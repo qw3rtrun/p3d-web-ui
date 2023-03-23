@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>3DP Web-UI Demo</title>
+    <link rel="stylesheet" type="text/css" href="/webjars/bootstrap/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" type="text/css" href="./css/main.css"/>
+    <script type="importmap">
+	{
+		"imports": {
+			"bootstrap": "/webjars/bootstrap/dist/js/bootstrap.esm.min.js",
+			"@popperjs/core": "/webjars/popperjs__core/lib/index.js",
+			"vue": "/webjars/vue/dist/vue.esm-browser.js",
+			"printer": "./js/printer.js"
+		}
+	}
+
+    </script>
+
+    <script type="module">
+        import 'bootstrap';
+        import {createApp} from 'vue';
+        import Printer from 'printer'
+        createApp(Printer).mount("#th1");
+    </script>
+</head>
+<body>
+<main>
+    <div class="container">
+        <div class="printer" id="th1"></div>
+    </div>
+</main>
+</body>
+</html>

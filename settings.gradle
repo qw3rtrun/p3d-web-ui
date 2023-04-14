@@ -3,6 +3,5 @@ rootProject.name = 'p3d-web-ui'
 include 'gcode'
 include 'terminal'
 include 'api'
-include 'ui'
-include 'design'
-include 'standalone'
+include 'printersmng'
+

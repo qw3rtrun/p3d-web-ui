@@ -5,3 +5,5 @@ include 'terminal'
 include 'api'
 include 'ui'
 include 'standalone'
+include 'printersmng'
+

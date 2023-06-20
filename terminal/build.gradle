@@ -29,11 +29,11 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.8.1'
 }
 
-dependencyManagement {
-    imports {
-        mavenBom SpringBootPlugin.BOM_COORDINATES
-    }
-}
+//dependencyManagement {
+//    imports {
+//        mavenBom SpringBootPlugin.BOM_COORDINATES
+//    }
+//}
 
 tasks.named('test') {
     useJUnitPlatform()

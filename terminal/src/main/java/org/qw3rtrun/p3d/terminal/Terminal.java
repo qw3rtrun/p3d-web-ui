@@ -46,7 +46,7 @@ public class Terminal {
     }
 
     public Flux<String> inbound() {
-        return connection.inbound().receive().asString();
+        return connection.inbound().receive().asString().log();
     }
 
     public Flux<String> inbound(Connection con) {

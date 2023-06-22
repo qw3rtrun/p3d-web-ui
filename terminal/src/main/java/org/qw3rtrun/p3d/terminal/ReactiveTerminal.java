@@ -2,11 +2,11 @@ package org.qw3rtrun.p3d.terminal;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.g.event.GEvent;
 import org.qw3rtrun.p3d.g.decoder.CompositeDecoder;
 import org.qw3rtrun.p3d.g.decoder.OkDecoder;
 import org.qw3rtrun.p3d.g.decoder.TemperatureReportedDecoder;
 import org.qw3rtrun.p3d.g.decoder.UnknownStringDecoder;
+import org.qw3rtrun.p3d.g.event.GEvent;
 import reactor.core.CoreSubscriber;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxOperator;
@@ -22,29 +22,60 @@ import static java.util.Arrays.asList;
 @RequiredArgsConstructor
 public class ReactiveTerminal {
 
+    private final TcpClient client = TcpClient.create()
+            .host("localhost")
+            .port(8099)
+            .doOnConnect(cfg -> System.out.println("TCPClient doOnConnect " + cfg))
+            .doOnConnected(cfg -> System.out.println("TCPClient doOnConnected " + cfg))
+            .doOnDisconnected(cfg -> System.out.println("TCPClient doOnDisconnected " + cfg))
+            .doOnResolveError((c, exp) -> exp.printStackTrace());
+
+    private Connection connection;
+
     public Mono<Connection> connecting() {
-        return TcpClient.create()
-                    .host("localhost")
-                    .port(8099)
-                    .doOnConnect(cfg -> System.out.println("onConnect " + cfg))
-                    .doOnConnected(cfg -> System.out.println("onConnected " + cfg))
-                    .doOnDisconnected(cfg -> System.out.println("onDisconnected " + cfg))
-                    .doOnResolveError((c, exp) -> exp.printStackTrace())
-                    .connect()
-                    .log(this.getClass().getSimpleName() + "#connect")
-                    .cast(Connection.class);
+        return client
+                .connect()
+                .log(this.getClass().getSimpleName() + "#connect")
+                .cast(Connection.class)
+                .doOnSuccess(this::handleConnect)
+                .doOnError(this::handleDisconnect);
     }
 
-    public Flux<String> rawInbound(Connection con) {
-        return con.inbound().receive()
+    public void disconnecting() {
+        connection.dispose();
+    }
+
+    public boolean isConnected() {
+        return connection != null;
+    }
+
+    private void handleConnect(Connection connection) {
+        this.connection = connection;
+        connection.onDispose().doOnTerminate(this::handleDisconnect).subscribe();
+        connection.onTerminate().doOnTerminate(this::handleDisconnect).subscribe();
+        System.out.println("handleConnect " + connection);
+    }
+
+    private void handleDisconnect(Throwable exp) {
+        System.out.println("handleDisconnect " + exp);
+        this.connection = null;
+    }
+
+    private void handleDisconnect() {
+        System.out.println("handleDisconnect " + connection);
+        this.connection = null;
+    }
+
+    public Flux<String> rawInbound() {
+        return connection.inbound().receive()
                 .asString()
                 .as(BufferedStringFlux::new)
                 .asLines()
                 .log(this.getClass().getSimpleName() + "#inbound");
     }
 
-    public Flux<GEvent> inbound(Connection con) {
-        return con.inbound().receive()
+    public Flux<GEvent> inbound() {
+        return connection.inbound().receive()
                 .asString()
                 .as(BufferedStringFlux::new)
                 .asLines()
@@ -53,8 +84,8 @@ public class ReactiveTerminal {
                 .log(this.getClass().getSimpleName() + "#inbound");
     }
 
-    public Mono<Void> outbound(Flux<String> sending, Connection con) {
-        return con.outbound().sendString(sending
+    public Mono<Void> outbound(Flux<String> sending) {
+        return connection.outbound().sendString(sending
                 .map(String::trim)
                 .log(this.getClass().getSimpleName() + "#outbond")
                 .map(str -> str + "\n")

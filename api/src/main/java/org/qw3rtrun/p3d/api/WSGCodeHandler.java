@@ -19,33 +19,32 @@ public class WSGCodeHandler implements WebSocketHandler {
     public Mono<Void> handle(WebSocketSession session) {
         log.info("handle()");
         return terminal.connecting()
-                .flatMap(connection -> connect(session, connection)
+                .flatMap(connection -> connect(session)
                 );
     }
 
-    private Mono<Void> connect(WebSocketSession session, Connection connection) {
-        Mono<Void> send = sending(session, connection);
-        Mono<Void> receive = receiving(session, connection);
+    private Mono<Void> connect(WebSocketSession session) {
+        Mono<Void> send = sending(session);
+        Mono<Void> receive = receiving(session);
 
         return Mono.zip(send, receive).then();
     }
 
-    private Mono<Void> sending(WebSocketSession session, Connection conn) {
+    private Mono<Void> sending(WebSocketSession session) {
         log.info("sending()");
         return session.send(
-                terminal.inbound(conn)
+                terminal.inbound()
                         .map(Object::toString)
                         .map(session::textMessage)
         );
     }
 
-    private Mono<Void> receiving(WebSocketSession session, Connection conn) {
+    private Mono<Void> receiving(WebSocketSession session) {
         log.info("receiving()");
         return terminal.outbound(
                 session.receive()
-                        .doOnComplete(conn::dispose)
-                        .map(WebSocketMessage::getPayloadAsText),
-                conn
+//                        .doOnComplete(conn::dispose)
+                        .map(WebSocketMessage::getPayloadAsText)
         );
     }
 }

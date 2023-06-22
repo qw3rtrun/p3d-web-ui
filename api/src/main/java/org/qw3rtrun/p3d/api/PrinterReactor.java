@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.api;
 
 import lombok.extern.slf4j.Slf4j;
+import org.qw3rtrun.p3d.api.dto.ConnectCmd;
 import org.qw3rtrun.p3d.g.G;
 import org.qw3rtrun.p3d.g.code.GCode;
 import org.qw3rtrun.p3d.g.event.GEvent;
@@ -11,7 +12,6 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
-import reactor.netty.Connection;
 
 import java.lang.reflect.InvocationTargetException;
 import java.util.Arrays;
@@ -19,7 +19,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
 
-import static org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature.m155;
 import static reactor.core.publisher.Sinks.EmitFailureHandler.FAIL_FAST;
 
 @Slf4j
@@ -38,10 +37,7 @@ public class PrinterReactor {
         this.printer = printer;
         updates = Sinks.many().replay().latestOrDefault(printer.getTemperature());
         this.printer.setEmitter(this::onEvent);
-        this.printer.setG(new G(str -> codes.emitNext(str, FAIL_FAST)));
         collectInvokers();
-        connect().log(this.getClass().getSimpleName() + "#printer").subscribe();
-        printer.onConnected();
     }
 
     private void collectInvokers() {
@@ -63,33 +59,56 @@ public class PrinterReactor {
                 });
     }
 
-    public Mono<Void> connect() {
-        log.info("connect()");
-        return terminal.connecting()
-                .flatMap(this::connect);
+    public Mono<Void> handleConnectCmd(Mono<ConnectCmd> connectCmd) {
+        return connectCmd.
+                doOnSuccess(this::handleConnectCmd)
+                .then();
     }
 
-    private Mono<Void> connect(Connection connection) {
-        Mono<Void> events = gEvent(connection);
-        Mono<Void> gcodes = gCode(connection);
+    public void handleConnectCmd(ConnectCmd cmd) {
+        if (cmd.connect() && !terminal.isConnected()) {
+            connect();
+        } else if (!cmd.connect() && terminal.isConnected()) {
+            disconnect();
+        }
+    }
 
+    public void connect() {
+        log.info("connect()");
+        terminal.connecting()
+                .publishOn(executor)
+                .flatMap(v -> handleConnect())
+                .log(this.getClass().getSimpleName() + "#printer")
+                .doOnTerminate(printer::onDisconnected)
+                .subscribe();
+    }
+
+    public void disconnect() {
+        log.info("disconnect()");
+        terminal.disconnecting();
+    }
+
+    private Mono<Void> handleConnect() {
+        codes = Sinks.unsafe().many().multicast().onBackpressureBuffer();
+        Mono<Void> events = gEvent();
+        Mono<Void> gcodes = gCode();
+        printer.onConnected(new G(str -> codes.emitNext(str, FAIL_FAST)));
         return Mono.zip(events, gcodes)
                 .then();
     }
 
-    private Mono<Void> gEvent(Connection conn) {
+    private Mono<Void> gEvent() {
         log.info("gEvent()");
-        return terminal.inbound(conn)
+        return terminal.inbound()
                 .publishOn(executor)
                 .doOnNext(this::invoke)
                 .then();
     }
 
-    private Mono<Void> gCode(Connection conn) {
+    private Mono<Void> gCode() {
         log.info("receiving()");
         return terminal.outbound(
-                codes.asFlux(),
-                conn
+                codes.asFlux()
         );
     }
 
@@ -103,8 +122,8 @@ public class PrinterReactor {
                 .doOnNext(rep -> log.info("<- {}", rep));
     }
 
-    public <T extends GCode> Mono<Void> handle(Mono<T> setTemp) {
-        return setTemp
+    public <T extends GCode> Mono<Void> handle(Mono<T> command) {
+        return command
                 .publishOn(executor)
                 .doOnNext(cmd -> log.info("-> {}", cmd))
                 .doOnNext(this::invoke)

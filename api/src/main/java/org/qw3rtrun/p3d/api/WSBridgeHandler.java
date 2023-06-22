@@ -19,31 +19,30 @@ public class WSBridgeHandler implements WebSocketHandler {
     public Mono<Void> handle(WebSocketSession session) {
         log.info("handle()");
         return terminal.connecting()
-                .flatMap(connection -> connect(session, connection)
+                .flatMap(connection -> connect(session)
                 );
     }
 
-    private Mono<Void> connect(WebSocketSession session, Connection connection) {
-        Mono<Void> send = sending(session, connection);
-        Mono<Void> receive = receiving(session, connection);
+    private Mono<Void> connect(WebSocketSession session) {
+        Mono<Void> send = sending(session);
+        Mono<Void> receive = receiving(session);
 
         return Mono.zip(send, receive).then();
     }
 
-    private Mono<Void> sending(WebSocketSession session, Connection conn) {
+    private Mono<Void> sending(WebSocketSession session) {
         log.info("sending()");
         return session.send(
-                terminal.rawInbound(conn)
+                terminal.rawInbound()
                         .map(session::textMessage)
         );
     }
 
-    private Mono<Void> receiving(WebSocketSession session, Connection conn) {
+    private Mono<Void> receiving(WebSocketSession session) {
         log.info("receiving()");
         return terminal.outbound(
                 session.receive()
-                        .map(WebSocketMessage::getPayloadAsText),
-                conn
+                        .map(WebSocketMessage::getPayloadAsText)
         );
     }
 }

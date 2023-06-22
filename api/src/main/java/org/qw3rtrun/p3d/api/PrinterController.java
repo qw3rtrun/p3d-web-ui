@@ -1,6 +1,8 @@
 package org.qw3rtrun.p3d.api;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.qw3rtrun.p3d.api.dto.ConnectCmd;
 import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
@@ -11,9 +13,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+@Slf4j
 @RestController
 @RequestMapping("/api-printer")
 @RequiredArgsConstructor
@@ -34,6 +38,12 @@ public class PrinterController {
     @PostMapping("/set-temp")
     public Mono<Void> setTemp(@RequestBody Mono<SetHotendTemperature> newState) {
         return printer.handle(newState);
+    }
+
+    @PostMapping("/connect")
+    public Mono<Void> connect(@RequestBody Mono<ConnectCmd> cmd) {
+        log.info("Cmd Connect received");
+        return printer.handleConnectCmd(cmd);
     }
 
     @PostMapping("/auto-report-temp")

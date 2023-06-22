@@ -21,9 +21,19 @@ public class PrinterState {
         return th1;
     }
 
-    public void onConnected() {
+    public void onConnected(G g) {
         log.info("Printer connected");
-        g.m155(1);
+        this.g = g;
+        g.m105();
+    }
+
+    public void onDisconnected() {
+        this.g = null;
+        log.warn("Printer disconnected");
+    }
+
+    protected boolean isConnected() {
+        return g != null;
     }
 
     public void handle(SetHotendTemperature temperature) {
@@ -50,9 +60,5 @@ public class PrinterState {
 
     protected void setEmitter(Consumer<TemperatureReport> emitter) {
         this.emitter = emitter;
-    }
-
-    public void setG(G g) {
-        this.g = g;
     }
 }

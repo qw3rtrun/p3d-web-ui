@@ -3,9 +3,11 @@ package org.qw3rtrun.p3d.api;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.dto.ConnectCmd;
+import org.qw3rtrun.p3d.api.dto.EventMessage;
 import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
+import org.qw3rtrun.p3d.g.event.GEvent;
 import org.qw3rtrun.p3d.g.event.TemperatureReport;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,7 +33,7 @@ public class PrinterController {
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<TemperatureReport> getUpdates() {
+    public Flux<EventMessage> getUpdates() {
         return printer.updates();
     }
 

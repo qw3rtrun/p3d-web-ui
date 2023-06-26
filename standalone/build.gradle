@@ -19,13 +19,13 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 }
 
-//sourceSets {
-//    main {
-//        resources {
-//            srcDirs += [
-//                    '../ui/src/maim/resources'
-//            ]
-//        }
-//    }
-//}
+sourceSets {
+    main {
+        resources {
+            srcDirs += [
+                    '../ui/src/maim/resources'
+            ]
+        }
+    }
+}
 

@@ -11,7 +11,7 @@ import reactor.netty.tcp.TcpClient;
 @RequiredArgsConstructor
 public class Terminal {
 
-    private Connection connection;
+    public Connection connection;
 
     public void connect() {
         if (connection == null) {

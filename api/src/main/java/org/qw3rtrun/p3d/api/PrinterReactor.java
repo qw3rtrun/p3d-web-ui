@@ -2,10 +2,13 @@ package org.qw3rtrun.p3d.api;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.dto.ConnectCmd;
+import org.qw3rtrun.p3d.api.dto.EventMessage;
 import org.qw3rtrun.p3d.g.G;
 import org.qw3rtrun.p3d.g.code.GCode;
+import org.qw3rtrun.p3d.g.event.DisconnectedEvent;
 import org.qw3rtrun.p3d.g.event.GEvent;
 import org.qw3rtrun.p3d.g.event.TemperatureReport;
+import org.qw3rtrun.p3d.g.event.TemperatureReportedEvent;
 import org.qw3rtrun.p3d.terminal.ReactiveTerminal;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -26,7 +29,7 @@ public class PrinterReactor {
 
     private Scheduler executor = Schedulers.single();
     private PrinterState printer;
-    private Sinks.Many<TemperatureReport> updates;
+    private Sinks.Many<EventMessage> updates;
     private Sinks.Many<String> codes = Sinks.unsafe().many().multicast().onBackpressureBuffer();
 
     private ReactiveTerminal terminal = new ReactiveTerminal();
@@ -35,7 +38,7 @@ public class PrinterReactor {
 
     public PrinterReactor(PrinterState printer) {
         this.printer = printer;
-        updates = Sinks.many().replay().latestOrDefault(printer.getTemperature());
+        updates = Sinks.many().replay().latestOrDefault(new EventMessage(printer.getId(), new DisconnectedEvent()));
         this.printer.setEmitter(this::onEvent);
         collectInvokers();
     }
@@ -66,6 +69,7 @@ public class PrinterReactor {
     }
 
     public void handleConnectCmd(ConnectCmd cmd) {
+        printer.handle(cmd);
         if (cmd.connect() && !terminal.isConnected()) {
             connect();
         } else if (!cmd.connect() && terminal.isConnected()) {
@@ -116,7 +120,7 @@ public class PrinterReactor {
         return Mono.defer(() -> Mono.just(printer.getTemperature())).publishOn(executor);
     }
 
-    public Flux<TemperatureReport> updates() {
+    public Flux<EventMessage> updates() {
         return updates.asFlux()
                 .publishOn(executor)
                 .doOnNext(rep -> log.info("<- {}", rep));
@@ -141,7 +145,7 @@ public class PrinterReactor {
                 .accept(message);
     }
 
-    private void onEvent(TemperatureReport report) {
-        updates.emitNext(report, FAIL_FAST);
+    private void onEvent(GEvent report) {
+        updates.emitNext(new EventMessage(printer.getId(), report), FAIL_FAST);
     }
 }

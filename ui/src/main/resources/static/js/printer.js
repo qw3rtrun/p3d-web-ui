@@ -1,7 +1,8 @@
 export default {
     data() {
         return {
-            temp: 99,
+            connected: false,
+            temp: "--",
             heating: false,
             target: -1,
             target_: ""
@@ -11,16 +12,44 @@ export default {
         const events = new EventSource("api-printer/stream");
         events.onmessage = e => {
             console.log(e);
-            var payload = JSON.parse(e.data);
-            this.temp = payload.current;
-            this.target = payload.target;
-            this.heating = this.target > 0;
+            const payload = JSON.parse(e.data);
+            if (payload.type === "OkTemperatureReported" || payload.type === "TemperatureReported") {
+                this.connected = true;
+                const report = payload.event.hotend;
+                this.temp = report.current;
+                this.target = report.target;
+                this.heating = this.target > 0;
+            } else if (payload.type === "DisconnectedEvent") {
+                this.connected = false;
+            } else if (payload.type === "ConnectedEvent") {
+                this.connected = true;
+            }
         }
     },
     methods: {
         update() {
             const requestOptions = {method: "POST"};
             fetch("api-printer/report-temp", requestOptions).then();
+        },
+        connect() {
+            console.log("click Connect");
+            // Simple POST request with a JSON body using fetch
+            const requestOptions = {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({connect: true})
+            };
+            fetch("api-printer/connect", requestOptions).then();
+        },
+        disconnect() {
+            console.log("click Disconnect");
+            // Simple POST request with a JSON body using fetch
+            const requestOptions = {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({connect: false})
+            };
+            fetch("api-printer/connect", requestOptions).then();
         },
         setHeatingTemp() {
             // Simple POST request with a JSON body using fetch
@@ -53,7 +82,12 @@ export default {
     },
     template: `
     <div class="card">
-        <div class="card-header">Nozzle Temperature</div>
+        <div class="card-header">
+            <span>Nozzle Temperature</span>
+            <a href="#" class="btn btn-primary" @click="connect()">Connect</a>
+            <a href="#" class="btn btn-primary" @click="disconnect()">Disconnect</a>
+            <input v-model="connected" class="form-check-input" type="checkbox" disabled>
+        </div>
         <div class="card-body">
         <div class="row">
             <div class="col">

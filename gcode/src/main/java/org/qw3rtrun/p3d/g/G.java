@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.g;
 
 import lombok.RequiredArgsConstructor;
 import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
+import org.qw3rtrun.p3d.g.code.FirmwareInfo;
 import org.qw3rtrun.p3d.g.code.GCode;
 import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
 
@@ -46,6 +47,14 @@ public class G {
 
     public void autoReportTemp() {
         m155();
+    }
+
+    public void firmwareInfo() {
+        m115();
+    }
+
+    public void m115() {
+        code(new FirmwareInfo());
     }
 
     public void code(GCode code) {

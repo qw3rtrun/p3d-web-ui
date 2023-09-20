@@ -6,5 +6,3 @@ include 'api'
 include 'ui'
 include 'design'
 include 'standalone'
-include 'printersmng'
-

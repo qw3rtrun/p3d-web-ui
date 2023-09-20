@@ -1,7 +1,9 @@
 package org.qw3rtrun.p3d.terminal;
 
+import org.qw3rtrun.p3d.g.code.FirmwareInfo;
 import org.qw3rtrun.p3d.g.code.GCode;
 import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
@@ -19,23 +21,48 @@ public class TerminalApplication {
 
         terminal.connect();
 
-        var sendMono = terminal.connection.outbound()
-                .sendString(Mono.just("M105\n").publishOn(executor).log())
+//        var sendMono = terminal.connection.outbound()
+//                .sendString(Mono.just("M105\n").publishOn(executor).log())
+//                .then();
+
+
+//        var receiveMono = terminal.inbound()
+//                .doOnNext(s -> {
+//                    System.out.println("-> " + s);
+//                })
+//                .subscribe();
+
+        var send1Mono = terminal.send(
+                Flux.<GCode>generate(s -> s.next(new ReportHotendTemperature()))
+                        .take(5)
+                        .log()
+        );
+
+        var send2Mono = terminal.send(
+                Flux.<GCode>generate(s -> s.next(new FirmwareInfo()))
+                        .take(5)
+                        .log()
+        );
+
+        var send3Mono = terminal.connection.outbound()
+                        .sendString(Flux.<String>generate(s -> s.next("M105\n"))
+                                .take(5)
+                                .log())
+                .then();
+        var send4Mono = terminal.connection.outbound()
+                .sendString(Flux.<String>generate(s -> s.next("M155\n"))
+                        .take(5)
+                        .log())
                 .then();
 
-        var receiveMono = terminal.connection.inbound().receive()
-                .asString()
-                .publishOn(executor);
-        receiveMono.log().subscribe(s -> {
-            System.out.println("-> " + s);
-            terminal.connection.dispose();
-        });
 
-        System.out.println("Sent");
-        sendMono.log().subscribe();
+        System.out.println("Done " + terminal.connection);
 
-        System.out.println("Done "+ terminal.connection);
+        send3Mono.subscribe();
+        send4Mono.subscribe();
+        //Mono.zip(send3Mono, send4Mono).block();
 
+        System.out.println("DisposeNow " + terminal.connection);
         terminal.connection.onDispose().block();
     }
 

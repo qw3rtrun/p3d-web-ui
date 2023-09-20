@@ -9,7 +9,6 @@ plugins {
 
 group = 'org.qw3rtrun.p3d'
 version = '0.0.1-SNAPSHOT'
-sourceCompatibility = '17'
 
 repositories {
     mavenCentral()

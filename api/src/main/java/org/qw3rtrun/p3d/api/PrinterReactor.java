@@ -8,7 +8,6 @@ import org.qw3rtrun.p3d.g.code.GCode;
 import org.qw3rtrun.p3d.g.event.DisconnectedEvent;
 import org.qw3rtrun.p3d.g.event.GEvent;
 import org.qw3rtrun.p3d.g.event.TemperatureReport;
-import org.qw3rtrun.p3d.g.event.TemperatureReportedEvent;
 import org.qw3rtrun.p3d.terminal.ReactiveTerminal;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;

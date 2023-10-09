@@ -104,19 +104,6 @@ export default {
                 <button type="button" class="btn btn-primary text-white" @click="disconnect()">Disconnect</button>
                 <input v-model="connected" class="form-check-input" type="checkbox" disabled>
             </div>           
-            <div>
-                <div class="dropdown">
-                  <button class="btn btn-secondary dropdown-toggle toggle-dark mb-0 me-0" type="button" id="dropdownMenuButton2" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false"> Settings </button>
-                  <div class="dropdown-menu" aria-labelledby="dropdownMenuButton2">
-                    <h6 class="dropdown-header">Settings</h6>
-                    <a class="dropdown-item" href="#">Action</a>
-                    <a class="dropdown-item" href="#">Another action</a>
-                    <a class="dropdown-item" href="#">Something else here</a>
-                    <div class="dropdown-divider"></div>
-                    <a class="dropdown-item" href="#">Separated link</a>
-                  </div>
-                </div>
-            </div>
         </div>
         <div class="row pt-2">
             <div class="col">

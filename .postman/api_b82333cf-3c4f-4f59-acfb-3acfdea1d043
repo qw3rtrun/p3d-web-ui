@@ -9,10 +9,13 @@ id = b82333cf-3c4f-4f59-acfb-3acfdea1d043
 
 [config.relations.collections]
 rootDirectory = postman/collections
+files[] = {"id":"20369128-9dc7435d-c99e-48c9-bb9d-6531d1fdad81","path":"Connection Manager.json","metaData":{}}
 
 [config.relations.collections.metaData]
 
 [config.relations.apiDefinition]
 rootDirectory = postman/schemas
+files[] = {"path":"index.yaml","metaData":{}}
 
 [config.relations.apiDefinition.metaData]
+type = openapi:3

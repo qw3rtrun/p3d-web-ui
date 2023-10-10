@@ -1,0 +1,91 @@
+{
+	"info": {
+		"_postman_id": "9dc7435d-c99e-48c9-bb9d-6531d1fdad81",
+		"name": "Connection Manager",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_uid": "20369128-9dc7435d-c99e-48c9-bb9d-6531d1fdad81"
+	},
+	"item": [
+		{
+			"name": "Add Printer",
+			"id": "dbc12f5f-39ab-42cf-9df7-af8c6eca75eb",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "http://localhost:8080/api-manager",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"api-manager"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Fetch All Printers",
+			"id": "1976d7d2-a127-40ce-b971-dff892437a0b",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "http://localhost:8080/api-manager",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"api-manager"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Fetch Printer by ID",
+			"id": "8d1ef6d9-5367-459e-9e72-892ecbca0132",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "http://localhost:8080/api-manager",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"api-manager"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

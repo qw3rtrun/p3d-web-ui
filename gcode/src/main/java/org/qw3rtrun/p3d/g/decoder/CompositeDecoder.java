@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.decoder;
 
 import lombok.RequiredArgsConstructor;
-import org.qw3rtrun.p3d.g.event.GEvent;
+import org.qw3rtrun.p3d.core.msg.GEvent;
 
 import java.util.List;
 import java.util.Optional;

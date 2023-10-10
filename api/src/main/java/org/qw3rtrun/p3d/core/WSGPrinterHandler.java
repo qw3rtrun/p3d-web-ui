@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.api;
+package org.qw3rtrun.p3d.core;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

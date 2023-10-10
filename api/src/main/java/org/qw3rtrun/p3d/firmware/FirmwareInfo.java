@@ -1,14 +1,11 @@
-package org.qw3rtrun.p3d.api.firmware;
+package org.qw3rtrun.p3d.firmware;
 
-import lombok.Data;
 import lombok.Getter;
-import lombok.Setter;
 import org.qw3rtrun.p3d.g.event.CapabilityReportEvent;
 import org.qw3rtrun.p3d.g.event.FirmwareInfoReportEvent;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 @Getter
 public class FirmwareInfo {

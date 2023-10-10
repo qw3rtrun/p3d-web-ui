@@ -21,9 +21,9 @@
             </a>
             <div class="collapse" th:classappend="${active == 'fdms' ? 'show' : ''}" id="list-fdm">
                 <ul class="nav flex-column sub-menu">
-                  <li class="nav-item"> <a class="nav-link" href="pages/ui-features/buttons.html">Marlin Sim</a></li>
-                  <li class="nav-item"> <a class="nav-link" href="pages/ui-features/dropdowns.html">FB Ghost 4</a></li>
-                  <li class="nav-item"> <a class="nav-link" href="pages/ui-features/typography.html">Zav Mini</a></li>
+                  <li class="nav-item" th:each="printer : ${printers}">
+                    <a class="nav-link" th:href="@{|/printers/${printer.uuid}|}">[[${printer.name}]]</a>
+                  </li>
                   <li><a class="nav-link" href="/printers/add.html"><i class="bi bi-plus"></i> Add</a></li>
                 </ul>
             </div>

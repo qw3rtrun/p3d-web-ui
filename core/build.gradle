@@ -10,14 +10,14 @@ plugins {
 group = 'org.qw3rtrun.p3d'
 version = '0.0.1-SNAPSHOT'
 
-repositories {
-    mavenCentral()
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
 }
 
-dependencies {
-    implementation project(':core')
-    implementation 'org.apache.commons:commons-lang3:3.12.0'
-    testImplementation "org.junit.jupiter:junit-jupiter:5.8.2"
+repositories {
+    mavenCentral()
 }
 
 dependencyManagement {
@@ -26,7 +26,9 @@ dependencyManagement {
     }
 }
 
+dependencies {
+}
+
 tasks.named('test') {
     useJUnitPlatform()
 }
-

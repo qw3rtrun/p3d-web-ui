@@ -1,5 +1,6 @@
 rootProject.name = 'p3d-web-ui'
 
+include 'core'
 include 'gcode'
 include 'terminal'
 include 'api'

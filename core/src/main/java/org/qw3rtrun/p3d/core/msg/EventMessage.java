@@ -1,7 +1,6 @@
-package org.qw3rtrun.p3d.api.dto;
+package org.qw3rtrun.p3d.core.msg;
 
 import lombok.NonNull;
-import org.qw3rtrun.p3d.g.event.GEvent;
 
 import java.util.UUID;
 

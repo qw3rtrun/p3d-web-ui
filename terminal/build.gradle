@@ -9,13 +9,13 @@ plugins {
 
 group = 'org.qw3rtrun.p3d'
 version = '0.0.1-SNAPSHOT'
-sourceCompatibility = "20.PREVIEW"
 
 repositories {
     mavenCentral()
 }
 
 dependencies {
+    implementation project(':core')
     implementation project(':gcode')
 
     // import a BOM

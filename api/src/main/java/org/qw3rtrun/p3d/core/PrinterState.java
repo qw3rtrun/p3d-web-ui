@@ -1,9 +1,9 @@
-package org.qw3rtrun.p3d.api;
+package org.qw3rtrun.p3d.core;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.api.dto.ConnectCmd;
-import org.qw3rtrun.p3d.api.firmware.FirmwareInfo;
+import org.qw3rtrun.p3d.core.msg.ConnectCmd;
+import org.qw3rtrun.p3d.firmware.FirmwareInfo;
 import org.qw3rtrun.p3d.g.G;
 import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
@@ -12,7 +12,7 @@ import org.qw3rtrun.p3d.g.event.CapabilityReportEvent;
 import org.qw3rtrun.p3d.g.event.ConnectedEvent;
 import org.qw3rtrun.p3d.g.event.DisconnectedEvent;
 import org.qw3rtrun.p3d.g.event.FirmwareInfoReportEvent;
-import org.qw3rtrun.p3d.g.event.GEvent;
+import org.qw3rtrun.p3d.core.msg.GEvent;
 import org.qw3rtrun.p3d.g.event.TemperatureReport;
 import org.qw3rtrun.p3d.g.event.TemperatureReportedEvent;
 

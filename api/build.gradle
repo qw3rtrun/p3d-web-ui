@@ -18,8 +18,10 @@ repositories {
 }
 
 dependencies {
+    implementation project(':core')
     implementation project(':terminal')
     implementation project(':gcode')
+
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'

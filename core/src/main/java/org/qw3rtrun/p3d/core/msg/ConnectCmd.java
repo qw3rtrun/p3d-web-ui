@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.api.dto;
+package org.qw3rtrun.p3d.core.msg;
 
 public record ConnectCmd(boolean connect) {
 }

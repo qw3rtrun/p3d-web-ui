@@ -1,12 +1,11 @@
 package org.qw3rtrun.p3d.terminal;
 
-import ch.qos.logback.classic.pattern.ContextNameConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.g.code.GCode;
 import org.qw3rtrun.p3d.g.decoder.*;
 import org.qw3rtrun.p3d.g.event.AdvancedOkReceivedEvent;
-import org.qw3rtrun.p3d.g.event.GEvent;
+import org.qw3rtrun.p3d.core.msg.GEvent;
 import org.qw3rtrun.p3d.g.event.OKReceivedEvent;
 import org.reactivestreams.Processor;
 import org.reactivestreams.Publisher;
@@ -18,15 +17,10 @@ import reactor.core.publisher.FluxOperator;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.netty.Connection;
-import reactor.netty.NettyInbound;
-import reactor.netty.NettyOutbound;
 import reactor.netty.tcp.TcpClient;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 

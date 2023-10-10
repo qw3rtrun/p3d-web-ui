@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.g.decoder;
 
-import org.qw3rtrun.p3d.g.event.GEvent;
+
+import org.qw3rtrun.p3d.core.msg.GEvent;
 
 import java.util.Optional;
 import java.util.function.Function;

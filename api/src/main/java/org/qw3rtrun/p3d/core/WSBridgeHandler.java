@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.api;
+package org.qw3rtrun.p3d.core;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -7,11 +7,10 @@ import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.publisher.Mono;
-import reactor.netty.Connection;
 
 @Slf4j
 @RequiredArgsConstructor
-public class WSGCodeHandler implements WebSocketHandler {
+public class WSBridgeHandler implements WebSocketHandler {
 
     private final ReactiveTerminal terminal;
 
@@ -33,8 +32,7 @@ public class WSGCodeHandler implements WebSocketHandler {
     private Mono<Void> sending(WebSocketSession session) {
         log.info("sending()");
         return session.send(
-                terminal.inbound()
-                        .map(Object::toString)
+                terminal.rawInbound()
                         .map(session::textMessage)
         );
     }
@@ -43,7 +41,6 @@ public class WSGCodeHandler implements WebSocketHandler {
         log.info("receiving()");
         return terminal.outbound(
                 session.receive()
-//                        .doOnComplete(conn::dispose)
                         .map(WebSocketMessage::getPayloadAsText)
         );
     }

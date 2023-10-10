@@ -1,13 +1,12 @@
-package org.qw3rtrun.p3d.api;
+package org.qw3rtrun.p3d.core;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.api.dto.ConnectCmd;
-import org.qw3rtrun.p3d.api.dto.EventMessage;
+import org.qw3rtrun.p3d.core.msg.ConnectCmd;
+import org.qw3rtrun.p3d.core.msg.EventMessage;
 import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
-import org.qw3rtrun.p3d.g.event.GEvent;
 import org.qw3rtrun.p3d.g.event.TemperatureReport;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,7 +14,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 

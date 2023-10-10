@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '3.0.2'
     id 'io.spring.dependency-management' version '1.1.0'
+    id "io.freefair.lombok" version "6.6.1"
 }
 
 group = 'org.qw3rtrun.p3d'
@@ -25,7 +26,9 @@ allprojects {
 }
 
 dependencies {
+    implementation project(':core')
     implementation project(':api')
+    implementation project(':printersmng')
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
@@ -45,12 +48,12 @@ dependencies {
     testImplementation 'io.projectreactor:reactor-test'
 }
 
-sourceSets {
-    main {
-        resources {
-            srcDirs += [
-                    'ui/src/maim/resources'
-            ]
-        }
-    }
-}
+//sourceSets {
+//    main {
+//        resources {
+//            srcDirs += [
+//                    'printersmng/src/main/resources'
+//            ]
+//        }
+//    }
+//}

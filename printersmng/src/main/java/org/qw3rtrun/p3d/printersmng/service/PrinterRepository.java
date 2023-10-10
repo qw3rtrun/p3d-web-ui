@@ -1,7 +1,9 @@
 package org.qw3rtrun.p3d.printersmng.service;
 
-import org.qw3rtrun.p3d.printersmng.model.Printer;
+import org.qw3rtrun.p3d.printersmng.model.PrinterEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface PrinterRepository extends JpaRepository<Printer, Integer> {
+import java.util.UUID;
+
+public interface PrinterRepository extends JpaRepository<PrinterEntity, UUID> {
 }

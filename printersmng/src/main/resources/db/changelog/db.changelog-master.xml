@@ -5,12 +5,19 @@
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
     <changeSet id="1" author="Liquibase">
-        <createTable tableName="printersdb">
-            <column name="id" type="bigint" autoIncrement="true">
+        <createTable tableName="printer_entity">
+            <column name="id" type="uuid" >
                 <constraints primaryKey="true" nullable="false"/>
             </column>
-            <column name="name" type="varchar"/>
-            <column name="connection" type="varchar"/>
+            <column name="name" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="host" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="port" type="number">
+                <constraints nullable="false"/>
+            </column>
         </createTable>
     </changeSet>
 </databaseChangeLog>

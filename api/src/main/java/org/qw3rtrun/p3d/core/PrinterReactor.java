@@ -1,12 +1,12 @@
-package org.qw3rtrun.p3d.api;
+package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.api.dto.ConnectCmd;
-import org.qw3rtrun.p3d.api.dto.EventMessage;
+import org.qw3rtrun.p3d.core.msg.ConnectCmd;
+import org.qw3rtrun.p3d.core.msg.EventMessage;
 import org.qw3rtrun.p3d.g.G;
 import org.qw3rtrun.p3d.g.code.GCode;
 import org.qw3rtrun.p3d.g.event.DisconnectedEvent;
-import org.qw3rtrun.p3d.g.event.GEvent;
+import org.qw3rtrun.p3d.core.msg.GEvent;
 import org.qw3rtrun.p3d.g.event.TemperatureReport;
 import org.qw3rtrun.p3d.terminal.ReactiveTerminal;
 import reactor.core.publisher.Flux;

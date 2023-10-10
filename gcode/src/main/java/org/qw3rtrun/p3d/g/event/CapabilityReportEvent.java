@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.event;
 
-import java.util.UUID;
+import org.qw3rtrun.p3d.core.msg.GEvent;
 
 public interface CapabilityReportEvent extends GEvent {
 

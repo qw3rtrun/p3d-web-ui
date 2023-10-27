@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.qw3rtrun.p3d.g.event.OkTemperatureReported;
-import org.qw3rtrun.p3d.g.event.TemperatureReport;
+import org.qw3rtrun.p3d.core.msg.TemperatureReport;
 
 class TemperatureReportedDecoderTest {
 

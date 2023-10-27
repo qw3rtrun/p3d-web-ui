@@ -24,6 +24,11 @@ application {
     mainClass = 'org.qw3rtrun.p3d.printersmng.PrintersmngApplication'
 }
 
+compileJava {
+    options.compilerArgs += ['--enable-preview']
+}
+
+tasks.withType(JavaExec) { jvmArgs += '--enable-preview' }
 
 dependencies {
     implementation project(':core')

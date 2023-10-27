@@ -1,13 +1,9 @@
 package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.core.msg.ConnectCmd;
-import org.qw3rtrun.p3d.core.msg.EventMessage;
+import org.qw3rtrun.p3d.core.msg.*;
 import org.qw3rtrun.p3d.g.G;
 import org.qw3rtrun.p3d.g.code.GCode;
-import org.qw3rtrun.p3d.g.event.DisconnectedEvent;
-import org.qw3rtrun.p3d.core.msg.GEvent;
-import org.qw3rtrun.p3d.g.event.TemperatureReport;
 import org.qw3rtrun.p3d.terminal.ReactiveTerminal;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -26,18 +22,20 @@ import static reactor.core.publisher.Sinks.EmitFailureHandler.FAIL_FAST;
 @Slf4j
 public class PrinterReactor {
 
+    private final ReactiveTerminal terminal;
+    private final PrinterState printer;
+
     private Scheduler executor = Schedulers.single();
-    private PrinterState printer;
     private Sinks.Many<EventMessage> updates;
     private Sinks.Many<String> codes = Sinks.unsafe().many().multicast().onBackpressureBuffer();
 
-    private ReactiveTerminal terminal = new ReactiveTerminal();
 
     private Map<Class<?>, Consumer<Object>> invokers = new HashMap<>();
 
-    public PrinterReactor(PrinterState printer) {
+    public PrinterReactor(ReactiveTerminal terminal, PrinterState printer) {
+        this.terminal = terminal;
         this.printer = printer;
-        updates = Sinks.many().replay().latestOrDefault(new EventMessage(printer.getId(), new DisconnectedEvent()));
+        updates = Sinks.many().replay().latestOrDefault(new EventMessage(printer.getId(), new MachineOfflineEvent()));
         this.printer.setEmitter(this::onEvent);
         collectInvokers();
     }
@@ -82,7 +80,7 @@ public class PrinterReactor {
                 .publishOn(executor)
                 .flatMap(v -> handleConnect())
                 .log(this.getClass().getSimpleName() + "#printer")
-                .doOnTerminate(printer::onDisconnected)
+                .doOnTerminate(printer::onOffline)
                 .subscribe();
     }
 
@@ -95,7 +93,7 @@ public class PrinterReactor {
         codes = Sinks.unsafe().many().multicast().onBackpressureBuffer();
         Mono<Void> events = gEvent();
         Mono<Void> gcodes = gCode();
-        printer.onConnected(new G(str -> codes.emitNext(str, FAIL_FAST)));
+        printer.onOnline(new G(str -> codes.emitNext(str, FAIL_FAST)));
         return Mono.zip(events, gcodes)
                 .then();
     }

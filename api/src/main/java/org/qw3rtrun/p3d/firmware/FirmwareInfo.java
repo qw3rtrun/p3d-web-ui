@@ -1,8 +1,8 @@
 package org.qw3rtrun.p3d.firmware;
 
 import lombok.Getter;
-import org.qw3rtrun.p3d.g.event.CapabilityReportEvent;
-import org.qw3rtrun.p3d.g.event.FirmwareInfoReportEvent;
+import org.qw3rtrun.p3d.core.msg.CapabilityReportEvent;
+import org.qw3rtrun.p3d.core.msg.FirmwareInfoReportEvent;
 
 import java.util.HashMap;
 import java.util.Map;

@@ -2,10 +2,7 @@ package org.qw3rtrun.p3d.printersmng.model;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.NonNull;
+import lombok.*;
 
 import java.util.UUID;
 
@@ -22,4 +19,13 @@ public class PrinterEntity {
     @NonNull
     String host;
     int port;
+    boolean connected;
+
+    public void connect() {
+        connected = true;
+    }
+
+    public void disconnect() {
+        connected = false;
+    }
 }

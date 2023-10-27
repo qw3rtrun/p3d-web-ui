@@ -1,21 +1,20 @@
 package org.qw3rtrun.p3d.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.qw3rtrun.p3d.core.model.Printer;
-import org.qw3rtrun.p3d.core.model.PrinterConnection;
-import org.qw3rtrun.p3d.core.service.PrinterManager;
+import org.qw3rtrun.p3d.core.model.PrinterAggregate;
+import org.qw3rtrun.p3d.core.service.MachineDescriptionManager;
+import org.qw3rtrun.p3d.core.service.PrinterAggregateManager;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
-import org.springframework.core.annotation.Order;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 
-import java.util.*;
-import java.util.stream.Stream;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 @SpringBootApplication
 public class ApiApplication {
@@ -25,11 +24,9 @@ public class ApiApplication {
     }
 
     @Bean
-    public HandlerMapping webSocketHandlerMapping(PrinterReactor printer, ObjectMapper mapper) {
+    public HandlerMapping webSocketHandlerMapping(PrinterReactorManager manager, ObjectMapper mapper) {
         Map<String, WebSocketHandler> map = new HashMap<>();
-//        map.put("/ws-emitter", new WSBridgeHandler(new ReactiveTerminal()));
-//        map.put("/ws-gcode", new WSGCodeHandler(new ReactiveTerminal()));
-        map.put("/ws-printer", new WSGPrinterHandler(printer, mapper));
+        map.put("/ws-printer/*", new WSGPrinterHandler(manager, mapper));
 
         SimpleUrlHandlerMapping handlerMapping = new SimpleUrlHandlerMapping();
         handlerMapping.setOrder(1);
@@ -38,8 +35,20 @@ public class ApiApplication {
     }
 
     @Bean
-    public PrinterReactor printer() {
-        return new PrinterReactor(new PrinterState());
+    @DependsOn
+    public PrinterReactorManager printer(MachineDescriptionManager descriptionManager, PrinterAggregateManager aggregateManager) {
+        return new PrinterReactorManager(descriptionManager, aggregateManager);
+    }
+
+    @Bean
+    public static PrinterAggregateManager stubStateManager() {
+        return new PrinterAggregateManager() {
+            @Override
+            public PrinterAggregate loadState(UUID uuid) {
+                return new PrinterState(uuid);
+            }
+
+        };
     }
 
 //    @Bean

@@ -1,8 +1,8 @@
 package org.qw3rtrun.p3d.g.decoder;
 
 import org.apache.commons.lang3.StringUtils;
-import org.qw3rtrun.p3d.g.event.CapabilityReport;
-import org.qw3rtrun.p3d.g.event.CapabilityReportEvent;
+import org.qw3rtrun.p3d.core.msg.CapabilityReport;
+import org.qw3rtrun.p3d.core.msg.CapabilityReportEvent;
 
 import java.util.Optional;
 

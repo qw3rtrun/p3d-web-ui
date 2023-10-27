@@ -8,17 +8,21 @@ import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketSession;
 import reactor.core.publisher.Mono;
 
+import java.util.UUID;
+
 @Slf4j
 @RequiredArgsConstructor
 public class WSGPrinterHandler implements WebSocketHandler {
 
-    private final PrinterReactor printer;
+    private final PrinterReactorManager reactorManager;
 
     private final ObjectMapper mapper;
 
     @Override
     public Mono<Void> handle(WebSocketSession session) {
         log.info("handle()");
+        var id = (UUID) session.getAttributes().get("id");
+        var printer = reactorManager.getReactor(id);
         return session.send(
                 printer.updates()
                         .map(value -> {

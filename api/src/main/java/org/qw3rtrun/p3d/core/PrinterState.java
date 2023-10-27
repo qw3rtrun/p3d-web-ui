@@ -1,29 +1,30 @@
 package org.qw3rtrun.p3d.core;
 
 import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.core.msg.ConnectCmd;
+import org.qw3rtrun.p3d.core.model.PrinterAggregate;
+import org.qw3rtrun.p3d.core.msg.*;
 import org.qw3rtrun.p3d.firmware.FirmwareInfo;
 import org.qw3rtrun.p3d.g.G;
 import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
+import org.qw3rtrun.p3d.g.code.SetBedTemperature;
 import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
-import org.qw3rtrun.p3d.g.event.CapabilityReportEvent;
-import org.qw3rtrun.p3d.g.event.ConnectedEvent;
-import org.qw3rtrun.p3d.g.event.DisconnectedEvent;
-import org.qw3rtrun.p3d.g.event.FirmwareInfoReportEvent;
-import org.qw3rtrun.p3d.core.msg.GEvent;
-import org.qw3rtrun.p3d.g.event.TemperatureReport;
-import org.qw3rtrun.p3d.g.event.TemperatureReportedEvent;
 
 import java.util.UUID;
 import java.util.function.Consumer;
 
 @Slf4j
-public class PrinterState {
+@RequiredArgsConstructor
+public class PrinterState implements PrinterAggregate {
 
     @Getter
-    private final UUID id = UUID.randomUUID();
+    private final UUID id;
+
+    private boolean connected;
+
+    private boolean online;
 
     private TemperatureReport th1 = new TemperatureReport(0d, 0d, 0);
     private Consumer<GEvent> emitter;
@@ -35,11 +36,12 @@ public class PrinterState {
         return th1;
     }
 
-    protected boolean isConnected() {
-        return g != null;
+    public void handle(SetHotendTemperature temperature) {
+        log.info("{}", temperature);
+        g.code(temperature);
     }
 
-    public void handle(SetHotendTemperature temperature) {
+    public void handle(SetBedTemperature temperature) {
         log.info("{}", temperature);
         g.code(temperature);
     }
@@ -54,27 +56,37 @@ public class PrinterState {
         g.code(report);
     }
 
-    public void onConnected(G g) {
-        log.info("Printer connected");
+    public void onOnline(G g) {
         this.g = g;
-        emitter.accept(new ConnectedEvent());
-        g.m155(0);
-        g.m115();
-        g.m155(1);
+        if (!this.online) {
+            log.info("Printer online");
+            this.online = true;
+            emitter.accept(new MachineOnlineEvent());
+            g.m155(0);
+            g.m115();
+            g.m155(1);
+        }
     }
 
     //TODO
     public void handle(ConnectCmd cmd) {
-        if (!cmd.connect()) {
+        if (!cmd.connect() && this.connected) {
             log.warn("Handle disconnect");
             g.m155(0);
+            emitter.accept(new DisconnectedEvent());
+        } else if (cmd.connect() && !this.connected) {
+            emitter.accept(new ConnectedEvent());
         }
+        this.connected = cmd.connect();
     }
 
-    public void onDisconnected() {
-        log.warn("Printer disconnected");
-        this.g = null;
-        emitter.accept(new DisconnectedEvent());
+    public void onOffline() {
+        if (this.online) {
+            this.online = false;
+            log.warn("Printer offline");
+            this.g = null;
+            emitter.accept(new MachineOfflineEvent());
+        }
     }
 
     public void on(TemperatureReportedEvent tempEvent) {

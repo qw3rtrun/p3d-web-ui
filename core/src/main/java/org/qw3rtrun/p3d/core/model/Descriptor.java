@@ -2,9 +2,10 @@ package org.qw3rtrun.p3d.core.model;
 
 import java.util.UUID;
 
-public record Printer(
+public record Descriptor(
         UUID uuid,
         String name,
-        PrinterConnection connection
+        ConnectionDetails connection,
+        boolean connected
 ) {
 }

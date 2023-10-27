@@ -2,7 +2,7 @@ package org.qw3rtrun.p3d.g.decoder;
 
 import org.qw3rtrun.p3d.g.event.AdvancedOKReceived;
 import org.qw3rtrun.p3d.g.event.OKReceived;
-import org.qw3rtrun.p3d.g.event.OKReceivedEvent;
+import org.qw3rtrun.p3d.core.msg.OKReceivedEvent;
 
 import java.util.Optional;
 import java.util.regex.Matcher;

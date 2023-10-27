@@ -1,8 +1,8 @@
 package org.qw3rtrun.p3d.g.decoder;
 
 import org.apache.commons.lang3.StringUtils;
-import org.qw3rtrun.p3d.g.event.FirmwareInfoReportEvent;
-import org.qw3rtrun.p3d.g.event.FirmwareReport;
+import org.qw3rtrun.p3d.core.msg.FirmwareInfoReportEvent;
+import org.qw3rtrun.p3d.core.msg.FirmwareReport;
 
 import java.util.HashMap;
 import java.util.Optional;

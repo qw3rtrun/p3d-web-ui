@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.decoder;
 
 import org.qw3rtrun.p3d.g.event.ReceivedUnknownEvent;
-import org.qw3rtrun.p3d.g.event.UnknownEvent;
+import org.qw3rtrun.p3d.core.msg.UnknownEvent;
 
 import java.util.Optional;
 

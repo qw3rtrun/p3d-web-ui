@@ -2,9 +2,9 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.core.model.Printer;
-import org.qw3rtrun.p3d.core.model.PrinterConnection;
-import org.qw3rtrun.p3d.core.service.PrinterManager;
+import org.qw3rtrun.p3d.core.model.Descriptor;
+import org.qw3rtrun.p3d.core.model.ConnectionDetails;
+import org.qw3rtrun.p3d.core.service.MachineDescriptionManager;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -19,26 +19,26 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class FDMPrinterManagementController {
 
-    private final PrinterManager printerManager;
+    private final MachineDescriptionManager machineDescriptionManager;
 
     @GetMapping(value = "/{uuid}")
-    public Mono<Printer> fetch(@PathVariable UUID uuid) {
-        return Mono.fromSupplier(() -> printerManager.fetch(uuid));
+    public Mono<Descriptor> fetch(@PathVariable UUID uuid) {
+        return Mono.fromSupplier(() -> machineDescriptionManager.fetch(uuid));
     }
 
     @GetMapping
-    public Flux<Printer> fetchAll() {
-        return Flux.fromStream(printerManager::fetchAll);
+    public Flux<Descriptor> fetchAll() {
+        return Flux.fromStream(machineDescriptionManager::fetchAll);
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<Printer> create(@RequestBody Mono<PrinterPayload> payload) {
-        return payload.map(p -> printerManager.add(p.name(), new PrinterConnection(p.host(), p.port())));
+    public Mono<Descriptor> create(@RequestBody Mono<PrinterPayload> payload) {
+        return payload.map(p -> machineDescriptionManager.add(p.name(), new ConnectionDetails(p.host(), p.port())));
     }
 
     @DeleteMapping("/{uuid}")
     public Mono<Void> delete(@PathVariable UUID uuid) {
-        return Mono.fromRunnable(() -> printerManager.delete(uuid));
+        return Mono.fromRunnable(() -> machineDescriptionManager.delete(uuid));
     }
 
     public record PrinterPayload(

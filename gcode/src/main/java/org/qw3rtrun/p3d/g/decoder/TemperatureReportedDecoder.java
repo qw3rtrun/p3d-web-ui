@@ -1,9 +1,9 @@
 package org.qw3rtrun.p3d.g.decoder;
 
 import org.qw3rtrun.p3d.g.event.OkTemperatureReported;
-import org.qw3rtrun.p3d.g.event.TemperatureReport;
+import org.qw3rtrun.p3d.core.msg.TemperatureReport;
 import org.qw3rtrun.p3d.g.event.TemperatureReported;
-import org.qw3rtrun.p3d.g.event.TemperatureReportedEvent;
+import org.qw3rtrun.p3d.core.msg.TemperatureReportedEvent;
 
 import java.util.HashMap;
 import java.util.Map;

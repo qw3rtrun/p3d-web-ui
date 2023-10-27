@@ -1,10 +1,7 @@
 package org.qw3rtrun.p3d.g;
 
 import lombok.RequiredArgsConstructor;
-import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
-import org.qw3rtrun.p3d.g.code.FirmwareInfo;
-import org.qw3rtrun.p3d.g.code.GCode;
-import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
+import org.qw3rtrun.p3d.g.code.*;
 
 import java.util.function.Consumer;
 
@@ -55,6 +52,14 @@ public class G {
 
     public void m115() {
         code(new FirmwareInfo());
+    }
+
+    public void m140(double temp) {
+        code(new SetBedTemperature(temp));
+    }
+
+    public void setBedTemperature(double temp) {
+        m140(temp);
     }
 
     public void code(GCode code) {

@@ -1,80 +1,13 @@
 <!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
 
-<head th:replace="container::common_headers(~{}, ~{:: //script})">
+<!--<head th:replace="container::common_headers(~{}, ~{:: //script})">-->
+<head th:replace="container::common_headers(~{}, ~{})">
     <title></title>
-
-    <script type="importmap">
-        {
-            "imports": {
-                "@popperjs/core": "/webjars/popperjs__core/lib/index.js",
-                "bootstrap": "/webjars/bootstrap/dist/js/bootstrap.esm.min.js",
-                "vue": "/webjars/vue/dist/vue.esm-browser.js",
-                "printer": "./js/component/printer.js"
-            }
-        }
-    </script>
-
-    <script type="module">
-        console.log("Script started");
-
-        import 'bootstrap';
-        import {createApp} from 'vue';
-        import Printer from 'printer';
-
-        createApp(Printer).mount("#th1");
-        console.log("VUE mounted");
-    </script>
 </head>
 
 <body th:replace="container::common_body(~{::#dashboard_form}, ~{})">
 <div class="content-wrapper" id="dashboard_form">
-    <div class="row">
-        <div class="col-sm-12">
-            <div class="home-tab">
-                <div class="d-sm-flex align-items-center justify-content-between border-bottom">
-                    <ul class="nav nav-tabs" role="tablist">
-                        <li class="nav-item">
-                            <a class="nav-link active ps-0" id="home-tab" data-bs-toggle="tab" href="#overview"
-                               role="tab" aria-controls="overview" aria-selected="true">Overview</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" id="profile-tab" data-bs-toggle="tab" href="#audiences" role="tab"
-                               aria-selected="false">Audiences</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" id="contact-tab" data-bs-toggle="tab" href="#demographics" role="tab"
-                               aria-selected="false">Demographics</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link border-0" id="more-tab" data-bs-toggle="tab" href="#more" role="tab"
-                               aria-selected="false">More</a>
-                        </li>
-                    </ul>
-                    <div>
-                        <div class="btn-wrapper">
-                            <a href="#" class="btn btn-otline-dark align-items-center"><i class="icon-share"></i> Share</a>
-                            <a href="#" class="btn btn-otline-dark"><i class="icon-printer"></i> Print</a>
-                            <a href="#" class="btn btn-primary text-white me-0"><i class="icon-download"></i> Export</a>
-                        </div>
-                    </div>
-                </div>
-                <div class="tab-content tab-content-basic">
-                    <div class="tab-pane fade show active" id="overview" role="tabpanel" aria-labelledby="overview">
-                        <div class="row">
-                            <div class="col-lg-8 d-flex flex-column">
-                                <div class="row flex-grow">
-                                    <div class="col-12 grid-margin stretch-card">
-                                        <div class="card card-rounded printer" id="th1"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
 
 </body>

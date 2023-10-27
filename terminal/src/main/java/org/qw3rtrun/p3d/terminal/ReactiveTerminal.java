@@ -1,15 +1,11 @@
 package org.qw3rtrun.p3d.terminal;
 
-import lombok.RequiredArgsConstructor;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.g.code.GCode;
-import org.qw3rtrun.p3d.g.decoder.CapabilityReportDecoder;
-import org.qw3rtrun.p3d.g.decoder.CompositeDecoder;
-import org.qw3rtrun.p3d.g.decoder.FirmwareReportDecoder;
-import org.qw3rtrun.p3d.g.decoder.OkDecoder;
-import org.qw3rtrun.p3d.g.decoder.TemperatureReportedDecoder;
-import org.qw3rtrun.p3d.g.decoder.UnknownStringDecoder;
+import org.qw3rtrun.p3d.core.model.ConnectionDetails;
 import org.qw3rtrun.p3d.core.msg.GEvent;
+import org.qw3rtrun.p3d.g.code.GCode;
+import org.qw3rtrun.p3d.g.decoder.*;
 import reactor.core.CoreSubscriber;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxOperator;
@@ -22,18 +18,20 @@ import java.util.Optional;
 import static java.util.Arrays.asList;
 
 @Slf4j
-@RequiredArgsConstructor
 public class ReactiveTerminal {
 
-    private final TcpClient client = TcpClient.create()
-            .host("localhost")
-            .port(8099)
-            .doOnConnect(cfg -> System.out.println("TCPClient doOnConnect " + cfg))
-            .doOnConnected(cfg -> System.out.println("TCPClient doOnConnected " + cfg))
-            .doOnDisconnected(cfg -> System.out.println("TCPClient doOnDisconnected " + cfg))
-            .doOnResolveError((c, exp) -> exp.printStackTrace());
-
+    private final TcpClient client;
     private Connection connection;
+
+    public ReactiveTerminal(@NonNull ConnectionDetails connectionDetails) {
+        this.client = TcpClient.create()
+                .host(connectionDetails.host())
+                .port(connectionDetails.port())
+                .doOnConnect(cfg -> System.out.println("TCPClient doOnConnect " + cfg))
+                .doOnConnected(cfg -> System.out.println("TCPClient doOnConnected " + cfg))
+                .doOnDisconnected(cfg -> System.out.println("TCPClient doOnDisconnected " + cfg))
+                .doOnResolveError((c, exp) -> exp.printStackTrace());
+    }
 
     public Mono<Connection> connecting() {
         return client
@@ -97,7 +95,7 @@ public class ReactiveTerminal {
 
     public Mono<Void> send(GCode gCode) {
         return connection.outbound()
-                .sendString(Mono.just(gCode.encode()+"\n").log())
+                .sendString(Mono.just(gCode.encode() + "\n").log())
                 .then();
     }
 
@@ -151,6 +149,5 @@ public class ReactiveTerminal {
                     .map(Optional::get);
         }
     }
-
 }
 

@@ -18,6 +18,7 @@
             <column name="port" type="number">
                 <constraints nullable="false"/>
             </column>
+            <column name="connected" type="boolean" defaultOnNull="false" />
         </createTable>
     </changeSet>
 </databaseChangeLog>

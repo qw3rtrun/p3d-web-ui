@@ -1,7 +1,5 @@
-import TemperatureControl from "./temperature-control";
-import { Person } from "../lib/classes"
 export default {
-    props : {
+    props: {
         name: String
     },
     emits: ['increased'],
@@ -17,7 +15,6 @@ export default {
     },
 
     mounted() {
-        const p = new Person({})
         console.log("TEST Mounted ");
     },
 

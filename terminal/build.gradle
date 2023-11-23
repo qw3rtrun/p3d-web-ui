@@ -1,17 +1,10 @@
 import org.springframework.boot.gradle.plugin.SpringBootPlugin
 
 plugins {
-    id 'java'
-    id 'org.springframework.boot' version '3.0.2' apply false
-    id 'io.spring.dependency-management' version '1.1.0'
-    id "io.freefair.lombok" version "6.6.1"
-}
-
-group = 'org.qw3rtrun.p3d'
-version = '0.0.1-SNAPSHOT'
-
-repositories {
-    mavenCentral()
+    id 'p3d.java-conventions'
+    id 'org.springframework.boot' version "$spring_boot_version" apply false
+    id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
+    id "io.freefair.lombok" version "$lombok_plugin_version"
 }
 
 dependencies {
@@ -25,15 +18,15 @@ dependencies {
     implementation 'io.projectreactor:reactor-core'
     implementation 'io.projectreactor.netty:reactor-netty-core'
     // https://mvnrepository.com/artifact/ch.qos.logback/logback-classic
-    implementation 'ch.qos.logback:logback-classic:1.4.5'
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.8.1'
+    implementation 'ch.qos.logback:logback-classic'
+    testImplementation 'org.junit.jupiter:junit-jupiter'
 }
 
-//dependencyManagement {
-//    imports {
-//        mavenBom SpringBootPlugin.BOM_COORDINATES
-//    }
-//}
+dependencyManagement {
+    imports {
+        mavenBom SpringBootPlugin.BOM_COORDINATES
+    }
+}
 
 tasks.named('test') {
     useJUnitPlatform()

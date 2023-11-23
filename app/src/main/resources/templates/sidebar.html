@@ -7,7 +7,7 @@
       <nav th:fragment="common_sidebar(active)" class="sidebar sidebar-offcanvas" id="sidebar">
         <ul class="nav">
           <li class="nav-item" th:classappend="${active == 'dashboard' ? 'active' : ''}">
-            <a class="nav-link" th:href="@{/dashboard.html}">
+            <a class="nav-link" th:href="@{/templates/dashboard.html}">
               <i class="mdi mdi-grid-large menu-icon"></i>
               <span class="menu-title">Dashboard Monitor</span>
             </a>

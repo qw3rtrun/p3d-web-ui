@@ -1,7 +1,8 @@
 package org.qw3rtrun.p3d.core.msg;
 
-import org.qw3rtrun.p3d.core.msg.CapabilityReportEvent;
+import lombok.NonNull;
 
-public record CapabilityReport(String fullReportString, String capability, boolean enabled) implements CapabilityReportEvent {
+public record CapabilityReport(@NonNull String fullReportString, @NonNull String capability,
+                               boolean enabled) implements CapabilityReportEvent {
 
 }

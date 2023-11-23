@@ -46,7 +46,7 @@ export default {
                 <h4 class="card-title">{{current}} °C <span v-if="heating"> -> {{value}} °C</span></h4>
             </div>
             <div class="col-auto align-self-end">
-                <button type="button" class="btn btn-primary text-white" @click="stopHeating()">0°</button>     
+                <button type="button" class="btn btn-primary text-white" @click="stopHeating()">OFF</button>     
             </div>
             <div class="col">
                 <div class="row justify-content-between">

@@ -10,17 +10,10 @@ import java.util.Map;
 @Getter
 public class FirmwareInfo {
 
-    private FirmwareInfoReportEvent info;
-
-    private Map<String, Boolean> capabilities = new HashMap<>();
+    private FirmwareInfoReportEvent raw;
 
     public boolean on(FirmwareInfoReportEvent event) {
-        info = event;
+        raw = event;
         return true;
-    }
-
-    public boolean on(CapabilityReportEvent event) {
-        var previous = capabilities.put(event.capability(), event.enabled());
-        return previous == null || event.enabled() != previous;
     }
 }

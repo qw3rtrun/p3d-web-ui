@@ -107,7 +107,7 @@ export default {
                 <p class="card-subtitle card-subtitle-dash">{{uuid}} {{connection}}</p>
             </div>         
         </div>
-        <TemperatureControl name="Nozzle 1" :curent="36" :value="150" :power="0" :presets="[
+        <TemperatureControl name="Nozzle 1" :current="this.temp" :value="this.target" :power="0" :presets="[
             {label: 'ABS', value: 250},
             {label: 'PETG', value: 230},
             {label: 'PLA', value: 210},

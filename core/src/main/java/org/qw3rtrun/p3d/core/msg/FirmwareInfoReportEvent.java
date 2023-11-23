@@ -1,7 +1,5 @@
 package org.qw3rtrun.p3d.core.msg;
 
-import org.qw3rtrun.p3d.core.msg.GEvent;
-
 import java.util.UUID;
 
 public interface FirmwareInfoReportEvent extends GEvent {

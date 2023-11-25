@@ -1,3 +1,5 @@
+import {watch, ref} from 'vue';
+
 export default {
     props: {
         name: String,
@@ -13,24 +15,39 @@ export default {
         },
     },
 
-    data() {
-        return {
-            heating: false,
-            input: 0,
-            presetIndex: 0
-        }
-    },
+    // data() {
+    //     return {
+    //         target: 0,
+    //         input: 0,
+    //         presetIndex: 0
+    //     }
+    // },
     computed: {
         activePreset() {
             return this.presets[this.presetIndex];
+        },
+        heating() {
+            return this.current > 0;
         }
     },
+
+    setup(props, data) {
+        const target = ref(0);
+        const input = ref(0);
+        const presetIndex = ref(0);
+        watch(() => props.value, (n) =>  {
+            console.log("New target temp changed :" + n);
+            input.value = n;
+        });
+        return {target, input, presetIndex};
+    },
+
     methods: {
         setHeatingTemp() {
             this.$emit('change', this.input)
         },
         stopHeating() {
-            this.input = 0;
+            this.value = 0;
             this.$emit('change', 0)
         },
         activatePreset(index) {

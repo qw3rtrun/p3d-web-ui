@@ -1,4 +1,5 @@
 const streams = new Map();
+const listeners = new Map();
 
 function post(uuid, path, payload) {
     const jsonBody = JSON.stringify(payload);
@@ -32,6 +33,30 @@ export default {
         streams.set(uuid, stream);
         return stream;
     },
+
+    subscribe(uuid, cb) {
+        if (listeners.has(cb)) {
+            console.warn("Callback '" + cb + "' (" + uuid + ") has already subscribed");
+            return;
+        }
+        const stream = this.eventStream(uuid);
+        const listener = e => {
+            const payload = JSON.parse(e.data);
+            cb(payload);
+        }
+        stream.addEventListener("message", listener);
+        console.log("Callback '" + cb + "' (" + uuid + ") successfully subscribed");
+        listeners.set(cb, listener);
+    },
+
+    unsubscribe(uuid, cb) {
+        if (listeners.has(cb)) {
+            const stream = streams.get(uuid);
+            stream.removeEventListener(stream.get(cb));
+            console.log("Callback '" + cb + "' (" + uuid + ") successfully unsubscribed");
+        }
+    },
+
     api(uuid) {
         return {
             connect() {

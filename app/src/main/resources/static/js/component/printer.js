@@ -1,19 +1,6 @@
 import client from 'client';
 import TemperatureControl from "./temperature-control.js";
-
-class TempReport {
-    constructor(name, year) {
-        this.name = name;
-        this.year = year;
-    }
-}
-
-class PrinterState {
-    constructor(name, year) {
-        this.name = name;
-        this.year = year;
-    }
-}
+import {PrinterState} from "../lib/printer-state.js"
 
 export default {
     props: {
@@ -26,13 +13,10 @@ export default {
     },
     data() {
         return {
+            state: new PrinterState(this.uuid, this.name),
             connected: false,
             online: false,
             tempReportPeriod: 1,
-            temp: 0,
-            heating: false,
-            target: 0,
-            target_: 0,
             bed: {
                 temp: 0,
                 heating: false,
@@ -59,7 +43,6 @@ export default {
             if (payload.type === "OkTemperatureReported" || payload.type === "TemperatureReported") {
                 this.connected = true;
                 const report = payload.event.hotend;
-                this.temp = report.current;
                 if (this.target !== report.target) {
                     this.target = report.target;
                     this.target_ = report.target;
@@ -81,13 +64,6 @@ export default {
                 this.online = false;
             }
         },
-
-        setHeatingTemp() {
-            this.api.setHeatingTemp(0, this.target_);
-        },
-        stopHeating() {
-            this.api.setHeatingTemp(0, 0);
-        },
         setBedTemp() {
             this.api.setBedTemp(this.bed.target_);
         },
@@ -107,12 +83,16 @@ export default {
                 <p class="card-subtitle card-subtitle-dash">{{uuid}} {{connection}}</p>
             </div>         
         </div>
-        <TemperatureControl name="Nozzle 1" :current="this.temp" :value="this.target" :power="0" :presets="[
-            {label: 'ABS', value: 250},
-            {label: 'PETG', value: 230},
-            {label: 'PLA', value: 210},
-            {label: 'TPU', value: 190},
-        ]"
+        <TemperatureControl name="Nozzle 1" 
+            :current="this.state.temperature.hotend.current"
+            :value="this.state.temperature.hotend.target"
+            :power="this.state.temperature.hotend.power" 
+            :presets="[
+                {label: 'ABS', value: 250},
+                {label: 'PETG', value: 230},
+                {label: 'PLA', value: 210},
+                {label: 'TPU', value: 190},
+            ]"
             @change="(t) => api.setHeatingTemp(0, t)" 
         />
 

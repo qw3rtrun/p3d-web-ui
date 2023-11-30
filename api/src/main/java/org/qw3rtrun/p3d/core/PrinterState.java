@@ -27,7 +27,7 @@ public class PrinterState implements PrinterAggregate {
 
     private boolean online;
 
-    private TemperatureReport th1 = new TemperatureReport(0d, 0d, 0);
+    private TemperatureControl temperatureControl = new TemperatureControl();
     private Consumer<GEvent> emitter;
     private G g;
 
@@ -36,7 +36,7 @@ public class PrinterState implements PrinterAggregate {
     private CapabilitiesInfo capabilities = new CapabilitiesInfo();
 
     public TemperatureReport getTemperature() {
-        return th1;
+        return temperatureControl.getHotend();
     }
 
     public void handle(SetHotendTemperature temperature) {
@@ -69,10 +69,9 @@ public class PrinterState implements PrinterAggregate {
         if (!this.online) {
             log.info("Printer online");
             this.online = true;
+            g.firmwareInfo(); //M115
+            g.autoReportTemp(1); //M105
             emitter.accept(new MachineOnlineEvent());
-            g.m155(0);
-            g.m115();
-            g.m155(1);
         }
     }
 
@@ -80,7 +79,9 @@ public class PrinterState implements PrinterAggregate {
     public void handle(ConnectCmd cmd) {
         if (!cmd.connect() && this.connected) {
             log.warn("Handle disconnect");
-            g.m155(0);
+            if (this.online) {
+                g.m155(0);
+            }
             emitter.accept(new DisconnectedEvent());
         } else if (cmd.connect() && !this.connected) {
             emitter.accept(new ConnectedEvent());
@@ -98,8 +99,7 @@ public class PrinterState implements PrinterAggregate {
     }
 
     public void on(TemperatureReportedEvent tempEvent) {
-        if (!th1.equals(tempEvent.hotend())) {
-            this.th1 = tempEvent.hotend();
+        if (temperatureControl.on(tempEvent)) {
             emitter.accept(tempEvent);
         }
     }

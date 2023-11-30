@@ -63,6 +63,6 @@ public class G {
     }
 
     public void code(GCode code) {
-        consumer.accept(code.encode() + "\n");
+        consumer.accept(code.encode());
     }
 }

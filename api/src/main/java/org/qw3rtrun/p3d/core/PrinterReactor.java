@@ -4,7 +4,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.core.msg.*;
 import org.qw3rtrun.p3d.g.G;
 import org.qw3rtrun.p3d.g.code.GCode;
-import org.qw3rtrun.p3d.terminal.ReactiveTerminal;
+import org.qw3rtrun.p3d.g.decoder.*;
+import org.qw3rtrun.p3d.terminal.HostTerminal;
+import org.qw3rtrun.p3d.terminal.PublisherQueue;
+import org.qw3rtrun.p3d.terminal.TerminalManager;
+import org.qw3rtrun.p3d.terminal.msg.Priority;
+import org.qw3rtrun.p3d.terminal.msg.Replay;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
@@ -15,25 +20,39 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 
+import static java.util.Arrays.asList;
 import static reactor.core.publisher.Sinks.EmitFailureHandler.FAIL_FAST;
 
 @Slf4j
 public class PrinterReactor {
 
-    private final ReactiveTerminal terminal;
+    //TODO
+    private final CompositeDecoder decoder = new CompositeDecoder(asList(
+            new WaitReceivedDecoder(),
+            new OkDecoder(),
+            new TemperatureReportedDecoder(),
+            new CapabilityReportDecoder(),
+            new FirmwareReportDecoder(),
+            new UnknownStringDecoder()
+    ));
+
+    private final TerminalManager manager;
     private final PrinterState printer;
+
+    private HostTerminal terminal;
 
     private Scheduler executor = Schedulers.single();
     private Sinks.Many<EventMessage> updates;
-    private Sinks.Many<String> codes = Sinks.unsafe().many().multicast().onBackpressureBuffer();
 
+    private PublisherQueue<String, Priority> commandQueue = new PublisherQueue<>();
 
     private Map<Class<?>, Consumer<Object>> invokers = new HashMap<>();
 
-    public PrinterReactor(ReactiveTerminal terminal, PrinterState printer) {
-        this.terminal = terminal;
+    public PrinterReactor(TerminalManager manager, PrinterState printer) {
+        this.manager = manager;
         this.printer = printer;
         updates = Sinks.many().replay().latestOrDefault(new EventMessage(printer.getId(), new MachineOfflineEvent()));
         this.printer.setEmitter(this::onEvent);
@@ -67,18 +86,18 @@ public class PrinterReactor {
 
     public void handleConnectCmd(ConnectCmd cmd) {
         printer.handle(cmd);
-        if (cmd.connect() && !terminal.isConnected()) {
+        if (cmd.connect() && terminal == null) {
             connect();
-        } else if (!cmd.connect() && terminal.isConnected()) {
+        } else if (!cmd.connect() && terminal != null) {
             disconnect();
         }
     }
 
     public void connect() {
         log.info("connect()");
-        terminal.connecting()
+        manager.connect()
                 .publishOn(executor)
-                .flatMap(v -> handleConnect())
+                .flatMap(v -> onConnected(v))
                 .log(this.getClass().getSimpleName() + "#printer")
                 .doOnTerminate(printer::onOffline)
                 .subscribe();
@@ -86,31 +105,37 @@ public class PrinterReactor {
 
     public void disconnect() {
         log.info("disconnect()");
-        terminal.disconnecting();
+        terminal.stop();
+        terminal = null;
+        printer.onOffline();
+        //terminal.disconnecting();
     }
 
-    private Mono<Void> handleConnect() {
-        codes = Sinks.unsafe().many().multicast().onBackpressureBuffer();
+    private Mono<Void> onConnected(HostTerminal terminal) {
+        commandQueue = new PublisherQueue<>();
+        this.terminal = terminal;
         Mono<Void> events = gEvent();
         Mono<Void> gcodes = gCode();
-        printer.onOnline(new G(str -> codes.emitNext(str, FAIL_FAST)));
+        printer.onOnline(new G(str -> commandQueue.addPublisher(Priority.REGULAR, Mono.just(str))));
         return Mono.zip(events, gcodes)
                 .then();
     }
 
     private Mono<Void> gEvent() {
         log.info("gEvent()");
-        return terminal.inbound()
+        return terminal.messageFlux()
                 .publishOn(executor)
+                .map(Replay.Message::raw)
+                .map(decoder::decode)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
                 .doOnNext(this::invoke)
                 .then();
     }
 
     private Mono<Void> gCode() {
         log.info("receiving()");
-        return terminal.outbound(
-                codes.asFlux()
-        );
+        return terminal.start(Flux.from(commandQueue));
     }
 
     public Mono<TemperatureReport> state() {

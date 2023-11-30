@@ -2,11 +2,10 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.core.model.Descriptor;
 import org.qw3rtrun.p3d.core.msg.ConnectCmd;
 import org.qw3rtrun.p3d.core.service.MachineDescriptionManager;
 import org.qw3rtrun.p3d.core.service.PrinterAggregateManager;
-import org.qw3rtrun.p3d.terminal.ReactiveTerminal;
+import org.qw3rtrun.p3d.terminal.TerminalManager;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -29,7 +28,7 @@ public class PrinterReactorManager {
     private PrinterReactor startReactor(UUID uuid) {
         var descriptor = descriptionManager.fetch(uuid);
         var aggregate = (PrinterState) aggregateManager.loadState(uuid);
-        var reactor = new PrinterReactor(new ReactiveTerminal(descriptor.connection()), aggregate);
+        var reactor = new PrinterReactor(new TerminalManager(descriptor.connection()), aggregate);
         reactor.updates().subscribe(descriptionManager::on);
         if (descriptor.connected()) {
             reactor.handleConnectCmd(new ConnectCmd(true));

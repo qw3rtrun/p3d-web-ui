@@ -26,9 +26,14 @@ tasks.withType(JavaExec) { jvmArgs += '--enable-preview' }
 
 dependencies {
     implementation 'org.apache.commons:commons-lang3:3.12.0'
-    testImplementation "junit:junit:4.13"
+    //testImplementation "junit:junit:4.13"
+}
+
+compileTestJava {
+    options.compilerArgs += ['--enable-preview']
 }
 
 tasks.named('test') {
+    jvmArgs += '--enable-preview'
     useJUnitPlatform()
 }

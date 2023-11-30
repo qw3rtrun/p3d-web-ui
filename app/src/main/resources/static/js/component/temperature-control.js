@@ -47,7 +47,7 @@ export default {
             this.$emit('change', this.input)
         },
         stopHeating() {
-            this.value = 0;
+            this.input = 0;
             this.$emit('change', 0)
         },
         activatePreset(index) {

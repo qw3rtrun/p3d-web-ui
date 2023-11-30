@@ -1,3 +1,4 @@
+import {shallowRef, triggerRef} from "vue"
 import client from "./client.js"
 
 export class TemperatureState {
@@ -30,16 +31,16 @@ export class PrinterState {
     constructor(uuid, name) {
         this.uuid = uuid;
         this.name = name;
-        this.temperature = new TemperatureControl(
+        this.temperature = shallowRef(new TemperatureControl(
             new TemperatureState(),
             new TemperatureState()
-        );
+        ));
         this.client = client.api(uuid);
         this.cb = payload => {
             if (payload.type === "OkTemperatureReported" || payload.type === "TemperatureReported") {
                 const report = payload.event;
-                this.temperature.onTemperatureReport(report);
-                console.log("P["+name+"] : temperature = "+this.temperature);
+                this.temperature.value.onTemperatureReport(report);
+                triggerRef(this.temperature);
             }
         }
         client.subscribe(uuid, this.cb);

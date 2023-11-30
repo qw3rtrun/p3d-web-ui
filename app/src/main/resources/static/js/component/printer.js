@@ -1,3 +1,4 @@
+import {ref} from 'vue';
 import client from 'client';
 import TemperatureControl from "./temperature-control.js";
 import {PrinterState} from "../lib/printer-state.js"
@@ -13,7 +14,7 @@ export default {
     },
     data() {
         return {
-            state: new PrinterState(this.uuid, this.name),
+            state: ref(new PrinterState(this.uuid, this.name)),
             connected: false,
             online: false,
             tempReportPeriod: 1,
@@ -95,41 +96,53 @@ export default {
             ]"
             @change="(t) => api.setHeatingTemp(0, t)" 
         />
+        <TemperatureControl name="Bed" 
+            :current="this.state.temperature.bed.current"
+            :value="this.state.temperature.bed.target"
+            :power="this.state.temperature.bed.power" 
+            :presets="[
+                {label: 'ABS', value: 80},
+                {label: 'PETG', value: 75},
+                {label: 'PLA', value: 60},
+                {label: 'TPU', value: 55},
+            ]"
+            @change="(t) => api.setBedTemp(t)" 
+        />
 
-        <div class="row pt-2">
-            <div class="col-3 align-self-center">
-                <h4 class="card-title">{{bed.temp}} °C <span v-if="bed.heating"> -> {{bed.target}} °C</span></h4>
-            </div>
-            <div class="col-auto align-self-end">
-                <button type="button" class="btn btn-primary text-white" @click="stopBedHeating()">0°</button>     
-            </div>
-            <div class="col">
-                <div class="row justify-content-between">
-                    <div class="col">
-                        <label for="bed-temp-slider" class="form-label">Bed Heating</label>
-                    </div>
-                    <div class="col-auto">
-                        <input v-model="bed.target_" placeholder="Temp" min="0" max="100" size="3" id="bed-temp-slider" @change="setBedTemp()">
-                    </div>
-                </div>
-                <input type="range" class="form-range" min="0" max="100" step="5" v-model="bed.target_" @change="setBedTemp()">
-            </div>
-            <div class="col-auto align-self-end">
-                <div class="btn-group">
-                      <button type="button" class="btn btn-danger text-white me-0" @click="this.bed.target_=60; setBedTemp();">PLA 60°</button>
-                      <button type="button" class="btn btn-danger dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
-                            <span class="visually-hidden">Toggle Dropdown</span>
-                      </button>
-                      <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="#" @click="this.bed.target_=60; setBedTemp();">PLA 60°</a></li>
-                            <li><a class="dropdown-item" href="#" @click="this.bed.target_=75; setBedTemp();">PETG 75°</a></li>
-                            <li><a class="dropdown-item" href="#" @click="this.bed.target_=50; setBedTemp();">TPU 50°</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="#">Presets</a></li>
-                      </ul>
-                </div>                                              
-            </div>
-        </div>
+<!--        <div class="row pt-2">-->
+<!--            <div class="col-3 align-self-center">-->
+<!--                <h4 class="card-title">{{bed.temp}} °C <span v-if="bed.heating"> -> {{bed.target}} °C</span></h4>-->
+<!--            </div>-->
+<!--            <div class="col-auto align-self-end">-->
+<!--                <button type="button" class="btn btn-primary text-white" @click="stopBedHeating()">0°</button>     -->
+<!--            </div>-->
+<!--            <div class="col">-->
+<!--                <div class="row justify-content-between">-->
+<!--                    <div class="col">-->
+<!--                        <label for="bed-temp-slider" class="form-label">Bed Heating</label>-->
+<!--                    </div>-->
+<!--                    <div class="col-auto">-->
+<!--                        <input v-model="bed.target_" placeholder="Temp" min="0" max="100" size="3" id="bed-temp-slider" @change="setBedTemp()">-->
+<!--                    </div>-->
+<!--                </div>-->
+<!--                <input type="range" class="form-range" min="0" max="100" step="5" v-model="bed.target_" @change="setBedTemp()">-->
+<!--            </div>-->
+<!--            <div class="col-auto align-self-end">-->
+<!--                <div class="btn-group">-->
+<!--                      <button type="button" class="btn btn-danger text-white me-0" @click="this.bed.target_=60; setBedTemp();">PLA 60°</button>-->
+<!--                      <button type="button" class="btn btn-danger dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">-->
+<!--                            <span class="visually-hidden">Toggle Dropdown</span>-->
+<!--                      </button>-->
+<!--                      <ul class="dropdown-menu">-->
+<!--                            <li><a class="dropdown-item" href="#" @click="this.bed.target_=60; setBedTemp();">PLA 60°</a></li>-->
+<!--                            <li><a class="dropdown-item" href="#" @click="this.bed.target_=75; setBedTemp();">PETG 75°</a></li>-->
+<!--                            <li><a class="dropdown-item" href="#" @click="this.bed.target_=50; setBedTemp();">TPU 50°</a></li>-->
+<!--                            <li><hr class="dropdown-divider"></li>-->
+<!--                            <li><a class="dropdown-item" href="#">Presets</a></li>-->
+<!--                      </ul>-->
+<!--                </div>                                              -->
+<!--            </div>-->
+<!--        </div>-->
         <div class="row">
             <div class="col">
                 <input v-model="tempReportPeriod" placeholder="Seconds between reports" type="number" @change="autoReportTemp()">

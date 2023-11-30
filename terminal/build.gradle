@@ -19,15 +19,13 @@ dependencies {
     implementation 'io.projectreactor.netty:reactor-netty-core'
     // https://mvnrepository.com/artifact/ch.qos.logback/logback-classic
     implementation 'ch.qos.logback:logback-classic'
+
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'io.projectreactor:reactor-test'
 }
 
 dependencyManagement {
     imports {
         mavenBom SpringBootPlugin.BOM_COORDINATES
     }
-}
-
-tasks.named('test') {
-    useJUnitPlatform()
 }

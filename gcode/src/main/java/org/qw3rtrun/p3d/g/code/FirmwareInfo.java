@@ -3,11 +3,12 @@ package org.qw3rtrun.p3d.g.code;
 import static java.lang.String.format;
 
 /**
- * M105
+ * M115
  *
  * @link
  * @see <a href="https://marlinfw.org/docs/gcode/M115.html">MarlinFirmare M115 FirmwareInfo</a>
  */
+@GCommand("M115")
 public record FirmwareInfo() implements GCode {
 
     public static FirmwareInfo m115() {

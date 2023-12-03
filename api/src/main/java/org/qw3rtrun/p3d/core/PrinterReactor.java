@@ -31,7 +31,6 @@ public class PrinterReactor {
 
     //TODO
     private final CompositeDecoder decoder = new CompositeDecoder(asList(
-            new WaitReceivedDecoder(),
             new OkDecoder(),
             new TemperatureReportedDecoder(),
             new CapabilityReportDecoder(),

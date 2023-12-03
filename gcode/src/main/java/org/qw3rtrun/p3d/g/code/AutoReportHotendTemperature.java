@@ -3,12 +3,13 @@ package org.qw3rtrun.p3d.g.code;
 import static java.lang.String.format;
 
 /**
- * M155
+ * M155 S<seconds>
  *
  * @link
  * @see <a href="https://marlinfw.org/docs/gcode/M155.html">MarlinFirmare M155 doc</a>
  */
-public record AutoReportHotendTemperature(int period) implements GCode {
+@GCommand("M155")
+public record AutoReportHotendTemperature(@GParameter("S") int period) implements GCode {
 
     public static AutoReportHotendTemperature m155(int period) {
         return new AutoReportHotendTemperature(period);

@@ -5,7 +5,6 @@ import org.qw3rtrun.p3d.g.code.GenericGCode;
 
 import java.util.Optional;
 
-@Slf4j
 public class GenericDecoder implements GCodeDecoder<GenericGCode> {
 
     @Override

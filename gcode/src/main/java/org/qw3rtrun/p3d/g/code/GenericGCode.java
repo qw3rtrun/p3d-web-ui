@@ -4,29 +4,31 @@ import java.util.Arrays;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-public record GenericGCode(char prefix, int number, GenericGParameter... parameters) implements GCode {
+public record GenericGCode(String prefix, String letter, int number, String rawParams,
+                           GenericGParameter... parameters) implements GCode {
 
     public static Optional<GenericGCode> parse(String line) {
         if (line.length() < 2) {
             return Optional.empty();
         }
-        int firstSeparator = line.indexOf('_');
+        int firstSeparator = line.indexOf(' ');
         if (firstSeparator < 0) {
             var code = GenericGParameter.parse(line);
-            if (code.integer() != null && (code.name() == 'M' || code.name() == 'G' || code.name() == 'm' || code.name() == 'g')) {
-                return Optional.of(new GenericGCode(code.name(), code.integer()));
+            if (code.integer() != null && (code.name().equals("M") || code.name().equals("G") || code.name().equals("m") || code.name().equals("g"))) {
+                return Optional.of(new GenericGCode(code.raw(), code.name(), code.integer(), ""));
             } else {
                 return Optional.empty();
             }
         } else {
             var code = GenericGParameter.parse(line.substring(0, firstSeparator));
-            if (code.integer() != null && (code.name() == 'M' || code.name() == 'G' || code.name() == 'm' || code.name() == 'g')) {
-                String[] split = line.substring(firstSeparator).split(" *");
+            if (code.integer() != null && (code.name().equals("M") || code.name().equals("G") || code.name().equals("m") || code.name().equals("g"))) {
+                var rawValue = line.substring(firstSeparator).trim();
+                String[] split = rawValue.split(" +");
                 GenericGParameter[] params = new GenericGParameter[split.length];
                 for (int i = 0; i < split.length; i++) {
                     params[i] = GenericGParameter.parse(split[i]);
                 }
-                return Optional.of(new GenericGCode(code.name(), code.integer(), params));
+                return Optional.of(new GenericGCode(code.raw(), code.name(), code.integer(), rawValue, params));
             } else {
                 return Optional.empty();
             }
@@ -35,6 +37,6 @@ public record GenericGCode(char prefix, int number, GenericGParameter... paramet
 
     @Override
     public String encode() {
-        return STR. "\{ prefix }\{ number } \{ Arrays.stream(parameters).map(GenericGParameter::encode).collect(Collectors.joining(" ")) }" ;
+        return STR. "\{ letter }\{ number } \{ Arrays.stream(parameters).map(GenericGParameter::encode).collect(Collectors.joining(" ")) }" ;
     }
 }

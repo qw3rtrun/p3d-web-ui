@@ -9,4 +9,5 @@ import java.lang.annotation.Target;
 @Target(ElementType.RECORD_COMPONENT)
 public @interface GParameter {
     String value();
+    String defaultValue() default "";
 }

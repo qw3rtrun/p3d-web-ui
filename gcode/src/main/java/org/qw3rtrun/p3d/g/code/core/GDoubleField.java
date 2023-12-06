@@ -8,4 +8,9 @@ public record GDoubleField(char letter, BigDecimal value) implements GField {
     public String rawValue() {
         return value.toString();
     }
+
+    @Override
+    public String toString() {
+        return "GDouble[" + asString() + ']';
+    }
 }

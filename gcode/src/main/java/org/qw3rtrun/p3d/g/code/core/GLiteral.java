@@ -1,7 +1,8 @@
 package org.qw3rtrun.p3d.g.code.core;
 
-public record GString(String string) implements GField {
-    public GString {
+public record GLiteral(String string) implements GElement {
+    public GLiteral(String string) {
+        this.string = string;
         if (this.string().isEmpty()) {
             throw new IllegalArgumentException("GString can't be empty");
         }
@@ -11,17 +12,12 @@ public record GString(String string) implements GField {
     }
 
     @Override
-    public char letter() {
-        return string.charAt(1);
+    public String asString() {
+        return string;
     }
 
     @Override
-    public String rawValue() {
-        return string.substring(1);
-    }
-
-    @Override
-    public GString asGString() {
-        return this;
+    public String toString() {
+        return "GLiteral[" + string + ']';
     }
 }

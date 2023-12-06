@@ -1,5 +1,6 @@
 package org.qw3rtrun.p3d.g.code.core;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 
 import java.math.BigDecimal;
@@ -15,16 +16,59 @@ import static java.lang.Math.min;
 
 public class GCoreCodec {
 
-    public String encode(GField field) {
-        return field.letter() + field.rawValue();
+    public static final String SPECIALCHARS = ":;\"";
+
+    public String encode(GElement... fields) {
+        return Arrays.stream(fields).map(this::encodeElement).collect(Collectors.joining(" "));
     }
 
-    public String encode(GField... fields) {
-        return Arrays.stream(fields).map(this::encode).collect(Collectors.joining(" "));
+    public String encode(Collection<? extends GElement> fields) {
+        return fields.stream().map(this::encodeElement).collect(Collectors.joining(" "));
     }
 
-    public String encode(Collection<? extends GField> fields) {
-        return fields.stream().map(this::encode).collect(Collectors.joining(" "));
+    public String encodeElement(GElement field) {
+        return switch (field) {
+            case GLiteral str -> encodeString(str.string());
+            case GStrField sf -> encodeString(sf.asString());
+            default -> field.asString();
+        };
+    }
+
+    public List<GElement> decode(String line) {
+        return splitFields(line).map(this::decodeElement).collect(Collectors.toList());
+    }
+
+    private GElement decodeElement(String raw) {
+        return switch (raw.substring(1)) {
+            case String val when raw.startsWith(";") -> new GComment(val);
+            case String val when raw.startsWith("\"") -> new GLiteral(decodeString(raw));
+            case String val when val.isEmpty() -> new GFlagField(raw.charAt(0));
+            case String val when !NumberUtils.isCreatable(val) -> new GStrField(raw.charAt(0), decodeString(val));
+            case String val -> switch (NumberUtils.createNumber(val)) {
+                case Integer i -> new GIntField(raw.charAt(0), i);
+                case BigDecimal bd -> new GDoubleField(raw.charAt(0), bd);
+                case Number n -> new GDoubleField(raw.charAt(0), BigDecimal.valueOf(n.doubleValue()));
+            };
+        };
+    }
+
+    private String decodeString(String str) {
+        if (str.startsWith("\"")) {
+            if (str.length() < 2 || str.charAt(str.length() - 1) != '"') {
+                throw new GCodeSyntaxException(str, "Quoted String's end-quote not found");
+            }
+        }
+        if (str.startsWith("\"") && str.length() > 1 && str.charAt(str.length() - 1) == '"') {
+            return StringUtils.replace(str.substring(1, str.length() - 1), "\"\"", "\"");
+        }
+        return str;
+    }
+
+    private String encodeString(String str) {
+        if (StringUtils.containsAny(str, SPECIALCHARS)) {
+            return "\"" + str.replace("\"", "\"\"") + "\"";
+        }
+        return str;
     }
 
     public Stream<String> splitFields(String line) {
@@ -42,36 +86,28 @@ public class GCoreCodec {
                     return null;
                 }
                 int start = pointer;
-                for (; pointer < chars.length && chars[pointer] != '"' && chars[pointer] != ' '; pointer++) ;
+                if (chars[pointer] == ';') {
+                    pointer = chars.length;
+                    return new String(chars, start, pointer - start);
+                }
+                for (; pointer < chars.length && chars[pointer] != '"' && chars[pointer] != ' ' && chars[pointer] != ';'; pointer++)
+                    ;
                 if (pointer >= chars.length) {
                     return new String(chars, start, chars.length - start);
                 }
-                if (chars[pointer] == ' ') {
+                if (chars[pointer] == ' ' || chars[pointer] == ';') {
                     return new String(chars, start, pointer - start);
                 }
                 pointer++;
                 for (; pointer < chars.length &&
                         (!(chars[pointer] == '"' && (pointer == chars.length - 1 || chars[pointer + 1] != '"')) ||
-                        !(chars[pointer] == '"' && chars[pointer - 1] != '"')); pointer++) ;
+                                !(chars[pointer] == '"' && chars[pointer - 1] != '"')); pointer++)
+                    ;
                 pointer++;
                 return new String(chars, start, min(pointer, chars.length) - start);
             }
         }).takeWhile(Objects::nonNull);
     }
 
-    public List<GField> decodeLine(String line) {
-        return splitFields(line).map(this::decodeField).collect(Collectors.toList());
-    }
 
-    public GField decodeField(String raw) {
-        return switch (raw.substring(1)) {
-            case String s when s.isEmpty() -> new GFlagField(raw.charAt(0));
-            case String s when !NumberUtils.isCreatable(s) -> new GStringField(raw.charAt(0), s);
-            case String s -> switch (NumberUtils.createNumber(s)) {
-                case Integer i -> new GIntField(raw.charAt(0), i);
-                case BigDecimal bd -> new GDoubleField(raw.charAt(0), bd);
-                case Number n -> new GDoubleField(raw.charAt(0), BigDecimal.valueOf(n.doubleValue()));
-            };
-        };
-    }
 }

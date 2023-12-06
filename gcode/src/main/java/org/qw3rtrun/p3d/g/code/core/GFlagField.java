@@ -6,4 +6,9 @@ public record GFlagField(char letter) implements GField {
     public String rawValue() {
         return "";
     }
+
+    @Override
+    public String toString() {
+        return "GFlag[" + asString() + ']';
+    }
 }

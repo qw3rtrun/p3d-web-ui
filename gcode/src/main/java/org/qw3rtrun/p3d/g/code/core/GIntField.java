@@ -6,4 +6,10 @@ public record GIntField(char letter, int value) implements GField {
     public String rawValue() {
         return String.valueOf(value);
     }
+
+    @Override
+    public String toString() {
+        return "GInt[" + asString() + ']';
+    }
+
 }

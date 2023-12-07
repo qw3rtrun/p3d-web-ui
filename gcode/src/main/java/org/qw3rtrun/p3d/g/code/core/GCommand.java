@@ -1,24 +1,35 @@
 package org.qw3rtrun.p3d.g.code.core;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
-public record GCommand(GIntField command, GLiteral string, GComment comment, GField... fields) {
+public record GCommand(int number, GIntField command, GLiteral string, GComment comment, GField... fields) {
+
+
+    public GCommand(GIntField command, GLiteral string, GComment comment, GField... fields) {
+        this(-1, command, string, comment, fields);
+    }
 
     public GCommand(GIntField command) {
-        this(command, null, null, new GField[0]);
+        this(-1, command, null, null);
     }
 
     public GCommand(GIntField command, GField... fields) {
-        this(command, null, null, fields);
+        this(-1, command, null, null, fields);
     }
 
     public GCommand(GIntField command, GLiteral string) {
-        this(command, string, null);
+        this(-1, command, string, null);
     }
 
-    public Collection<GElement> asElements() {
+    public List<GElement> asElements() {
         var list = new ArrayList<GElement>();
+        if (number >= 0) {
+            list.add(G.N(number));
+        }
         list.add(command);
         if (fields != null) {
             list.addAll(List.of(fields));
@@ -34,7 +45,7 @@ public record GCommand(GIntField command, GLiteral string, GComment comment, GFi
 
     @Override
     public String toString() {
-        var fstr = (fields == null)? "" : " "+Arrays.stream(fields).map(Objects::toString).collect(Collectors.joining(" "));
-        return STR."\{command}\{fstr}\{string == null? "": " "+string}\{comment == null? "": " "+comment}";
+        var fstr = (fields == null) ? "" : " " + Arrays.stream(fields).map(Objects::toString).collect(Collectors.joining(" "));
+        return STR. "\{ command.letter() }\{ command.value() }(\{ fstr }\{ string == null ? "" : " " + string }\{ comment == null ? "" : " " + comment })" ;
     }
 }

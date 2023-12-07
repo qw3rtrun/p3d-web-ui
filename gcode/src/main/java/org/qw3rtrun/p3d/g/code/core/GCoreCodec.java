@@ -5,7 +5,6 @@ import org.apache.commons.lang3.math.NumberUtils;
 
 import java.math.BigDecimal;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
@@ -14,19 +13,26 @@ import java.util.stream.Stream;
 
 import static java.lang.Math.min;
 
-public class GCoreCodec {
+public class GCoreCodec implements GCodec {
 
     public static final String SPECIALCHARS = ":;\"";
 
+    @Override
     public String encode(GElement... fields) {
         return Arrays.stream(fields).map(this::encodeElement).collect(Collectors.joining(" "));
     }
 
-    public String encode(Collection<? extends GElement> fields) {
+    @Override
+    public String encode(List<? extends GElement> fields) {
         return fields.stream().map(this::encodeElement).collect(Collectors.joining(" "));
     }
 
-    public String encodeElement(GElement field) {
+    @Override
+    public List<GElement> decode(String line) {
+        return splitFields(line).map(this::decodeElement).collect(Collectors.toList());
+    }
+
+    private String encodeElement(GElement field) {
         return switch (field) {
             case GLiteral str -> encodeString(str.string());
             case GStrField sf -> encodeString(sf.asString());
@@ -34,13 +40,10 @@ public class GCoreCodec {
         };
     }
 
-    public List<GElement> decode(String line) {
-        return splitFields(line).map(this::decodeElement).collect(Collectors.toList());
-    }
-
     private GElement decodeElement(String raw) {
         return switch (raw.substring(1)) {
             case String val when raw.startsWith(";") -> new GComment(val);
+            case String val when raw.startsWith("*") -> new GChecksum(decodeChecksum(val));
             case String val when raw.startsWith("\"") -> new GLiteral(decodeString(raw));
             case String val when val.isEmpty() -> new GFlagField(raw.charAt(0));
             case String val when !NumberUtils.isCreatable(val) -> new GStrField(raw.charAt(0), decodeString(val));
@@ -50,6 +53,14 @@ public class GCoreCodec {
                 case Number n -> new GDoubleField(raw.charAt(0), BigDecimal.valueOf(n.doubleValue()));
             };
         };
+    }
+
+    private int decodeChecksum(String str) {
+        try {
+            return Integer.parseInt(str);
+        } catch (NumberFormatException e) {
+            throw new GCodeSyntaxException(str, "Checksum should be a number");
+        }
     }
 
     private String decodeString(String str) {
@@ -90,12 +101,14 @@ public class GCoreCodec {
                     pointer = chars.length;
                     return new String(chars, start, pointer - start);
                 }
-                for (; pointer < chars.length && chars[pointer] != '"' && chars[pointer] != ' ' && chars[pointer] != ';'; pointer++)
-                    ;
+                if (chars[pointer] == '*') {
+                    pointer++;
+                }
+                for (; pointer < chars.length && chars[pointer] != '*' && chars[pointer] != ' ' && chars[pointer] != '"' && chars[pointer] != ';'; pointer++);
                 if (pointer >= chars.length) {
                     return new String(chars, start, chars.length - start);
                 }
-                if (chars[pointer] == ' ' || chars[pointer] == ';') {
+                if (chars[pointer] == ' ' || chars[pointer] == '*' || chars[pointer] == ';') {
                     return new String(chars, start, pointer - start);
                 }
                 pointer++;
@@ -107,7 +120,4 @@ public class GCoreCodec {
                 return new String(chars, start, min(pointer, chars.length) - start);
             }
         }).takeWhile(Objects::nonNull);
-    }
-
-
-}
+    }}

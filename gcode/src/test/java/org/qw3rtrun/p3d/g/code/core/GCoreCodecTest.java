@@ -17,12 +17,19 @@ class GCoreCodecTest {
         System.out.println(codec.splitFields("M105 S0.5 B Ptest.gco").collect(Collectors.toList()));
         System.out.println(codec.splitFields("  M105   S0.5    B    Ptest.gco    ").collect(Collectors.toList()));
         System.out.println(codec.splitFields("M105 S0.5 B P\"test gco\"").collect(Collectors.toList()));
+        System.out.println(codec.splitFields("M105 S0.5 B P\"a ;* \"\" b\"").collect(Collectors.toList()));
         System.out.println(codec.splitFields("M105 S0.5 B P\"test gco").collect(Collectors.toList()));
         System.out.println(codec.splitFields("M105 S0.5 B P\"test gco\"\"").collect(Collectors.toList()));
         System.out.println(codec.splitFields("M105 S0.5 B P\"\"test gco\"\"").collect(Collectors.toList()));
         System.out.println(codec.splitFields("M105 S0.5 B P\"test gco\" G\"foo\"\"boo\" C ").collect(Collectors.toList()));
         System.out.println(codec.splitFields("\"").collect(Collectors.toList()));
         System.out.println(codec.splitFields("M105 \"Fi \"\" le\"").collect(Collectors.toList()));
+
+        System.out.println(codec.splitFields("M105 S1*71").collect(Collectors.toList()));
+        System.out.println(codec.splitFields("M105 S1 *71").collect(Collectors.toList()));
+        System.out.println(codec.splitFields("M105 S1 *71*71").collect(Collectors.toList()));
+        System.out.println(codec.splitFields("M105 S1 ;*71 ;comment *71").collect(Collectors.toList()));
+        System.out.println(codec.splitFields("M105 S1 \"*71\"").collect(Collectors.toList()));
 
     }
 }

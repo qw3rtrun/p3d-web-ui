@@ -34,8 +34,8 @@ publishing {
             credentials {
                 // Die Zugangsdaten (weiter unten beschrieben)
                 // The credentials (described in the next section)
-                username = project.findProperty("gpr.user")
-                password = project.findProperty("gpr.key")
+                username = project.findProperty("gpr.user") ?: System.getenv("USERNAME")
+                password = project.findProperty("gpr.key") ?: System.getenv("TOKEN")
             }
         }
     }

@@ -62,7 +62,7 @@ public class G {
         m140(temp);
     }
 
-    public void code(GCode code) {
+    public void code(GEncodable code) {
         consumer.accept(code.encode());
     }
 }

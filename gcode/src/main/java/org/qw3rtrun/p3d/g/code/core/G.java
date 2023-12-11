@@ -8,6 +8,18 @@ public class G {
         return new GCommand(new GIntField('M', n), fields);
     }
 
+    public static GCommand M(int n, GComment com, GField... fields) {
+        return new GCommand(new GIntField('M', n), null, com, fields);
+    }
+
+    public static GCommand M(int n, GLiteral lit, GField... fields) {
+        return new GCommand(new GIntField('M', n), lit, null, fields);
+    }
+
+    public static GCommand M(int n, GLiteral lit, GComment com, GField... fields) {
+        return new GCommand(new GIntField('M', n), lit, null, fields);
+    }
+
     public static GCommand G(int n, GField... fields) {
         return new GCommand(new GIntField('G', n), fields);
     }
@@ -20,12 +32,24 @@ public class G {
         return new GIntField('S', n);
     }
 
+    public static GFlagField B() {
+        return new GFlagField('B');
+    }
+
     public static GIntField P(int n) {
         return new GIntField('P', n);
     }
 
     public static GIntField F(int n) {
         return new GIntField('F', n);
+    }
+
+    public static GStrField F(String val) {
+        return new GStrField('F', val);
+    }
+
+    public static GLiteral LIT(String val) {
+        return new GLiteral(val);
     }
 
     public static GIntField N(int n) {
@@ -66,6 +90,10 @@ public class G {
 
     public static GDoubleField E(double n) {
         return new GDoubleField('I', new BigDecimal(n));
+    }
+
+    public static GComment COM(String text) {
+        return new GComment(text);
     }
 
 //    U,V,W	Additional axis coordinates (RepRapFirmware)

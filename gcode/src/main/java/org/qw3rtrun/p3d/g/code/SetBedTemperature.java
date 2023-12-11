@@ -8,10 +8,10 @@ import static java.lang.String.format;
  * @link
  * @see <a href="https://marlinfw.org/docs/gcode/M140.html">MarlinFirmare M140 Set Bed Temperature doc</a>
  */
-@GCommand("M140")
+@GCode("M140")
 public record SetBedTemperature(
-        @GParameter("S") double temp
-) implements GCode {
+        @GParam("S") double temp
+) implements GEncodable {
 
     public static SetBedTemperature m140(double temp) {
         return new SetBedTemperature(temp);

@@ -1,5 +1,7 @@
 package org.qw3rtrun.p3d.g.code.core;
 
+import lombok.Builder;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -7,7 +9,6 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 public record GCommand(int number, GIntField command, GLiteral string, GComment comment, GField... fields) {
-
 
     public GCommand(GIntField command, GLiteral string, GComment comment, GField... fields) {
         this(-1, command, string, comment, fields);
@@ -41,6 +42,10 @@ public record GCommand(int number, GIntField command, GLiteral string, GComment 
             list.add(comment);
         }
         return list;
+    }
+
+    public String name() {
+        return command.asString();
     }
 
     @Override

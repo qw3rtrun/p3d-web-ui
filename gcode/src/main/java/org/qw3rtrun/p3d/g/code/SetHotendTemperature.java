@@ -8,11 +8,11 @@ import static java.lang.String.format;
  * @link
  * @see <a href="https://marlinfw.org/docs/gcode/M104.html">MarlinFirmare M104 doc</a>
  */
-@GCommand("M104")
+@GCode("M104")
 public record SetHotendTemperature(
-        @GParameter("T") int index,
-        @GParameter("S") double temp
-) implements GCode {
+        @GParam("T") int index,
+        @GParam("S") double temp
+) implements GEncodable {
 
     public static SetHotendTemperature m104(int index, double temp) {
         return new SetHotendTemperature(index, temp);

@@ -1,22 +1,20 @@
 package org.qw3rtrun.p3d.g.code.decoder;
 
 import org.junit.jupiter.api.Test;
-import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
-import org.qw3rtrun.p3d.g.code.GCommand;
+import org.qw3rtrun.p3d.g.code.GCode;
 import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
+
+import static org.qw3rtrun.p3d.g.code.core.G.*;
 
 class CommandDecoderDescriptorTest {
 
     private CommandDecoderDescriptor<SetHotendTemperature> decoder =
             CommandDecoderDescriptor.build(SetHotendTemperature.class,
-                    SetHotendTemperature.class.getAnnotation(GCommand.class));
-
-    private GenericDecoder generic = new GenericDecoder();
+                    SetHotendTemperature.class.getAnnotation(GCode.class));
 
     @Test
     void simpleTest() {
-        var gcode = "M104 T1 S150";
-        var cmd = decoder.decode(generic.decode(gcode).get());
+        var cmd = decoder.decode(M(104, T(0), S(250)));
         System.out.println(cmd);
     }
 }

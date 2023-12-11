@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.code.decoder;
 
 import org.apache.commons.lang3.EnumUtils;
-import org.qw3rtrun.p3d.g.code.GenericGParameter;
+import org.qw3rtrun.p3d.g.code.core.*;
 
 import java.util.List;
 
@@ -23,17 +23,16 @@ public sealed interface ValueDecoder<T> {
         };
     }
 
-    T extractValue(GenericGParameter parameter);
+    T extractValue(GField parameter);
 }
 
 final class BooleanDecoder implements ValueDecoder<Boolean> {
     @Override
-    public Boolean extractValue(GenericGParameter parameter) {
+    public Boolean extractValue(GField parameter) {
         return switch (parameter) {
-            case GenericGParameter p when p.bool() != null -> p.bool();
-            case GenericGParameter p when p.integer() != null -> p.integer() > 0;
-            case GenericGParameter p when p.number() != null -> p.number() > 0;
-            case GenericGParameter p when p.str() != null -> p.str().equalsIgnoreCase("true");
+            case GFlagField p -> true;
+            case GIntField i -> (i.value() > 0);
+            case GStrField s -> s.value().equalsIgnoreCase("true");
             default -> null;
         };
     }
@@ -41,10 +40,10 @@ final class BooleanDecoder implements ValueDecoder<Boolean> {
 
 final class IntDecoder implements ValueDecoder<Integer> {
     @Override
-    public Integer extractValue(GenericGParameter parameter) {
+    public Integer extractValue(GField parameter) {
         return switch (parameter) {
-            case GenericGParameter p when p.integer() != null -> p.integer();
-            case GenericGParameter p when p.number() != null -> p.number().intValue();
+            case GIntField i -> i.value();
+            case GDoubleField d -> d.value().intValue();
             default -> null;
         };
     }
@@ -52,10 +51,10 @@ final class IntDecoder implements ValueDecoder<Integer> {
 
 final class DoubleDecoder implements ValueDecoder<Double> {
     @Override
-    public Double extractValue(GenericGParameter parameter) {
+    public Double extractValue(GField parameter) {
         return switch (parameter) {
-            case GenericGParameter p when p.number() != null -> p.number();
-            case GenericGParameter p when p.integer() != null -> p.integer().doubleValue();
+            case GIntField i -> (double) i.value();
+            case GDoubleField d -> d.value().doubleValue();
             default -> null;
         };
     }
@@ -63,8 +62,8 @@ final class DoubleDecoder implements ValueDecoder<Double> {
 
 final class StringDecoder implements ValueDecoder<String> {
     @Override
-    public String extractValue(GenericGParameter parameter) {
-        return parameter.str();
+    public String extractValue(GField parameter) {
+        return parameter.rawValue();
     }
 }
 
@@ -77,10 +76,10 @@ final class EnumDecoder<E extends Enum<E>> implements ValueDecoder<E> {
     }
 
     @Override
-    public E extractValue(GenericGParameter parameter) {
-        if (parameter.integer() == null || parameter.integer() >= enumList.size()) {
-            return null;
+    public E extractValue(GField parameter) {
+        if (parameter instanceof GIntField i) {
+            return enumList.get(i.value());
         }
-        return enumList.get(parameter.integer());
+        return null;
     }
 }

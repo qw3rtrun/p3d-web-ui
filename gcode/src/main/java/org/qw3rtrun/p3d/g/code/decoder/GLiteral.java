@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.code;
+package org.qw3rtrun.p3d.g.code.decoder;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -7,7 +7,7 @@ import java.lang.annotation.Target;
 
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.RECORD_COMPONENT)
-public @interface GParameter {
+public @interface GLiteral {
     String value();
     String defaultValue() default "";
 }

@@ -1,6 +1,12 @@
 package org.qw3rtrun.p3d.g.code;
 
-public interface GCode {
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
-    String encode();
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.TYPE)
+public @interface GCode {
+    String value();
 }

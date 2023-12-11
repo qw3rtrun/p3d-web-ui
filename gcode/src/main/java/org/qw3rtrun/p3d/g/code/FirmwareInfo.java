@@ -8,8 +8,8 @@ import static java.lang.String.format;
  * @link
  * @see <a href="https://marlinfw.org/docs/gcode/M115.html">MarlinFirmare M115 FirmwareInfo</a>
  */
-@GCommand("M115")
-public record FirmwareInfo() implements GCode {
+@GCode("M115")
+public record FirmwareInfo() implements GEncodable {
 
     public static FirmwareInfo m115() {
         return new FirmwareInfo();

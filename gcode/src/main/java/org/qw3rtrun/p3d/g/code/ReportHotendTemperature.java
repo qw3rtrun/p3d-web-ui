@@ -8,8 +8,8 @@ import static java.lang.String.format;
  * @link
  * @see <a href="https://marlinfw.org/docs/gcode/M105.html">MarlinFirmare M105 doc</a>
  */
-@GCommand("M105")
-public record ReportHotendTemperature(@GParameter("I") int index) implements GCode {
+@GCode("M105")
+public record ReportHotendTemperature(@GParam("I") int index) implements GEncodable {
 
     public static ReportHotendTemperature m105(int index) {
         return new ReportHotendTemperature(index);

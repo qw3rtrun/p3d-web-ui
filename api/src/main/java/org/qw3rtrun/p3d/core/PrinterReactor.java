@@ -3,7 +3,7 @@ package org.qw3rtrun.p3d.core;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.core.msg.*;
 import org.qw3rtrun.p3d.g.G;
-import org.qw3rtrun.p3d.g.code.GCode;
+import org.qw3rtrun.p3d.g.code.GEncodable;
 import org.qw3rtrun.p3d.g.decoder.*;
 import org.qw3rtrun.p3d.terminal.HostTerminal;
 import org.qw3rtrun.p3d.terminal.PublisherQueue;
@@ -61,7 +61,7 @@ public class PrinterReactor {
     private void collectInvokers() {
         Arrays.stream(PrinterState.class.getDeclaredMethods())
                 .filter(method -> method.getParameterCount() == 1)
-                .filter(method -> GCode.class.isAssignableFrom(method.getParameterTypes()[0])
+                .filter(method -> GEncodable.class.isAssignableFrom(method.getParameterTypes()[0])
                         || GEvent.class.isAssignableFrom(method.getParameterTypes()[0]))
                 .forEach(method -> {
                     log.info("register invoker {}", method);
@@ -147,7 +147,7 @@ public class PrinterReactor {
                 .doOnNext(rep -> log.info("<- {}", rep));
     }
 
-    public <T extends GCode> Mono<Void> handle(Mono<T> command) {
+    public <T extends GEncodable> Mono<Void> handle(Mono<T> command) {
         return command
                 .publishOn(executor)
                 .doOnNext(cmd -> log.info("-> {}", cmd))

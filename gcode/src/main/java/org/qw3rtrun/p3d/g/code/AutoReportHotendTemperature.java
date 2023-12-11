@@ -8,8 +8,8 @@ import static java.lang.String.format;
  * @link
  * @see <a href="https://marlinfw.org/docs/gcode/M155.html">MarlinFirmare M155 doc</a>
  */
-@GCommand("M155")
-public record AutoReportHotendTemperature(@GParameter("S") int period) implements GCode {
+@GCode("M155")
+public record AutoReportHotendTemperature(@GParam("S") int period) implements GEncodable {
 
     public static AutoReportHotendTemperature m155(int period) {
         return new AutoReportHotendTemperature(period);

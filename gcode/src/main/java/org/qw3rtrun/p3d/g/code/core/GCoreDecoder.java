@@ -1,5 +1,6 @@
 package org.qw3rtrun.p3d.g.code.core;
 
+import lombok.NonNull;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 
@@ -7,20 +8,21 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
-public class GCoreParser {
+public class GCoreDecoder {
     private final String line;
     private final char[] chars;
+    private final CheckSum checksum;
 
     int pointer = 0;
-    int checksum = 0;
 
     int start = 0;
 
     List<GElement> elements = new ArrayList<>();
 
-    public GCoreParser(String line) {
+    public GCoreDecoder(@NonNull String line, @NonNull CheckSum checkSum) {
         this.line = line;
         this.chars = line.toCharArray();
+        this.checksum = checkSum;
     }
 
     public List<GElement> parse() throws GCodeSyntaxException {
@@ -33,7 +35,7 @@ public class GCoreParser {
 
     private GElement decodeElement(String raw) {
         return switch (raw.substring(1)) {
-            case String val when raw.startsWith("\"") -> new GLiteral(decodeString(raw));
+            case String _ when raw.startsWith("\"") -> new GLiteral(decodeString(raw));
             case String val when val.isEmpty() -> new GFlagField(raw.charAt(0));
             case String val when !NumberUtils.isCreatable(val) -> new GStrField(raw.charAt(0), decodeString(val));
             case String val -> switch (NumberUtils.createNumber(val)) {
@@ -94,7 +96,7 @@ public class GCoreParser {
         public void next() {
             var current = chars[pointer];
             if (current == ' ') {
-                checksum ^= current;
+                checksum.add(current);
                 pointer++;
             } else {
                 start(ELEMENT);
@@ -112,14 +114,14 @@ public class GCoreParser {
                     case ';' -> start(COMMENT);
                     case '*' -> start(CHECKSUM);
                     default -> {
-                        checksum ^= current;
+                        checksum.add(current);
                         pointer++;
                     }
                 }
             } else {
                 switch (current) {
                     case '"' -> {
-                        checksum ^= current;
+                        checksum.add(current);
                         pointer++;
                         state = LITERAL;
                     }
@@ -127,7 +129,7 @@ public class GCoreParser {
                     case ' ' -> endAndThen(DELIM);
                     case ';' -> endAndThen(COMMENT);
                     default -> {
-                        checksum ^= current;
+                        checksum.add(current);
                         pointer++;
                     }
                 }
@@ -144,7 +146,7 @@ public class GCoreParser {
         @Override
         void next() throws GCodeSyntaxException {
             var current = chars[pointer];
-            checksum ^= current;
+            checksum.add(current);
             if (start == pointer) {
                 pointer++;
             } else {
@@ -184,7 +186,7 @@ public class GCoreParser {
         @Override
         void endAndThen(State next) {
             var cs = decodeChecksum(new String(chars, start, pointer - start));
-            if ((checksum & 0xff) != cs) {
+            if (checksum.get() != cs) {
                 throw new GCodeSyntaxException(line, "Checksum does not match");
             }
             super.endAndThen(PRECOMMENT);

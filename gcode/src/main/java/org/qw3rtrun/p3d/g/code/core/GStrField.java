@@ -1,7 +1,5 @@
 package org.qw3rtrun.p3d.g.code.core;
 
-import org.apache.commons.lang3.StringUtils;
-
 public record GStrField(char letter, String value) implements GField {
 
     public GStrField(char letter, String value) {

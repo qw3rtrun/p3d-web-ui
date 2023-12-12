@@ -1,39 +1,33 @@
 package org.qw3rtrun.p3d.g.code.core;
 
+import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 
-import java.util.Arrays;
 import java.util.List;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
-public class GCoreCodec implements GCodec {
+public class GCoreEncoder {
 
     public static final String SPECIALCHARS = ":;\"";
 
-    private final Supplier<? extends CheckSum> checksum;
+    private final CheckSum checksum;
 
-    @Override
-    public String encode(GElement... fields) {
-        return Arrays.stream(fields).map(this::encodeElement).collect(Collectors.joining(" "));
-    }
+    public String encode(@NonNull List<? extends GElement> fields) {
+        if (fields.isEmpty()) {
+            throw new IllegalArgumentException("GCode fields in empty");
+        }
+        if (fields.get(0) instanceof GIntField i && i.letter() == 'N') {
 
-    @Override
-    public String encode(List<? extends GElement> fields) {
+        }
         return fields.stream().map(this::encodeElement).collect(Collectors.joining(" "));
-    }
-
-    @Override
-    public List<GElement> decode(String line) {
-        return new GCoreDecoder(line, checksum.get()).parse();
     }
 
     private String encodeElement(GElement field) {
         return switch (field) {
             case GLiteral str -> encodeString(str.string());
-            case GStrField sf -> sf.letter()+encodeString(sf.rawValue());
+            case GStrField sf -> sf.letter() + encodeString(sf.rawValue());
             default -> field.asString();
         };
     }

@@ -16,8 +16,7 @@ public class GCommandCodec {
     }
 
     public GCommand decode(String line) throws GCodeSyntaxException {
-        var parser = new GCoreParser(line);
-        var elements = parser.parse();
+        var elements = codec.decode(line);
         if (elements.isEmpty()) {
             throw new GCodeSyntaxException(line, "GCommand should have at lease one field");
         }

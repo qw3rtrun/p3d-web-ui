@@ -12,11 +12,11 @@ public class G {
         return new GCommand(new GIntField('M', n), null, com, fields);
     }
 
-    public static GCommand M(int n, GLiteral lit, GField... fields) {
+    public static GCommand M(int n, GString lit, GField... fields) {
         return new GCommand(new GIntField('M', n), lit, null, fields);
     }
 
-    public static GCommand M(int n, GLiteral lit, GComment com, GField... fields) {
+    public static GCommand M(int n, GString lit, GComment com, GField... fields) {
         return new GCommand(new GIntField('M', n), lit, null, fields);
     }
 
@@ -48,8 +48,8 @@ public class G {
         return new GStrField('F', val);
     }
 
-    public static GLiteral LIT(String val) {
-        return new GLiteral(val);
+    public static GString LIT(String val) {
+        return new GString(val);
     }
 
     public static GIntField N(int n) {

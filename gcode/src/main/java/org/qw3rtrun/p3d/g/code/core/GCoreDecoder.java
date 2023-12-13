@@ -1,10 +1,7 @@
 package org.qw3rtrun.p3d.g.code.core;
 
 import lombok.NonNull;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.math.NumberUtils;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -33,41 +30,12 @@ public class GCoreDecoder {
         return elements;
     }
 
-    private GElement decodeElement(String raw) {
-        return switch (raw.substring(1)) {
-            case String _ when raw.startsWith("\"") -> new GLiteral(decodeString(raw));
-            case String val when val.isEmpty() -> new GFlagField(raw.charAt(0));
-            case String val when !NumberUtils.isCreatable(val) -> new GStrField(raw.charAt(0), decodeString(val));
-            case String val -> switch (NumberUtils.createNumber(val)) {
-                case Integer i -> new GIntField(raw.charAt(0), i);
-                case BigDecimal bd -> new GDoubleField(raw.charAt(0), bd);
-                case Number n -> new GDoubleField(raw.charAt(0), BigDecimal.valueOf(n.doubleValue()));
-            };
-        };
-    }
-
-    private GComment decodeComment(String raw) {
-        return new GComment(raw.substring(1));
-    }
-
     private int decodeChecksum(String str) {
         try {
             return Integer.parseInt(str.substring(1));
         } catch (NumberFormatException e) {
             throw new GCodeSyntaxException(str, "Checksum should be a number");
         }
-    }
-
-    private String decodeString(String str) {
-        if (str.startsWith("\"")) {
-            if (str.length() < 2 || str.charAt(str.length() - 1) != '"') {
-                throw new GCodeSyntaxException(str, "Quoted String's end-quote not found");
-            }
-        }
-        if (str.startsWith("\"") && str.length() > 1 && str.charAt(str.length() - 1) == '"') {
-            return StringUtils.replace(str.substring(1, str.length() - 1), "\"\"", "\"");
-        }
-        return str;
     }
 
     private abstract class State {
@@ -110,7 +78,7 @@ public class GCoreDecoder {
             var current = chars[pointer];
             if (pointer == start) {
                 switch (current) {
-                    case '"' -> start(LITERAL);
+                    case '"' -> start(QUOTE);
                     case ';' -> start(COMMENT);
                     case '*' -> start(CHECKSUM);
                     default -> {
@@ -123,7 +91,7 @@ public class GCoreDecoder {
                     case '"' -> {
                         checksum.add(current);
                         pointer++;
-                        state = LITERAL;
+                        state = QUOTE;
                     }
                     case '*' -> endAndThen(CHECKSUM);
                     case ' ' -> endAndThen(DELIM);
@@ -137,12 +105,12 @@ public class GCoreDecoder {
         }
 
         void endAndThen(State next) {
-            elements.add(decodeElement(new String(chars, start, pointer - start)));
+            elements.add(GField.from(new String(chars, start, pointer - start)));
             super.endAndThen(next);
         }
     };
 
-    private final State LITERAL = new State() {
+    private final State QUOTE = new State() {
         @Override
         void next() throws GCodeSyntaxException {
             var current = chars[pointer];
@@ -162,7 +130,8 @@ public class GCoreDecoder {
 
         @Override
         void endAndThen(State next) {
-            var s = decodeElement(new String(chars, start, pointer - start));
+            var raw = new String(chars, start, pointer - start);
+            var s = QuoteUtils.createQuote(raw);
             elements.add(s);
             super.endAndThen(next);
         }
@@ -213,8 +182,8 @@ public class GCoreDecoder {
         @Override
         void endAndThen(State next) {
             pointer = chars.length;
-            var element = new String(chars, start, pointer - start);
-            var comm = decodeComment(element);
+            var raw = new String(chars, start, pointer - start);
+            var comm = GComment.from(raw);
             elements.add(comm);
             super.endAndThen(next);
         }

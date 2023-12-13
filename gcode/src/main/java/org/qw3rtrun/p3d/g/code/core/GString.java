@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.code.core;
 
-public record GLiteral(String string) implements GElement {
-    public GLiteral(String string) {
+public record GString(String string) implements GElement {
+    public GString(String string) {
         this.string = string;
         if (this.string().isEmpty()) {
             throw new IllegalArgumentException("GString can't be empty");

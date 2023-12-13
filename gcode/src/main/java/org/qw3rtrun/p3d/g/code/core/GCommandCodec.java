@@ -24,7 +24,7 @@ public class GCommandCodec {
         if (iterator.next() instanceof GIntField cmd) {
             List<GField> fields = new ArrayList<>();
             GComment comment = null;
-            GLiteral literal = null;
+            GString literal = null;
             while (iterator.hasNext()) {
                 var elem = iterator.next();
                 if (elem instanceof GField f) {
@@ -36,7 +36,7 @@ public class GCommandCodec {
                     }
                     fields.add(f);
                 }
-                if (elem instanceof GLiteral l) {
+                if (elem instanceof GString l) {
                     if (comment != null) {
                         throw new GCodeSyntaxException(line, "GLiteral has to be placed before GComment");
                     }

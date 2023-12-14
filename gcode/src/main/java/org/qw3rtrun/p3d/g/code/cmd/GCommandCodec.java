@@ -1,6 +1,7 @@
-package org.qw3rtrun.p3d.g.code.core;
+package org.qw3rtrun.p3d.g.code.cmd;
 
 import lombok.RequiredArgsConstructor;
+import org.qw3rtrun.p3d.g.code.core.*;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -21,14 +22,26 @@ public class GCommandCodec {
             throw new GCodeSyntaxException(line, "GCommand should have at lease one field");
         }
         Iterator<? extends GElement> iterator = elements.iterator();
-        if (iterator.next() instanceof GIntField cmd) {
+        if (iterator.next() instanceof GIntField first) {
+            GIntField cmd;
+            int number = -1;
+            if (first.letter() == 'N') {
+                number = first.value();
+                if (iterator.hasNext() && iterator.next() instanceof GIntField c) {
+                    cmd = c;
+                } else {
+                    throw new GCodeSyntaxException(line, "GCommand should have int as command field after Nnnn");
+                }
+            } else {
+                cmd = first;
+            }
             List<GField> fields = new ArrayList<>();
             GComment comment = null;
-            GString literal = null;
+            List<GLiteral> literals = new ArrayList<>();
             while (iterator.hasNext()) {
                 var elem = iterator.next();
                 if (elem instanceof GField f) {
-                    if (literal != null) {
+                    if (!literals.isEmpty()) {
                         throw new GCodeSyntaxException(line, "GField has to be placed before GLiteral");
                     }
                     if (comment != null) {
@@ -40,13 +53,13 @@ public class GCommandCodec {
                     if (comment != null) {
                         throw new GCodeSyntaxException(line, "GLiteral has to be placed before GComment");
                     }
-                    literal = l;
+                    literals.add(l);
                 }
                 if (elem instanceof GComment c) {
                     comment = c;
                 }
             }
-            return new GCommand(cmd, literal, comment, fields.toArray(new GField[0]));
+            return new GCommand(number, cmd, fields, literals, comment);
         } else {
             throw new GCodeSyntaxException(line, "GCommand should have int as first command field");
         }

@@ -1,27 +1,32 @@
-package org.qw3rtrun.p3d.g.code.core;
+package org.qw3rtrun.p3d.g.code.cmd;
+
+import org.qw3rtrun.p3d.g.code.core.*;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 public class G {
 
     public static GCommand M(int n, GField... fields) {
-        return new GCommand(new GIntField('M', n), fields);
+        return new GCommand(-1, new GIntField('M', n), Arrays.asList(fields), Collections.emptyList(), null);
     }
 
     public static GCommand M(int n, GComment com, GField... fields) {
-        return new GCommand(new GIntField('M', n), null, com, fields);
+        return new GCommand(new GIntField('M', n), Arrays.asList(fields), Collections.emptyList(), com);
     }
 
-    public static GCommand M(int n, GString lit, GField... fields) {
-        return new GCommand(new GIntField('M', n), lit, null, fields);
+    public static GCommand M(int n, GLiteral lit, GField... fields) {
+        return new GCommand(new GIntField('M', n), Arrays.asList(fields), List.of(lit), null);
     }
 
-    public static GCommand M(int n, GString lit, GComment com, GField... fields) {
-        return new GCommand(new GIntField('M', n), lit, null, fields);
+    public static GCommand M(int n, GLiteral lit, GComment com, GField... fields) {
+        return new GCommand(new GIntField('M', n), Arrays.asList(fields), List.of(lit), com);
     }
 
     public static GCommand G(int n, GField... fields) {
-        return new GCommand(new GIntField('G', n), fields);
+        return new GCommand(new GIntField('G', n), Arrays.asList(fields));
     }
 
     public static GIntField T(int n) {
@@ -48,8 +53,8 @@ public class G {
         return new GStrField('F', val);
     }
 
-    public static GString LIT(String val) {
-        return new GString(val);
+    public static GLiteral LIT(String val) {
+        return QuoteUtils.createLiteral(val);
     }
 
     public static GIntField N(int n) {

@@ -9,16 +9,26 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class GCoreEncoder {
 
-    private final CheckSum checksum;
-
     public String encode(@NonNull List<? extends GElement> fields) {
-        if (fields.isEmpty()) {
-            throw new IllegalArgumentException("GCode fields in empty");
-        }
-        if (fields.get(0) instanceof GIntField i && i.letter() == 'N') {
-
-        }
+        assertEmpty(fields);
         return fields.stream().map(GElement::asString).collect(Collectors.joining(" "));
+    }
+
+    public String encode(@NonNull List<? extends GElement> fields, @NonNull CheckSum checksum) {
+        var encode = encode(fields);
+        checksum.add(encode);
+        return STR."\{encode}*\{checksum.getString()}";
+    }
+
+    public String encode(@NonNull List<? extends GElement> fields, @NonNull CheckSum checksum, @NonNull GComment comment) {
+        return STR."\{encode(fields, checksum)} \{encode(List.of(comment))}";
+
+    }
+
+    private void assertEmpty(List<? extends GElement> fields) {
+        if (!fields.isEmpty()) {
+            throw new IllegalArgumentException("GCode fields should be not empty");
+        }
     }
 
 }

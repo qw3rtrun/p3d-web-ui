@@ -4,8 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.qw3rtrun.p3d.g.code.GCode;
 import org.qw3rtrun.p3d.g.code.GEncodable;
 import org.qw3rtrun.p3d.g.code.GParam;
-import org.qw3rtrun.p3d.g.code.core.GCommand;
-import org.qw3rtrun.p3d.g.code.core.GCoreCodec;
+import org.qw3rtrun.p3d.g.code.cmd.GCommand;
 import org.qw3rtrun.p3d.g.code.core.GField;
 
 import java.lang.reflect.Constructor;
@@ -100,13 +99,12 @@ public class CommandDecoderDescriptor<T extends GEncodable> {
     }
 
     private Object[] buildParameters(GCommand command) {
-        var paramsMap = stream(command.fields()).collect(toMap(f -> String.valueOf(f.letter()).toUpperCase(), identity()));
+        var paramsMap = command.getFields().stream().collect(toMap(f -> String.valueOf(f.letter()).toUpperCase(), identity()));
         return stream(parameterDecoders).map(pd -> pd.decode(paramsMap)).toArray();
     }
 
     public static class ParameterDecoder {
 
-        private final GCoreCodec codec = new GCoreCodec();
         private final GParam descr;
         private final ValueDecoder valueDecoder;
         private final GField defaultParam;
@@ -115,7 +113,7 @@ public class CommandDecoderDescriptor<T extends GEncodable> {
             this.descr = descr;
             this.valueDecoder = valueDecoder;
             if (!descr.defaultValue().isEmpty()) {
-                defaultParam = (GField) codec.decode(descr.value() + descr.defaultValue()).get(0);
+                defaultParam = GField.from(descr.value() + descr.defaultValue());
             } else {
                 defaultParam = null;
             }

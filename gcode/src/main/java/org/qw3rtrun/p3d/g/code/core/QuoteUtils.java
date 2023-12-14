@@ -6,8 +6,10 @@ import org.apache.commons.lang3.StringUtils;
 @UtilityClass
 public class QuoteUtils {
 
+    public final String SPECIAL = "\";: *";
+
     public String quote(String str) {
-        return "\"" + str.replace("\"", "\"\"") + "\"";
+        return STR."\"\{str.replace("\"", "\"\"")}\"";
     }
 
     public String unquote(String str) {
@@ -22,7 +24,11 @@ public class QuoteUtils {
         return str;
     }
 
+    public GLiteral createLiteral(String str) {
+        return StringUtils.containsAny(str, SPECIAL) ? GQuote.from(str) : new GString(str);
+    }
+
     public GElement createQuote(String raw) {
-        return raw.startsWith("\"")? GQuote.from(raw) : GQuoteField.from(raw);
+        return raw.startsWith("\"") ? GQuote.from(raw) : GQuoteField.from(raw);
     }
 }

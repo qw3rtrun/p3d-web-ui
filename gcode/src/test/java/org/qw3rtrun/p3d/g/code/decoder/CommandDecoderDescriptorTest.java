@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.g.code.GCode;
 import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
 
-import static org.qw3rtrun.p3d.g.code.core.G.*;
+import static org.qw3rtrun.p3d.g.code.cmd.G.*;
 
 class CommandDecoderDescriptorTest {
 

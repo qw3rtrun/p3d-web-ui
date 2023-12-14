@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.code.core;
 
-public record GQuote(String string) implements GElement {
+public record GQuote(String string) implements GLiteral {
 
     public GQuote(String string) {
         this.string = string;

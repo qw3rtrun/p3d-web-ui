@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.code.core;
 
-public record GString(String string) implements GElement {
+public record GString(String string) implements GLiteral {
     public GString(String string) {
         this.string = string;
         if (this.string().isEmpty()) {

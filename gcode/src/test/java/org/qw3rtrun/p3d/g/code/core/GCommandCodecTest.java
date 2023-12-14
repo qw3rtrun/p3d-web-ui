@@ -1,12 +1,13 @@
 package org.qw3rtrun.p3d.g.code.core;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.g.code.cmd.GCommandCodec;
 
-import static org.qw3rtrun.p3d.g.code.core.G.*;
+import static org.qw3rtrun.p3d.g.code.cmd.G.*;
 
 class GCommandCodecTest {
 
-    private GCommandCodec codec = new GCommandCodec(new GCoreCodec());
+    private GCommandCodec codec = new GCommandCodec(new GCoreCodec(XorCheckSum::new, new GCoreEncoder()));
 
     @Test
     void test() {

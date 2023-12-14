@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Test;
 
 class GCoreCodecTest {
 
-    GCoreCodec codec = new GCoreCodec();
+    GCoreCodec codec = new GCoreCodec(XorCheckSum::new, new GCoreEncoder());
 
     @Test
     void decodeLine() {

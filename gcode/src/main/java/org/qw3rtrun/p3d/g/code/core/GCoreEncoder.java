@@ -26,7 +26,7 @@ public class GCoreEncoder {
     }
 
     private void assertEmpty(List<? extends GElement> fields) {
-        if (!fields.isEmpty()) {
+        if (fields.isEmpty()) {
             throw new IllegalArgumentException("GCode fields should be not empty");
         }
     }

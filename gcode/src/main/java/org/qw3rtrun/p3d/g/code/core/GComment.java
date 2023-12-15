@@ -13,7 +13,7 @@ public record GComment(String text) implements GElement {
 
     @Override
     public String toString() {
-        return "GComment[" + asString() + ']';
+        return STR."COM(\"\{text}\")";
     }
 
 }

@@ -25,7 +25,7 @@ public class GCommandCodec {
         if (iterator.next() instanceof GIntField first) {
             GIntField cmd;
             int number = -1;
-            if (first.letter() == 'N') {
+            if (first.isN()) {
                 number = first.value();
                 if (iterator.hasNext() && iterator.next() instanceof GIntField c) {
                     cmd = c;

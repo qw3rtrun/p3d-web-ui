@@ -8,6 +8,10 @@ public sealed interface GField extends GElement permits GDoubleField, GFlagField
 
     char letter();
 
+    default boolean is(char ch) {
+        return ch == letter() || Character.toUpperCase(ch) == letter();
+    }
+
     String rawValue();
 
     default String asString() {
@@ -20,8 +24,7 @@ public sealed interface GField extends GElement permits GDoubleField, GFlagField
             case String val when !NumberUtils.isCreatable(val) -> new GStrField(raw.charAt(0), val);
             case String val -> switch (NumberUtils.createNumber(val)) {
                 case Integer i -> new GIntField(raw.charAt(0), i);
-                case BigDecimal bd -> new GDoubleField(raw.charAt(0), bd);
-                case Number n -> new GDoubleField(raw.charAt(0), BigDecimal.valueOf(n.doubleValue()));
+                default -> new GDoubleField(raw.charAt(0), new BigDecimal(val));
             };
         };
     }

@@ -11,6 +11,6 @@ public record GDoubleField(char letter, BigDecimal value) implements GField {
 
     @Override
     public String toString() {
-        return "GDouble[" + asString() + ']';
+        return STR. "\{letter}(\{rawValue()})";
     }
 }

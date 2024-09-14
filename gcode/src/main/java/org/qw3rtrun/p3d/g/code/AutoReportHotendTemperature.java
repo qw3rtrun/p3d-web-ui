@@ -1,5 +1,9 @@
 package org.qw3rtrun.p3d.g.code;
 
+import org.qw3rtrun.p3d.g.code.descr.GCode;
+import org.qw3rtrun.p3d.g.code.descr.GEncodable;
+import org.qw3rtrun.p3d.g.code.descr.GParam;
+
 import static java.lang.String.format;
 
 /**
@@ -30,6 +34,6 @@ public record AutoReportHotendTemperature(@GParam("S") int period) implements GE
 
     @Override
     public String toString() {
-        return getClass().getSimpleName() + "(" + encode() + ')';
+        return STR."\{getClass().getSimpleName()}(\{encode()}\{')'}";
     }
 }

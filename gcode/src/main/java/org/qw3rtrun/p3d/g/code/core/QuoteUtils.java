@@ -24,10 +24,6 @@ public class QuoteUtils {
         return str;
     }
 
-    public GLiteral createLiteral(String str) {
-        return StringUtils.containsAny(str, SPECIAL) ? GQuote.from(str) : new GString(str);
-    }
-
     public GElement createQuote(String raw) {
         return raw.startsWith("\"") ? GQuote.from(raw) : GQuoteField.from(raw);
     }

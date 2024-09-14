@@ -105,7 +105,7 @@ public class GCoreDecoder {
         }
 
         void endAndThen(State next) {
-            elements.add(GField.from(new String(chars, start, pointer - start)));
+            elements.add(GNamedField.from(new String(chars, start, pointer - start)));
             super.endAndThen(next);
         }
     };

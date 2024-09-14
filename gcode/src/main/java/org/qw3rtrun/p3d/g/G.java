@@ -1,7 +1,11 @@
 package org.qw3rtrun.p3d.g;
 
 import lombok.RequiredArgsConstructor;
-import org.qw3rtrun.p3d.g.code.*;
+import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
+import org.qw3rtrun.p3d.g.code.FirmwareInfo;
+import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
+import org.qw3rtrun.p3d.g.code.SetBedTemperature;
+import org.qw3rtrun.p3d.g.code.descr.GEncodable;
 
 import java.util.function.Consumer;
 

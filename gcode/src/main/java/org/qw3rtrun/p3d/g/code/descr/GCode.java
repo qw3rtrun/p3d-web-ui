@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.code;
+package org.qw3rtrun.p3d.g.code.descr;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

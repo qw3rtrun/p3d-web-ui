@@ -2,7 +2,7 @@ package org.qw3rtrun.p3d.g.code.core;
 
 import lombok.NonNull;
 
-public record GQuoteField(char letter, @NonNull String value) implements GField {
+public record GQuoteField(char letter, @NonNull String value) implements GNamedField {
 
     public GQuoteField(char letter, @NonNull String value) {
         if (value.contains("\n") || value.contains("\r")) {

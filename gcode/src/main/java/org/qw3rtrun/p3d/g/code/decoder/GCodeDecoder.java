@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.code.decoder;
 
-import org.qw3rtrun.p3d.g.code.GEncodable;
+import org.qw3rtrun.p3d.g.code.descr.GEncodable;
 
 import java.util.Optional;
 

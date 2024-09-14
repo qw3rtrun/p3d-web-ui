@@ -23,12 +23,12 @@ public sealed interface ValueDecoder<T> {
         };
     }
 
-    T extractValue(GField parameter);
+    T extractValue(GNamedField parameter);
 }
 
 final class BooleanDecoder implements ValueDecoder<Boolean> {
     @Override
-    public Boolean extractValue(GField parameter) {
+    public Boolean extractValue(GNamedField parameter) {
         return switch (parameter) {
             case GFlagField p -> true;
             case GIntField i -> (i.value() > 0);
@@ -40,7 +40,7 @@ final class BooleanDecoder implements ValueDecoder<Boolean> {
 
 final class IntDecoder implements ValueDecoder<Integer> {
     @Override
-    public Integer extractValue(GField parameter) {
+    public Integer extractValue(GNamedField parameter) {
         return switch (parameter) {
             case GIntField i -> i.value();
             case GDoubleField d -> d.value().intValue();
@@ -51,7 +51,7 @@ final class IntDecoder implements ValueDecoder<Integer> {
 
 final class DoubleDecoder implements ValueDecoder<Double> {
     @Override
-    public Double extractValue(GField parameter) {
+    public Double extractValue(GNamedField parameter) {
         return switch (parameter) {
             case GIntField i -> (double) i.value();
             case GDoubleField d -> d.value().doubleValue();
@@ -62,7 +62,7 @@ final class DoubleDecoder implements ValueDecoder<Double> {
 
 final class StringDecoder implements ValueDecoder<String> {
     @Override
-    public String extractValue(GField parameter) {
+    public String extractValue(GNamedField parameter) {
         return parameter.rawValue();
     }
 }
@@ -76,7 +76,7 @@ final class EnumDecoder<E extends Enum<E>> implements ValueDecoder<E> {
     }
 
     @Override
-    public E extractValue(GField parameter) {
+    public E extractValue(GNamedField parameter) {
         if (parameter instanceof GIntField i) {
             return enumList.get(i.value());
         }

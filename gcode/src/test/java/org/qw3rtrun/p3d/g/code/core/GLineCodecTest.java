@@ -1,11 +1,12 @@
 package org.qw3rtrun.p3d.g.code.core;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvFileSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.qw3rtrun.p3d.g.code.cmd.GCommand;
-import org.qw3rtrun.p3d.g.code.cmd.GCommandCodec;
+import org.qw3rtrun.p3d.g.code.cmd.GLineCodec;
 
 import java.util.Arrays;
 import java.util.stream.Stream;
@@ -15,9 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.params.provider.Arguments.of;
 import static org.qw3rtrun.p3d.g.code.cmd.G.*;
 
-class GCommandCodecTest {
+class GLineCodecTest {
 
-    private final GCommandCodec codec = new GCommandCodec(new GCoreCodec(XorCheckSum::new, new GCoreEncoder()));
+    private final GLineCodec codec = new GLineCodec(new GCoreCodec(XorCheckSum::new, new GCoreEncoder()));
 
     public static Stream<Arguments> gcodes() {
         return Stream.of(
@@ -27,7 +28,7 @@ class GCommandCodecTest {
         );
     }
 
-    public static Stream<Arguments> gCommands() {
+    public static Stream<Arguments> gLines() {
         return toArgs(
                 G(0, X(12), COM(" Move to 12mm on the X axis")),
                 G(0, F(1500), COM(" Set the feedrate to 1500 mm/min")),
@@ -334,8 +335,8 @@ class GCommandCodecTest {
         );
     }
 
-    private static Stream<Arguments> toArgs(GCommand... commands) {
-        return Arrays.stream(commands).map(Arguments::of);
+    private static Stream<Arguments> toArgs(Object... lines) {
+        return Arrays.stream(lines).map(l -> (l instanceof GCommand c) ? c.asLine() : l).map(Arguments::of);
     }
 
     @ParameterizedTest
@@ -345,7 +346,7 @@ class GCommandCodecTest {
     }
 
     @ParameterizedTest
-    @MethodSource("gCommands")
+    @MethodSource("gLines")
     void test(GCommand gCommand) {
         var encode = codec.encode(gCommand);
         assertNotNull(encode);
@@ -359,4 +360,20 @@ class GCommandCodecTest {
         System.out.println(decode + ",");
         assertNotNull(decode);
     }
+
+    @Test
+    void serialPrintTest() {
+        final var actual = codec.decode("m188 A1 E1 \"Hello World!\"");
+        System.out.println(actual);
+        assertEquals(M(118, A(1), E(1), LIT("Hello"), LIT("World")), actual);
+    }
+
+    @Test
+    void strTest() {
+        final var actual = codec.decode("M118 \"Hello World!\"");
+        System.out.println(actual);
+        var expected = M(118, LIT("Hello World!"));
+        assertEquals(expected, actual);
+    }
+
 }

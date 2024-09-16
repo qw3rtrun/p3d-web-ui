@@ -6,6 +6,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvFileSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.qw3rtrun.p3d.g.code.cmd.GCommand;
+import org.qw3rtrun.p3d.g.code.cmd.GLine;
 import org.qw3rtrun.p3d.g.code.cmd.GLineCodec;
 
 import java.util.Arrays;
@@ -24,7 +25,7 @@ class GLineCodecTest {
         return Stream.of(
                 of(M(155), "M155"),
                 of(M(115, T(1), S(150)), "M115 T1 S150"),
-                of(M(32, LIT("test.gco")), "M32 test.gco")
+                of(M(32, LIT("test.gco")).getCmd(), "M32 test.gco")
         );
     }
 
@@ -347,7 +348,7 @@ class GLineCodecTest {
 
     @ParameterizedTest
     @MethodSource("gLines")
-    void test(GCommand gCommand) {
+    void test(GLine gCommand) {
         var encode = codec.encode(gCommand);
         assertNotNull(encode);
         System.out.println(encode);
@@ -363,16 +364,16 @@ class GLineCodecTest {
 
     @Test
     void serialPrintTest() {
-        final var actual = codec.decode("m188 A1 E1 \"Hello World!\"");
+        final var actual = codec.decode("m118 A1 E1 \"Hello World!\"");
         System.out.println(actual);
-        assertEquals(M(118, A(1), E(1), LIT("Hello"), LIT("World")), actual);
+        assertEquals(M(118, A(1), E(1), LIT("\"Hello World!\"")), actual);
     }
 
     @Test
     void strTest() {
         final var actual = codec.decode("M118 \"Hello World!\"");
         System.out.println(actual);
-        var expected = M(118, LIT("Hello World!"));
+        var expected = M(118, LIT("\"Hello World!\""));
         assertEquals(expected, actual);
     }
 

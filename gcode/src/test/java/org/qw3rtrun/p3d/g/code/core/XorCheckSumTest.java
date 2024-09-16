@@ -14,7 +14,7 @@ class XorCheckSumTest {
     @ValueSource(strings = {
             "N1 M115*39",
             "N1 M155 S1*97",
-            "N2 M117 Hello World!*7 H"
+            "N2 M117 Hello World!*7"
     })
 
     void checksum(String gcode) {

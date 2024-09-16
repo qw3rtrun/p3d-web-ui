@@ -132,8 +132,12 @@ public class G {
         return new GDoubleField('I', new BigDecimal(n));
     }
 
+    public static GIntField E(int n) {
+        return new GIntField('E', n);
+    }
+
     public static GDoubleField E(double n) {
-        return new GDoubleField('I', new BigDecimal(n));
+        return new GDoubleField('E', new BigDecimal(n));
     }
 
     public static GComment COM(String text) {

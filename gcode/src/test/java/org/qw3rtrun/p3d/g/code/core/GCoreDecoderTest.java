@@ -16,8 +16,8 @@ class GCoreDecoderTest {
         assertEquals(M(105, COM("Comment"), B(), S(250), F("ile.gco")).asElements(), new GCoreDecoder("M105 B S250 File.gco ;Comment", new XorCheckSum()).parse());
 
         assertEquals(M(105, LIT("\"File.gco\"")).asElements(), new GCoreDecoder("M105 \"File.gco\"", new XorCheckSum()).parse());
-        assertEquals(M(105, LIT("File new.gco")).asElements(), new GCoreDecoder("M105 \"File new.gco\"", new XorCheckSum()).parse());
-        assertEquals(M(105, LIT("File\"new.gco")).asElements(), new GCoreDecoder("M105 \"File\"\"new.gco\"", new XorCheckSum()).parse());
+        assertEquals(M(105, LIT("\"File new.gco\"")).asElements(), new GCoreDecoder("M105 \"File new.gco\"", new XorCheckSum()).parse());
+        assertEquals(M(105, LIT("\"File\"new.gco\"")).asElements(), new GCoreDecoder("M105 \"File\"\"new.gco\"", new XorCheckSum()).parse());
         //assertEquals(M(105, F("File \"new.gco")).asElements(), new GCoreParser("M105 F\"File \"\"new.gco\" \"Literal\"\"\" ;Comment").parse());
     }
 }

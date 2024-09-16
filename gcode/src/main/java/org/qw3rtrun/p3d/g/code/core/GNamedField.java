@@ -4,12 +4,14 @@ import org.apache.commons.lang3.math.NumberUtils;
 
 import java.math.BigDecimal;
 
+import static java.lang.Character.toUpperCase;
+
 public sealed interface GNamedField extends GField permits GDoubleField, GFlagField, GIntField, GQuoteField, GStrField {
 
     char letter();
 
     default boolean is(char ch) {
-        return ch == letter() || Character.toUpperCase(ch) == letter();
+        return ch == letter() || toUpperCase(ch) == letter();
     }
 
     String rawValue();
@@ -20,11 +22,11 @@ public sealed interface GNamedField extends GField permits GDoubleField, GFlagFi
 
     static GNamedField from(String raw) {
         return switch (raw.substring(1)) {
-            case String val when val.isEmpty() -> new GFlagField(raw.charAt(0));
-            case String val when !NumberUtils.isCreatable(val) -> new GStrField(raw.charAt(0), val);
+            case String val when val.isEmpty() -> new GFlagField(toUpperCase(raw.charAt(0)));
+            case String val when !NumberUtils.isCreatable(val) -> new GStrField(toUpperCase(raw.charAt(0)), val);
             case String val -> switch (NumberUtils.createNumber(val)) {
-                case Integer i -> new GIntField(raw.charAt(0), i);
-                default -> new GDoubleField(raw.charAt(0), new BigDecimal(val));
+                case Integer i -> new GIntField(toUpperCase(raw.charAt(0)), i);
+                default -> new GDoubleField(toUpperCase(raw.charAt(0)), new BigDecimal(val));
             };
         };
     }

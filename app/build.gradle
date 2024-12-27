@@ -13,13 +13,15 @@ version = '0.0.1-SNAPSHOT'
 dependencyManagement {
     imports {
         mavenBom SpringBootPlugin.BOM_COORDINATES
+        mavenBom "org.springframework.modulith:spring-modulith-bom:$springModulithVersion"
     }
 }
 
 dependencies {
-    implementation project(':core')
-    implementation project(':api')
-    implementation project(':printersmng')
+    implementation project(':backend:core')
+    implementation project(':backend:api')
+    implementation project(':backend:machine-mng')
+    implementation project(':frontend:web-ui')
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
@@ -37,6 +39,8 @@ dependencies {
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'io.projectreactor:reactor-test'
+    runtimeOnly 'org.springframework.modulith:spring-modulith-actuator'
+    runtimeOnly 'org.springframework.modulith:spring-modulith-observability'
 }
 
 //sourceSets {

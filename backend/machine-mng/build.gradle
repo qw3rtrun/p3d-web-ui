@@ -1,0 +1,37 @@
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+plugins {
+    id 'p3d.java-conventions'
+    id 'application'
+    id 'org.springframework.boot' version "$spring_boot_version" apply false
+    id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
+    id "io.freefair.lombok" version "$lombok_plugin_version"
+    id 'org.liquibase.gradle' version '2.0.4'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom SpringBootPlugin.BOM_COORDINATES
+        mavenBom "org.springframework.modulith:spring-modulith-bom:$springModulithVersion"
+    }
+}
+
+application {
+    mainClass = 'org.qw3rtrun.p3d.machine-mng.PrintersmngApplication'
+}
+
+dependencies {
+    implementation project(':backend:core')
+
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'com.h2database:h2'
+    implementation 'org.liquibase:liquibase-core'
+    implementation 'org.springframework.modulith:spring-modulith-starter-core'
+    implementation 'org.springframework.modulith:spring-modulith-starter-jpa'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.modulith:spring-modulith-starter-test'
+}
+
+apply plugin: "org.liquibase.gradle"
+
+

@@ -3,7 +3,7 @@ import org.springframework.boot.gradle.plugin.SpringBootPlugin
 plugins {
     id 'maven-publish'
     id 'p3d.java-conventions'
-    id "org.jetbrains.kotlin.jvm" version "2.0.20"
+    id "org.jetbrains.kotlin.jvm" version "$kotlin_plugin_version"
     id 'org.springframework.boot' version "$spring_boot_version" apply false
     id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
     id "io.freefair.lombok" version "$lombok_plugin_version"
@@ -11,7 +11,7 @@ plugins {
 }
 
 dependencies {
-    implementation project(':core')
+    implementation project(':backend:core')
 }
 
 dependencyManagement {

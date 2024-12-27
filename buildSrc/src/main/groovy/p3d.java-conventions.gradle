@@ -8,6 +8,10 @@ version = '0.0.1-SNAPSHOT'
 sourceCompatibility = JavaVersion.VERSION_22
 targetCompatibility = JavaVersion.VERSION_22
 
+ext {
+    springModulithVersion = "1.2.7"
+}
+
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of("22")
@@ -43,3 +47,5 @@ tasks.named('test') {
     jvmArgs += '--enable-preview'
     useJUnitPlatform()
 }
+
+

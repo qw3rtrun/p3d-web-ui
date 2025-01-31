@@ -10,7 +10,9 @@ sealed interface GIdentifier : GToken {
     val letter: Char
 }
 
-data class GUnknown(val char: Char) : GToken
+data class GUnknown(val str: String) : GToken {
+    constructor(ch: Char) : this(ch.toString())
+}
 
 data class GField(override val letter: Char) : GIdentifier
 

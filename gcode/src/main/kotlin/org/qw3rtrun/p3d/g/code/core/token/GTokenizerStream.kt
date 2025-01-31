@@ -3,19 +3,18 @@ package org.qw3rtrun.p3d.g.code.core.token
 import org.qw3rtrun.p3d.g.code.core.CheckSum
 import org.qw3rtrun.p3d.g.code.core.XorCheckSum
 import java.math.BigDecimal
+import java.util.stream.Stream
 
-class GTokenizer(line: String) {
+class GTokenizerStream(private val line: String) {
 
     private val chars = line.toCharArray()
     private val checksum: CheckSum = XorCheckSum()
 
     var pointer = 0
 
-    fun current() = chars[pointer]
-
     val tokens: MutableList<GToken> = ArrayList<GToken>()
 
-    fun parse(): List<GToken> {
+    fun parse(input: Stream<String>): Stream<GToken> {
         while (pointer < chars.size) {
             val c = chars[pointer]
             when {
@@ -31,7 +30,7 @@ class GTokenizer(line: String) {
                 }
             }
         }
-        return tokens
+        return tokens.stream()
     }
 
     fun space() {
@@ -96,7 +95,7 @@ class GTokenizer(line: String) {
 
     fun comment() {
         val start = pointer;
-        while (++pointer < chars.size && chars[pointer] != '\n')
+        while (pointer++ < chars.size && chars[pointer] != '\n')
             tokens.add(GLineComment(String(chars.copyOfRange(start, pointer))))
     }
 

@@ -1,103 +1,150 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
-import org.qw3rtrun.p3d.g.code.core.CheckSum
-import org.qw3rtrun.p3d.g.code.core.XorCheckSum
 import java.math.BigDecimal
+import java.util.stream.Stream
+import kotlin.streams.asSequence
+import kotlin.streams.asStream
 
-class GTokenizer(line: String) {
+class GTokenizer {
 
-    private val chars = line.toCharArray()
-    private val checksum: CheckSum = XorCheckSum()
+    fun parse(gcode: Iterator<Char>): Iterator<GToken> = GTokenizerIterator(gcode)
+    fun parse(gcode: Iterable<Char>): Sequence<GToken> = GTokenizerIterator(gcode.iterator()).asSequence()
+    fun parse(gcode: Sequence<Char>): Sequence<GToken> = parse(gcode.iterator()).asSequence()
+    fun parse(gcode: CharSequence): Sequence<GToken> = parse(gcode.iterator()).asSequence()
+    fun parse(gcode: Stream<Char>): Stream<GToken> = parse(gcode.asSequence()).asStream()
 
-    var pointer = 0
+    fun parseLines(gcode: Sequence<String>): Sequence<GToken> = parse(gcode.flatMap { it.asSequence() }).asSequence()
+}
 
-    fun current() = chars[pointer]
+class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
 
-    val tokens: MutableList<GToken> = ArrayList<GToken>()
+    private var ch: Char? = null
 
-    fun parse(): List<GToken> {
-        while (pointer < chars.size) {
-            val c = chars[pointer]
-            when {
-                c.isWhitespace() -> space()
-                c.isLetter() -> ident()
-                c.isDigit() || c == '.' -> number()
-                c == '\"' -> string()
-                c == '{' -> expression()
-                c == ';' -> comment()
-                else -> {
-                    tokens.add(GUnknown(c))
-                    pointer++
-                }
+    override fun hasNext() = ch != null || chars.hasNext()
+
+    override fun next(): GToken {
+        ch = ch ?: chars.next()
+        return when {
+            ch!!.isWhitespace() -> space(ch!!)
+            ch!!.isLetter() -> ident(ch!!)
+            ch!!.isDigit() || ch == '.' -> number(ch!!)
+            ch == '\"' -> string()
+            ch == '{' -> expression('{')
+            ch == ';' -> tailComment()
+            ch == '(' -> inlineComment('(')
+            else -> {
+                val unknown = GUnknown(ch!!)
+                ch = null
+                return unknown
             }
-        }
-        return tokens
-    }
-
-    fun space() {
-        when (chars[pointer]) {
-            ' ' -> {
-                tokens.add(GWhitespace)
-                pointer++
-            }
-
-            '\n' -> {
-                tokens.add(GNewline)
-                pointer++
-            }
-
-            else -> return;
         }
     }
 
-    fun number() {
-        val start = pointer
+    fun space(current: Char): GToken {
+        ch = null
+        return when (current) {
+            ' ' -> GSpace
+            '\n' -> GNewline()
+            '\r' -> {
+                if (chars.hasNext()) {
+                    ch = chars.next()
+                    if (ch == '\n') GNewline("\r\n") else GUnknown('\r')
+                } else GUnknown(current)
+            }
+
+            else -> GUnknown(current);
+        }
+    }
+
+    fun number(start: Char): GNumber {
+        val str = StringBuilder(start.toString())
         var decimal = false
-        while (pointer < chars.size && (chars[pointer].isDigit() || chars[pointer] == '.')) {
-            if (chars[pointer] == '.') {
-                decimal = true
+        var current = start
+
+        while (chars.hasNext()) {
+            current = chars.next()
+            when {
+                current.isDigit() -> str.append(current)
+                current == '.' -> {
+                    str.append(current)
+                    decimal = true;
+                }
+
+                else -> {
+                    ch = current
+                    break
+                }
+
             }
-            pointer++
         }
-        val value = BigDecimal(String(chars.copyOfRange(start, pointer)))
+        val value = BigDecimal(str.toString())
 
-        tokens.add(if (decimal) GFloat(value) else GInt(value.toInt()))
+        return if (decimal) GFloat(value) else GInt(value.toInt())
     }
 
-    fun string() {
-        val res = chars.copyOfRange(pointer++, chars.size)
-        var index = 0;
-        while (pointer < chars.size) {
-            if (chars[pointer] != '"') {
-                res[index++] = chars[pointer++]
-            } else if (++pointer < chars.size && chars[pointer] == '"') {
-                res[index++] = chars[pointer++]
-            } else break;
+    fun string(): GToken {
+        val str = StringBuilder()
+        while (chars.hasNext()) {
+            var c = chars.next()
+            if (c == '"') {
+                ch = null
+                if (chars.hasNext()) {
+                    c = chars.next()
+                    if (c == '"') {
+                        str.append(c)
+                    } else {
+                        ch = c;
+                        break
+                    }
+                }
+            } else str.append(c)
         }
-        tokens.add(GQuotedString(String(res, 0, index)))
+        return GQuotedString(str.toString())
     }
 
-    fun ident() {
-        if (chars[pointer].isLetter()) {
-            tokens.add(GField(chars[pointer]))
-            pointer++
-        }
+    fun ident(current: Char): GToken {
+        ch = null
+        return if (current.isLetter()) GField(current) else GUnknown(current)
     }
 
-    fun expression() {
-        val start = pointer;
+    fun expression(start: Char): GToken {
+        val expression = StringBuilder(start.toString())
         var stack = 1;
-        while (pointer++ < chars.size && stack > 0) when (chars[pointer]) {
-            '{' -> stack++
-            '}' -> stack--
+        while (chars.hasNext() && stack > 0) {
+            ch = chars.next();
+            expression.append(ch);
+            when (ch) {
+                '{' -> stack++
+                '}' -> stack--
+            }
         }
-        tokens.add(GRawExpression(String(chars.copyOfRange(start, pointer))))
+        if (ch == '}') ch = null
+        return if (stack == 0) GRawExpression(expression.toString()) else GUnknown(expression.toString())
     }
 
-    fun comment() {
-        val start = pointer;
-        while (++pointer < chars.size && chars[pointer] != '\n')
-            tokens.add(GLineComment(String(chars.copyOfRange(start, pointer))))
+    fun tailComment(): GComment {
+        val str = StringBuilder()
+        ch = null
+        while (chars.hasNext()) {
+            ch = chars.next()
+            if (ch != '\n') str.append(ch) else break
+        }
+        if (ch != '\n') ch = null
+        return GTailComment(str.toString())
     }
 
+    fun inlineComment(start: Char): GToken {
+        val comment = StringBuilder()
+        var stack = 1;
+        while (chars.hasNext() && stack > 0) {
+            ch = chars.next();
+            comment.append(ch);
+            when (ch) {
+                '(' -> stack++
+                ')' -> stack--
+            }
+        }
+        if (ch == ')') ch = null
+        return if (stack == 0) GInlineComment(comment.toString()) else GUnknown(comment.toString())
+    }
 }

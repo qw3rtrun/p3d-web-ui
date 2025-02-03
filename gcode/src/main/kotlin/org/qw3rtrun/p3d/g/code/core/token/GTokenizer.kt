@@ -32,6 +32,11 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
             ch == '{' -> expression('{')
             ch == ';' -> tailComment()
             ch == '(' -> inlineComment('(')
+            ch == '*' -> {
+                ch = null;
+                return GChecksum
+            }
+
             else -> {
                 val unknown = GUnknown(ch!!)
                 ch = null
@@ -44,11 +49,11 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         ch = null
         return when (current) {
             ' ' -> GSpace
-            '\n' -> GNewline()
+            '\n' -> GLineBreak()
             '\r' -> {
                 if (chars.hasNext()) {
                     ch = chars.next()
-                    if (ch == '\n') GNewline("\r\n") else GUnknown('\r')
+                    if (ch == '\n') GLineBreak("\r\n") else GUnknown('\r')
                 } else GUnknown(current)
             }
 
@@ -104,7 +109,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
 
     fun ident(current: Char): GToken {
         ch = null
-        return if (current.isLetter()) GField(current) else GUnknown(current)
+        return if (current.isLetter()) GLetter(current) else GUnknown(current)
     }
 
     fun expression(start: Char): GToken {

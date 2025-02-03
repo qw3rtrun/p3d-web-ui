@@ -5,12 +5,14 @@ import java.math.BigDecimal
 sealed interface GToken {
     fun rawText(): String
 }
+sealed interface GMember: GToken
 
-sealed interface GLiteral : GToken
+sealed interface GLiteral : GMember
 
-sealed interface GIdentifier : GToken {
-    val letter: Char
-    override fun rawText() = letter.toString()
+
+sealed interface GIdentifier : GMember {
+    val name: String
+    override fun rawText() = name
 }
 
 data class GUnknown(val str: String) : GToken {
@@ -19,9 +21,15 @@ data class GUnknown(val str: String) : GToken {
     override fun rawText(): String = str
 }
 
-data class GField(override val letter: Char) : GIdentifier
+data class GLetter(val letter: Char) : GIdentifier {
+    override val name: String
+        get() = letter.toString()
+}
 
-sealed interface GChecksum : GToken
+data object GChecksum : GIdentifier {
+    override val name: String
+        get() = "*"
+}
 
 sealed interface GComment : GToken {
     val string: String
@@ -49,7 +57,7 @@ data object GTag : GWhitespace {
     override val char: Char = '\t';
 }
 
-data class GNewline(val breaker: String = "\n") : GSeparator {
+data class GLineBreak(val breaker: String = "\n") : GSeparator {
     override fun toString(): String = this.javaClass.simpleName
     override fun rawText(): String = breaker
 }

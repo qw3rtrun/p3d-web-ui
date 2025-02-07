@@ -65,7 +65,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         val str = StringBuilder(start.toString())
         var decimal = false
         var current = start
-
+        ch = null
         while (chars.hasNext()) {
             current = chars.next()
             when {
@@ -88,11 +88,11 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
     }
 
     fun string(): GToken {
+        ch = null
         val str = StringBuilder()
         while (chars.hasNext()) {
             var c = chars.next()
             if (c == '"') {
-                ch = null
                 if (chars.hasNext()) {
                     c = chars.next()
                     if (c == '"') {
@@ -123,7 +123,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
                 '}' -> stack--
             }
         }
-        if (ch == '}') ch = null
+        ch = null
         return if (stack == 0) GRawExpression(expression.toString()) else GUnknown(expression.toString())
     }
 

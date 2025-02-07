@@ -42,6 +42,7 @@ class GTokenizerTest {
         println(line("M{SHOW_MGS}I\"Hello \"\"World\"\"\""))
         println(line("M{SET_TEMP} F{CURRENT}X1.05\n"))
         println(line("M{SET_TEMP} (Это \"переменные\" в (в рантайме)) F{CURRENT}X1.05\n"))
+        println(line("M11 I   \"Hello World\"M155 \"Hello World\";comment\"\n"))
     }
 
     @Test
@@ -54,6 +55,14 @@ class GTokenizerTest {
     fun reprint() {
         assert(reprint(AFTER_GCODE) == AFTER_GCODE)
         assert(reprint(BEFORE_GCODE) == BEFORE_GCODE)
+    }
+
+    @Test
+    fun testEnd() {
+        reprint("M{")
+        reprint("M\"")
+        reprint("M\"asd")
+        reprint("M1")
     }
 
 }

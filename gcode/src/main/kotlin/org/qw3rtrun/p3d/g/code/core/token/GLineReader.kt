@@ -19,27 +19,38 @@ class GLineIterator(val tokens: Iterator<GToken>) : Iterator<GParsedLine> {
 
     private fun nextLine(): List<GToken> {
         val line = ArrayList<GToken>()
-        while (tokens.hasNext()) {
+        do {
             val next = tokens.next()
             line.add(next)
             when {
                 next is GLineBreak -> break
             }
-        }
+        } while (tokens.hasNext())
         return line
     }
 
     private fun parseLine(tokens: List<GToken>): GParsedLine {
-        val members = tokens.filter { it is GMember }.map { it as GMember }
-        if (members.isEmpty()) {
+        val members = tokens.filter { it is GMember }.map { it as GMember }.iterator()
+        if (!members.hasNext()) {
             return GCommands(emptyList(), tokens)
         }
 
-        val first = members[0]
-        val cmds = ArrayList<GCommand>()
+        var cmds = listOf<GCommand>()
+        val first = members.next()
         if (first is GIdentifier && isCommand(first, true)) {
-            cmds.plus(GCommand(first, members.subList(1, members.size)))
-            return GCommands(cmds, tokens)
+            var cmd: GIdentifier = first
+            var params = mutableListOf<GMember>()
+            while (members.hasNext()) {
+                val next = members.next()
+                if (next is GIdentifier && isCommand(next, false)) {
+                    cmds = cmds + GCommand(cmd, params)
+                    cmd = next
+                    params = mutableListOf<GMember>()
+                } else {
+                    params.add(next)
+                }
+            }
+            return GCommands(cmds + GCommand(cmd, params), tokens)
         } else return GNotIdentifierError(first, tokens)
     }
 

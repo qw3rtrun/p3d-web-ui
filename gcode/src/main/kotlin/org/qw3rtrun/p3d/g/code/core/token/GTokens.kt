@@ -53,7 +53,7 @@ data object GSpace : GWhitespace {
     override val char: Char = ' ';
 }
 
-data object GTag : GWhitespace {
+data object GTab : GWhitespace {
     override val char: Char = '\t';
 }
 
@@ -92,7 +92,7 @@ data class GFloat(val float: BigDecimal) : GNumber {
     override fun rawText(): String = float.toString()
 }
 
-sealed interface GExpression : GLiteral {
+sealed interface GExpression : GMember {
     val exception: String
 }
 

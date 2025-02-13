@@ -1,6 +1,10 @@
-package org.qw3rtrun.p3d.g.code.core.token
+package org.qw3rtrun.p3d.g.code.token
 
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.token.GCommandLine
+import org.qw3rtrun.p3d.g.code.core.token.GError
+import org.qw3rtrun.p3d.g.code.core.token.GLineIterator
+import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 class GCodeReaderTest {
 
@@ -17,7 +21,7 @@ class GCodeReaderTest {
 
         iter.forEach {
             when (it) {
-                is GCommands -> {println(it.cmds); println(it.line)}
+                is GCommandLine -> {println(it.cmds); println(it.line)}
                 is GError -> println(it.msg)
             }
         }

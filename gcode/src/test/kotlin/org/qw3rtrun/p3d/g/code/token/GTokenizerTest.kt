@@ -1,6 +1,7 @@
-package org.qw3rtrun.p3d.g.code.core.token
+package org.qw3rtrun.p3d.g.code.token
 
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 private const val BEFORE_GCODE =
     "M140 S{first_layer_bed_temperature[0]} ;Запустить нагрев стола до указанной в профиле филамента температуры\n" +

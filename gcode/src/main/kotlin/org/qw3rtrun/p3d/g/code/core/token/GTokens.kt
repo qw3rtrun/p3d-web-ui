@@ -4,13 +4,16 @@ import java.math.BigDecimal
 
 sealed interface GToken {
     fun rawText(): String
+    fun toSeq() = sequenceOf(this)
 }
-sealed interface GMember: GToken
 
-sealed interface GLiteral : GMember
+sealed interface GElement : GToken {
+    override fun toSeq(): Sequence<GElement> = sequenceOf(this)
+}
 
+sealed interface GLiteral : GElement
 
-sealed interface GIdentifier : GMember {
+sealed interface GIdentifier : GElement {
     val name: String
     override fun rawText() = name
 }
@@ -71,7 +74,7 @@ sealed interface GNumber : GLiteral {
 }
 
 data class GQuotedString(override val string: String) : GString {
-    override fun rawText(): String = "s\"${string.replace("\"", "\"\"")}\""
+    override fun rawText(): String = "\"${string.replace("\"", "\"\"")}\""
 }
 
 data class GInt(val int: Int) : GNumber {
@@ -92,10 +95,17 @@ data class GFloat(val float: BigDecimal) : GNumber {
     override fun rawText(): String = float.toString()
 }
 
-sealed interface GExpression : GMember {
+sealed interface GExpression : GElement {
     val exception: String
 }
 
 data class GRawExpression(override val exception: String) : GExpression {
     override fun rawText(): String = exception
 }
+
+
+fun Int.toToken() = GInt(this)
+fun Double.toToken() = GFloat(this)
+fun BigDecimal.toToken() = GFloat(this)
+fun Char.toToken() = GLetter(this)
+fun String.toToken() = GQuotedString(this)

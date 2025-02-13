@@ -8,14 +8,14 @@ class GCodeReader {
 
 }
 
-class GLineIterator(val tokens: Iterator<GToken>) : Iterator<GParsedLine> {
+class GLineIterator(val tokens: Iterator<GToken>) : Iterator<GLine> {
 
 
     override fun hasNext(): Boolean {
         return tokens.hasNext()
     }
 
-    override fun next(): GParsedLine = parseLine(nextLine())
+    override fun next(): GLine = parseLine(nextLine())
 
     private fun nextLine(): List<GToken> {
         val line = ArrayList<GToken>()
@@ -29,28 +29,28 @@ class GLineIterator(val tokens: Iterator<GToken>) : Iterator<GParsedLine> {
         return line
     }
 
-    private fun parseLine(tokens: List<GToken>): GParsedLine {
-        val members = tokens.filter { it is GMember }.map { it as GMember }.iterator()
+    private fun parseLine(tokens: List<GToken>): GLine {
+        val members = tokens.filter { it is GElement }.map { it as GElement }.iterator()
         if (!members.hasNext()) {
-            return GCommands(emptyList(), tokens)
+            return GCommandLine(emptyList(), tokens)
         }
 
         var cmds = listOf<GCommand>()
         val first = members.next()
         if (first is GIdentifier && isCommand(first, true)) {
             var cmd: GIdentifier = first
-            var params = mutableListOf<GMember>()
+            var params = mutableListOf<GElement>()
             while (members.hasNext()) {
                 val next = members.next()
                 if (next is GIdentifier && isCommand(next, false)) {
                     cmds = cmds + GCommand(cmd, params)
                     cmd = next
-                    params = mutableListOf<GMember>()
+                    params = mutableListOf<GElement>()
                 } else {
                     params.add(next)
                 }
             }
-            return GCommands(cmds + GCommand(cmd, params), tokens)
+            return GCommandLine(cmds + GCommand(cmd, params), tokens)
         } else return GNotIdentifierError(first, tokens)
     }
 

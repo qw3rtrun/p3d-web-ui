@@ -95,7 +95,7 @@ public class PrinterReactor {
         manager.connect()
                 .publishOn(executor)
                 .flatMap(this::onConnected)
-                .log(STR."\{this.getClass().getSimpleName()}#printer")
+                .log(this.getClass().getSimpleName() + "#printer")
                 .doOnTerminate(printer::onOffline)
                 .subscribe();
     }

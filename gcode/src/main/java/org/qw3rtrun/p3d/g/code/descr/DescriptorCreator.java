@@ -14,12 +14,13 @@ import static java.util.Arrays.stream;
 public class DescriptorCreator {
 
     public <T extends Record & GEncodable> CommandDescriptor<T> build(Class<T> type, GCode annotation) {
-        return findParametrizedConstructor(type)
+        CommandDescriptor commandDescriptor = findParametrizedConstructor(type)
                 .map(c -> new CommandDescriptor(type, annotation, c, buildParamDecoders(type), null))
                 .or(() -> findRawConstructor(type).or(() -> findDefaultConstructor(type))
                         .map(c -> new CommandDescriptor<>(type, annotation, c, null, null))
                 ).orElseThrow(() -> new IllegalArgumentException(
-                        STR."@GCommand annotated class should have 'default' or String constructor or GParameter annotated constructor params: \{type}"));
+                        "@GCommand annotated class should have 'default' or String constructor or GParameter annotated constructor params: " + type));
+        return commandDescriptor;
     }
 
     private <T extends GEncodable> ParameterDecoder[] buildParamDecoders(Class<T> type) {

@@ -9,6 +9,7 @@ import org.qw3rtrun.p3d.mng.service.PrinterRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 import java.util.UUID;
@@ -22,6 +23,7 @@ public class MachineManagementModule {
     }
 
     @Bean
+    @Primary
     public static MachineManagementService dbPrinterManager(PrinterRepository repository, MachineEventBus eventBus) {
         return new MachineManagementImpl(eventBus, repository);
     }

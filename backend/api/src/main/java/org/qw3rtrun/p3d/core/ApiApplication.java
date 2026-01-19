@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.core;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.qw3rtrun.p3d.core.bus.CommandQueryBus;
 import org.qw3rtrun.p3d.core.bus.CommandQueryGateway;
 import org.qw3rtrun.p3d.core.bus.CommandQueryService;
@@ -16,6 +15,7 @@ import org.springframework.context.annotation.DependsOn;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.HashMap;
 import java.util.List;

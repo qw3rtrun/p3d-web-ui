@@ -9,7 +9,7 @@ public class QuoteUtils {
     public final String SPECIAL = "\";: *";
 
     public String quote(String str) {
-        return STR."\"\{str.replace("\"", "\"\"")}\"";
+        return "\"" + str.replace("\"", "\"\"") + "\"";
     }
 
     public String unquote(String str) {

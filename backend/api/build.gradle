@@ -11,6 +11,8 @@ dependencies {
     implementation project(':gcode')
 
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    // Explicit Jackson dependency for ObjectMapper and JSON processing
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     annotationProcessor 'org.projectlombok:lombok'

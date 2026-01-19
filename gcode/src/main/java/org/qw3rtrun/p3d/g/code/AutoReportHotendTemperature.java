@@ -34,6 +34,6 @@ public record AutoReportHotendTemperature(@GParam("S") int period) implements GE
 
     @Override
     public String toString() {
-        return STR."\{getClass().getSimpleName()}(\{encode()}\{')'}";
+        return getClass().getSimpleName() + "(" + encode() + ')';
     }
 }

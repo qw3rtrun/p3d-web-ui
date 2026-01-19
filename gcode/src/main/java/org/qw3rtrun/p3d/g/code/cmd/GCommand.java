@@ -69,6 +69,6 @@ public class GCommand {
                                 .map(Objects::toString)
                 );
         var pStr = pStream.collect(Collectors.joining(", "));
-        return STR."\{command.letter()}(\{pStr})";
+        return command.letter() + "(" + pStr + ")";
     }
 }

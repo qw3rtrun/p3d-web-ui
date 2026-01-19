@@ -3,13 +3,13 @@ plugins {
     id 'org.springframework.boot' version "$spring_boot_version"
     id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
     id "io.freefair.lombok" version "$lombok_plugin_version"
-    id 'org.siouan.frontend-jdk17' version '8.0.0'
+    id 'org.siouan.frontend-jdk21' version '10.0.0'
 }
 
 group = 'org.qw3rtrun.p3d'
 version = '0.0.1-SNAPSHOT'
 
-def nodeVersionProp = "22.0.2"
+def nodeVersionProp = "22.22.0"
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
@@ -25,7 +25,7 @@ dependencies {
 
 frontend {
     //nodeDistributionProvided.set(true)
-    nodeVersion = "22.2.0"
+    nodeVersion = "22.22.0"
     packageJsonDirectory = file("${projectDir}/src/frontend")
     nodeInstallDirectory = file("${projectDir}/.node")
     assembleScript.set("run build")

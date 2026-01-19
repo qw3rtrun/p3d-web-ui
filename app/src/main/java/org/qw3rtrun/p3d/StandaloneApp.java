@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 @SpringBootApplication
 public class StandaloneApp {
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         SpringApplication.run(StandaloneApp.class, args);
     }
 }

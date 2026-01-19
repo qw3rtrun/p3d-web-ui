@@ -5,16 +5,13 @@ plugins {
 group = 'org.qw3rtrun.p3d'
 version = '0.0.1-SNAPSHOT'
 
-sourceCompatibility = JavaVersion.VERSION_22
-targetCompatibility = JavaVersion.VERSION_22
-
 ext {
-    springModulithVersion = "1.2.7"
+    springModulithVersion = "2.0.1"
 }
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of("22")
+        languageVersion = JavaLanguageVersion.of("25")
     }
 }
 
@@ -28,23 +25,13 @@ configurations {
     }
 }
 
-compileJava {
-    options.compilerArgs += ['--enable-preview']
-}
-
-tasks.withType(JavaExec) { jvmArgs += '--enable-preview' }
-
 dependencies {
     implementation 'org.apache.commons:commons-lang3:3.12.0'
     testImplementation 'org.junit.jupiter:junit-jupiter'
-}
-
-compileTestJava {
-    options.compilerArgs += ['--enable-preview']
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
-    jvmArgs += '--enable-preview'
     useJUnitPlatform()
 }
 

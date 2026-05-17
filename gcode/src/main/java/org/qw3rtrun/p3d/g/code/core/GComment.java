@@ -8,12 +8,12 @@ public record GComment(String text) implements GElement {
 
     @Override
     public String asString() {
-        return STR. ";\{ text }" ;
+        return ";" + text;
     }
 
     @Override
     public String toString() {
-        return STR."COM(\"\{text}\")";
+        return "COM(\"" + text + "\")";
     }
 
 }

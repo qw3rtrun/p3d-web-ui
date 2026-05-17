@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.code.core;
 
-public record GFlagField(char letter) implements GField {
+public record GFlagField(char letter) implements GNamedField {
 
     @Override
     public String rawValue() {
@@ -9,6 +9,6 @@ public record GFlagField(char letter) implements GField {
 
     @Override
     public String toString() {
-        return STR. "\{letter}()";
+        return letter + "()";
     }
 }

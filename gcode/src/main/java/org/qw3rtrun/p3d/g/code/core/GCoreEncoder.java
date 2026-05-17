@@ -17,11 +17,11 @@ public class GCoreEncoder {
     public String encode(@NonNull List<? extends GElement> fields, @NonNull CheckSum checksum) {
         var encode = encode(fields);
         checksum.add(encode);
-        return STR."\{encode}*\{checksum.getString()}";
+        return encode + "*" + checksum.getString();
     }
 
     public String encode(@NonNull List<? extends GElement> fields, @NonNull CheckSum checksum, @NonNull GComment comment) {
-        return STR."\{encode(fields, checksum)} \{encode(List.of(comment))}";
+        return encode(fields, checksum) + " " + encode(List.of(comment));
 
     }
 

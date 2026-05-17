@@ -9,7 +9,7 @@ public class QuoteUtils {
     public final String SPECIAL = "\";: *";
 
     public String quote(String str) {
-        return STR."\"\{str.replace("\"", "\"\"")}\"";
+        return "\"" + str.replace("\"", "\"\"") + "\"";
     }
 
     public String unquote(String str) {
@@ -22,10 +22,6 @@ public class QuoteUtils {
             return StringUtils.replace(str.substring(1, str.length() - 1), "\"\"", "\"");
         }
         return str;
-    }
-
-    public GLiteral createLiteral(String str) {
-        return StringUtils.containsAny(str, SPECIAL) ? GQuote.from(str) : new GString(str);
     }
 
     public GElement createQuote(String raw) {

@@ -105,7 +105,7 @@ public class GCoreDecoder {
         }
 
         void endAndThen(State next) {
-            elements.add(GField.from(new String(chars, start, pointer - start)));
+            elements.add(GNamedField.from(new String(chars, start, pointer - start)));
             super.endAndThen(next);
         }
     };
@@ -131,7 +131,7 @@ public class GCoreDecoder {
         @Override
         void endAndThen(State next) {
             var raw = new String(chars, start, pointer - start);
-            var s = QuoteUtils.createQuote(raw);
+            var s = GQuote.from(raw);
             elements.add(s);
             super.endAndThen(next);
         }

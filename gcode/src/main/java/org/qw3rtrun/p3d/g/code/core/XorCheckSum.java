@@ -15,6 +15,6 @@ public class XorCheckSum implements CheckSum {
 
     @Override
     public String getString() {
-        return STR. "\{ get() }" ;
+        return String.valueOf(get());
     }
 }

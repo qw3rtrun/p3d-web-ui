@@ -43,6 +43,6 @@ export class PrinterState {
                 triggerRef(this.temperature);
             }
         }
-        client.subscribe(uuid, this.cb);
+        this.client.subscribe(uuid, this.cb);
     }
 }

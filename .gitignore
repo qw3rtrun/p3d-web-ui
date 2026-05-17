@@ -37,3 +37,7 @@ out/
 .vscode/
 
 data/
+/frontend/web-ui/.frontend-gradle-plugin/**
+/frontend/web-ui/.node/
+/frontend/web-ui/src/frontend/node_modules/**
+/frontend/web-ui/src/frontend/package-lock.json

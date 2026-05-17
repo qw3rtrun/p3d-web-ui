@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.g.code;
 
-import static java.lang.String.format;
+import org.qw3rtrun.p3d.g.code.descr.GCode;
+import org.qw3rtrun.p3d.g.code.descr.GEncodable;
 
 /**
  * M115

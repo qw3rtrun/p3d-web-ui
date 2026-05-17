@@ -5,45 +5,35 @@ import org.qw3rtrun.p3d.g.code.core.*;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
 
 public class G {
 
-    public static GCommand M(int n, GField... fields) {
-        return new GCommand(-1, new GIntField('M', n), Arrays.asList(fields), Collections.emptyList(), null);
+    public static GCommand M(int n, GNamedField... fields) {
+        return new GCommand(new GIntField('M', n), Arrays.asList(fields));
     }
 
-    public static GCommand M(int n, GComment com, GField... fields) {
-        return new GCommand(new GIntField('M', n), Arrays.asList(fields), Collections.emptyList(), com);
+    public static GLine M(int n, GComment com, GNamedField... fields) {
+        return new GLine(new GCommand(new GIntField('M', n), Arrays.asList(fields)), com);
     }
 
-    public static GCommand M(int n, GLiteral lit, GField... fields) {
-        return new GCommand(new GIntField('M', n), Arrays.asList(fields), List.of(lit), null);
-    }
-
-    public static GCommand M(int n, GLiteral lit, GComment com, GField... fields) {
-        return new GCommand(new GIntField('M', n), Arrays.asList(fields), List.of(lit), com);
-    }
-
-    public static GCommand M(int n, GElement... elements) {
+    public static GLine M(int n, GElement... elements) {
         var c = new GIntField('M', n);
         var list = new ArrayList<GElement>();
         list.add(c);
         list.addAll(Arrays.asList(elements));
-        return GCommand.from(list);
+        return GLine.from(list);
     }
 
-    public static GCommand G(int n, GField... fields) {
+    public static GCommand G(int n, GNamedField... fields) {
         return new GCommand(new GIntField('G', n), Arrays.asList(fields));
     }
 
-    public static GCommand G(int n, GElement... elements) {
+    public static GLine G(int n, GElement... elements) {
         var c = new GIntField('G', n);
         var list = new ArrayList<GElement>();
         list.add(c);
         list.addAll(Arrays.asList(elements));
-        return GCommand.from(list);
+        return GLine.from(list);
     }
 
     public static GIntField T(int n) {
@@ -74,8 +64,8 @@ public class G {
         return new GStrField('F', val);
     }
 
-    public static GLiteral LIT(String val) {
-        return QuoteUtils.createLiteral(val);
+    public static GElement LIT(String val) {
+        return val.startsWith("\"") ? GQuote.from(val) : new GStrField(val);
     }
 
     public static GIntField N(int n) {
@@ -142,8 +132,12 @@ public class G {
         return new GDoubleField('I', new BigDecimal(n));
     }
 
+    public static GIntField E(int n) {
+        return new GIntField('E', n);
+    }
+
     public static GDoubleField E(double n) {
-        return new GDoubleField('I', new BigDecimal(n));
+        return new GDoubleField('E', new BigDecimal(n));
     }
 
     public static GComment COM(String text) {
@@ -272,6 +266,10 @@ public class G {
 
     public static GDoubleField F(double n) {
         return new GDoubleField('F', new BigDecimal(n));
+    }
+
+    public static GIntField STAR(int checksum) {
+        return new GIntField('*', checksum);
     }
 
 //    U,V,W	Additional axis coordinates (RepRapFirmware)

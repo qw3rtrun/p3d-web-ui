@@ -1,7 +1,6 @@
 package org.qw3rtrun.p3d.g.code.core;
 
 import org.apache.commons.lang3.tuple.Pair;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -13,7 +12,7 @@ class XorCheckSumTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "N0 M115*38",
+            "N1 M115*39",
             "N1 M155 S1*97",
             "N2 M117 Hello World!*7"
     })

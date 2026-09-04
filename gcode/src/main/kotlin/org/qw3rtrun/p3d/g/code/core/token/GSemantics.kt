@@ -6,6 +6,22 @@ sealed interface GLine {
     val line: List<GToken>
 }
 
+data class GCommand(val head: GIdentifier, val params: List<GElement> = emptyList()) {
+    constructor(headPair: Pair<GIdentifier, GElement>, params: List<GElement> = emptyList()) : this(
+        headPair.first,
+        listOf(headPair.second) + params
+    )
+
+    fun print(): String = buildString {
+        append(head.rawText())
+        for (param in params) {
+            append(param.rawText())
+        }
+    }
+}
+
+data class GCommandLine(val cmds: List<GCommand>, override val line: List<GToken>) : GLine
+
 sealed interface GError : GLine {
     val msg: String
 }

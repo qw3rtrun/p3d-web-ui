@@ -28,7 +28,7 @@ public class PrinterController {
 
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<TemperatureReport> getState(@PathVariable UUID id) {
-        return  manager.getReactor(id).state();
+        return manager.getReactor(id).state();
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

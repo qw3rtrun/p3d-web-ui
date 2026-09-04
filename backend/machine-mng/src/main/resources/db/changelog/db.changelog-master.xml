@@ -6,7 +6,7 @@
         http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
     <changeSet id="1" author="Liquibase">
         <createTable tableName="printer_entity" ifNotExists="true">
-            <column name="id" type="uuid" >
+            <column name="id" type="uuid">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
             <column name="name" type="varchar">
@@ -18,7 +18,7 @@
             <column name="port" type="number">
                 <constraints nullable="false"/>
             </column>
-            <column name="connected" type="boolean" defaultOnNull="false" />
+            <column name="connected" type="boolean" defaultOnNull="false"/>
         </createTable>
     </changeSet>
 </databaseChangeLog>

@@ -1,55 +1,55 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg
-   width="50"
-   height="50"
-   viewBox="0 0 50 50"
-   fill="none"
-   version="1.1"
-   id="svg1"
-   sodipodi:docname="logo-mini.svg"
-   inkscape:version="1.3 (0e150ed6c4, 2023-07-21)"
-   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
-   xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
-  <defs
-     id="defs1">
-    <rect
-       x="6.9892473"
-       y="10.573477"
-       width="40.56153"
-       height="26.164874"
-       id="rect1" />
-  </defs>
-  <sodipodi:namedview
-     id="namedview1"
-     pagecolor="#ffffff"
-     bordercolor="#000000"
-     borderopacity="0.25"
-     inkscape:showpageshadow="2"
-     inkscape:pageopacity="0.0"
-     inkscape:pagecheckerboard="0"
-     inkscape:deskcolor="#d1d1d1"
-     inkscape:zoom="16.74"
-     inkscape:cx="25.029869"
-     inkscape:cy="25"
-     inkscape:window-width="2303"
-     inkscape:window-height="1321"
-     inkscape:window-x="-9"
-     inkscape:window-y="-9"
-     inkscape:window-maximized="1"
-     inkscape:current-layer="svg1" />
-  <circle
-     cx="25"
-     cy="25"
-     r="25"
-     fill="#1F3BB3"
-     id="circle1" />
-  <text
-     xml:space="preserve"
-     id="text1"
-     style="font-weight:600;font-size:32px;line-height:0;font-family:'Lucida Sans';-inkscape-font-specification:'Lucida Sans Semi-Bold';letter-spacing:-3.18px;word-spacing:0px;white-space:pre;shape-inside:url(#rect1);fill:#ffffff;fill-opacity:1"
-     transform="translate(0.17921146,16.487455)"><tspan
+        width="50"
+        height="50"
+        viewBox="0 0 50 50"
+        fill="none"
+        version="1.1"
+        id="svg1"
+        sodipodi:docname="logo-mini.svg"
+        inkscape:version="1.3 (0e150ed6c4, 2023-07-21)"
+        xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+        xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+        xmlns="http://www.w3.org/2000/svg"
+        xmlns:svg="http://www.w3.org/2000/svg">
+    <defs
+            id="defs1">
+        <rect
+                x="6.9892473"
+                y="10.573477"
+                width="40.56153"
+                height="26.164874"
+                id="rect1"/>
+    </defs>
+    <sodipodi:namedview
+            id="namedview1"
+            pagecolor="#ffffff"
+            bordercolor="#000000"
+            borderopacity="0.25"
+            inkscape:showpageshadow="2"
+            inkscape:pageopacity="0.0"
+            inkscape:pagecheckerboard="0"
+            inkscape:deskcolor="#d1d1d1"
+            inkscape:zoom="16.74"
+            inkscape:cx="25.029869"
+            inkscape:cy="25"
+            inkscape:window-width="2303"
+            inkscape:window-height="1321"
+            inkscape:window-x="-9"
+            inkscape:window-y="-9"
+            inkscape:window-maximized="1"
+            inkscape:current-layer="svg1"/>
+    <circle
+            cx="25"
+            cy="25"
+            r="25"
+            fill="#1F3BB3"
+            id="circle1"/>
+    <text
+            xml:space="preserve"
+            id="text1"
+            style="font-weight:600;font-size:32px;line-height:0;font-family:'Lucida Sans';-inkscape-font-specification:'Lucida Sans Semi-Bold';letter-spacing:-3.18px;word-spacing:0px;white-space:pre;shape-inside:url(#rect1);fill:#ffffff;fill-opacity:1"
+            transform="translate(0.17921146,16.487455)"><tspan
        x="6.9882812"
        y="19.850857"
        id="tspan2">P3</tspan></text>

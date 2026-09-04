@@ -34,6 +34,6 @@ public record ReportHotendTemperature(@GParam("I") int index) implements GEncoda
 
     @Override
     public String toString() {
-        return getClass().getSimpleName()+"("+encode()+')';
+        return getClass().getSimpleName() + "(" + encode() + ')';
     }
 }

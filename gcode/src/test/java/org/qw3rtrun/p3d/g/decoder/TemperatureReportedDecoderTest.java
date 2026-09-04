@@ -21,8 +21,8 @@ class TemperatureReportedDecoderTest {
         var report = decoder.decode(line);
         Assertions.assertTrue(report.isPresent());
         Assertions.assertEquals(new OkTemperatureReported(
-                new TemperatureReport(125.25, 220, 128),
-                new TemperatureReport(35, 60, 90)
+                        new TemperatureReport(125.25, 220, 128),
+                        new TemperatureReport(35, 60, 90)
                 ), report.get()
         );
     }

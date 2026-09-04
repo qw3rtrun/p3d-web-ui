@@ -21,11 +21,40 @@ class GCodeReaderTest {
 
         iter.forEach {
             when (it) {
-                is GCommandLine -> {println(it.cmds); println(it.line)}
+                is GCommandLine -> {
+                    println(it.cmds); println(it.line)
+                }
+
                 is GError -> println(it.msg)
             }
         }
     }
 
+    @Test
+    fun tailString() {
+        val gcode = """
+            G92 .1
+            G92 S.1
+            M28 file.txt
+            M28 B1 file.txt
 
+            M30 /path/to/file.gco
+
+            M32 S5022 !/boats/sailboat.gco
+            M32 P !/models/lgbust.gco#
+
+            M33 funstuff/mask.gco
+        """.trimIndent()
+
+        val iter = GLineIterator(tokenizer.parse(gcode).iterator()).asSequence()
+        iter.forEach {
+            when (it) {
+                is GCommandLine -> {
+                    println(it.cmds); println(it.line)
+                }
+
+                is GError -> println(it.msg)
+            }
+        }
+    }
 }

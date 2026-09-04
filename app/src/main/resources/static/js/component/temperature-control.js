@@ -35,7 +35,7 @@ export default {
         const target = ref(0);
         const input = ref(0);
         const presetIndex = ref(0);
-        watch(() => props.value, (n) =>  {
+        watch(() => props.value, (n) => {
             console.log("New target temp changed :" + n);
             input.value = n;
         });

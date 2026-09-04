@@ -34,13 +34,13 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
             ch == '(' -> inlineComment('(')
             ch == '*' -> {
                 ch = null;
-                return GChecksum
+                GChecksum
             }
 
             else -> {
                 val unknown = GUnknown(ch!!)
                 ch = null
-                return unknown
+                unknown
             }
         }
     }
@@ -61,13 +61,18 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         }
     }
 
-    fun number(start: Char): GNumber {
-        val str = StringBuilder(start.toString())
-        var decimal = false
-        var current = start
+    fun number(start: Char): GToken {
+        var decimal = !start.isDigit()
         ch = null
+        val str = StringBuilder(if (decimal) "0$start" else "$start")
+        if (decimal) {
+            ch = if (chars.hasNext()) chars.next() else null
+            if (ch?.isDigit() == true) {
+                str.append(ch)
+            } else return GUnknown(start)
+        }
         while (chars.hasNext()) {
-            current = chars.next()
+            val current = chars.next()
             when {
                 current.isDigit() -> str.append(current)
                 current == '.' -> {
@@ -82,6 +87,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
 
             }
         }
+        println(str)
         val value = BigDecimal(str.toString())
 
         return if (decimal) GFloat(value) else GInt(value.toInt())

@@ -11,6 +11,8 @@ class G(private val output: (GCommand) -> Unit) {
     fun T(num: Int, vararg tail: GElement) = cmd(GLetter('T'), num.toToken(), *tail)
     fun T(cmd: GElement, vararg tail: GElement) = cmd(GLetter('T'), cmd, *tail)
 
-    private fun cmd(head: GIdentifier, vararg tail: GElement) = cmd(GCommand(head, tail.toList()))
+    private fun cmd(head: GIdentifier, cmd: GElement, vararg tail: GElement) =
+        cmd(GCommand(Pair(head, cmd), tail.toList()))
+
     private fun cmd(cmd: GCommand) = this.output(cmd)
 }

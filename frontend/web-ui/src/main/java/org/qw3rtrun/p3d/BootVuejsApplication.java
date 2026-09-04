@@ -34,5 +34,6 @@ class CustomEndpoint {
         return new CustomData(123, "Vasya Petrov");
     }
 
-    record CustomData(int id, String name) {}
+    record CustomData(int id, String name) {
+    }
 }

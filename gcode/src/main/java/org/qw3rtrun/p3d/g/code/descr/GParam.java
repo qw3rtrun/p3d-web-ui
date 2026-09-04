@@ -9,5 +9,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.RECORD_COMPONENT)
 public @interface GParam {
     String value();
+
     String defaultValue() default "";
 }

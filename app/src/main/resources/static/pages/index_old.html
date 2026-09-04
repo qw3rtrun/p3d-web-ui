@@ -7,14 +7,14 @@
     <link rel="stylesheet" type="text/css" href="/webjars/bootstrap/dist/css/bootstrap.min.css"/>
     <link rel="stylesheet" type="text/css" href="../css/main.css"/>
     <script type="importmap">
-	{
-		"imports": {
-			"bootstrap": "/webjars/bootstrap/dist/js/bootstrap.esm.min.js",
-			"@popperjs/core": "/webjars/popperjs__core/lib/index.js",
-			"vue": "/webjars/vue/dist/vue.esm-browser.js",
-			"printer": "./js/printer.js"
-		}
-	}
+        {
+            "imports": {
+                "bootstrap": "/webjars/bootstrap/dist/js/bootstrap.esm.min.js",
+                "@popperjs/core": "/webjars/popperjs__core/lib/index.js",
+                "vue": "/webjars/vue/dist/vue.esm-browser.js",
+                "printer": "./js/printer.js"
+            }
+        }
 
     </script>
 
@@ -22,6 +22,7 @@
         import 'bootstrap';
         import {createApp} from 'vue';
         import Printer from 'printer'
+
         createApp(Printer).mount("#th1");
     </script>
 </head>

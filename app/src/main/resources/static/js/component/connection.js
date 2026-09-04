@@ -20,8 +20,7 @@ export default {
     beforeUnmount() {
         this.stream.removeEventListener("message", this.eventHandler);
     },
-    components : {
-    },
+    components: {},
     methods: {
         connect() {
             this.api.connect();

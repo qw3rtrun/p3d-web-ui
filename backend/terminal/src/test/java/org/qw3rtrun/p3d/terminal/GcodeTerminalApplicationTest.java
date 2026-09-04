@@ -54,6 +54,7 @@ class GcodeTerminalApplicationTest {
                 .map(s -> "[" + s.trim() + "]")
                 .subscribe(System.out::println);
     }
+
     @Test
     void fluxTest2() {
         Flux.just("Test\n", "Hello ", "World!\n", "Oh\nNo", "!\n")

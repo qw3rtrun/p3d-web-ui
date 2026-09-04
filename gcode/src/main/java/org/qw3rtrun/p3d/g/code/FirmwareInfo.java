@@ -23,6 +23,6 @@ public record FirmwareInfo() implements GEncodable {
 
     @Override
     public String toString() {
-        return getClass().getSimpleName()+"("+encode()+')';
+        return getClass().getSimpleName() + "(" + encode() + ')';
     }
 }

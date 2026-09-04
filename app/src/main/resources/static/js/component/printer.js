@@ -68,7 +68,7 @@ export default {
         setBedTemp() {
             this.api.setBedTemp(this.bed.target_);
         },
-        stopBedHeating(){
+        stopBedHeating() {
             this.api.setBedTemp(0);
         },
         autoReportTemp() {

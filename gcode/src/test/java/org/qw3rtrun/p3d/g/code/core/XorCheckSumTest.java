@@ -16,7 +16,6 @@ class XorCheckSumTest {
             "N1 M155 S1*97",
             "N2 M117 Hello World!*7"
     })
-
     void checksum(String gcode) {
         var data = split(gcode);
         checkSum.add(data.getKey());

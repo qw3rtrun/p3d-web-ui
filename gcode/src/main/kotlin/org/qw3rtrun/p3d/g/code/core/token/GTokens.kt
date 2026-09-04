@@ -18,7 +18,7 @@ sealed interface GIdentifier : GElement {
     override fun rawText() = name
 }
 
-data class GUnknown(val str: String) : GToken {
+data class GUnknown(val str: String) : GElement {
     constructor(ch: Char) : this(ch.toString())
 
     override fun rawText(): String = str

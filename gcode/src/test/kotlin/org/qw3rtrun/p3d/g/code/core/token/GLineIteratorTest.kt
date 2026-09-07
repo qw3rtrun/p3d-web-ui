@@ -272,4 +272,111 @@ class GLineIteratorTest {
         assertFalse(iter.hasNext())
         assertFalse(iter.hasNext())
     }
+
+    @Test
+    fun `next after the last line throws`() {
+        // Token list iterator on purpose: neither iterator guards on `hasNext()`, they propagate
+        // what the underlying source throws (GCODE_TODO.md 1.17).
+        val iter = GLineIterator(tokenizer.parse("G1 X1\n").toList().iterator())
+
+        iter.next()
+
+        assertFalse(iter.hasNext())
+        assertThrows<NoSuchElementException> { iter.next() }
+    }
+
+    @Test
+    fun `a line of nothing but whitespace is one line`() {
+        val lines = GLineIterator(tokenizer.parse("   \n").iterator()).asSequence().toList()
+
+        assertEquals(1, lines.size)
+        assertInstanceOf(GSimpleLine::class.java, lines[0])
+        assertEquals(listOf(GSpace, GSpace, GSpace, GLineBreak("\n")), lines[0].payload)
+    }
+
+    @Test
+    fun `the payload of simple lines reproduces the input`() {
+        val input = "G28\n; comment\nM104 S200\n\nG1 Z5"
+        val lines = GLineIterator(tokenizer.parse(input).iterator()).asSequence().toList()
+
+        assertEquals(5, lines.size)
+        assertEquals(input, lines.joinToString("") { line -> line.payload.joinToString("") { it.rawText() } })
+    }
+
+    @Test
+    fun `a line number without a checksum is not a packet`() {
+        // GCODE_spec.md section 7.3 requires both or neither; reporting it as an error is still
+        // open (GCODE_TODO.md 4.3), so this only pins that it is not treated as a valid packet.
+        val line = GLineIterator(tokenizer.parse("N100 G1 X10\n").iterator()).next()
+
+        assertFalse(line is GPacketLine)
+    }
+
+    @Test
+    fun `a checksum without a line number is not a packet`() {
+        val line = GLineIterator(tokenizer.parse("G1 X10*45\n").iterator()).next()
+
+        assertFalse(line is GPacketLine)
+    }
+
+    @Test
+    fun `a star inside a tail comment does not make a packet`() {
+        val line = GLineIterator(tokenizer.parse("N1 G28 ; 3*4\n").iterator()).next()
+
+        assertFalse(line is GPacketLine)
+    }
+
+    @Test
+    fun `a star inside a quoted string does not make a packet`() {
+        val line = GLineIterator(tokenizer.parse("N1 M117 \"a*b\"\n").iterator()).next()
+
+        assertFalse(line is GPacketLine)
+    }
+
+    @Test
+    fun `packet line with zero line number and zero checksum`() {
+        val packet = GLineIterator(tokenizer.parse("N0 G28*0\n").iterator()).next() as GPacketLine
+
+        assertEquals(GInt(0), packet.number)
+        assertEquals(GCheckSumValue(GChecksum, GInt(0)), packet.checksum)
+        assertEquals(listOf(GSpace, GLetter('G'), GInt(28)), packet.payload)
+    }
+
+    @Test
+    fun `packet line with a large line number and the maximum checksum`() {
+        val packet = GLineIterator(tokenizer.parse("N999999 G28*255\n").iterator()).next() as GPacketLine
+
+        assertEquals(GInt(999999), packet.number)
+        assertEquals(GCheckSumValue(GChecksum, GInt(255)), packet.checksum)
+    }
+
+    @Test
+    fun `consecutive packet lines`() {
+        val lines = GLineIterator(tokenizer.parse("N1 G28*18\nN2 G28*17\nN3 T0*57\n").iterator())
+            .asSequence().toList()
+
+        assertEquals(3, lines.size)
+        assertTrue(lines.all { it is GPacketLine })
+        assertEquals(
+            listOf(GInt(1), GInt(2), GInt(3)),
+            lines.map { (it as GPacketLine).number }
+        )
+        assertEquals(
+            listOf(GInt(18), GInt(17), GInt(57)),
+            lines.map { (it as GPacketLine).checksum.value }
+        )
+    }
+
+    @Test
+    fun `line count matches the number of terminated lines`() {
+        assertEquals(0, lineCount(""))
+        assertEquals(1, lineCount("G28"))
+        assertEquals(1, lineCount("G28\n"))
+        assertEquals(2, lineCount("G28\nG28"))
+        assertEquals(2, lineCount("G28\nG28\n"))
+        assertEquals(3, lineCount("\n\n\n"))
+    }
+
+    private fun lineCount(gcode: String) =
+        GLineIterator(tokenizer.parse(gcode).iterator()).asSequence().count()
 }

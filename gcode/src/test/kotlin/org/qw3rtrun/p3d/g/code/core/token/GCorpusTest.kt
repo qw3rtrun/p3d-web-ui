@@ -1,0 +1,97 @@
+package org.qw3rtrun.p3d.g.code.core.token
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+
+/**
+ * Corpus level tests over `src/test/resources/marlin.gcode` - 300+ lines of real Marlin flavoured
+ * G-code. These guard the lexer and the liner against regressions on realistic input rather than on
+ * hand-written snippets.
+ *
+ * The corpus is normalised to LF before parsing: CRLF input is handled separately (GCODE_TODO.md
+ * 1.12) and the checkout may or may not use CRLF, which would make these tests platform dependent.
+ */
+class GCorpusTest {
+
+    private val tokenizer = GTokenizer()
+
+    private val corpus: String = requireNotNull(javaClass.getResourceAsStream("/marlin.gcode")) {
+        "marlin.gcode fixture is missing from the test resources"
+    }.readBytes().decodeToString().replace("\r\n", "\n")
+
+    private val lines: List<String> = corpus.split("\n").let {
+        if (it.last().isEmpty()) it.dropLast(1) else it
+    }
+
+    @Test
+    fun `the corpus is big enough to be worth testing`() {
+        assertTrue(lines.size > 300) { "expected a corpus of 300+ lines, got ${lines.size}" }
+    }
+
+    @Test
+    fun `the whole corpus tokenizes without failing`() {
+        val tokens = tokenizer.parse(corpus).toList()
+
+        assertTrue(tokens.size > 2500) { "expected 2500+ tokens, got ${tokens.size}" }
+        assertTrue(tokens.none { it is GUnknown && it.str.isEmpty() })
+    }
+
+    @Test
+    fun `every line tokenizes into at least one token`() {
+        lines.filter { it.isNotEmpty() }.forEach { line ->
+            val tokens = tokenizer.parse(line).toList()
+
+            assertTrue(tokens.isNotEmpty()) { "line [$line] produced no tokens" }
+        }
+    }
+
+    @Test
+    fun `the corpus contains the token kinds it is meant to exercise`() {
+        val tokens = tokenizer.parse(corpus).toList()
+
+        assertTrue(tokens.any { it is GLetter }) { "no command letters in the corpus" }
+        assertTrue(tokens.any { it is GInt }) { "no integers in the corpus" }
+        assertTrue(tokens.any { it is GFloat }) { "no decimals in the corpus" }
+        assertTrue(tokens.any { it is GTailComment }) { "no tail comments in the corpus" }
+        assertTrue(tokens.any { it is GQuotedString }) { "no quoted strings in the corpus" }
+        assertTrue(tokens.any { it is GLineBreak }) { "no line breaks in the corpus" }
+    }
+
+    @Test
+    fun `the liner splits the corpus into one line per line break`() {
+        val parsed = GLineIterator(tokenizer.parse(corpus).iterator()).asSequence().toList()
+
+        assertEquals(lines.size, parsed.size)
+        assertTrue(parsed.all { it.payload.isNotEmpty() }) { "a parsed line has an empty payload" }
+    }
+
+    @Test
+    fun `only the documented lexer gaps produce unknown tokens`() {
+        // Characters the lexer does not understand yet. Each entry is a documented gap:
+        // '-' and '+' signs (GCODE_TODO.md 1.1), '.' from leading-dot decimals and file extensions,
+        // '/' '\' '~' '!' ':' '|' from paths, '#' from RS274 parameters, ''' and ',' from prose in
+        // quoted strings. The set is expected to shrink as those are implemented.
+        val expected = listOf("!", "#", "'", ",", "-", ".", "/", ":", "\\", "|", "~")
+
+        val actual = tokenizer.parse(corpus)
+            .filterIsInstance<GUnknown>()
+            .map { it.str }
+            .distinct()
+            .sorted()
+            .toList()
+
+        assertEquals(expected, actual)
+    }
+
+    @Test
+    fun `each line round trips through the token stream`() {
+        val failing = lines.filter { line ->
+            runCatching { tokenizer.parse(line).joinToString("") { it.rawText() } }.getOrNull() != line
+        }
+
+        // Quarantine, not an expectation: both lines use a leading-dot decimal, which the lexer
+        // currently duplicates (GCODE_TODO.md 1.13). This list must become empty once that is fixed.
+        assertEquals(listOf("G92 .1 ;TODO", "M851 X0.20 Y.40"), failing)
+    }
+}

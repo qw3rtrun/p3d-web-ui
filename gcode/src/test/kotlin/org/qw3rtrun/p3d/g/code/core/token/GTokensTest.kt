@@ -95,6 +95,52 @@ class GTokensTest {
         }
 
         @Test
+        fun `int carries the lexeme it was parsed from`() {
+            val int = GInt(1, "01")
+
+            assertEquals(1, int.int)
+            assertEquals("01", int.rawText())
+        }
+
+        @Test
+        fun `int defaults its lexeme to the canonical form`() {
+            assertEquals("1", GInt(1).lexeme)
+            assertEquals("-7", GInt(-7).lexeme)
+        }
+
+        @Test
+        fun `int equality is lexeme sensitive`() {
+            // Same value, different lexeme: two tokens, so that rawText() round-trips what was read.
+            assertNotEquals(GInt(1), GInt(1, "01"))
+            assertNotEquals(GInt(5), GInt(5, "+5"))
+            assertEquals(GInt(1), GInt(1, "1"))
+        }
+
+        @Test
+        fun `float carries the lexeme it was parsed from`() {
+            val float = GFloat(BigDecimal("0.5"), ".5")
+
+            assertEquals(0, float.float.compareTo(BigDecimal("0.5")))
+            assertEquals(".5", float.rawText())
+        }
+
+        @Test
+        fun `float built from a string keeps that string as its lexeme`() {
+            assertEquals(".5", GFloat(".5").rawText())
+            assertEquals("1.", GFloat("1.").rawText())
+            assertEquals("+1.5", GFloat("+1.5").rawText())
+        }
+
+        @Test
+        fun `float from a double does not expand the binary representation`() {
+            // BigDecimal(1.05) is 1.0500000000000000444...; BigDecimal.valueOf(1.05) is 1.05.
+            assertEquals("1.05", GFloat(1.05).rawText())
+            assertEquals("1.05", 1.05.toToken().rawText())
+            assertEquals("-0.1", GFloat(-0.1).rawText())
+            assertEquals("0.0", GFloat(0.0).rawText())
+        }
+
+        @Test
         fun `float equality is scale sensitive`() {
             // Intentional: GFloat keeps BigDecimal semantics so that rawText() round-trips the exact
             // digits that were parsed. 1.0 and 1.00 are different lexemes, hence different tokens.

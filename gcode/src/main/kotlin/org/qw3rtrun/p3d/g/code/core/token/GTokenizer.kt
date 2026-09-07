@@ -27,7 +27,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         return when {
             ch!!.isWhitespace() -> space(ch!!)
             ch!!.isLetter() -> ident(ch!!)
-            ch!!.isDigit() || ch == '.' -> number(ch!!)
+            ch!!.isDigit() || ch == '.' || ch == '-' || ch == '+' -> number(ch!!)
             ch == '\"' -> string()
             ch == '{' -> expression('{')
             ch == ';' -> tailComment()
@@ -49,48 +49,72 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         ch = null
         return when (current) {
             ' ' -> GSpace
+            '\t' -> GTab
             '\n' -> GLineBreak()
             '\r' -> {
                 if (chars.hasNext()) {
-                    ch = chars.next()
-                    if (ch == '\n') GLineBreak("\r\n") else GUnknown('\r')
+                    val next = chars.next()
+                    if (next == '\n') {
+                        // CR and LF belong to one break token, both characters are consumed.
+                        GLineBreak("\r\n")
+                    } else {
+                        // A lone CR is not a break: keep the lookahead for the next token.
+                        ch = next
+                        GUnknown('\r')
+                    }
                 } else GUnknown(current)
             }
 
-            else -> GUnknown(current);
+            else -> GUnknown(current)
         }
     }
 
+    /**
+     * Lexes a number per spec section 3.1: `[+|-] digits [ . digits ]` or `[+|-] . digits`, with at
+     * least one digit somewhere and at most one decimal point.
+     *
+     * The lexeme is handed to the token verbatim, so a sign, leading zeros (`G01`) and a trailing
+     * dot (`X1.`) survive `rawText()` unchanged.
+     */
     fun number(start: Char): GToken {
-        var decimal = !start.isDigit()
         ch = null
-        val str = StringBuilder(if (decimal) "0$start" else "$start")
-        if (decimal) {
-            ch = if (chars.hasNext()) chars.next() else null
-            if (ch?.isDigit() == true) {
-                str.append(ch)
-            } else return GUnknown(start)
-        }
-        while (chars.hasNext()) {
-            val current = chars.next()
-            when {
-                current.isDigit() -> str.append(current)
-                current == '.' -> {
-                    str.append(current)
-                    decimal = true;
-                }
+        val raw = StringBuilder()
+        var dots = 0
+        var digits = 0
+        var current: Char? = start
 
-                else -> {
-                    ch = current
-                    break
-                }
-
+        if (current == '+' || current == '-') {
+            raw.append(current)
+            current = if (chars.hasNext()) chars.next() else null
+            // A sign belongs to a number and to nothing else. If no number follows, the sign is a
+            // lexical error and the character that followed it goes back into the lookahead.
+            if (current == null || !(current.isDigit() || current == '.')) {
+                ch = current
+                return GUnknown(raw.toString())
             }
         }
-        println(str)
-        val value = BigDecimal(str.toString())
 
-        return if (decimal) GFloat(value) else GInt(value.toInt())
+        while (current != null) {
+            when {
+                current.isDigit() -> digits++
+                current == '.' -> dots++
+                else -> break
+            }
+            raw.append(current)
+            current = if (chars.hasNext()) chars.next() else null
+        }
+        // Whatever stopped the number (null at end of input) is the next token's first character.
+        ch = current
+
+        val text = raw.toString()
+        return when {
+            // A lone `.`, a bare sign or more than one decimal point is not a number: keep the
+            // lexeme as-is instead of letting BigDecimal throw out of the iterator.
+            digits == 0 || dots > 1 -> GUnknown(text)
+            dots == 1 -> GFloat(BigDecimal(text), text)
+            // An integer that does not fit an Int is kept verbatim rather than silently truncated.
+            else -> text.toIntOrNull()?.let { GInt(it, text) } ?: GUnknown(text)
+        }
     }
 
     fun string(): GToken {

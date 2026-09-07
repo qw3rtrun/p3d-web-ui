@@ -9,8 +9,8 @@ import org.junit.jupiter.api.Test
  * G-code. These guard the lexer and the liner against regressions on realistic input rather than on
  * hand-written snippets.
  *
- * The corpus is normalised to LF before parsing: CRLF input is handled separately (GCODE_TODO.md
- * 1.12) and the checkout may or may not use CRLF, which would make these tests platform dependent.
+ * The corpus is parsed exactly as it is checked out - LF or CRLF - so these tests also guard the
+ * line-ending handling on realistic input.
  */
 class GCorpusTest {
 
@@ -18,9 +18,9 @@ class GCorpusTest {
 
     private val corpus: String = requireNotNull(javaClass.getResourceAsStream("/marlin.gcode")) {
         "marlin.gcode fixture is missing from the test resources"
-    }.readBytes().decodeToString().replace("\r\n", "\n")
+    }.readBytes().decodeToString()
 
-    private val lines: List<String> = corpus.split("\n").let {
+    private val lines: List<String> = corpus.lines().let {
         if (it.last().isEmpty()) it.dropLast(1) else it
     }
 
@@ -67,12 +67,19 @@ class GCorpusTest {
     }
 
     @Test
+    fun `no line break is counted twice`() {
+        val breaks = tokenizer.parse(corpus).count { it is GLineBreak }
+
+        assertEquals(corpus.count { it == '\n' }, breaks)
+    }
+
+    @Test
     fun `only the documented lexer gaps produce unknown tokens`() {
         // Characters the lexer does not understand yet. Each entry is a documented gap:
-        // '-' and '+' signs (GCODE_TODO.md 1.1), '.' from leading-dot decimals and file extensions,
-        // '/' '\' '~' '!' ':' '|' from paths, '#' from RS274 parameters, ''' and ',' from prose in
-        // quoted strings. The set is expected to shrink as those are implemented.
-        val expected = listOf("!", "#", "'", ",", "-", ".", "/", ":", "\\", "|", "~")
+        // '.' from file extensions, '/' '\' '~' '!' ':' '|' from paths, '#' from RS274 parameters,
+        // ''' and ',' from prose in bare rest-of-line strings (GCODE_spec.md section 3.4a).
+        // The set is expected to shrink as those are implemented.
+        val expected = listOf("!", "#", "'", ",", ".", "/", ":", "\\", "|", "~")
 
         val actual = tokenizer.parse(corpus)
             .filterIsInstance<GUnknown>()
@@ -90,8 +97,8 @@ class GCorpusTest {
             runCatching { tokenizer.parse(line).joinToString("") { it.rawText() } }.getOrNull() != line
         }
 
-        // Quarantine, not an expectation: both lines use a leading-dot decimal, which the lexer
-        // currently duplicates (GCODE_TODO.md 1.13). This list must become empty once that is fixed.
-        assertEquals(listOf("G92 .1 ;TODO", "M851 X0.20 Y.40"), failing)
+        // No quarantine: number tokens carry their original lexeme, so every line of the corpus
+        // reproduces itself byte for byte.
+        assertEquals(emptyList<String>(), failing)
     }
 }

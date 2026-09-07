@@ -368,6 +368,19 @@ class GLineIteratorTest {
     }
 
     @Test
+    fun `a negative line number is indistinguishable from the missing-number sentinel`() {
+        // Characterisation point, not an expectation: `GLiner` reports "no line number" as
+        // GInt(-1), which a real `N-1` now also produces. GCODE_TODO.md 4.3 replaces the
+        // sentinel with a nullable field or a GError subtype; this test must change with it.
+        val parsed = GLineIterator(tokenizer.parse("N-1 G28*12\n").iterator()).next() as GPacketLine
+        val missing = GLineIterator(tokenizer.parse("N G28*12\n").iterator()).next() as GPacketLine
+
+        assertEquals(GInt(-1), parsed.number)
+        assertEquals(GInt(-1), missing.number)
+        assertEquals(parsed.number, missing.number)
+    }
+
+    @Test
     fun `line count matches the number of terminated lines`() {
         assertEquals(0, lineCount(""))
         assertEquals(1, lineCount("G28"))

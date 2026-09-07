@@ -591,8 +591,8 @@ The mapping is given here so that the spec and the code can be kept in step.
 |---|---|
 | Letter identifier | `GLetter(letter: Char)` : `GIdentifier` |
 | Checksum marker `*` | `GChecksum` (object, `name == "*"`) : `GIdentifier` |
-| Integer | `GInt(int: Int)` : `GNumber` |
-| Decimal | `GFloat(float: BigDecimal)` : `GNumber` |
+| Integer | `GInt(int: Int, lexeme: String = int.toString())` : `GNumber` |
+| Decimal | `GFloat(float: BigDecimal, lexeme: String = float.toString())` : `GNumber` |
 | Quoted string | `GQuotedString(string: String)` : `GString` — `rawText()` re-doubles `"` |
 | Expression `{ … }` | `GRawExpression` : `GExpression` |
 | Tail comment `;` | `GTailComment(string, key = ";")` : `GComment` |
@@ -605,20 +605,21 @@ Every token exposes `rawText()`, so a token stream round-trips to the original t
 
 Notable choices: **decimals are `BigDecimal`**, so no precision is lost at parse time
 ([§3.1](#31-numeric-values) precision limits apply only when the value reaches firmware); the
-quoted-string escape is the **RepRapFirmware doubling** rule.
+quoted-string escape is the **RepRapFirmware doubling** rule; and a **number carries the lexeme it
+was read from** alongside its value, so `+5`, `01`, `.5` and `1.` re-print as written. The lexeme is
+part of token identity — `GInt(1) != GInt(1, "01")` — and value comparison goes through `int` /
+`float.compareTo`.
 
 ### B.2 Tokenizer — `token/GTokenizer.kt`
 
 `GTokenizer.parse(…)` yields a lazy `Sequence<GToken>`/`Iterator<GToken>` over a character stream,
 dispatching on the first character exactly as in the [§2](#2-lexical-structure-tokens) table:
 whitespace → `GSpace`/`GTab`/`GLineBreak` (with `\r\n` lookahead, lone `\r` → `GUnknown`), letter →
-`GLetter`, digit or `.` → number, `"` → string, `{` → balanced expression, `;` → tail comment,
+`GLetter`, digit, `.`, `+` or `-` → number, `"` → string, `{` → balanced expression, `;` → tail comment,
 `(` → balanced inline comment, `*` → `GChecksum`, otherwise `GUnknown`.
 
 Deviations from this spec, as currently written (all verified by running the module):
 
-* signs (`+`/`-`) are **not** part of the number token — they lex as `GUnknown`, so negative values
-  are not representable: `G1 E-5` → `… GLetter(E), GUnknown(-), GInt(5)`;
 * `GInlineComment.string` **keeps the closing `)`** (`inlineComment()` appends the character before
   decrementing the nesting counter) while `rawText()` appends another one, so
   `G1 (feedrate) F1500` re-prints as `G1 (feedrate)) F1500`;
@@ -626,14 +627,20 @@ Deviations from this spec, as currently written (all verified by running the mod
   closing one (`M"asd` → `M"asd"`); both degrade to a token rather than raising a lexical error;
 * `parseLines(Sequence<String>)` does not re-insert line terminators, so consecutive lines are
   concatenated (`["G28", "M104 S200"]` → `G28M104 S200`);
-* `Double.toToken()` uses `BigDecimal(Double)`, i.e. the exact binary expansion:
-  `1.05.toToken().rawText()` = `1.0500000000000000444089209850062616169452667236328125`
-  (`BigDecimal.valueOf` would give `1.05`);
-* `.5` is normalised to `0.5`, and a lone `.` degrades to `GUnknown`;
+* a lone `.`, a bare sign, a number with two decimal points (`1.2.3`) and an integer too large for
+  `Int` all degrade to `GUnknown` carrying the original lexeme, rather than to a typed lexical error
+  ([§9](#9-error-handling));
 * a subcode ([§4.1](#41-command-letters)) is lexed as a decimal: `G29.1` → `GLetter(G), GFloat(29.1)`;
 * bare rest-of-line strings ([§3.4](#34-string-values)) are not recognised — `M117 Hello World`
-  becomes one `GLetter` per character;
-* `GTokenizerIterator.number()` still contains a debug `println`.
+  becomes one `GLetter` per character.
+
+Conforming as of the number-lexeme pass: the optional sign of [§3.1](#31-numeric-values) is part of
+the number token (`G1 E-5` → `… GLetter(E), GInt(-5)`), a tab is `GTab`
+([§2.1](#21-whitespace)), and `rawText()` round-trips **every** construct the lexer accepts,
+non-canonical numbers included — `.5`, `01` and `1.` come back byte-identical.
+
+Both line terminators of [§1.2](#12-end-of-line) are handled: `\r\n` is one `GLineBreak("\r\n")`, and
+a lone `\r` degrades to `GUnknown` without consuming the following character.
 
 ### B.3 Line model — `token/GSemantics.kt`, `token/GLiner.kt`
 

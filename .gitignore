@@ -41,3 +41,7 @@ data/
 /frontend/web-ui/.node/
 /frontend/web-ui/src/frontend/node_modules/**
 /frontend/web-ui/src/frontend/package-lock.json
+
+### Claude Code ###
+# .claude/skills is a junction to .agents/skills (the tracked source)
+.claude/

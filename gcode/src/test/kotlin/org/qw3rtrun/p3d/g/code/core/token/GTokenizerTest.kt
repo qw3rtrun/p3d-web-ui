@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.g.code.core.token
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -15,7 +16,6 @@ import org.junit.jupiter.params.provider.ValueSource
  * contract, the input overloads and `rawText()` round-tripping.
  *
  * Deliberately not covered here (tracked in GCODE_TODO.md, tests come with the fixes):
- * signed numbers, leading-dot / trailing-dot / multi-dot decimals, leading zeros, tabs, CRLF,
  * unterminated strings and comments, `parseLines`, and the text *content* of inline comments.
  */
 class GTokenizerTest {
@@ -98,6 +98,156 @@ class GTokenizerTest {
         @Test
         fun `a number at end of input is emitted`() {
             assertEquals(listOf(GLetter('F'), GInt(1800)), tokens("F1800"))
+        }
+
+        @Test
+        fun `a decimal may start with a dot`() {
+            assertEquals(listOf(GLetter('X'), GFloat(".5")), tokens("X.5"))
+            assertEquals(listOf(GLetter('Y'), GFloat(".40")), tokens("Y.40"))
+        }
+
+        @Test
+        fun `a leading dot decimal keeps its lexeme and its value`() {
+            val result = tokens("X.5")
+
+            assertEquals(".5", result[1].rawText())
+            assertEquals(0, (result[1] as GFloat).float.compareTo(GFloat("0.5").float))
+        }
+
+        @Test
+        fun `a leading dot decimal does not duplicate its first digit`() {
+            assertEquals(2, tokens("X.5").size)
+            assertEquals(listOf(GFloat(".5"), GLetter('X')), tokens(".5X"))
+            assertEquals(listOf(GFloat(".5"), GSpace, GInt(5)), tokens(".5 5"))
+        }
+
+        @Test
+        fun `a lone dot is unknown`() {
+            assertEquals(listOf(GLetter('X'), GUnknown(".")), tokens("X."))
+        }
+
+        @Test
+        fun `a dot that is not followed by a digit is unknown and keeps the next token`() {
+            assertEquals(listOf(GLetter('X'), GUnknown("."), GLetter('A')), tokens("X.A"))
+            assertEquals(listOf(GUnknown("."), GSpace, GLetter('X')), tokens(". X"))
+        }
+
+        @Test
+        fun `a trailing dot is a real, lexeme included`() {
+            // GCODE_spec.md section 3.1 lists `2.` among the real forms.
+            val result = tokens("X1.")
+
+            assertEquals(listOf(GLetter('X'), GFloat("1.")), result)
+            assertInstanceOf(GNumber::class.java, result[1])
+            assertEquals("X1.", reprint("X1."))
+        }
+
+        @Test
+        fun `a negative integer includes its sign`() {
+            // GCODE_spec.md section 3.1 - an optional sign is part of the number.
+            assertEquals(listOf(GLetter('E'), GInt(-5)), tokens("E-5"))
+            assertEquals(listOf(GLetter('P'), GInt(-1), GSpace, GLetter('S'), GInt(1)), tokens("P-1 S1"))
+        }
+
+        @Test
+        fun `a negative real includes its sign`() {
+            assertEquals(listOf(GLetter('Z'), GFloat("-0.2")), tokens("Z-0.2"))
+            assertEquals(listOf(GLetter('X'), GFloat("-1.70")), tokens("X-1.70"))
+            assertEquals(listOf(GLetter('X'), GFloat("-.5")), tokens("X-.5"))
+        }
+
+        @Test
+        fun `a plus sign is kept in the lexeme`() {
+            assertEquals(listOf(GLetter('S'), GInt(5, "+5")), tokens("S+5"))
+            assertEquals(5, (tokens("S+5")[1] as GInt).int)
+            assertEquals(listOf(GLetter('S'), GFloat("+1.5")), tokens("S+1.5"))
+            assertEquals("S+5", reprint("S+5"))
+        }
+
+        @Test
+        fun `a signed number stops at the next word`() {
+            assertEquals(listOf(GLetter('E'), GInt(-5), GSpace, GLetter('F'), GInt(1800)), tokens("E-5 F1800"))
+            assertEquals(listOf(GLetter('E'), GInt(-5), GLetter('F')), tokens("E-5F"))
+            assertEquals(listOf(GLetter('E'), GInt(-5), GLineBreak("\n")), tokens("E-5\n"))
+        }
+
+        @Test
+        fun `a sign that does not introduce a number is unknown`() {
+            // GCODE_spec.md section 3.1 needs at least one digit somewhere in the number;
+            // section 9 asks for a lexical error rather than a silently dropped character.
+            assertEquals(listOf(GUnknown("-")), tokens("-"))
+            assertEquals(listOf(GUnknown("+")), tokens("+"))
+            assertEquals(listOf(GLetter('X'), GUnknown("-"), GLetter('Y')), tokens("X-Y"))
+            assertEquals(listOf(GUnknown("-"), GSpace), tokens("- "))
+            assertEquals(listOf(GUnknown("-"), GInt(-5)), tokens("--5"))
+        }
+
+        @Test
+        fun `a sign with a dot but no digit is unknown`() {
+            assertEquals(listOf(GUnknown("-.")), tokens("-."))
+            assertEquals(listOf(GUnknown("-."), GLetter('X')), tokens("-.X"))
+        }
+
+        @Test
+        fun `a signed number with two decimal points is unknown`() {
+            assertEquals(listOf(GLetter('X'), GUnknown("-1.2.3")), tokens("X-1.2.3"))
+            assertEquals("X-1.2.3", reprint("X-1.2.3"))
+        }
+
+        @Test
+        fun `signed numbers round trip`() {
+            assertEquals("G1 E-5 F1800", reprint("G1 E-5 F1800"))
+            assertEquals("M851 X-1.70 Y-1.30", reprint("M851 X-1.70 Y-1.30"))
+            assertEquals("X+5 Y+0.5", reprint("X+5 Y+0.5"))
+        }
+
+        @Test
+        fun `leading zeros are kept in the lexeme`() {
+            // `G01` is the command `G1`: the value is normalised, the rendered lexeme is not.
+            assertEquals(listOf(GLetter('G'), GInt(1, "01")), tokens("G01"))
+            assertEquals(1, (tokens("G01")[1] as GInt).int)
+            assertEquals("G01", reprint("G01"))
+            assertEquals("G0001 X007", reprint("G0001 X007"))
+        }
+
+        @Test
+        fun `the lexeme is part of number identity`() {
+            assertNotEquals(GInt(1), GInt(1, "01"))
+            assertNotEquals(GFloat("0.5"), GFloat(".5"))
+        }
+
+        @Test
+        fun `a number with two decimal points is an unknown token`() {
+            // GCODE_spec.md section 3.1 allows at most one decimal point; section 9 asks for a
+            // lexical error rather than an exception out of the tokenizer.
+            assertEquals(listOf(GLetter('X'), GUnknown("1.2.3")), tokens("X1.2.3"))
+            assertEquals(listOf(GUnknown("1..2")), tokens("1..2"))
+            assertEquals(listOf(GUnknown(".1.2")), tokens(".1.2"))
+        }
+
+        @Test
+        fun `a malformed number does not stop the rest of the line`() {
+            assertEquals(
+                listOf(GLetter('X'), GUnknown("1.2.3"), GSpace, GLetter('Y'), GInt(1)),
+                tokens("X1.2.3 Y1")
+            )
+        }
+
+        @Test
+        fun `a malformed number round trips`() {
+            assertEquals("X1.2.3 Y1", reprint("X1.2.3 Y1"))
+            assertEquals(".1.2", reprint(".1.2"))
+        }
+
+        @Test
+        fun `an integer too large for Int is an unknown token`() {
+            assertEquals(listOf(GLetter('N'), GUnknown("99999999999")), tokens("N99999999999"))
+            assertEquals("N99999999999", reprint("N99999999999"))
+        }
+
+        @Test
+        fun `the largest representable integer is still a number`() {
+            assertEquals(listOf(GLetter('N'), GInt(2147483647)), tokens("N2147483647"))
         }
     }
 
@@ -274,7 +424,29 @@ class GTokenizerTest {
     @Nested
     inner class Separators {
 
-        // Tabs and CRLF are not asserted here - see GCODE_TODO.md 1.12 and 1.15.
+        @Test
+        fun `a tab is a tab token`() {
+            // GCODE_spec.md section 2.1 classifies the tab as whitespace.
+            assertEquals(listOf(GTab), tokens("\t"))
+        }
+
+        @Test
+        fun `a tab separates two words`() {
+            assertEquals(
+                listOf(GLetter('G'), GInt(1), GTab, GLetter('X'), GInt(1)),
+                tokens("G1\tX1")
+            )
+        }
+
+        @Test
+        fun `repeated tabs are separate tokens`() {
+            assertEquals(listOf(GTab, GTab), tokens("\t\t"))
+        }
+
+        @Test
+        fun `tabs and spaces can be mixed`() {
+            assertEquals(listOf(GSpace, GTab, GSpace), tokens(" \t "))
+        }
 
         @Test
         fun `a space is a space token`() {
@@ -302,6 +474,45 @@ class GTokenizerTest {
                 listOf(GLetter('G'), GInt(1), GLineBreak("\n"), GLetter('G'), GInt(2)),
                 tokens("G1\nG2")
             )
+        }
+
+        @Test
+        fun `CRLF is one line break`() {
+            assertEquals(listOf(GLineBreak("\r\n")), tokens("\r\n"))
+        }
+
+        @Test
+        fun `CRLF separates two commands`() {
+            assertEquals(
+                listOf(GLetter('G'), GInt(1), GLineBreak("\r\n"), GLetter('G'), GInt(2)),
+                tokens("G1\r\nG2")
+            )
+        }
+
+        @Test
+        fun `consecutive CRLF breaks are separate tokens`() {
+            assertEquals(listOf(GLineBreak("\r\n"), GLineBreak("\r\n")), tokens("\r\n\r\n"))
+        }
+
+        @Test
+        fun `LF and CRLF can be mixed`() {
+            assertEquals(
+                listOf(GLineBreak("\n"), GLineBreak("\r\n"), GLineBreak("\n")),
+                tokens("\n\r\n\n")
+            )
+        }
+
+        @Test
+        fun `a lone CR is unknown and does not swallow the next character`() {
+            assertEquals(
+                listOf(GLetter('G'), GInt(1), GUnknown("\r"), GLetter('G'), GInt(2)),
+                tokens("G1\rG2")
+            )
+        }
+
+        @Test
+        fun `a lone CR at end of input is unknown`() {
+            assertEquals(listOf(GLetter('G'), GInt(1), GUnknown("\r")), tokens("G1\r"))
         }
     }
 
@@ -500,6 +711,15 @@ class GTokenizerTest {
                 "G28",
                 "G1 X10.5 Y20 F1800",
                 "G1X10.5Y20F1800",
+                "G1 E-5 F1800",
+                "G1 X-1.5 Y+2 Z-0.05",
+                "X+5 Y+0.5",
+                "G01 X007",
+                "X.5 Y.40",
+                "X1.",
+                "G1\tX1\tY2",
+                "G92 .1 ;TODO",
+                "M851 X0.20 Y.40",
                 "M117 \"Hello World!\"",
                 "M11 I   \"Hello \"\"World\"\"\"",
                 "M140 S{first_layer_bed_temperature[0]}",
@@ -511,6 +731,11 @@ class GTokenizerTest {
                 "\n\n",
                 "G28\n",
                 "G1 X1\nG1 X2\n",
+                "\r\n",
+                "G28\r\n",
+                "G1 X1\r\nG1 X2\r\n",
+                "; comment\r\nG1 F100\r\n",
+                "G1 X1\nG1 X2\r\nG1 X3",
                 "M117 \"Привет, мир!\" ;комментарий"
             ]
         )

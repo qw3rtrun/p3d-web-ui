@@ -630,16 +630,20 @@ whitespace → `GSpace`/`GTab`/`GLineBreak` (with `\r\n` lookahead, lone `\r` �
 
 Deviations from this spec, as currently written (all verified by running the module):
 
-* `GInlineComment.string` **keeps the closing `)`** (`inlineComment()` appends the character before
-  decrementing the nesting counter) while `rawText()` appends another one, so
-  `G1 (feedrate) F1500` re-prints as `G1 (feedrate)) F1500`;
-* an unterminated `(` loses its opening delimiter (`M(abc` → `Mabcc`) and an unterminated `"` gains a
-  closing one (`M"asd` → `M"asd"`); both degrade to a token rather than raising a lexical error;
-* `parseLines(Sequence<String>)` does not re-insert line terminators, so consecutive lines are
-  concatenated (`["G28", "M104 S200"]` → `G28M104 S200`);
+* `Char.isLetter()` / `isDigit()` classify the **whole Unicode category**, so a non-ASCII character
+  outside a comment or a string is lexed as a word rather than as a lexical error: `GЯ1` →
+  `[GLetter(G), GLetter(Я), GInt(1)]` and `X١` → `GInt(1, "١")`, because
+  `"١".toIntOrNull()` is Unicode-aware too. [§1.1](#11-character-set-and-encoding) confines
+  non-ASCII to comments and quoted strings — [TODO 01](../todos/01-ascii-and-lexer-portability.md);
+* `tailComment()` stops only at `\n`, so on CRLF input the CR lands **inside the comment text**:
+  `;ab\r\n` → `GTailComment("ab\r")` + `GLineBreak("\n")`. The lexeme round-trips, so this is a
+  content bug rather than a fidelity bug, but it affects every commented line of a CRLF file — all
+  125 tail comments of `marlin.gcode` carry it — [TODO 01](../todos/01-ascii-and-lexer-portability.md);
 * a lone `.`, a bare sign, a number with two decimal points (`1.2.3`) and an integer too large for
   `Int` all degrade to `GUnknown` carrying the original lexeme, rather than to a typed lexical error
   ([§9](#9-error-handling));
+* an unterminated `(`, `"` or `{` degrades to `GUnknown` carrying the exact lexeme (`M(abc` →
+  `[GLetter(M), GUnknown("(abc")]`) rather than to a typed lexical error ([§9](#9-error-handling));
 * a subcode ([§4.1](#41-command-letters)) is lexed as a decimal: `G29.1` → `GLetter(G), GFloat(29.1)`;
 * bare rest-of-line strings ([§3.4](#34-string-values)) are not recognised — `M117 Hello World`
   becomes one `GLetter` per character.
@@ -647,7 +651,10 @@ Deviations from this spec, as currently written (all verified by running the mod
 Conforming as of the number-lexeme pass: the optional sign of [§3.1](#31-numeric-values) is part of
 the number token (`G1 E-5` → `… GLetter(E), GInt(-5)`), a tab is `GTab`
 ([§2.1](#21-whitespace)), and `rawText()` round-trips **every** construct the lexer accepts,
-non-canonical numbers included — `.5`, `01` and `1.` come back byte-identical.
+non-canonical numbers included — `.5`, `01` and `1.` come back byte-identical. A comment keeps its
+delimiters out of its text and only in its lexeme, so `G1 (feedrate) F1500` re-prints byte-identically,
+and `parseLines(Sequence<String>)` re-inserts the caller-chosen terminator between lines, so
+`["G28", "M104 S200"]` → `G28\nM104 S200`.
 
 Both line terminators of [§1.2](#12-end-of-line) are handled: `\r\n` is one `GLineBreak("\r\n")`, and
 a lone `\r` degrades to `GUnknown` without consuming the following character.
@@ -657,7 +664,7 @@ a lone `\r` degrades to `GUnknown` without consuming the following character.
 | Spec concept | Type |
 |---|---|
 | Any line/block ([§5](#5-line-block-structure)) | `GLine { val payload: List<GToken> }` |
-| Empty line | `GEmptyLine` (currently unreachable — blank lines become `GSimpleLine`) |
+| Empty line | `GEmptyLine` — a line of only whitespace and/or comments ([§5](#5-line-block-structure)) |
 | Unnumbered line | `GSimpleLine` |
 | `N…*…` framed line ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GPacketLine(number, payload, checksum, tail)` — also `GOrdered`, `GCheckSumControlled` |
 | Checksum field | `GCheckSumValue(ident: GChecksum, value: GInt)` |
@@ -665,22 +672,36 @@ a lone `\r` degrades to `GUnknown` without consuming the following character.
 | One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GIdentifier, params: List<GElement>)` |
 | Structural error ([§9](#9-error-handling)) | `GError`, e.g. `GNotIdentifierError` |
 
-`GLineIterator` splits a token stream at `GLineBreak` and classifies each line: a line is a *packet*
-when it starts with `GLetter('N')` **and** contains `GChecksum` — i.e. it implements the
-[§7.3](#73-pairing-rule) pairing rule as a recognition condition, though the match is
-case-sensitive and position-exact, so `n1 G28*12` and ` N1 G28*12` fall back to `GSimpleLine`.
+`GLineIterator` splits a token stream at `GLineBreak` and classifies each line off its *elements* —
+the tokens that are neither separators nor comments — so leading whitespace never changes the answer
+([§2.1](#21-whitespace)) and a `*` the lexer put inside a comment or a string is not a checksum
+marker. A line is a *packet* when its first element is `N`/`n` **and** some element is `GChecksum`,
+and both markers must be followed by an integer, so the [§7.3](#73-pairing-rule) pairing rule is
+enforced as four typed [§9](#9-error-handling) variants rather than by falling back to `GSimpleLine`:
+
+| Input | Result |
+|---|---|
+| `N1 G28*12`, `n1 G28*12`, ` N1 G28*12` | `GPacketLine` — the match is case-insensitive ([§2.2](#22-case)) and position-tolerant |
+| `N1 G28` | `GMissingChecksum(number = GInt(1))` |
+| `G28*12` | `GMissingLineNumber` |
+| `N*`, `NX*12` | `GMalformedLineNumber` |
+| `N1 G28*`, `N1 G28*X` | `GMalformedChecksum(number = GInt(1))` |
+
+`GPacketLine.payload` is the raw tokens (separators included) between the line number and the `*`;
+`tail` is what follows the checksum *value*, and the error variants carry the whole line. The trailing
+break is dropped by **testing** for it rather than by computing a bound from `size`, so an
+unterminated line keeps its last token and a short line does not throw —
+`N*` yields `GMalformedLineNumber`, not `IllegalArgumentException` (TODO 1.3).
+
 `GCommandParser.isCommand()` treats `G`, `M` and (line-initially) `T` as command letters, which is
 the [§4.1](#41-command-letters) set minus Marlin's development-only `D`; the class is not reachable
-from anywhere yet, so `GCommandLine`/`GError` are never produced.
+from anywhere yet, so `GCommandLine` and `GNotIdentifierError` are never produced. The `GError`
+variants in the table above **are** produced: `marlin.gcode` contains exactly two `N` lines with no
+checksum, and both come back as `GMissingChecksum`.
 
 Not yet covered by the implementation: line-number continuity checking, checksum
 *verification*/generation at the line level (`XorCheckSum` is correct — it yields `57` for `N3 T0` —
-but has no callers), line-length limits, subcodes, and the `N`-without-`*` / `*`-without-`N` error
-cases ([§7.3](#73-pairing-rule)) — a mismatched line falls back to `GSimpleLine` or yields
-`GPacketLine` fields of `-1`. `GPacketLine.tail` also starts at the checksum *value* rather than
-after it, and is computed as `subList(indexOfCheckSum + 1, size - 1)`, which assumes a trailing line
-break: without one it drops the last real token, and `N*` throws
-`IllegalArgumentException: fromIndex(2) > toIndex(1)`.
+but has no callers), line-length limits and subcodes.
 
 ---
 

@@ -66,7 +66,7 @@ The `:gcode` submodule is partitioned into the following functional layers:
     - `GTokens.kt`: Sealed hierarchy of token elements (`GToken`, `GElement`, `GIdentifier`, `GLiteral`, `GComment`,
       `GSeparator`, `GString`, `GNumber`, `GExpression`).
     - `GTokenizer.kt`: Character stream/sequence tokenizer parsing raw strings into token sequences.
-    - `GSemantics.kt` & `GLineReader.kt`: Converts flat token streams into structured line models (`GLine`,
+    - `GSemantics.kt` & `GLiner.kt`: Converts flat token streams into structured line models (`GLine`,
       `GCommandLine`, syntax errors).
 2. **Core AST & Checksum Layer (`org.qw3rtrun.p3d.g.code.core`, `org.qw3rtrun.p3d.g.code.cmd`)**:
     - Legacy/Java AST: `GField`, `GIntField`, `GDoubleField`, `GStrField`, `GFlagField`, `GQuoteField`, `GComment`,
@@ -101,7 +101,7 @@ The `:gcode` submodule is partitioned into the following functional layers:
 | `org.qw3rtrun.p3d.g.code.core.token` | `GTokens.kt`      | Valid  | Enhance with missing token types if needed            |
 | `org.qw3rtrun.p3d.g.code.core.token` | `GSemantics.kt`   | WIP    | Define `GCommandLine`, `GCommand` AST representations |
 | `org.qw3rtrun.p3d.g.code.core.token` | `GTokenizer.kt`   | Valid  | Remove debug `println`, clean up edge cases           |
-| `org.qw3rtrun.p3d.g.code.core.token` | `GLineReader.kt`  | Broken | Implement `GCommandLine` and `GLineIterator` cleanly  |
+| `org.qw3rtrun.p3d.g.code.core.token` | `GLiner.kt`  | Broken | Implement `GCommandLine` and `GLineIterator` cleanly  |
 
 ### 3.2 Java Files to Migrate
 
@@ -255,7 +255,7 @@ checkpoints at each step.
            fun print(): String = ...
        }
        ```
-    2. Fix `GLineReader.kt` type inference and token iteration logic.
+    2. Fix `GLiner.kt` type inference and token iteration logic.
     3. Fix `G.kt` command builder functions to create `GCommand` instances matching the AST.
     4. Fix `GTest.kt` and ensure `GTokenizerTest.kt` and `GCodeReaderTest.kt` execute cleanly.
 - **Verification**: Run `./gradlew :gcode:compileKotlin`.
@@ -360,7 +360,7 @@ checkpoints at each step.
 
 - [ ] **Phase 1: Fix Compilation & Complete Token AST**
     - [ ] Implement `GCommandLine` and `GCommand` in `GSemantics.kt`
-    - [ ] Fix `GLineReader.kt` parsing logic
+    - [ ] Fix `GLiner.kt` parsing logic
     - [ ] Fix `G.kt` builder methods
     - [ ] Verify `GTokenizerTest.kt` and `GCodeReaderTest.kt`
 - [ ] **Phase 2: Domain Events (`org.qw3rtrun.p3d.g.event`)**

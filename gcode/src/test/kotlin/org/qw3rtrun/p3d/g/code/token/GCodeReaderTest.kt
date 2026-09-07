@@ -22,10 +22,11 @@ class GCodeReaderTest {
         iter.forEach {
             when (it) {
                 is GCommandLine -> {
-                    println(it.cmds); println(it.line)
+                    println(it.cmds); println(it.payload)
                 }
 
                 is GError -> println(it.msg)
+                else -> println(it)
             }
         }
     }
@@ -50,10 +51,11 @@ class GCodeReaderTest {
         iter.forEach {
             when (it) {
                 is GCommandLine -> {
-                    println(it.cmds); println(it.line)
+                    println(it.cmds); println(it.payload)
                 }
 
                 is GError -> println(it.msg)
+                else -> println(it)
             }
         }
     }

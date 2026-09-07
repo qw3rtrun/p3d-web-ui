@@ -61,7 +61,7 @@ the host's own I/O layer.
 | `Double`, `Float` in a protocol path | decimal text, or a scaled integer | binary floating point cannot hold authored decimals; rounding is a call-site decision, never a constructor's |
 | `Sequence`/`Stream` chains, `map`/`filter`/`flatMap`/`groupBy` over hot paths, `java.util.stream`, `kotlin.streams.*` | an explicit loop or a hand-written iterator | pipeline semantics (laziness, `constrainOnce`) differ per language; loops transliterate exactly |
 | coroutines, `Flow`, Reactor `Mono`/`Flux` | a synchronous iterator the edge drives | concurrency belongs to the transport layer |
-| `Char.isDigit()`, `isLetter()`, `isWhitespace()` | explicit ASCII range checks | these accept the whole Unicode category. `isLetter()` is why `GЯ1` lexes as a letter — logged as TODO 1.18. The wire format is 7-bit ASCII ([spec §1.1](../../../doc/specs/GCODE_spec.md#11-character-set-and-encoding)) |
+| `Char.isDigit()`, `isLetter()`, `isWhitespace()` | explicit ASCII range checks | these accept the whole Unicode category. `isLetter()` is why `GЯ1` *used* to lex as a letter, and `isDigit()` + `toIntOrNull` is why `X1١` used to lex as `GInt(11)` — both fixed in todo 01, so `GTokenizer.kt` is now the worked example rather than the counter-example. The wire format is 7-bit ASCII ([spec §1.1](../../../doc/specs/GCODE_spec.md#11-character-set-and-encoding)) |
 | `String.trim()`, `equals(ignoreCase = true)`, `uppercase()` | explicit ASCII comparison and folding | locale- and Unicode-dependent; a Turkish locale changes `i`/`I` |
 | exceptions for malformed input | a variant carrying the offending bytes | see *Errors are values* |
 | reflection, annotations, Lombok, Jackson, Spring | plain constructors and plain functions | none of it exists in a port |
@@ -232,16 +232,24 @@ Then check by hand:
 
 Live examples of what this skill rules out, so nobody copies them as precedent:
 
-- `decoder/OkDecoder.kt`, `TemperatureReportedDecoder.kt`, `FirmwareReportDecoder.kt`,
-  `CapabilityReportDecoder.kt` — `java.util.regex` + `java.util.Optional`; these are the *edge*, but
-  the same lines are what a port has to reimplement, and the regexes are unreviewable against
-  [spec §9](../../../doc/specs/GCODE_spec.md#9-error-handling).
-- `decoder/CapabilityReportDecoder.kt`, `FirmwareReportDecoder.kt`, `WaitReceivedDecoder.kt` —
-  `org.apache.commons.lang3.StringUtils` for `isNotBlank` / `isNumeric`, both a two-line loop.
+- `decoder/OkDecoder.kt`, `TemperatureReportedDecoder.kt`, `FirmwareReportDecoder.kt` —
+  `java.util.regex`; these are the *edge*, but the same lines are what a port has to reimplement, and
+  the regexes are unreviewable against
+  [spec §9](../../../doc/specs/GCODE_spec.md#9-error-handling). Note
+  `CapabilityReportDecoder.kt` is **not** a regex user — it is a prefix guard plus `split(":")`; the
+  four-file version of this list was wrong and sent one reviewer looking for a pattern that is not
+  there.
+- `decoder/**` — `java.util.Optional` on all eight decoders *and* on the `GEventDecoder` fun
+  interface, which extends `java.util.function.Function` / `Predicate`, so the JVM types are in the
+  supertype list rather than just the return position.
+- `decoder/CapabilityReportDecoder.kt` — `org.apache.commons.lang3.StringUtils` for `isNotBlank`
+  (`:21`) and `isNumeric` (`:29`), both a two-line loop. This is the **only** `StringUtils` user;
+  `FirmwareReportDecoder.kt` and `WaitReceivedDecoder.kt` are clean.
+- `decoder/**` — `ignoreCase = true` at 8 sites in 5 files, plus `.trim()` in `OkDecoder.kt:12` and
+  `FirmwareReportDecoder.kt:22`. Locale-dependent, and trimming the Unicode whitespace set rather
+  than the four characters [§2.1](../../../doc/specs/GCODE_spec.md#21-whitespace) defines.
 - `code/core/token/GTokens.kt`, `GTokenizer.kt` — `java.math.BigDecimal` is the core's only external
   type, and it is in the hot path.
-- `code/core/token/GTokenizer.kt` — the `Stream<Char>` overload plus `kotlin.streams.*`, and
-  `Char.isLetter()` / `isWhitespace()` for classification.
 - `:gcode` depends on `:backend:core` for event types, so the module as a whole is not extractable
   yet; only `code/core/**` is close.
 

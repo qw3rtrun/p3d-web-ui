@@ -3,62 +3,139 @@
 **Goal.** The reply half of the protocol is hand-rolled scanners that can be reviewed against
 [spec §9](../specs/GCODE_spec.md#9-error-handling) and transliterated to a port.
 
-**Depends on:** nothing. **Blocks:** nothing. Independent of the whole 02→05 chain and can be picked
-up whenever.
+**Depends on:** [02](./02-number-representation.md), but only for one line — see *The 02 coupling*
+below. Everything else here is independent of the 02→05 chain. **Blocks:** nothing.
 
 ## Why
 
-`gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/decoder/**` decodes firmware replies with three
-things the module's style rules exclude:
+`gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/decoder/**` is eight files that decode firmware
+replies with constructs the module's style rules exclude. The attributions below are per-file and
+were verified by grep — an earlier version of this file mis-assigned three of them, so check before
+widening the scope.
 
-- **`java.util.regex`** — `OkDecoder`, `TemperatureReportedDecoder`, `FirmwareReportDecoder`,
-  `CapabilityReportDecoder`. No equivalent semantics across four languages, hides backtracking cost,
-  and — the reason that matters here — a regex cannot be reviewed line by line against a byte spec.
-- **`java.util.Optional`** on every `decode()` signature. JVM-only and allocating, where Kotlin's
-  nullability is native in all four targets.
-- **`org.apache.commons.lang3.StringUtils`** for `isNotBlank` / `isNumeric` —
-  `CapabilityReportDecoder`, `FirmwareReportDecoder`, `WaitReceivedDecoder`. Both are a two-line
-  loop. Note `commons-lang3` arrives on the classpath via
+- **`java.util.regex`** — three files, not four: `OkDecoder.kt:46-48` (`ADVANCED_OK_PATTERN`),
+  `TemperatureReportedDecoder.kt:65-67` (`TEMP_REPORT_PATTERN`), `FirmwareReportDecoder.kt:33`
+  (`((?<field>[A-Z_]+):)+` — the named group `field` is never read, and a `+` over a group is the
+  classic backtracking shape). No equivalent semantics across four languages, hides backtracking
+  cost, and — the reason that matters here — a regex cannot be reviewed line by line against a byte
+  spec. **`CapabilityReportDecoder` uses no regex**: it is a length/prefix guard plus
+  `line.split(":")` (`:11-17`).
+- **`java.util.Optional`** — all eight files, *and* the `GEventDecoder` interface itself
+  (`GEventDecoder.kt:8-14`). This is the one item that is **not** mechanical: the interface is a
+  `fun interface` extending `java.util.function.Function<String, Optional<G>>` and
+  `Predicate<String>`, so the JVM types are in the supertype list, not just the return position. See
+  *Do* for the ordering that follows from that.
+- **`org.apache.commons.lang3.StringUtils`** — one file, not three: `CapabilityReportDecoder.kt:3`,
+  for `isNotBlank` (`:21`) and `isNumeric` (`:29`). Both are a two-line loop. `FirmwareReportDecoder`
+  and `WaitReceivedDecoder` are clean — `WaitReceivedDecoder` is now four lines of
+  `length != 4 || !startsWith(...)`. Note `commons-lang3` arrives on the classpath via
   `buildSrc/.../p3d.java-conventions.gradle`, not through `:gcode`'s own dependencies, so nothing
   currently stops it spreading.
+- **Locale-dependent and allocating string ops the skill's deny table names** — missing from every
+  earlier version of this file, and the most numerous item here:
+  - `ignoreCase = true` — 8 sites in 5 files: `CapabilityReportDecoder.kt:11, 32`,
+    `FirmwareReportDecoder.kt:11`, `OkDecoder.kt:13, 16, 38`, `TemperatureReportedDecoder.kt:32`,
+    `WaitReceivedDecoder.kt:9`. Kotlin's `ignoreCase` is locale-dependent and has no portable
+    equivalent; the wire format is ASCII
+    ([§1.1](../specs/GCODE_spec.md#11-character-set-and-encoding)), so these want an ASCII case fold.
+  - `.trim()` — `OkDecoder.kt:12`, `FirmwareReportDecoder.kt:22`. Allocates, and trims the Unicode
+    whitespace set rather than the four characters
+    [§2.1](../specs/GCODE_spec.md#21-whitespace) defines.
+  - `line.split(SEPARATOR)` — `CapabilityReportDecoder.kt:14`. Allocates a list only to read three
+    fixed positions out of it.
+  - `asSequence().map { }.firstOrNull { }` — `CompositeDecoder.kt:10-12`. A three-stage pipeline
+    where a `for` over `encoders` with an early return is the in-house idiom.
 
 These are the **edge**, not the portable core, so this is lower priority than
 [02](./02-number-representation.md). But they are also the reply half of the protocol: a port has to
 reimplement every one of them, and today there is no reviewable statement of what they accept.
 
+## The 02 coupling
+
+`TemperatureReportedDecoder.kt:60-61` parses temperatures with `String.toDouble()` into
+`Map<String, Double>` and hands them to `TemperatureReport`. [02](./02-number-representation.md)
+decides what a number holds in this module and removes the `Double` path from the core. If 02 lands
+first, this decoder adopts whatever it decided rather than re-introducing `Double` at the edge; if 06
+lands first, leave `:60-61` alone and say so in the commit so that 02 finds it. `TemperatureReport`
+lives in `:backend:core`, so changing its field types is out of scope for both files — that is why
+this is a note and not a blocker.
+
+## Where the tests already are
+
+Three decoders have tests, in `gcode/src/test/kotlin/org/qw3rtrun/p3d/g/decoder/` — note the package
+is `g.decoder`, **not** `g.marlin.decoder`, which is why they are easy to miss:
+
+| Decoder | Test | Size |
+|---|---|---|
+| `OkDecoder` | `OkDecoderTest.kt` | 4 parameterized methods, 0 `@Test` |
+| `TemperatureReportedDecoder` | `TemperatureReportedDecoderTest.kt` | 2 parameterized methods |
+| `FirmwareReportDecoder` | `FirmwareReportDecoderTest.kt` | 1 `@Test` |
+| `CapabilityReportDecoder` | **none** | — |
+| `WaitReceivedDecoder` | **none** | — |
+| `CompositeDecoder`, `UnknownStringDecoder`, `GEventDecoder` | **none** | — |
+
+The two with zero coverage are the two that need it most. `CapabilityReportDecoder` is the only
+`StringUtils` user. And `WaitReceivedDecoder` is **not wired into production at all** —
+`PrinterReactor.java:33-39` builds its `CompositeDecoder` from `OkDecoder`,
+`TemperatureReportedDecoder`, `CapabilityReportDecoder`, `FirmwareReportDecoder` and
+`UnknownStringDecoder`, so a `wait` reply falls through to `UnknownStringDecoder`. Decide whether
+`WaitReceivedDecoder` is wired up or deleted before spending a rewrite on it.
+
 ## Do
 
-- [ ] Replace `Optional<T>` with `T?` across the `decode()` signatures. Mechanical, and worth doing
-      first because it is the change that touches every decoder and makes the rest smaller.
-- [ ] Replace `StringUtils.isNotBlank` / `isNumeric` with private helpers. Two loops, ASCII-explicit,
-      consistent with [01](./01-ascii-and-lexer-portability.md)'s character classes — reuse those
-      helpers if they end up somewhere shareable.
-- [ ] Replace each regex with an explicit scanner or a small state machine. Take them one decoder at a
-      time, each as its own commit. For anything with modes, use an `enum class` plus a `when` over
-      `(state, byte)`: it reads as a table, ports as a table, and reviews against the spec as a table.
+- [ ] **`CapabilityReportDecoder` first.** It is the whole `StringUtils` item, it has no regex to
+      unpick, and it has no tests — so it is the smallest end-to-end slice of this file:
+      characterise, replace `isNotBlank` / `isNumeric` with ASCII-explicit private helpers, drop
+      `split`, drop the two `ignoreCase` sites. Reuse
+      [01](./01-ascii-and-lexer-portability.md)'s character classes if 01 made them shareable; if 01
+      kept them private to `GTokenizer.kt`, say so here rather than duplicating them silently.
+- [ ] **Decide `WaitReceivedDecoder`'s fate** — wire it into `PrinterReactor`, or delete it. One line
+      either way, and it decides whether the rest of this file covers seven decoders or eight.
+- [ ] **Replace `Optional<T>` with `T?`.** Do the `GEventDecoder` interface as its own commit: the
+      `Function` / `Predicate` supertypes (`GEventDecoder.kt:8`) have to go or be re-expressed before
+      the eight implementations can change, and `test()`'s default body (`:14`) is written in terms
+      of `Optional.isPresent`. `:backend:api` constructs `CompositeDecoder` directly
+      (`PrinterReactor.java:33`), so check whether anything there relies on the SAM conversion before
+      deleting the supertypes.
+- [ ] **Replace each regex with an explicit scanner or a small state machine.** One decoder per
+      commit, in this order: `FirmwareReportDecoder` (simplest pattern), `OkDecoder`,
+      `TemperatureReportedDecoder` (the largest, and the one entangled with 02). For anything with
+      modes, use an `enum class` plus a `when` over `(state, byte)`: it reads as a table, ports as a
+      table, and reviews against the spec as a table.
+- [ ] **Replace the remaining `ignoreCase` and `.trim()` sites** listed in *Why*: an ASCII case fold
+      and an explicit §2.1 trim, both as private helpers.
+- [ ] **`CompositeDecoder.kt:10-12`** → a `for` loop with an early return.
 - [ ] Consider declaring `:gcode`'s dependencies explicitly rather than inheriting the conventions
       plugin's, so a future `commons-lang3` import fails the build instead of silently working.
 
 ## Verify
 
-- [ ] **Characterise before changing.** Each decoder's current behaviour over a corpus of real
-      firmware replies goes into tests *first*, while the regex is still there. Without that this is a
-      rewrite with no safety net — the regexes are the only specification of what these accept, which
-      is precisely the complaint.
-- [ ] A hostile-input pass per decoder: truncated lines, empty lines, unexpected fields, values out of
-      range. Malformed input yields a value, never an exception, same rule as the core.
-- [ ] The grep comes back clean:
+- [ ] **Characterise before changing.** Each decoder's current behaviour goes into tests *first*,
+      while the regex is still there — extending the three suites in `g/decoder/` and adding the two
+      missing ones. Without that this is a rewrite with no safety net: the regexes are the only
+      specification of what these accept, which is precisely the complaint.
+- [ ] A hostile-input pass per decoder: truncated lines, empty lines, unexpected fields, values out
+      of range, mixed case, a trailing `\r`. Malformed input yields a value, never an exception, the
+      same rule as the core.
+- [ ] The grep comes back clean. Note this is wider than the grep earlier versions of this file
+      carried, which would have passed with all 8 `ignoreCase` sites still in place:
 
       ```bash
-      grep -rn 'Regex\|java\.util\.regex\|Optional\|StringUtils' gcode/src/main/kotlin/
+      grep -rn 'Regex\|java\.util\.regex\|Optional\|StringUtils\|ignoreCase\|\.trim()\|uppercase()\|lowercase()' \
+        gcode/src/main/kotlin/
       ```
+
+- [ ] `./gradlew build` green, and the `:gcode:test` count has gone **up** by at least the two new
+      suites — a rewrite that leaves the count flat has characterised nothing.
 
 ## Notes
 
 There is a real gap in the corpus story here. `marlin.gcode` is a fixture of commands *sent*; there
 is no fixture of replies *received*. Capturing one — a real session's `ok`, temperature reports,
 `Resend:` lines, capability report — would make this file far safer and would also serve
-[05](./05-line-numbering-and-session.md). Consider that the first task.
+[05](./05-line-numbering-and-session.md). Consider that the first task. The same item is listed in
+[08](./08-test-and-doc-debt.md); do it in whichever file reaches it first and strike it from the
+other.
 
 `:gcode` also depends on `:backend:core` for the event types these decoders return, so the module as
 a whole is not extractable even after this file. Only `code/core/**` is close to it. That coupling is

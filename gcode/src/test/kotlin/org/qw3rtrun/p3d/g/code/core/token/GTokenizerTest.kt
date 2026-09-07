@@ -45,6 +45,23 @@ class GTokenizerTest {
         }
 
         @Test
+        fun `a non ascii letter outside a comment or a string is unknown`() {
+            // GCODE_spec.md section 1.1: the wire format is 7-bit ASCII, so a Cyrillic capital is a
+            // lexical error (section 9), not a command letter.
+            assertEquals(listOf(GLetter('G'), GUnknown("Я"), GInt(1)), tokens("GЯ1"))
+        }
+
+        @Test
+        fun `a reclassified non ascii letter still round trips`() {
+            assertEquals("GЯ1", reprint("GЯ1"))
+        }
+
+        @Test
+        fun `latin letters with diacritics are unknown`() {
+            assertEquals(listOf(GUnknown("é"), GUnknown("Å")), tokens("éÅ"))
+        }
+
+        @Test
         fun `a letter followed by a number is a word`() {
             assertEquals(listOf(GLetter('X'), GInt(10)), tokens("X10"))
         }
@@ -249,6 +266,32 @@ class GTokenizerTest {
         fun `the largest representable integer is still a number`() {
             assertEquals(listOf(GLetter('N'), GInt(2147483647)), tokens("N2147483647"))
         }
+
+        @Test
+        fun `a non ascii digit is not a digit`() {
+            // GCODE_spec.md section 1.1. Both the predicate and String.toIntOrNull() accept the whole
+            // Unicode Nd category, so "١" used to lex as GInt(1, "١").
+            assertEquals(listOf(GLetter('X'), GUnknown("١")), tokens("X١"))
+        }
+
+        @Test
+        fun `a decimal built from non ascii digits is not a number`() {
+            // BigDecimal(String) is Unicode-aware as well, so "١.٢" used to lex as GFloat(1.2).
+            assertEquals(
+                listOf(GLetter('X'), GUnknown("١"), GUnknown("."), GUnknown("٢")),
+                tokens("X١.٢")
+            )
+        }
+
+        @Test
+        fun `a non ascii digit does not become part of an ascii number`() {
+            assertEquals(listOf(GLetter('X'), GInt(1), GUnknown("١")), tokens("X1١"))
+        }
+
+        @Test
+        fun `non ascii digits still round trip`() {
+            assertEquals("X١.٢", reprint("X١.٢"))
+        }
     }
 
     @Nested
@@ -388,6 +431,28 @@ class GTokenizerTest {
                 listOf(GLetter('G'), GInt(1), GSpace, GTailComment(" c")),
                 tokens("G1 ; c")
             )
+        }
+
+        @Test
+        fun `tail comment ends at the CR of a CRLF and does not keep it`() {
+            // GCODE_spec.md section 1.2: CRLF is a line terminator, so neither of its two characters
+            // is comment content. The CR is still emitted - by GLineBreak, not by the comment.
+            assertEquals(listOf(GTailComment("ab"), GLineBreak("\r\n")), tokens(";ab\r\n"))
+            // GLineBreak.toString() prints only the class name, so pin the bytes too.
+            assertEquals(listOf(59, 97, 98, 13, 10), reprint(";ab\r\n").map { it.code })
+        }
+
+        @Test
+        fun `a tail comment on a CRLF line still round trips`() {
+            assertEquals(";ab\r\n", reprint(";ab\r\n"))
+        }
+
+        @Test
+        fun `a tail comment ended by a lone CR at end of input round trips`() {
+            // The lone CR is not a terminator (section 1.2), so it degrades to GUnknown exactly as it
+            // does outside a comment - and the byte is still emitted.
+            assertEquals(listOf(GTailComment("ab"), GUnknown("\r")), tokens(";ab\r"))
+            assertEquals(listOf(59, 97, 98, 13), reprint(";ab\r").map { it.code })
         }
 
         @Test
@@ -589,6 +654,31 @@ class GTokenizerTest {
             )
         }
 
+        @ParameterizedTest
+        @ValueSource(chars = ['\u000B', '\u000C', '\u001C', '\u001D', '\u001E', '\u001F', '\u0085', '\u00A0', '\u2028'])
+        fun `only the four separators of section 2 1 are whitespace`(ch: Char) {
+            // GCODE_spec.md section 2.1 names space and tab; section 1.2 names LF and CRLF. Everything
+            // Char.isWhitespace() adds on top of those four - VT, FF, the file separators, NEL, NBSP,
+            // LINE SEPARATOR - is a lexical error (section 9).
+            assertEquals(
+                listOf(GLetter('G'), GInt(1), GUnknown(ch.toString()), GLetter('X')),
+                tokens("G1" + ch + "X")
+            )
+        }
+
+        @Test
+        fun `an ascii space still separates two words`() {
+            assertEquals(
+                listOf(GLetter('G'), GInt(1), GSpace, GLetter('X'), GInt(1)),
+                tokens("G1 X1")
+            )
+        }
+
+        @Test
+        fun `a reclassified non breaking space still round trips`() {
+            assertEquals("G1 X", reprint("G1 X"))
+        }
+
         @Test
         fun `a lone CR at end of input is unknown`() {
             assertEquals(listOf(GLetter('G'), GInt(1), GUnknown("\r")), tokens("G1\r"))
@@ -640,6 +730,14 @@ class GTokenizerTest {
             assertEquals(
                 listOf(GLetter('G'), GInt(1), GUnknown("?"), GLetter('X'), GInt(2)),
                 tokens("G1?X2")
+            )
+        }
+
+        @Test
+        fun `a non ascii character does not disturb the surrounding tokens`() {
+            assertEquals(
+                listOf(GLetter('G'), GInt(1), GUnknown("Я"), GLetter('X'), GInt(2)),
+                tokens("G1ЯX2")
             )
         }
 
@@ -844,10 +942,9 @@ class GTokenizerTest {
             assertEquals(expected, tokenizer.parse(source.asSequence()).toList())
         }
 
-        @Test
-        fun `char stream`() {
-            assertEquals(expected, tokenizer.parse(source.toList().stream()).toList())
-        }
+        // There is no `Stream<Char>` overload: it was the portable core's only java.util.stream
+        // dependency, nothing called it, and the four overloads above cover every caller. A JVM
+        // caller that wants one writes `parse(stream.asSequence()).asStream()` at its own edge.
     }
 
     @Nested

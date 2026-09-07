@@ -624,21 +624,16 @@ part of token identity — `GInt(1) != GInt(1, "01")` — and value comparison g
 
 `GTokenizer.parse(…)` yields a lazy `Sequence<GToken>`/`Iterator<GToken>` over a character stream,
 dispatching on the first character exactly as in the [§2](#2-lexical-structure-tokens) table:
-whitespace → `GSpace`/`GTab`/`GLineBreak` (with `\r\n` lookahead, lone `\r` → `GUnknown`), letter →
-`GLetter`, digit, `.`, `+` or `-` → number, `"` → string, `{` → balanced expression, `;` → tail comment,
-`(` → balanced inline comment, `*` → `GChecksum`, otherwise `GUnknown`.
+space/tab/LF/CR → `GSpace`/`GTab`/`GLineBreak` (with `\r\n` lookahead, lone `\r` → `GUnknown`),
+`A`–`Z`/`a`–`z` → `GLetter`, `0`–`9`, `.`, `+` or `-` → number, `"` → string, `{` → balanced
+expression, `;` → tail comment, `(` → balanced inline comment, `*` → `GChecksum`, otherwise
+`GUnknown`. The character classes are private one-line functions over explicit ASCII ranges;
+there is no `Char.isLetter()`/`isDigit()`/`isWhitespace()` in the module, and no
+`java.util.stream`/`kotlin.streams` either — the `Stream<Char>` overload is gone, since the
+`Iterator`/`Iterable`/`Sequence`/`CharSequence` ones cover every caller.
 
 Deviations from this spec, as currently written (all verified by running the module):
 
-* `Char.isLetter()` / `isDigit()` classify the **whole Unicode category**, so a non-ASCII character
-  outside a comment or a string is lexed as a word rather than as a lexical error: `GЯ1` →
-  `[GLetter(G), GLetter(Я), GInt(1)]` and `X١` → `GInt(1, "١")`, because
-  `"١".toIntOrNull()` is Unicode-aware too. [§1.1](#11-character-set-and-encoding) confines
-  non-ASCII to comments and quoted strings — [TODO 01](../todos/01-ascii-and-lexer-portability.md);
-* `tailComment()` stops only at `\n`, so on CRLF input the CR lands **inside the comment text**:
-  `;ab\r\n` → `GTailComment("ab\r")` + `GLineBreak("\n")`. The lexeme round-trips, so this is a
-  content bug rather than a fidelity bug, but it affects every commented line of a CRLF file — all
-  125 tail comments of `marlin.gcode` carry it — [TODO 01](../todos/01-ascii-and-lexer-portability.md);
 * a lone `.`, a bare sign, a number with two decimal points (`1.2.3`) and an integer too large for
   `Int` all degrade to `GUnknown` carrying the original lexeme, rather than to a typed lexical error
   ([§9](#9-error-handling));
@@ -657,7 +652,18 @@ and `parseLines(Sequence<String>)` re-inserts the caller-chosen terminator betwe
 `["G28", "M104 S200"]` → `G28\nM104 S200`.
 
 Both line terminators of [§1.2](#12-end-of-line) are handled: `\r\n` is one `GLineBreak("\r\n")`, and
-a lone `\r` degrades to `GUnknown` without consuming the following character.
+a lone `\r` degrades to `GUnknown` without consuming the following character. A `;` comment ends at
+either terminator character, so on CRLF input the CR is emitted by the `GLineBreak` and not kept in
+`GTailComment.string`; `;ab\r\n` → `GTailComment("ab")` + `GLineBreak("\r\n")`, still byte-identical
+on re-print.
+
+[§1.1](#11-character-set-and-encoding) is enforced rather than assumed: a non-ASCII character outside
+a comment or a quoted string is a [§9](#9-error-handling) lexical error carrying the character, so
+`GЯ1` → `[GLetter(G), GUnknown(Я), GInt(1)]` and `X١` → `[GLetter(X), GUnknown(١)]`. Comments and
+quoted strings are unaffected — `marlin.gcode` keeps the `’` and `µ` in its comment text. Note that
+`String.toIntOrNull()` and `BigDecimal(String)` accept the whole Unicode `Nd` category, so it is the
+digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` from lexing as
+`GFloat(1.2)`.
 
 ### B.3 Line model — `token/GSemantics.kt`, `token/GLiner.kt`
 

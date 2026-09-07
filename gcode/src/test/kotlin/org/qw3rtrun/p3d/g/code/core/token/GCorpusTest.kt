@@ -79,6 +79,10 @@ class GCorpusTest {
         // '.' from file extensions, '/' '\' '~' '!' ':' '|' from paths, '#' from RS274 parameters,
         // ''' and ',' from prose in bare rest-of-line strings (GCODE_spec.md section 3.4a).
         // The set is expected to shrink as those are implemented.
+        //
+        // All ASCII: narrowing the character classes to 7-bit ASCII (spec section 1.1) added nothing
+        // here, which is what proves the change is scoped - the corpus does have non-ASCII, but only
+        // inside comments and quoted strings, where it stays content. See the two tests below.
         val expected = listOf("!", "#", "'", ",", ".", "/", ":", "\\", "|", "~")
 
         val actual = tokenizer.parse(corpus)
@@ -89,6 +93,57 @@ class GCorpusTest {
             .toList()
 
         assertEquals(expected, actual)
+    }
+
+    @Test
+    fun `no token outside a comment or a string carries a non ascii character`() {
+        // GCODE_spec.md section 1.1 confines non-ASCII to comments and quoted strings. The corpus has
+        // Cyrillic in both, so this is the test that separates "reclassified" from "broken".
+        val offenders = tokenizer.parse(corpus)
+            .filter { it !is GComment && it !is GQuotedString }
+            .map { it.rawText() }
+            .filter { text -> text.any { it.code > 127 } }
+            .distinct()
+            .toList()
+
+        assertEquals(emptyList<String>(), offenders)
+    }
+
+    @Test
+    fun `the corpus still carries the non ascii characters of its comments`() {
+        // U+2019 on line 140 and U+00B5 on lines 380-382. The fixture has no non-ASCII quoted string,
+        // so the string half of the section 1.1 carve-out is pinned in GTokenizerTest instead.
+        val nonAscii = tokenizer.parse(corpus)
+            .filterIsInstance<GComment>()
+            .flatMap { comment -> comment.string.asSequence() }
+            .filter { it.code > 127 }
+            .distinct()
+            .sorted()
+            .toList()
+
+        assertEquals(listOf('\u00B5', '\u2019'), nonAscii)
+    }
+
+    @Test
+    fun `no comment text carries a stray carriage return`() {
+        // The fixture is CRLF. GCODE_spec.md section 1.2 makes both characters of a CRLF part of the
+        // terminator, so neither belongs to the comment text; the CR is emitted by GLineBreak.
+        val withCr = tokenizer.parse(corpus)
+            .filterIsInstance<GTailComment>()
+            .filter { it.string.contains('\r') }
+            .map { it.string }
+            .toList()
+
+        assertEquals(0, withCr.size) {
+            "${withCr.size} comments still carry a CR, e.g. [${withCr.firstOrNull()}]"
+        }
+    }
+
+    @Test
+    fun `the whole corpus round trips byte for byte including its terminators`() {
+        // The per-line test below strips terminators, so it cannot see a CR moving between a comment
+        // and its line break. This one parses the file exactly as checked out.
+        assertEquals(corpus, tokenizer.parse(corpus).joinToString("") { it.rawText() })
     }
 
     @Test

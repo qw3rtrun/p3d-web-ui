@@ -523,12 +523,25 @@ source-dependently.*
 
 ### 1.18 Minor / decide-and-document
 
-- [ ] On CRLF input `tailComment()` stops only at `'\n'`, so the `'\r'` lands *inside* the comment
+- [x] On CRLF input `tailComment()` stops only at `'\n'`, so the `'\r'` lands *inside* the comment
       text (`;ab\r\n` → `GTailComment("ab\r")`). The text still round-trips, but the comment content
       carries a stray CR.
-- [ ] `Char.isLetter()` accepts any Unicode letter, so `GЯ1` lexes `Я` as a `GLetter`. Spec
+
+      *Fixed in [01](./01-ascii-and-lexer-portability.md): the scan stops at either terminator
+      character and `space()` emits `GLineBreak("\r\n")`, so `;ab\r\n` →
+      `[GTailComment("ab"), GLineBreak("\r\n")]` and the CR is still re-printed. Covered by
+      `GTokenizerTest.TailComments` (three cases, code points asserted because
+      `GLineBreak.toString()` prints only the class name) and by `GCorpusTest.no comment text carries
+      a stray carriage return` — all 125 tail comments of the CRLF fixture used to carry one.*
+- [x] `Char.isLetter()` accepts any Unicode letter, so `GЯ1` lexes `Я` as a `GLetter`. Spec
       [§1.1](../specs/GCODE_spec.md#11-character-set-and-encoding) confines non-ASCII to comments and
       quoted strings.
+
+      *Fixed in [01](./01-ascii-and-lexer-portability.md), along with `isDigit()` and
+      `isWhitespace()`: `GЯ1` → `[GLetter(G), GUnknown(Я), GInt(1)]`, `X١` →
+      `[GLetter(X), GUnknown(١)]`. The digit case mattered twice over — `X١` used to lex as
+      `GInt(1, "١")` and `X1١` as `GInt(11, "1١")`, because `String.toIntOrNull()` is Unicode-aware
+      as well. Narrowing the class is what keeps a non-ASCII digit away from it.*
 
 ---
 

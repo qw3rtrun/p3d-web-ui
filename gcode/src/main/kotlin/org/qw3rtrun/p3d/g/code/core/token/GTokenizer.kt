@@ -1,9 +1,24 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
 import java.math.BigDecimal
-import java.util.stream.Stream
-import kotlin.streams.asSequence
-import kotlin.streams.asStream
+
+// ASCII character classes, spelled out rather than taken from Char.isLetter() / isDigit() /
+// isWhitespace(), which accept whole Unicode categories. The wire format is 7-bit ASCII
+// (spec 1.1), so a non-ASCII character outside a comment or a quoted string is a lexical error
+// (spec 9), not a word - and these four lines transliterate to C, Rust and JS unchanged.
+private fun isDigit(c: Char) = c >= '0' && c <= '9'
+private fun isUpper(c: Char) = c >= 'A' && c <= 'Z'
+private fun isLower(c: Char) = c >= 'a' && c <= 'z'
+private fun isLetter(c: Char) = isUpper(c) || isLower(c)
+
+/**
+ * The separators of spec 2.1 (space, tab) and the terminator characters of spec 1.2 (LF, CR) -
+ * exactly the four [GTokenizerIterator.space] handles, and nothing else. `Char.isWhitespace()` also
+ * accepted VT, FF, the file separators, NBSP and LINE SEPARATOR, all of which fell through to a dead
+ * `else` inside `space()`; they now reach the top-level `else` of `next()` and become `GUnknown`
+ * along the same path as every other unrecognised character.
+ */
+private fun isSpace(c: Char) = c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
 class GTokenizer {
 
@@ -15,7 +30,6 @@ class GTokenizer {
     fun parse(gcode: Iterable<Char>): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
     fun parse(gcode: Sequence<Char>): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
     fun parse(gcode: CharSequence): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
-    fun parse(gcode: Stream<Char>): Stream<GToken> = parse(gcode.asSequence()).asStream()
 
     /**
      * Tokenizes lines whose terminators have already been stripped, as `readLines()` and
@@ -74,9 +88,14 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         if (!hasNext()) throw NoSuchElementException("no more tokens")
         ch = ch ?: chars.next()
         return when {
-            ch!!.isWhitespace() -> space(ch!!)
-            ch!!.isLetter() -> ident(ch!!)
-            ch!!.isDigit() || ch == '.' || ch == '-' || ch == '+' -> number(ch!!)
+            isSpace(ch!!) -> space(ch!!)
+            isLetter(ch!!) -> {
+                val letter = GLetter(ch!!)
+                ch = null
+                letter
+            }
+
+            isDigit(ch!!) || ch == '.' || ch == '-' || ch == '+' -> number(ch!!)
             ch == '\"' -> string()
             ch == '{' -> expression('{')
             ch == ';' -> tailComment()
@@ -94,28 +113,25 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         }
     }
 
+    /**
+     * Lexes one separator. Only the four characters of [isSpace] reach here, so the CR case is the
+     * fall-through: there is no fifth possibility to guard against.
+     */
     fun space(current: Char): GToken {
         ch = null
-        return when (current) {
-            ' ' -> GSpace
-            '\t' -> GTab
-            '\n' -> GLineBreak()
-            '\r' -> {
-                if (chars.hasNext()) {
-                    val next = chars.next()
-                    if (next == '\n') {
-                        // CR and LF belong to one break token, both characters are consumed.
-                        GLineBreak("\r\n")
-                    } else {
-                        // A lone CR is not a break: keep the lookahead for the next token.
-                        ch = next
-                        GUnknown('\r')
-                    }
-                } else GUnknown(current)
-            }
-
-            else -> GUnknown(current)
+        if (current == ' ') return GSpace
+        if (current == '\t') return GTab
+        if (current == '\n') return GLineBreak()
+        // spec 1.2: CR terminates a line only as the first half of CRLF.
+        if (chars.hasNext()) {
+            val next = chars.next()
+            // CR and LF belong to one break token, both characters are consumed.
+            if (next == '\n') return GLineBreak("\r\n")
+            // A lone CR is not a break: keep the lookahead for the next token.
+            ch = next
+            return GUnknown('\r')
         }
+        return GUnknown(current)
     }
 
     /**
@@ -137,7 +153,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
             current = if (chars.hasNext()) chars.next() else null
             // A sign belongs to a number and to nothing else. If no number follows, the sign is a
             // lexical error and the character that followed it goes back into the lookahead.
-            if (current == null || !(current.isDigit() || current == '.')) {
+            if (current == null || !(isDigit(current) || current == '.')) {
                 ch = current
                 return GUnknown(raw.toString())
             }
@@ -145,7 +161,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
 
         while (current != null) {
             when {
-                current.isDigit() -> digits++
+                isDigit(current) -> digits++
                 current == '.' -> dots++
                 else -> break
             }
@@ -162,6 +178,11 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
             digits == 0 || dots > 1 -> GUnknown(text)
             dots == 1 -> GFloat(BigDecimal(text), text)
             // An integer that does not fit an Int is kept verbatim rather than silently truncated.
+            //
+            // spec 1.1: `toIntOrNull` and `BigDecimal(String)` are both wider than the class that
+            // guards them - they accept the whole Unicode Nd category, so `"\u0661".toIntOrNull()`
+            // is 1. Only [isDigit] keeps a non-ASCII digit out of `text`; do not relax it on the
+            // assumption that the conversion would reject one.
             else -> text.toIntOrNull()?.let { GInt(it, text) } ?: GUnknown(text)
         }
     }
@@ -208,11 +229,6 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         return if (terminated) GQuotedString(text.toString()) else GUnknown(raw.toString())
     }
 
-    fun ident(current: Char): GToken {
-        ch = null
-        return if (current.isLetter()) GLetter(current) else GUnknown(current)
-    }
-
     /**
      * Lexes a brace expression, the same nested scan as [inlineComment] over `{` `}`. Unlike a
      * comment an expression keeps its delimiters in the token text, so there is one buffer, not two.
@@ -238,15 +254,18 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
      * Lexes a `;` comment, which runs to the end of the line. The break itself is a separate token,
      * so it is left in the lookahead rather than consumed.
      *
-     * On CRLF input the `\r` still lands inside the comment text - the text round-trips, but it
-     * carries a stray CR. That is TODO 1.18 and is deliberately unchanged here.
+     * spec 1.2: a line ends at LF or at CRLF, so **both** characters of a CRLF belong to the
+     * terminator and neither is comment content. The scan therefore stops at either, and [space]
+     * decides what the character it stopped on means - `\r\n` is one `GLineBreak("\r\n")`, a lone
+     * `\r` is `GUnknown`, exactly as outside a comment. The CR is still emitted, by the separator
+     * rather than by the comment, so `;ab\r\n` round-trips byte for byte.
      */
     fun tailComment(): GComment {
         ch = null
         val text = StringBuilder()
         var current: Char? = if (chars.hasNext()) chars.next() else null
 
-        while (current != null && current != '\n') {
+        while (current != null && current != '\n' && current != '\r') {
             text.append(current)
             current = if (chars.hasNext()) chars.next() else null
         }

@@ -4,7 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.core.msg.*;
 import org.qw3rtrun.p3d.g.G;
 import org.qw3rtrun.p3d.g.code.descr.GEncodable;
-import org.qw3rtrun.p3d.g.decoder.*;
+import org.qw3rtrun.p3d.g.marlin.decoder.*;
 import org.qw3rtrun.p3d.terminal.HostTerminal;
 import org.qw3rtrun.p3d.terminal.PublisherQueue;
 import org.qw3rtrun.p3d.terminal.TerminalManager;

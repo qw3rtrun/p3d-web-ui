@@ -1,7 +1,6 @@
-package org.qw3rtrun.p3d.g.decoder
+package org.qw3rtrun.p3d.g.marlin.decoder
 
-import org.apache.commons.lang3.StringUtils
-import org.qw3rtrun.p3d.g.event.WaitReceived
+import org.qw3rtrun.p3d.g.marlin.event.WaitReceived
 import java.util.Optional
 
 class WaitReceivedDecoder : GEventDecoder<WaitReceived> {

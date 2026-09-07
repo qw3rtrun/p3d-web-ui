@@ -181,6 +181,40 @@ class GSemanticsTest {
             )
             assertEquals("error", kind(GNotIdentifierError(GUnknown("?"), payload)))
         }
+        @Test
+        fun `the structural errors carry the line and a message`() {
+            // GCODE_spec.md section 7.3 and section 9 - structural errors. Each one keeps the whole
+            // line so a caller can log it, resend it, or decide the severity for itself.
+            assertEquals("line number 42 has no checksum", GMissingChecksum(GInt(42), payload).msg)
+            assertEquals("line number ? has no checksum", GMissingChecksum(null, payload).msg)
+            assertEquals("checksum without a line number", GMissingLineNumber(payload).msg)
+            assertEquals("'N' is not followed by a line number", GMalformedLineNumber(payload).msg)
+            assertEquals(
+                "'*' is not followed by a checksum value on line 7",
+                GMalformedChecksum(GInt(7), payload).msg
+            )
+        }
+
+        @Test
+        fun `every structural error is a GError and keeps its payload`() {
+            val errors: List<GError> = listOf(
+                GMissingChecksum(GInt(1), payload),
+                GMissingLineNumber(payload),
+                GMalformedLineNumber(payload),
+                GMalformedChecksum(GInt(1), payload)
+            )
+
+            assertTrue(errors.all { it is GLine }) { "expected all of $errors to be GLine" }
+            assertTrue(errors.all { it.payload == payload })
+            assertTrue(errors.none { it is GOrdered || it is GCheckSumControlled })
+        }
+
+        @Test
+        fun `a missing checksum keeps the line number it did find`() {
+            assertEquals(GInt(42), GMissingChecksum(GInt(42), payload).number)
+            assertEquals(null, GMissingChecksum(null, payload).number)
+        }
+
     }
 
     @Nested

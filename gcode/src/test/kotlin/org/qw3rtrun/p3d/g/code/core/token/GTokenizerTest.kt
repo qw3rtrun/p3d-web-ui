@@ -294,6 +294,69 @@ class GTokenizerTest {
         fun `non ascii content inside a string is preserved`() {
             assertEquals(listOf(GQuotedString("Привет!")), tokens("\"Привет!\""))
         }
+
+        @Test
+        fun `a string closed by the last character of the input is terminated`() {
+            // The closing quote is the final character, so there is nothing left to look ahead at.
+            // This must still be a string and not a lexical error (GCODE_TODO.md 1.7).
+            assertEquals(listOf(GLetter('M'), GQuotedString("a")), tokens("M\"a\""))
+        }
+    }
+
+    /**
+     * A literal that never closes is a lexical error, GCODE_spec.md section 9. The token carries the
+     * original bytes, opening delimiter included, so `rawText()` still reproduces the input and the
+     * degraded text is never silently repaired (GCODE_TODO.md 1.7).
+     */
+    @Nested
+    inner class UnterminatedLiterals {
+
+        @Test
+        fun `an unterminated inline comment keeps its opening paren`() {
+            assertEquals(listOf(GLetter('M'), GUnknown("(abc")), tokens("M(abc"))
+        }
+
+        @Test
+        fun `an unterminated inline comment does not repeat its last character`() {
+            // The lookahead used to survive the scan and re-emit the final char (GCODE_TODO.md 1.7).
+            assertEquals(listOf(GUnknown("(abc")), tokens("(abc"))
+        }
+
+        @Test
+        fun `an unterminated nested inline comment keeps all of its text`() {
+            assertEquals(listOf(GUnknown("(a(b")), tokens("(a(b"))
+        }
+
+        @Test
+        fun `an inline comment closed one level short is unterminated`() {
+            assertEquals(listOf(GUnknown("((a)")), tokens("((a)"))
+        }
+
+        @Test
+        fun `an unterminated string keeps its opening quote`() {
+            assertEquals(listOf(GLetter('M'), GUnknown("\"asd")), tokens("M\"asd"))
+        }
+
+        @Test
+        fun `a lone quote is a lexical error`() {
+            assertEquals(listOf(GUnknown("\"")), tokens("\""))
+        }
+
+        @Test
+        fun `an unterminated string keeps its doubled quotes verbatim`() {
+            assertEquals(listOf(GUnknown("\"a\"\"b")), tokens("\"a\"\"b"))
+        }
+
+        @Test
+        fun `an unterminated expression keeps its opening brace`() {
+            assertEquals(listOf(GLetter('M'), GUnknown("{abc")), tokens("M{abc"))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = ["M(abc", "(abc", "(a(b", "((a)", "M\"asd", "\"", "\"a\"\"b", "M{abc", "{a{b"])
+        fun `an unterminated literal round trips`(gcode: String) {
+            assertEquals(gcode, reprint(gcode))
+        }
     }
 
     @Nested
@@ -336,9 +399,25 @@ class GTokenizerTest {
     @Nested
     inner class InlineComments {
 
-        // The *text* of an inline comment is not asserted here: it currently keeps the closing
-        // paren (GCODE_TODO.md 1.2). Structure - one token per comment group, and correct
-        // resumption of the line afterwards - is asserted instead.
+        @Test
+        fun `the delimiters frame the comment and are not part of its text`() {
+            assertEquals(listOf(GInlineComment("feedrate")), tokens("(feedrate)"))
+        }
+
+        @Test
+        fun `an empty inline comment has empty text`() {
+            assertEquals(listOf(GInlineComment("")), tokens("()"))
+        }
+
+        @Test
+        fun `nested parentheses are part of the comment text`() {
+            assertEquals(listOf(GInlineComment("(a)")), tokens("((a))"))
+        }
+
+        @Test
+        fun `an inline comment between two words round trips`() {
+            assertEquals("G1 (feedrate) F1500", reprint("G1 (feedrate) F1500"))
+        }
 
         @Test
         fun `an inline comment is a single token`() {
@@ -589,12 +668,137 @@ class GTokenizerTest {
 
         @Test
         fun `next on an exhausted iterator throws`() {
-            // The source iterator is a List one on purpose: `next()` does not guard on `hasNext()`
-            // itself, it propagates whatever the character source throws (GCODE_TODO.md 1.17).
             val iter = tokenizer.parse(emptyList<Char>().iterator())
 
             assertFalse(iter.hasNext())
             assertThrows<NoSuchElementException> { iter.next() }
+        }
+
+        @Test
+        fun `next past the end throws NoSuchElementException whatever the source is`() {
+            // A String source used to raise StringIndexOutOfBoundsException where a List source
+            // raised NoSuchElementException (GCODE_TODO.md 1.17). Iterator.next() specifies the
+            // latter, and the type must not depend on which overload the caller picked.
+            assertThrows<NoSuchElementException> { tokenizer.parse("".iterator()).next() }
+            assertThrows<NoSuchElementException> { tokenizer.parse(emptyList<Char>().iterator()).next() }
+            assertThrows<NoSuchElementException> { tokenizer.parse(emptySequence<Char>().iterator()).next() }
+        }
+
+        @Test
+        fun `next past the end of a non empty source throws NoSuchElementException`() {
+            val iter = tokenizer.parse("G".iterator())
+
+            assertEquals(GLetter('G'), iter.next())
+            assertThrows<NoSuchElementException> { iter.next() }
+        }
+    }
+
+    /**
+     * `Iterator.asSequence()` is `constrainOnce()`, so the returned sequence used to be consumable
+     * exactly once (GCODE_TODO.md 1.11). A sequence built over a re-iterable source must itself be
+     * re-iterable; one built over an iterator cannot be, and that asymmetry is asserted too.
+     */
+    @Nested
+    inner class Reiteration {
+
+        @Test
+        fun `a char sequence parse can be consumed twice`() {
+            val parsed = tokenizer.parse("G1 X2")
+
+            assertEquals(parsed.toList(), parsed.toList())
+            assertEquals(5, parsed.count())
+        }
+
+        @Test
+        fun `an iterable parse can be consumed twice`() {
+            val parsed = tokenizer.parse("G1 X2".toList())
+
+            assertEquals(parsed.toList(), parsed.toList())
+        }
+
+        @Test
+        fun `a sequence parse is re-iterable when its source is`() {
+            val parsed = tokenizer.parse("G1 X2".asSequence())
+
+            assertEquals(parsed.toList(), parsed.toList())
+        }
+
+        @Test
+        fun `a parse over a bare iterator is single use, by nature of the source`() {
+            val parsed = tokenizer.parse("G1 X2".iterator()).asSequence()
+
+            assertEquals(5, parsed.count())
+            assertThrows<IllegalStateException> { parsed.toList() }
+        }
+
+        @Test
+        fun `parseLines can be consumed twice`() {
+            val parsed = tokenizer.parseLines(sequenceOf("G28", "M104 S200"))
+
+            assertEquals(parsed.toList(), parsed.toList())
+        }
+    }
+
+    /**
+     * `parseLines` takes lines with their terminators already stripped, as `readLines()` and
+     * `lineSequence()` produce them, and puts a terminator back between them. Without it the
+     * commands fused into one line (GCODE_TODO.md 1.5).
+     */
+    @Nested
+    inner class ParseLines {
+
+        private fun reprintLines(lines: List<String>, terminator: String = "\n"): String =
+            tokenizer.parseLines(lines.asSequence(), terminator).joinToString("") { it.rawText() }
+
+        @Test
+        fun `a terminator is re-inserted between lines`() {
+            assertEquals("G28\nM104 S200", reprintLines(listOf("G28", "M104 S200")))
+        }
+
+        @Test
+        fun `the lines stay separate token runs`() {
+            assertEquals(
+                listOf(
+                    GLetter('G'), GInt(28), GLineBreak("\n"),
+                    GLetter('M'), GInt(104), GSpace, GLetter('S'), GInt(200)
+                ),
+                tokenizer.parseLines(sequenceOf("G28", "M104 S200")).toList()
+            )
+        }
+
+        @Test
+        fun `no terminator is appended after the last line`() {
+            assertEquals("G28", reprintLines(listOf("G28")))
+        }
+
+        @Test
+        fun `an empty sequence produces no tokens`() {
+            assertEquals(emptyList<GToken>(), tokenizer.parseLines(emptySequence()).toList())
+        }
+
+        @Test
+        fun `blank lines are preserved`() {
+            assertEquals("G28\n\nG90", reprintLines(listOf("G28", "", "G90")))
+        }
+
+        @Test
+        fun `the terminator is the callers choice`() {
+            assertEquals("G28\r\nG90", reprintLines(listOf("G28", "G90"), "\r\n"))
+        }
+
+        @Test
+        fun `a CRLF terminator is still one line break token`() {
+            val breaks = tokenizer.parseLines(sequenceOf("G28", "G90"), "\r\n").filterIsInstance<GLineBreak>()
+
+            assertEquals(listOf(GLineBreak("\r\n")), breaks.toList())
+        }
+
+        @Test
+        fun `the line count survives the round trip`() {
+            val program = listOf("; header", "G28", "G1 X1 F100", "", "G90")
+            val lines = GLineIterator(tokenizer.parseLines(program.asSequence()).iterator())
+
+            assertEquals(program.size, lines.asSequence().count())
         }
 
         @Test
@@ -725,6 +929,10 @@ class GTokenizerTest {
                 "M140 S{first_layer_bed_temperature[0]}",
                 "M{SET_TEMP} F{CURRENT}X1.05",
                 "; a whole line comment",
+                "G1 (feedrate) F1500",
+                "G1 ((nested) comment) F1",
+                "()",
+                "(a)(b)",
                 "G1 F100 ; trailing comment with \" and * and (",
                 "N42 G1 X1 F100*9",
                 "\n",

@@ -585,6 +585,16 @@ frame("G1 X10 F600", 1)  # checksum computed over the exact bytes above
 This repository implements the syntax above in `gcode/src/main/kotlin/org/qw3rtrun/p3d/g/code/core/`.
 The mapping is given here so that the spec and the code can be kept in step.
 
+That package is written as a **portable core**: a deliberately small language surface (hand-written
+iterators, integer and bitwise math, records, arrays, explicit state machines, no third-party
+dependencies) so that it can be re-implemented in JS/TS, C or Rust as a transliteration rather than a
+rewrite. Consequences visible in the types below: characters are classified by explicit comparison
+rather than by Unicode-category predicates, malformed input yields a token that carries the offending
+bytes instead of an exception, and every token exposes `rawText()` so a parse can be diffed against a
+raw capture. The rules are recorded in the `low-level-protocol-dev` skill
+(`.agents/skills/low-level-protocol-dev/SKILL.md`) and the outstanding gaps in
+[`doc/todos/`](../todos/00-index.md).
+
 ### B.1 Tokens — `token/GTokens.kt`
 
 | Spec token ([§2](#2-lexical-structure-tokens)) | Type |

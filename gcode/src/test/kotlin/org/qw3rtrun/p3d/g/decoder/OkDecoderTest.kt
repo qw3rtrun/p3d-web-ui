@@ -4,7 +4,8 @@ import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.qw3rtrun.p3d.core.msg.AdvancedOkReceivedEvent
-import org.qw3rtrun.p3d.g.event.AdvancedOKReceived
+import org.qw3rtrun.p3d.g.marlin.decoder.OkDecoder
+import org.qw3rtrun.p3d.g.marlin.event.AdvancedOKReceived
 
 class OkDecoderTest {
     private val decoder = OkDecoder()

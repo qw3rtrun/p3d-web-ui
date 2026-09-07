@@ -101,4 +101,29 @@ class GCorpusTest {
         // reproduces itself byte for byte.
         assertEquals(emptyList<String>(), failing)
     }
+    @Test
+    fun `the liner classifies every corpus line and loses nothing`() {
+        val parsed = GLineIterator(tokenizer.parse(corpus).iterator()).asSequence().toList()
+        val kinds = parsed.groupingBy { it::class.simpleName!! }.eachCount()
+
+        // The corpus is a file, not a serial capture: it has commands, blank/comment-only lines,
+        // and exactly two `N` lines with no checksum. GCODE_spec.md section 7.3 makes the last pair
+        // a structural error over a link; in a file it is benign, which is why the liner reports
+        // the structure rather than refusing the line. Pinned so the ratio cannot drift silently.
+        assertEquals(setOf("GSimpleLine", "GEmptyLine", "GMissingChecksum"), kinds.keys)
+        assertEquals(2, kinds["GMissingChecksum"])
+        assertEquals(lines.size, parsed.size)
+        assertTrue(parsed.none { it is GPacketLine }) { "the corpus has no checksummed lines" }
+    }
+
+    @Test
+    fun `the two unchecksummed line numbers are the ones the fixture actually contains`() {
+        val parsed = GLineIterator(tokenizer.parse(corpus).iterator()).asSequence().toList()
+
+        assertEquals(
+            listOf("line number 100 has no checksum", "line number 101 has no checksum"),
+            parsed.filterIsInstance<GError>().map { it.msg }
+        )
+    }
+
 }

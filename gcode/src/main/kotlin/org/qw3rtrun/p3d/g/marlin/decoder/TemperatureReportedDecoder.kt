@@ -1,9 +1,9 @@
-package org.qw3rtrun.p3d.g.decoder
+package org.qw3rtrun.p3d.g.marlin.decoder
 
 import org.qw3rtrun.p3d.core.msg.TemperatureReport
 import org.qw3rtrun.p3d.core.msg.TemperatureReportedEvent
-import org.qw3rtrun.p3d.g.event.OkTemperatureReported
-import org.qw3rtrun.p3d.g.event.TemperatureReported
+import org.qw3rtrun.p3d.g.marlin.event.OkTemperatureReported
+import org.qw3rtrun.p3d.g.marlin.event.TemperatureReported
 import java.util.Optional
 import java.util.regex.Matcher
 import java.util.regex.Pattern

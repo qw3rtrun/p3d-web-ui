@@ -1,8 +1,12 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertDoesNotThrow
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class GLineIteratorTest {
 
@@ -84,7 +88,7 @@ class GLineIteratorTest {
         val lines = GLineIterator(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(2, lines.size)
-        assertTrue(lines.all { it is GSimpleLine })
+        assertTrue(lines.all { it is GEmptyLine }) { "expected two empty lines, got $lines" }
         assertEquals(listOf(GLineBreak("\n")), lines[0].payload)
         assertEquals(listOf(GLineBreak("\n")), lines[1].payload)
     }
@@ -113,7 +117,7 @@ class GLineIteratorTest {
             ),
             packet.payload
         )
-        assertEquals(listOf(GInt(45)), packet.tail)
+        assertEquals(emptyList<GToken>(), packet.tail)
         assertFalse(iter.hasNext())
     }
 
@@ -146,46 +150,27 @@ class GLineIteratorTest {
     }
 
     @Test
-    fun `packet line without line number defaults to negative one`() {
-        val input = "N G1 X10 *45\n"
-        val iter = GLineIterator(tokenizer.parse(input).iterator())
+    fun `an N that is not followed by a number is a malformed line number`() {
+        val line = GLineIterator(tokenizer.parse("N G1 X10 *45\n").iterator()).next()
 
-        assertTrue(iter.hasNext())
-        val line = iter.next()
-        assertInstanceOf(GPacketLine::class.java, line)
-        val packet = line as GPacketLine
-
-        assertEquals(GInt(-1), packet.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(45)), packet.checksum)
+        assertInstanceOf(GMalformedLineNumber::class.java, line)
+        assertEquals("'N' is not followed by a line number", (line as GError).msg)
     }
 
     @Test
-    fun `packet line without valid checksum value defaults checksum value to negative one`() {
-        val input = "N100 G1 X10 *ABC\n"
-        val iter = GLineIterator(tokenizer.parse(input).iterator())
+    fun `a star that is not followed by a number is a malformed checksum`() {
+        val line = GLineIterator(tokenizer.parse("N100 G1 X10 *ABC\n").iterator()).next()
 
-        assertTrue(iter.hasNext())
-        val line = iter.next()
-        assertInstanceOf(GPacketLine::class.java, line)
-        val packet = line as GPacketLine
-
-        assertEquals(GInt(100), packet.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(-1)), packet.checksum)
+        assertInstanceOf(GMalformedChecksum::class.java, line)
+        assertEquals(GInt(100), (line as GMalformedChecksum).number)
+        assertEquals("'*' is not followed by a checksum value on line 100", line.msg)
     }
 
     @Test
-    fun `packet line with checksum at index 1`() {
-        val input = "N*45 G1 X10\n"
-        val iter = GLineIterator(tokenizer.parse(input).iterator())
+    fun `a checksum immediately after N is a malformed line number`() {
+        val line = GLineIterator(tokenizer.parse("N*45 G1 X10\n").iterator()).next()
 
-        assertTrue(iter.hasNext())
-        val line = iter.next()
-        assertInstanceOf(GPacketLine::class.java, line)
-        val packet = line as GPacketLine
-
-        assertEquals(GInt(-1), packet.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(-1)), packet.checksum)
-        assertEquals(emptyList<GToken>(), packet.tail)
+        assertInstanceOf(GMalformedLineNumber::class.java, line)
     }
 
     @Test
@@ -201,7 +186,7 @@ class GLineIteratorTest {
         assertEquals(GInt(1), packet.number)
         assertEquals(GCheckSumValue(GChecksum, GInt(12)), packet.checksum)
         assertEquals(listOf(GSpace, GLetter('G'), GInt(28), GSpace), packet.payload)
-        assertEquals(listOf(GInt(12), GSpace, GTailComment("homing")), packet.tail)
+        assertEquals(listOf(GSpace, GTailComment("homing")), packet.tail)
     }
 
     @Test
@@ -210,7 +195,7 @@ class GLineIteratorTest {
         val lines = GLineIterator(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(2, lines.size)
-        assertInstanceOf(GSimpleLine::class.java, lines[0])
+        assertInstanceOf(GEmptyLine::class.java, lines[0])
         assertEquals(listOf(GTailComment(" full line comment"), GLineBreak("\n")), lines[0].payload)
 
         assertInstanceOf(GSimpleLine::class.java, lines[1])
@@ -219,7 +204,7 @@ class GLineIteratorTest {
                 GLetter('G'),
                 GInt(1),
                 GSpace,
-                GInlineComment("feedrate)"),
+                GInlineComment("feedrate"),
                 GSpace,
                 GLetter('F'),
                 GInt(1500),
@@ -236,7 +221,7 @@ class GLineIteratorTest {
 
         assertEquals(4, lines.size)
         assertInstanceOf(GPacketLine::class.java, lines[0])
-        assertInstanceOf(GSimpleLine::class.java, lines[1])
+        assertInstanceOf(GEmptyLine::class.java, lines[1])
         assertInstanceOf(GSimpleLine::class.java, lines[2])
         assertInstanceOf(GPacketLine::class.java, lines[3])
 
@@ -275,8 +260,6 @@ class GLineIteratorTest {
 
     @Test
     fun `next after the last line throws`() {
-        // Token list iterator on purpose: neither iterator guards on `hasNext()`, they propagate
-        // what the underlying source throws (GCODE_TODO.md 1.17).
         val iter = GLineIterator(tokenizer.parse("G1 X1\n").toList().iterator())
 
         iter.next()
@@ -286,11 +269,11 @@ class GLineIteratorTest {
     }
 
     @Test
-    fun `a line of nothing but whitespace is one line`() {
+    fun `a line of nothing but whitespace is one empty line`() {
         val lines = GLineIterator(tokenizer.parse("   \n").iterator()).asSequence().toList()
 
         assertEquals(1, lines.size)
-        assertInstanceOf(GSimpleLine::class.java, lines[0])
+        assertInstanceOf(GEmptyLine::class.java, lines[0])
         assertEquals(listOf(GSpace, GSpace, GSpace, GLineBreak("\n")), lines[0].payload)
     }
 
@@ -304,19 +287,21 @@ class GLineIteratorTest {
     }
 
     @Test
-    fun `a line number without a checksum is not a packet`() {
-        // GCODE_spec.md section 7.3 requires both or neither; reporting it as an error is still
-        // open (GCODE_TODO.md 4.3), so this only pins that it is not treated as a valid packet.
+    fun `a line number without a checksum is a pairing error`() {
+        // GCODE_spec.md section 7.3 requires both or neither.
         val line = GLineIterator(tokenizer.parse("N100 G1 X10\n").iterator()).next()
 
-        assertFalse(line is GPacketLine)
+        assertInstanceOf(GMissingChecksum::class.java, line)
+        assertEquals(GInt(100), (line as GMissingChecksum).number)
+        assertEquals("line number 100 has no checksum", line.msg)
     }
 
     @Test
-    fun `a checksum without a line number is not a packet`() {
+    fun `a checksum without a line number is a pairing error`() {
         val line = GLineIterator(tokenizer.parse("G1 X10*45\n").iterator()).next()
 
-        assertFalse(line is GPacketLine)
+        assertInstanceOf(GMissingLineNumber::class.java, line)
+        assertEquals("checksum without a line number", (line as GError).msg)
     }
 
     @Test
@@ -324,6 +309,7 @@ class GLineIteratorTest {
         val line = GLineIterator(tokenizer.parse("N1 G28 ; 3*4\n").iterator()).next()
 
         assertFalse(line is GPacketLine)
+        assertInstanceOf(GMissingChecksum::class.java, line)
     }
 
     @Test
@@ -331,6 +317,7 @@ class GLineIteratorTest {
         val line = GLineIterator(tokenizer.parse("N1 M117 \"a*b\"\n").iterator()).next()
 
         assertFalse(line is GPacketLine)
+        assertInstanceOf(GMissingChecksum::class.java, line)
     }
 
     @Test
@@ -368,16 +355,16 @@ class GLineIteratorTest {
     }
 
     @Test
-    fun `a negative line number is indistinguishable from the missing-number sentinel`() {
-        // Characterisation point, not an expectation: `GLiner` reports "no line number" as
-        // GInt(-1), which a real `N-1` now also produces. GCODE_TODO.md 4.3 replaces the
-        // sentinel with a nullable field or a GError subtype; this test must change with it.
-        val parsed = GLineIterator(tokenizer.parse("N-1 G28*12\n").iterator()).next() as GPacketLine
-        val missing = GLineIterator(tokenizer.parse("N G28*12\n").iterator()).next() as GPacketLine
+    fun `a negative line number is distinguishable from a missing one`() {
+        // Was a characterisation point: both used to report GInt(-1). The sentinel is gone, so a
+        // real N-1 is a packet carrying -1 and a missing number is a different type entirely.
+        // Spec 7.1 - Marlin tolerates a sign after N, so N-1 is not itself an error.
+        val parsed = GLineIterator(tokenizer.parse("N-1 G28*12\n").iterator()).next()
+        val missing = GLineIterator(tokenizer.parse("N G28*12\n").iterator()).next()
 
-        assertEquals(GInt(-1), parsed.number)
-        assertEquals(GInt(-1), missing.number)
-        assertEquals(parsed.number, missing.number)
+        assertInstanceOf(GPacketLine::class.java, parsed)
+        assertEquals(GInt(-1, "-1"), (parsed as GPacketLine).number)
+        assertInstanceOf(GMalformedLineNumber::class.java, missing)
     }
 
     @Test
@@ -392,4 +379,184 @@ class GLineIteratorTest {
 
     private fun lineCount(gcode: String) =
         GLineIterator(tokenizer.parse(gcode).iterator()).asSequence().count()
+
+    private fun lines(gcode: String): List<GLine> =
+        GLineIterator(tokenizer.parse(gcode).iterator()).asSequence().toList()
+
+    private fun line(gcode: String): GLine = lines(gcode).single()
+
+    /**
+     * The buffer boundaries a framer has to survive, per the `low-level-protocol-dev` framing rule.
+     * `tail` used to be computed as `subList(i + 1, size - 1)`, which assumed a trailing line break:
+     * every case here either threw or silently dropped a token (GCODE_TODO.md 1.3).
+     */
+    @Nested
+    inner class BufferBoundaries {
+
+        @ParameterizedTest
+        @ValueSource(
+            strings = [
+                "", "\n", "\r\n", " ", " \n",
+                "*", "*\n", "N", "N\n", "N*", "N*\n", "N1*", "N1*\n", "N1 G1*", "N1 G1*\n",
+                "N1", "N1 ", "N1 G28*12", "N1 G28*12 ;c", "N1 G28*12 ;c\n",
+                "G1 X1", "G1 X1\n", ";c", ";c\n", "(c", "\"a"
+            ]
+        )
+        fun `no input makes the liner throw`(gcode: String) {
+            // assertDoesNotThrow, not a value assertion: the point is that every boundary is
+            // classified rather than crashing. What each one classifies as is asserted elsewhere.
+            assertDoesNotThrow { lines(gcode) }
+        }
+
+        @Test
+        fun `a checksum marker as the last token does not throw`() {
+            assertInstanceOf(GMalformedChecksum::class.java, line("N1*"))
+            assertInstanceOf(GMalformedChecksum::class.java, line("N1 G1*"))
+            assertInstanceOf(GMalformedLineNumber::class.java, line("N*"))
+        }
+
+        @Test
+        fun `a packet without a terminator keeps its whole tail`() {
+            val packet = line("N1 G28*12 ;c") as GPacketLine
+
+            assertEquals(listOf(GSpace, GTailComment("c")), packet.tail)
+        }
+
+        @Test
+        fun `a packet with a terminator does not keep it in the tail`() {
+            val packet = line("N1 G28*12 ;c\n") as GPacketLine
+
+            assertEquals(listOf(GSpace, GTailComment("c")), packet.tail)
+        }
+
+        @Test
+        fun `a CRLF terminator is stripped from the tail too`() {
+            val packet = line("N1 G28*12\r\n") as GPacketLine
+
+            assertEquals(emptyList<GToken>(), packet.tail)
+        }
+
+        @Test
+        fun `a lone checksum marker is a missing line number, not a crash`() {
+            assertInstanceOf(GMissingLineNumber::class.java, line("*"))
+            assertInstanceOf(GMissingLineNumber::class.java, line("*\n"))
+        }
+
+        @Test
+        fun `a lone N is a pairing error, not a crash`() {
+            assertInstanceOf(GMissingChecksum::class.java, line("N"))
+            assertEquals(null, (line("N") as GMissingChecksum).number)
+        }
+    }
+
+    /** Spec section 5: a line of only whitespace and/or comments is a no-op. */
+    @Nested
+    inner class EmptyLines {
+
+        @ParameterizedTest
+        @ValueSource(strings = ["\n", "\r\n", "   \n", "\t\n", "; comment\n", "(comment)\n", "  ; c  \n"])
+        fun `a line with no command element is empty`(gcode: String) {
+            assertInstanceOf(GEmptyLine::class.java, line(gcode))
+        }
+
+        @Test
+        fun `empty input produces no lines at all`() {
+            assertEquals(emptyList<GLine>(), lines(""))
+        }
+
+        @Test
+        fun `an empty line keeps its tokens so the input is not lost`() {
+            assertEquals(listOf(GTailComment(" c"), GLineBreak("\n")), line("; c\n").payload)
+        }
+
+        @Test
+        fun `a line with a command is not empty`() {
+            assertInstanceOf(GSimpleLine::class.java, line("G28\n"))
+            assertInstanceOf(GSimpleLine::class.java, line("  G28 ; c\n"))
+        }
+
+        @Test
+        fun `an unknown token still counts as a command element`() {
+            // GUnknown is a GElement: a line of junk is a simple line, not a no-op.
+            assertInstanceOf(GSimpleLine::class.java, line("?\n"))
+        }
+    }
+
+    /**
+     * Spec section 2.1 - leading whitespace is a separator; section 2.2 - the dialects are
+     * case-insensitive. Packet detection used to require `tokens[0] == GLetter('N')` exactly
+     * (GCODE_TODO.md 1.8).
+     */
+    @Nested
+    inner class PacketDetection {
+
+        @ParameterizedTest
+        @ValueSource(strings = ["N1 G28*18", "n1 G28*18", " N1 G28*18", "\tN1 G28*18", "   n1 G28*18"])
+        fun `a packet is recognised whatever the case and leading whitespace`(gcode: String) {
+            val packet = line(gcode) as GPacketLine
+
+            assertEquals(GInt(1), packet.number)
+            assertEquals(GInt(18), packet.checksum.value)
+        }
+
+        @Test
+        fun `the line number must be the first element`() {
+            // spec 5: `N` is the first field. A trailing N is a parameter, not a line number.
+            assertInstanceOf(GMissingLineNumber::class.java, line("G1 N5*10\n"))
+        }
+
+        @Test
+        fun `an N parameter later in the line is not the line number`() {
+            val packet = line("N1 M110 N7*125\n") as GPacketLine
+
+            assertEquals(GInt(1), packet.number)
+            assertEquals(listOf(GSpace, GLetter('M'), GInt(110), GSpace, GLetter('N'), GInt(7)), packet.payload)
+        }
+
+        @Test
+        fun `whitespace between N and its number is allowed`() {
+            // spec 2.1: whitespace is a separator, words assemble across it.
+            val packet = line("N 1 G28*18\n") as GPacketLine
+
+            assertEquals(GInt(1), packet.number)
+        }
+    }
+
+    /**
+     * Every token the tokenizer produced must appear in exactly one line, so the liner is a pure
+     * regrouping of the stream. `payload` is the whole line for every type except `GPacketLine`,
+     * which decomposes it - so packets are checked by reassembling their parts.
+     */
+    @Nested
+    inner class NothingIsLost {
+
+        private fun reassemble(line: GLine): String = when (line) {
+            is GPacketLine -> "N" + line.number.rawText() +
+                    line.payload.joinToString("") { it.rawText() } +
+                    line.checksum.ident.rawText() + line.checksum.value.rawText() +
+                    line.tail.joinToString("") { it.rawText() }
+
+            else -> line.payload.joinToString("") { it.rawText() }
+        }
+
+        @ParameterizedTest
+        @ValueSource(
+            strings = [
+                "G28\n; comment\nM104 S200\n\nG1 Z5",
+                "N1 G28*18\nN2 G1 X10*33\n",
+                "N1 G28*12 ;homing\n",
+                "  \n\t\nG1 X1\n",
+                "G1 X1\r\nG1 X2\r\n",
+                "N100 M110\nN101 M110 N100\n"
+            ]
+        )
+        fun `the lines together reproduce the input, terminators aside`(gcode: String) {
+            // A GPacketLine does not model its own terminator, so compare against the input with
+            // line breaks removed. Every other token must survive.
+            val expected = gcode.replace("\r", "").replace("\n", "")
+            val actual = lines(gcode).joinToString("") { reassemble(it) }.replace("\r", "").replace("\n", "")
+
+            assertEquals(expected, actual)
+        }
+    }
 }

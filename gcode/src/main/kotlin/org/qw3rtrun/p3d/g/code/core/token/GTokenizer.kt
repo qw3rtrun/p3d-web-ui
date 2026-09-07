@@ -8,12 +8,58 @@ import kotlin.streams.asStream
 class GTokenizer {
 
     fun parse(gcode: Iterator<Char>): Iterator<GToken> = GTokenizerIterator(gcode)
-    fun parse(gcode: Iterable<Char>): Sequence<GToken> = GTokenizerIterator(gcode.iterator()).asSequence()
-    fun parse(gcode: Sequence<Char>): Sequence<GToken> = parse(gcode.iterator()).asSequence()
-    fun parse(gcode: CharSequence): Sequence<GToken> = parse(gcode.iterator()).asSequence()
+
+    // Sequence { ... } rather than Iterator.asSequence(): the latter is constrainOnce(), which made
+    // the result consumable exactly once even when the source could be walked again (TODO 1.11).
+    // Re-iterability is inherited from the source, so only the bare-Iterator overload is single-use.
+    fun parse(gcode: Iterable<Char>): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
+    fun parse(gcode: Sequence<Char>): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
+    fun parse(gcode: CharSequence): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
     fun parse(gcode: Stream<Char>): Stream<GToken> = parse(gcode.asSequence()).asStream()
 
-    fun parseLines(gcode: Sequence<String>): Sequence<GToken> = parse(gcode.flatMap { it.asSequence() }).asSequence()
+    /**
+     * Tokenizes lines whose terminators have already been stripped, as `readLines()` and
+     * `lineSequence()` produce them, re-inserting [terminator] *between* them.
+     *
+     * The terminator is the caller's choice because the line source no longer carries it: a file
+     * read on Windows and one read on Linux arrive here identically. Concatenating without it fused
+     * consecutive commands into a single line (TODO 1.5).
+     */
+    fun parseLines(gcode: Sequence<String>, terminator: String = "\n"): Sequence<GToken> =
+        Sequence { GTokenizerIterator(GLineCharIterator(gcode.iterator(), terminator)) }
+}
+
+/**
+ * Concatenates already-split lines back into a character stream, putting [terminator] between
+ * consecutive lines and never after the last one.
+ */
+private class GLineCharIterator(
+    private val lines: Iterator<String>,
+    private val terminator: String,
+) : Iterator<Char> {
+
+    /** The current line with its terminator re-attached, consumed character by character. */
+    private var chunk: String = ""
+    private var index = 0
+
+    private fun fill() {
+        while (index >= chunk.length && lines.hasNext()) {
+            val line = lines.next()
+            // The terminator separates lines, so the final one does not get one.
+            chunk = if (lines.hasNext()) line + terminator else line
+            index = 0
+        }
+    }
+
+    override fun hasNext(): Boolean {
+        fill()
+        return index < chunk.length
+    }
+
+    override fun next(): Char {
+        if (!hasNext()) throw NoSuchElementException("no more characters")
+        return chunk[index++]
+    }
 }
 
 class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
@@ -23,6 +69,9 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
     override fun hasNext() = ch != null || chars.hasNext()
 
     override fun next(): GToken {
+        // Iterator.next() specifies NoSuchElementException. Without this guard the type depended on
+        // the source overload - a String source raised StringIndexOutOfBoundsException (TODO 1.17).
+        if (!hasNext()) throw NoSuchElementException("no more tokens")
         ch = ch ?: chars.next()
         return when {
             ch!!.isWhitespace() -> space(ch!!)
@@ -117,24 +166,46 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         }
     }
 
+    /**
+     * Lexes a quoted string per spec section 3.4: `"` to the next unpaired `"`, where a doubled `""`
+     * inside the string is one literal quote.
+     *
+     * Two texts are tracked because they differ: [text] is the decoded content the token carries,
+     * [raw] is the exact lexeme. Only the lexeme can represent an unterminated string, which is a
+     * lexical error (spec section 9) rather than a string that gains a closing quote it never had.
+     */
     fun string(): GToken {
         ch = null
-        val str = StringBuilder()
-        while (chars.hasNext()) {
-            var c = chars.next()
-            if (c == '"') {
-                if (chars.hasNext()) {
-                    c = chars.next()
-                    if (c == '"') {
-                        str.append(c)
-                    } else {
-                        ch = c;
-                        break
-                    }
-                }
-            } else str.append(c)
+        val raw = StringBuilder().append('"')
+        val text = StringBuilder()
+        var terminated = false
+        var current: Char? = if (chars.hasNext()) chars.next() else null
+
+        while (current != null) {
+            if (current != '"') {
+                raw.append(current)
+                text.append(current)
+                current = if (chars.hasNext()) chars.next() else null
+                continue
+            }
+            raw.append(current)
+            val next = if (chars.hasNext()) chars.next() else null
+            if (next == '"') {
+                // spec 3.4b: "" is an escaped quote, not the end of the string.
+                raw.append(next)
+                text.append('"')
+                current = if (chars.hasNext()) chars.next() else null
+            } else {
+                // The quote closed the string; whatever followed it belongs to the next token.
+                terminated = true
+                current = next
+                break
+            }
         }
-        return GQuotedString(str.toString())
+        // Whatever stopped the scan (null at end of input) is the next token's first character.
+        ch = current
+
+        return if (terminated) GQuotedString(text.toString()) else GUnknown(raw.toString())
     }
 
     fun ident(current: Char): GToken {
@@ -142,44 +213,77 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
         return if (current.isLetter()) GLetter(current) else GUnknown(current)
     }
 
+    /**
+     * Lexes a brace expression, the same nested scan as [inlineComment] over `{` `}`. Unlike a
+     * comment an expression keeps its delimiters in the token text, so there is one buffer, not two.
+     */
     fun expression(start: Char): GToken {
-        val expression = StringBuilder(start.toString())
-        var stack = 1;
-        while (chars.hasNext() && stack > 0) {
-            ch = chars.next();
-            expression.append(ch);
-            when (ch) {
-                '{' -> stack++
-                '}' -> stack--
+        ch = null
+        val raw = StringBuilder().append(start)
+        var depth = 1
+
+        while (depth > 0 && chars.hasNext()) {
+            val current = chars.next()
+            raw.append(current)
+            when (current) {
+                '{' -> depth++
+                '}' -> depth--
             }
         }
-        ch = null
-        return if (stack == 0) GRawExpression(expression.toString()) else GUnknown(expression.toString())
+
+        return if (depth == 0) GRawExpression(raw.toString()) else GUnknown(raw.toString())
     }
 
+    /**
+     * Lexes a `;` comment, which runs to the end of the line. The break itself is a separate token,
+     * so it is left in the lookahead rather than consumed.
+     *
+     * On CRLF input the `\r` still lands inside the comment text - the text round-trips, but it
+     * carries a stray CR. That is TODO 1.18 and is deliberately unchanged here.
+     */
     fun tailComment(): GComment {
-        val str = StringBuilder()
         ch = null
-        while (chars.hasNext()) {
-            ch = chars.next()
-            if (ch != '\n') str.append(ch) else break
+        val text = StringBuilder()
+        var current: Char? = if (chars.hasNext()) chars.next() else null
+
+        while (current != null && current != '\n') {
+            text.append(current)
+            current = if (chars.hasNext()) chars.next() else null
         }
-        if (ch != '\n') ch = null
-        return GTailComment(str.toString())
+        // The break that ended the comment (null at end of input) starts the next token.
+        ch = current
+
+        return GTailComment(text.toString())
     }
 
+    /**
+     * Lexes a parenthesised comment per spec section 2, tracking nesting so an inner `(` `)` pair
+     * stays part of the text.
+     *
+     * Nothing is read past the closing delimiter, so the lookahead is written once on entry and
+     * never inside the loop. Writing it in the loop is what made an unterminated comment re-emit its
+     * last character as a second token (TODO 1.7); appending the closing paren before the nesting
+     * counter reached zero is what put it inside the comment text (TODO 1.2). `expression()` is the
+     * same scan over `{` `}` and is deliberately kept in the same shape.
+     */
     fun inlineComment(start: Char): GToken {
-        val comment = StringBuilder()
-        var stack = 1;
-        while (chars.hasNext() && stack > 0) {
-            ch = chars.next();
-            comment.append(ch);
-            when (ch) {
-                '(' -> stack++
-                ')' -> stack--
+        ch = null
+        val raw = StringBuilder().append(start)
+        val text = StringBuilder()
+        var depth = 1
+
+        while (depth > 0 && chars.hasNext()) {
+            val current = chars.next()
+            raw.append(current)
+            when (current) {
+                '(' -> depth++
+                ')' -> depth--
             }
+            // The delimiters frame the comment; only the closing one drops the depth to zero, so
+            // every character seen while still nested is content.
+            if (depth > 0) text.append(current)
         }
-        if (ch == ')') ch = null
-        return if (stack == 0) GInlineComment(comment.toString()) else GUnknown(comment.toString())
+
+        return if (depth == 0) GInlineComment(text.toString()) else GUnknown(raw.toString())
     }
 }

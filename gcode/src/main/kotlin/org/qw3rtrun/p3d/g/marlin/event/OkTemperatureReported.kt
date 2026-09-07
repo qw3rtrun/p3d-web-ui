@@ -1,12 +1,13 @@
-package org.qw3rtrun.p3d.g.event
+package org.qw3rtrun.p3d.g.marlin.event
 
+import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
 import org.qw3rtrun.p3d.core.msg.TemperatureReport
 import org.qw3rtrun.p3d.core.msg.TemperatureReportedEvent
 
-data class TemperatureReported(
+data class OkTemperatureReported(
     @get:JvmName("getHotend") val hotend: TemperatureReport?,
     @get:JvmName("getBed") val bed: TemperatureReport?
-) : TemperatureReportedEvent {
+) : OKReceivedEvent, TemperatureReportedEvent {
     override fun hotend(): TemperatureReport? = hotend
     override fun bed(): TemperatureReport? = bed
 }

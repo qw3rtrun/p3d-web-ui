@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.event
+package org.qw3rtrun.p3d.g.marlin.event
 
 import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
 

@@ -1,7 +1,7 @@
-package org.qw3rtrun.p3d.g.decoder
+package org.qw3rtrun.p3d.g.marlin.decoder
 
 import org.qw3rtrun.p3d.core.msg.UnknownEvent
-import org.qw3rtrun.p3d.g.event.ReceivedUnknownEvent
+import org.qw3rtrun.p3d.g.marlin.event.ReceivedUnknownEvent
 import java.util.Optional
 
 class UnknownStringDecoder : GEventDecoder<UnknownEvent> {

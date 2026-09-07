@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.decoder
+package org.qw3rtrun.p3d.g.marlin.decoder
 
 import org.qw3rtrun.p3d.core.msg.GEvent
 import java.util.Optional

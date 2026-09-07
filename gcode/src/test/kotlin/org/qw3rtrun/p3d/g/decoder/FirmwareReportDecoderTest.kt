@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.g.decoder
 
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.marlin.decoder.FirmwareReportDecoder
 
 class FirmwareReportDecoderTest {
 

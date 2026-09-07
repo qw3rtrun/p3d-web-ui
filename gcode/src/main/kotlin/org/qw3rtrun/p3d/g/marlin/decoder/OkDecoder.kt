@@ -1,8 +1,8 @@
-package org.qw3rtrun.p3d.g.decoder
+package org.qw3rtrun.p3d.g.marlin.decoder
 
 import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
-import org.qw3rtrun.p3d.g.event.AdvancedOKReceived
-import org.qw3rtrun.p3d.g.event.OKReceived
+import org.qw3rtrun.p3d.g.marlin.event.AdvancedOKReceived
+import org.qw3rtrun.p3d.g.marlin.event.OKReceived
 import java.util.Optional
 import java.util.regex.Pattern
 

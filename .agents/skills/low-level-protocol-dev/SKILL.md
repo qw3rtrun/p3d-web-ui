@@ -197,8 +197,16 @@ Follow the `tdd` skill for the loop; these are the protocol-specific rules on to
 | nullable `T?` | `T \| null` | sentinel or out-param + bool | `Option<T>` |
 | `and`/`or`/`xor`/`shl` | `&`/`\|`/`^`/`<<` | same | same |
 
-Keep functions small enough to read as one screen of the target language. If a function has no
-obvious C shape, split it until it does.
+Write what a competent C programmer would write in **one** function: locals, explicit control flow,
+index arithmetic, a single pass. "If a function has no obvious C shape, reshape it until it does" —
+*reshape*, not decompose. Splitting a scan across small helpers that each name one line of code is
+the wrong direction here: it allocates, it hides the flow, and it is the thing a port has to undo.
+One screen of C is the size to aim for, and that is considerably larger than one screen of idiomatic
+Kotlin.
+
+Density is bought with comments, not paid for with them: cite the spec section beside every
+non-obvious rule (`// spec 3.1: at least one digit somewhere in the number`) so dense code stays
+reviewable against the spec.
 
 ## Review checklist
 

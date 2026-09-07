@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "kotlin-tooling-java-to-kotlin": {
+      "source": "kotlin/kotlin-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/kotlin-tooling-java-to-kotlin/SKILL.md",
+      "computedHash": "c0fb7dd11aa110da86406c042d7fbac7f3c2334524f53b368d88eed0b87a323e"
+    },
+    "tdd": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/tdd/SKILL.md",
+      "computedHash": "e753a5da75292bbe59d302d89566bc2c53d0e73944da2f0e944a7578883c07d0"
+    }
+  }
+}

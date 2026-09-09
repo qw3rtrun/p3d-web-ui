@@ -27,7 +27,7 @@ class GSemanticsTest {
 
         @Test
         fun `params default to an empty list`() {
-            assertEquals(emptyList<GElement>(), GCommand(GLetter('G')).params)
+            assertEquals(emptyList<GValue>(), GCommand(GLetter('G')).params)
         }
 
         @Test

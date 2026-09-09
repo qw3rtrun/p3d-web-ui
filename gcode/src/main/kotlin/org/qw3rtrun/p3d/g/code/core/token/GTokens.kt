@@ -7,18 +7,19 @@ sealed interface GToken {
     fun toSeq() = sequenceOf(this)
 }
 
-sealed interface GElement : GToken {
-    override fun toSeq(): Sequence<GElement> = sequenceOf(this)
+sealed interface GValue : GToken {
+    override fun toSeq(): Sequence<GValue> = sequenceOf(this)
 }
 
-sealed interface GLiteral : GElement
+sealed interface GLiteral : GValue
 
-sealed interface GIdentifier : GElement {
+sealed interface GIdentifier : GToken {
     val name: String
     override fun rawText() = name
+    fun isLetter(l: Char): Boolean = name == l.toString().lowercase() || name == l.toString().uppercase()
 }
 
-data class GUnknown(val str: String) : GElement {
+data class GUnknown(val str: String) : GToken {
     constructor(ch: Char) : this(ch.toString())
 
     override fun rawText(): String = str
@@ -90,6 +91,12 @@ data class GQuotedString(override val string: String) : GString {
     override fun rawText(): String = "\"${string.replace("\"", "\"\"")}\""
 }
 
+// This is a GCODE design gap, when some string parameters have no quote.
+// The problem is it depends only on the command's number itself, so it can be caught only when a semantic reveal
+data class GUnquotedString(override val string: String) : GString {
+    override fun rawText(): String = "\"${string.replace("\"", "\"\"")}\""
+}
+
 data class GInt(val int: Int, override val lexeme: String = int.toString()) : GNumber {
     override val number: Number
         get() = int
@@ -106,7 +113,7 @@ data class GFloat(val float: BigDecimal, override val lexeme: String = float.toS
         get() = float
 }
 
-sealed interface GExpression : GElement {
+sealed interface GExpression : GValue {
     val exception: String
 }
 

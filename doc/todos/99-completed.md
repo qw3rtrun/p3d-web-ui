@@ -592,7 +592,7 @@ production packages: everything for `core.token` lives in
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `GTokensTest` | 45 | token model: `rawText()` fidelity per kind, the number lexeme (identity, defaults, `Double` precision), quoted-string escaping, sealed-hierarchy membership (comments/separators are *not* `GElement`), `toSeq()`, `toToken()` conversions, scale-sensitive `GFloat` equality |
+| `GTokensTest` | 45 | token model: `rawText()` fidelity per kind, the number lexeme (identity, defaults, `Double` precision), quoted-string escaping, sealed-hierarchy membership (comments/separators are *not* `GValue`), `toSeq()`, `toToken()` conversions, scale-sensitive `GFloat` equality |
 | `GTokenizerTest` | 181 | one nested group per token kind (letters, numbers incl. signed, non-canonical and malformed ones, quoted strings, tail/inline comments, expressions, separators incl. tabs and LF/CRLF/CR, checksum marker, unknown chars), unterminated literals, iterator contract, sequence re-iteration, `parseLines`, all five input overloads, whole-line integration, 37 round-trip cases |
 | `GLineIteratorTest` | 83 | line splitting, packet recognition and the four structural errors, plus four nested groups added in Commit B: `BufferBoundaries` (26 no-throw cases, tail with/without terminator, CRLF, `*`-last, `N`-last), `EmptyLines` (spec §5 no-ops), `PacketDetection` (case and leading whitespace, N-must-be-first, whitespace inside the N word), `NothingIsLost` (the lines reassemble into the input) |
 | `GSemanticsTest` | 26 | `GCommand.print()`, both constructors, line-type hierarchy, exhaustive `when` guard over `GLine`, `GCheckSumValue`, error messages |

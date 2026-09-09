@@ -287,7 +287,7 @@ class GTokensTest {
                 GUnknown("?")
             )
 
-            assertTrue(elements.all { it is GElement }) { "expected all of $elements to be GElement" }
+            assertTrue(elements.all { it is GValue }) { "expected all of $elements to be GElement" }
         }
 
         @Test
@@ -302,7 +302,7 @@ class GTokensTest {
                 GLineBreak()
             )
 
-            assertTrue(nonElements.none { it is GElement }) { "expected none of $nonElements to be GElement" }
+            assertTrue(nonElements.none { it is GValue }) { "expected none of $nonElements to be GElement" }
         }
 
         @Test
@@ -357,7 +357,7 @@ class GTokensTest {
 
         @Test
         fun `toSeq of an element is a sequence of elements`() {
-            val elements: Sequence<GElement> = GLetter('X').toSeq()
+            val elements: Sequence<GValue> = GLetter('X').toSeq()
 
             assertEquals(listOf(GLetter('X')), elements.toList())
         }

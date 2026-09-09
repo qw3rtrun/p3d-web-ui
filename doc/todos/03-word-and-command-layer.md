@@ -37,9 +37,9 @@ collapses two concerns into one type and makes the packet/command distinction aw
       takes `List<GToken>` or a `GLine`; taking the line lets it work on a `GPacketLine`'s payload
       without the caller unpacking it.
 - [ ] **Word assembly across whitespace** ([spec §2.1](../specs/GCODE_spec.md#21-whitespace)). A word
-      is a letter plus its value, and whitespace between them is a separator, not a boundary:
-      `X 10`, `X10` and `X  10` are the same word. The current `parseLine` filters to `GElement` and
-      pairs positionally, which gets this right by accident — make it deliberate and test it.
+  is a letter plus its value, and whitespace between them is a separator, not a boundary:
+      `X 10`, `X10` and `X  10` are the same word. The current `parseLine` filters to `GValue` and
+  pairs positionally, which gets this right by accident — make it deliberate and test it.
 - [ ] **Value-less flag parameters** ([§3.2](../specs/GCODE_spec.md#32-flag-value-less-parameters)) —
       a letter with no following value is a flag, not a letter waiting for a number. `G28 X Y` is
       three words, two of them flags.

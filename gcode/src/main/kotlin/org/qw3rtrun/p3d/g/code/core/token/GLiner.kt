@@ -15,7 +15,7 @@ class GLineIterator(private val tokens: Iterator<GToken>) : Iterator<GLine> {
         // Iterator.next() specifies NoSuchElementException; without this the tokenizer's own
         // exception leaked out and its type depended on the character source (TODO 1.17).
         if (!hasNext()) throw NoSuchElementException("no more lines")
-        return parseLine(nextLine())
+        return GSemanticParser().parseLine(nextLine())
     }
 
     /** Reads up to and including the next line break, or to the end of the stream. */
@@ -40,7 +40,7 @@ class GLineIterator(private val tokens: Iterator<GToken>) : Iterator<GLine> {
     /** Indices, into [body], of the tokens that carry meaning - separators and comments excluded. */
     private fun elementIndices(body: List<GToken>): List<Int> {
         val indices = ArrayList<Int>()
-        for (i in body.indices) if (body[i] is GElement) indices.add(i)
+        for (i in body.indices) if (body[i] is GValue) indices.add(i)
         return indices
     }
 
@@ -64,63 +64,33 @@ class GLineIterator(private val tokens: Iterator<GToken>) : Iterator<GLine> {
         return if (token is GInt) token else null
     }
 
-    private fun parseLine(line: List<GToken>): GLine {
-        val body = stripTerminator(line)
-        val elements = elementIndices(body)
-
-        // spec 5: a line of nothing but whitespace and/or comments is a no-op. It keeps its tokens
-        // so that the line still reproduces its input.
-        if (elements.isEmpty()) return GEmptyLine(line)
-
-        // spec 5 and 7.1: the line number, if present, is the first field of the line.
-        val numbered = isLetter(body[elements[0]], 'N', 'n')
-        val star = checksumAt(body, elements)
-
-        // spec 7.3: a line number and a checksum must both be present or both be absent.
-        if (!numbered && star < 0) return GSimpleLine(line)
-        if (!numbered) return GMissingLineNumber(line)
-        if (star < 0) return GMissingChecksum(numberAfter(body, elements, 0), line)
-
-        // spec 7.1 and 8.1: both markers are present, so both must be followed by an integer.
-        val number = numberAfter(body, elements, 0) ?: return GMalformedLineNumber(line)
-        val value = numberAfter(body, elements, star) ?: return GMalformedChecksum(number, line)
-
-        val numberAt = elements[1]
-        val valueAt = elements[star + 1]
-        return GPacketLine(
-            number,
-            body.subList(numberAt + 1, elements[star]),
-            GCheckSumValue(GChecksum, value),
-            body.subList(valueAt + 1, body.size),
-        )
-    }
 }
 
 class GCommandParser {
-    private fun parseLine(tokens: List<GToken>): GLine {
-        val members = tokens.filter { it is GElement }.map { it as GElement }.iterator()
-        if (!members.hasNext()) {
-            return GCommandLine(emptyList(), tokens)
-        }
-
-        var cmds = listOf<GCommand>()
-        val first = members.next()
-        if (first is GIdentifier && isCommand(first, true)) {
-            var cmd: GIdentifier = first
-            var params = mutableListOf<GElement>()
-            while (members.hasNext()) {
-                val next = members.next()
-                if (next is GIdentifier && isCommand(next, false)) {
-                    cmds = cmds + GCommand(cmd, params)
-                    cmd = next
-                    params = mutableListOf<GElement>()
-                } else {
-                    params.add(next)
-                }
-            }
-            return GCommandLine(cmds + GCommand(cmd, params), tokens)
-        } else return GNotIdentifierError(first, tokens)
-    }
+//    private fun parseLine(tokens: List<GToken>): List<GCommand> {
+//        val members = tokens.filter { it is GValue }.map { it as GValue }.iterator()
+//        if (!members.hasNext()) {
+//            return emptyList()
+//        }
+//
+//        var cmds = listOf<GCommand>()
+//        val first = members.next()
+//        if (first is GIdentifier && isCommand(first, true)) {
+//            var cmd: GIdentifier = first
+//            var params = mutableListOf<GValue>()
+//            while (members.hasNext()) {
+//                val next = members.next()
+//                if (next is GIdentifier && isCommand(next, false)) {
+//                    cmds = cmds + GCommand(cmd, params)
+//                    cmd = next
+//                    params = mutableListOf<GValue>()
+//                } else {
+//                    params.add(next)
+//                }
+//            }
+//            return cmds + GCommand(cmd, params)
+//        } else throw GNotIdentifierError(first, tokens)
+//    }
 
     // spec 2.2, as in GLineIterator: explicit ASCII comparison, never `equals(ignoreCase = true)`.
     private fun isCommand(token: GToken?, includeT: Boolean = false) = token is GLetter

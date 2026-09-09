@@ -1,59 +1,67 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
-sealed interface GSemantic
+sealed interface GSemantic {
+    val raw: List<GToken>
+}
 
-sealed interface GLine : GSemantic {
-    val payload: List<GToken>
+sealed interface GWord : GSemantic {
+    val id: GIdentifier
+    fun isLetter(l: Char): Boolean = id.isLetter(l)
+}
+
+sealed interface GParameter<out V : GValue> : GWord {
+    val value: V
+}
+
+sealed class GFlag : GWord
+
+class GMeaningless(override val raw: List<GToken>) : GSemantic {
+    constructor(token: GToken) : this(listOf(token))
+}
+
+sealed interface GLine {
+    val payload: List<GSemantic>
+    fun raw(): List<GToken> = payload.flatMap { it.raw }
+    fun meaningful(): List<GWord> = payload.filterIsInstance<GWord>()
 }
 
 sealed interface GOrdered : GLine {
     val number: GInt
 }
 
-data class GCheckSumValue(val ident: GChecksum, val value: GInt)
-
 sealed interface GCheckSumControlled : GLine {
-    val checksum: GCheckSumValue
+    val checksum: GParameterWord<GInt>
 }
 
 /**
  * A line that carries no command: empty, or nothing but whitespace and/or comments. Spec section 5
  * calls such a line a no-op. It keeps its tokens so the line still reproduces its input.
  */
-data class GEmptyLine(override val payload: List<GToken>) : GLine {
-    constructor() : this(emptyList())
-}
+data class GMeaninglessLine(override val payload: List<GSemantic>) : GLine
 
-data class GSimpleLine(override val payload: List<GToken>) : GLine
+
+data class GSimpleLine(override val payload: List<GSemantic>) : GLine
 
 data class GPacketLine(
     override val number: GInt,
-    override val payload: List<GToken>,
-    override val checksum: GCheckSumValue,
-    val tail: List<GToken>,
+    override val payload: List<GSemantic>,
+    override val checksum: GParameterWord<GInt>,
+    val raw: List<GSemantic>,
 ) : GLine, GOrdered, GCheckSumControlled
 
-data class GCommand(val head: GIdentifier, val params: List<GElement> = emptyList()) : GSemantic {
-    constructor(headPair: Pair<GIdentifier, GElement>, params: List<GElement> = emptyList()) : this(
-        headPair.first,
-        listOf(headPair.second) + params
+data class GCommand(val head: GParameterWord<GInt>, val params: List<GWord> = emptyList()) {
+    constructor(cmdId: GIdentifier, cmdNum: GInt, params: List<GWord> = emptyList()) : this(
+        GParameterWord(cmdId, cmdNum), params
     )
 
-    fun print(): String = buildString {
-        append(head.rawText())
-        for (param in params) {
-            append(param.rawText())
-        }
-    }
+    fun print(): List<GToken> = head.raw + params.flatMap { it.raw }
 }
-
-data class GCommandLine(val cmds: List<GCommand>, override val payload: List<GToken>) : GLine
 
 sealed interface GError : GLine {
     val msg: String
 }
 
-data class GNotIdentifierError(val head: GElement, override val payload: List<GToken>) : GError {
+data class GNotIdentifierError(val head: GValue, override val payload: List<GSemantic>) : GError {
     override val msg: String
         get() = "GCode should start with a letter, but '${head.rawText()}'"
 }
@@ -66,25 +74,25 @@ data class GNotIdentifierError(val head: GElement, override val payload: List<GT
  * the liner reports the structure and leaves the severity to the caller rather than refusing to
  * parse. The corpus fixture contains two such lines.
  */
-data class GMissingChecksum(val number: GInt?, override val payload: List<GToken>) : GError {
+data class GMissingChecksum(val number: GInt?, override val payload: List<GSemantic>) : GError {
     override val msg: String
         get() = "line number ${number?.rawText() ?: "?"} has no checksum"
 }
 
 /** Spec section 7.3: a checksum without a line number. */
-data class GMissingLineNumber(override val payload: List<GToken>) : GError {
+data class GMissingLineNumber(override val payload: List<GSemantic>) : GError {
     override val msg: String
         get() = "checksum without a line number"
 }
 
 /** Spec section 7.1: `N` is present and paired with a `*`, but is not followed by an integer. */
-data class GMalformedLineNumber(override val payload: List<GToken>) : GError {
+data class GMalformedLineNumber(override val payload: List<GSemantic>) : GError {
     override val msg: String
         get() = "'N' is not followed by a line number"
 }
 
 /** Spec section 8.1: `*` is present and paired with an `N`, but is not followed by an integer. */
-data class GMalformedChecksum(val number: GInt, override val payload: List<GToken>) : GError {
+data class GMalformedChecksum(val number: GInt, override val payload: List<GSemantic>) : GError {
     override val msg: String
         get() = "'*' is not followed by a checksum value on line ${number.rawText()}"
 }

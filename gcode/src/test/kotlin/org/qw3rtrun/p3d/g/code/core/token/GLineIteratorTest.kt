@@ -177,12 +177,21 @@ class GLineIteratorTest {
     }
 
     @Test
-    fun `a star that is not followed by a number is a malformed checksum`() {
-        val line = GLineIterator(tokenizer.parse("N100 G1 X10 *ABC\n").iterator()).next()
+    fun `a star that is followed by a non-integer is a malformed checksum`() {
+        val line = GLineIterator(tokenizer.parse("N100 G1 X10 *10.5\n").iterator()).next()
 
         assertInstanceOf(GMalformedChecksum::class.java, line)
         assertEquals(GInt(100), (line as GMalformedChecksum).number)
         assertEquals("'*' is not followed by a checksum value on line 100", line.msg)
+    }
+
+    @Test
+    fun `a star that is not followed by a value is a missing checksum`() {
+        val line = GLineIterator(tokenizer.parse("N100 G1 X10 *ABC\n").iterator()).next()
+
+        assertInstanceOf(GMissingChecksum::class.java, line)
+        assertEquals(GInt(100), (line as GMissingChecksum).number)
+        assertEquals("line number 100 has no checksum", line.msg)
     }
 
     @Test
@@ -441,8 +450,8 @@ class GLineIteratorTest {
 
         @Test
         fun `a checksum marker as the last token does not throw`() {
-            assertInstanceOf(GMalformedChecksum::class.java, line("N1*"))
-            assertInstanceOf(GMalformedChecksum::class.java, line("N1 G1*"))
+            assertInstanceOf(GMissingChecksum::class.java, line("N1*"))
+            assertInstanceOf(GMissingChecksum::class.java, line("N1 G1*"))
             assertInstanceOf(GMalformedLineNumber::class.java, line("N*"))
         }
 
@@ -455,7 +464,6 @@ class GLineIteratorTest {
                     GParameterWord(GLetter('N'), GInt(1)),
                     GMeaningless(GSpace),
                     GParameterWord(GLetter('G'), GInt(28)),
-                    GMeaningless(GSpace),
                     GParameterWord(GChecksum, GInt(12)),
                     GMeaningless(GSpace),
                     GMeaningless(GTailComment("c"))
@@ -473,7 +481,6 @@ class GLineIteratorTest {
                     GParameterWord(GLetter('N'), GInt(1)),
                     GMeaningless(GSpace),
                     GParameterWord(GLetter('G'), GInt(28)),
-                    GMeaningless(GSpace),
                     GParameterWord(GChecksum, GInt(12)),
                     GMeaningless(GSpace),
                     GMeaningless(GTailComment("c")),
@@ -500,15 +507,14 @@ class GLineIteratorTest {
         }
 
         @Test
-        fun `a lone checksum marker is a missing line number, not a crash`() {
-            assertInstanceOf(GMissingLineNumber::class.java, line("*"))
-            assertInstanceOf(GMissingLineNumber::class.java, line("*\n"))
+        fun `a lone checksum marker is a simple line, not a crash`() {
+            assertInstanceOf(GSimpleLine::class.java, line("*"))
+            assertInstanceOf(GSimpleLine::class.java, line("*\n"))
         }
 
         @Test
-        fun `a lone N is a pairing error, not a crash`() {
-            assertInstanceOf(GMissingChecksum::class.java, line("N"))
-            assertEquals(null, (line("N") as GMissingChecksum).number)
+        fun `a lone N is a malformed line number, not a crash`() {
+            assertInstanceOf(GMalformedLineNumber::class.java, line("N"))
         }
     }
 
@@ -553,12 +559,19 @@ class GLineIteratorTest {
     inner class PacketDetection {
 
         @ParameterizedTest
-        @ValueSource(strings = ["N1 G28*18", "n1 G28*18", " N1 G28*18", "\tN1 G28*18", "   n1 G28*18"])
-        fun `a packet is recognised whatever the case and leading whitespace`(gcode: String) {
+        @ValueSource(strings = ["N1 G28*18", "n1 G28*18"])
+        fun `a packet is recognised whatever the case`(gcode: String) {
             val packet = line(gcode) as GPacketLine
 
             assertEquals(GInt(1), packet.number)
             assertEquals(GInt(18), packet.checksum.value)
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = [" N1 G28*18", "\tN1 G28*18", "   n1 G28*18"])
+        fun `a line with leading whitespace before N is not a packet`(gcode: String) {
+            val error = line(gcode)
+            assertInstanceOf(GMissingLineNumber::class.java, error)
         }
 
         @Test
@@ -600,8 +613,10 @@ class GLineIteratorTest {
     @Nested
     inner class NothingIsLost {
 
-        private fun reassemble(line: GLine): String =
-            line.raw().joinToString("") { it.rawText() }
+        private fun reassemble(line: GLine): String = when (line) {
+            is GPacketLine -> line.raw.flatMap { it.raw }.joinToString("") { it.rawText() }
+            else -> line.raw().joinToString("") { it.rawText() }
+        }
 
         @ParameterizedTest
         @ValueSource(

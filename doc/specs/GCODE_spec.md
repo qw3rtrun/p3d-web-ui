@@ -665,21 +665,25 @@ quoted strings are unaffected — `marlin.gcode` keeps the `’` and `µ` in its
 digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` from lexing as
 `GFloat(1.2)`.
 
-### B.3 Line model — `token/GSemantics.kt`, `token/GLiner.kt`, `token/GSemanticParser.kt`
+### B.3 Line model — `token/GSemantics.kt`, `token/GSemanticParser.kt`
 
 | Spec concept | Type |
 |---|---|
-| Any line/block ([§5](#5-line-block-structure)) | `GLine { val payload: List<GToken> }` |
-| Empty line | `GEmptyLine` — a line of only whitespace and/or comments ([§5](#5-line-block-structure)) |
+| Any line/block ([§5](#5-line-block-structure)) | `GLine { val payload: List<GSemantic> }`, plus `raw()` and `meaningful()` |
+| A semantic element | `GSemantic`: a `GWord` (`GParameterWord`, `GFlagWord`) or a `GMeaningless` |
+| Line of only whitespace and/or comments ([§5](#5-line-block-structure)) | `GMeaninglessLine` |
 | Unnumbered line | `GSimpleLine` |
-| `N…*…` framed line ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GPacketLine(number, payload, checksum, tail)` — also `GOrdered`, `GCheckSumControlled` |
-| Checksum field | `GCheckSumValue(ident: GChecksum, value: GInt)` |
-| Word list grouped into commands | `GCommandLine(cmds: List<GCommand>, payload)` |
-| One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GIdentifier, params: List<GElement>)` |
-| Structural error ([§9](#9-error-handling)) | `GError`, e.g. `GNotIdentifierError` |
+| `N…*…` framed line ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GPacketLine(number, payload, checksum, whole)` — also `GOrdered`, `GCheckSumControlled` |
+| Checksum field | `GParameterWord<GInt>` whose `id` is `GChecksum` |
+| One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GInt>, params: List<GWord>)` |
+| Structural error ([§9](#9-error-handling)) | `GError`: `GNotIdentifierError`, `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum` |
 
-`GLineIterator` splits a token stream at `GLineBreak` and hands each line to `GSemanticParser`,
-which first groups the tokens into **elements** — a *word* (`GParameterWord`, an identifier plus its
+`payload` is the whole line for every type except `GPacketLine`, which decomposes its input — so
+`GPacketLine` keeps every element in `whole` and overrides `raw()` over it. `raw()`, not `payload`,
+is what round-trips a line.
+
+`GSemanticParser` is a single `Iterator<GLine>`: it splits a token stream at `GLineBreak` and, for
+each line, first groups the tokens into **elements** — a *word* (`GParameterWord`, an identifier plus its
 value, or `GFlagWord`, an identifier alone) or a `GMeaningless` (separator, comment, anything else)
 — and then classifies the line off those elements. One pass finds the two the shape needs: the
 **first word**, which is the line's first field ([§5](#5-line-block-structure) — whitespace

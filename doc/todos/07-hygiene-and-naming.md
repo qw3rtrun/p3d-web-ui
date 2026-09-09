@@ -9,12 +9,17 @@ especially the file rename, which would muddy any behavioural diff it landed ins
 
 ## Do
 
-- [ ] **Rename / split `code/core/token/GLiner.kt`.** It holds `GLineIterator` and `GCommandParser`
-      and nothing called `GLiner` — the empty `GCodeReader` stub that made it three unrelated classes
-      is already gone. Either rename to something honest or split in two; if
-      [03](./03-word-and-command-layer.md) is done first, splitting is clearly right because the two
-      classes will have real, separate jobs. **Land this as a pure rename in its own commit** so the
-      diff stays reviewable.
+- [x] **`code/core/token/GLiner.kt` is gone.** It held `GLineIterator` and `GCommandParser` and
+      nothing called `GLiner`. Resolved by both routes at once: `GCommandParser` moved to its own
+      file (it has a real job now, per [03](./03-word-and-command-layer.md)), and `GLineIterator` was
+      **merged into `GSemanticParser`**, which is now a single `Iterator<GLine>` doing grouping and
+      classification. That also removed the `GSemanticParser()` allocated per line. Call sites
+      renamed (34) and `GLineIteratorTest.kt` → `GSemanticParserTest.kt`.
+- [x] **`GParameter` and `GFlag` deleted.** Each had exactly one implementation and was named nowhere
+      else, so `GParameterWord` and `GFlagWord` now implement `GWord` directly, in `GSemantics.kt`
+      beside it. This also removed the `sealed class` / `sealed interface` split between the two, and
+      the `out` variance on `GParameterWord` — the annotation the style rules forbid outright — which
+      turned out to be unnecessary: the module compiles without it.
 - [ ] **Drop the `GLineBreak.toString()` override** (`GTokens.kt`). It hides the data-class output —
       `GLineBreak("\r\n").toString()` prints `"GLineBreak"` — which is exactly the information you
       want in a failing assertion. Removing it may make some test failure messages longer and all of

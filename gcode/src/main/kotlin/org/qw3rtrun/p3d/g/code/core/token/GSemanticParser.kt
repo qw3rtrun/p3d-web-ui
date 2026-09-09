@@ -1,6 +1,37 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
-class GSemanticParser {
+/**
+ * Turns a token stream into a stream of classified lines, per GCODE_spec.md section 5.
+ *
+ * Two steps, both here. Grouping: tokens are cut into lines at each line break. Classification: a
+ * line's shape is read off its **semantic elements** - words and the meaningless runs between them -
+ * so leading whitespace never changes the answer (spec 2.1) and a `*` the lexer put inside a comment
+ * or a string is not a checksum marker.
+ *
+ * One instance consumes one token stream. [parseLine] is independent of that state and can be called
+ * directly on a line's tokens.
+ */
+class GSemanticParser(private val source: Iterator<GToken>) : Iterator<GLine> {
+
+    override fun hasNext(): Boolean = source.hasNext()
+
+    override fun next(): GLine {
+        // Iterator.next() specifies NoSuchElementException; without this the tokenizer's own
+        // exception leaked out and its type depended on the character source (TODO 1.17).
+        if (!hasNext()) throw NoSuchElementException("no more lines")
+        return parseLine(nextLine())
+    }
+
+    /** Reads up to and including the next line break, or to the end of the stream. */
+    private fun nextLine(): List<GToken> {
+        val line = ArrayList<GToken>()
+        do {
+            val next = source.next()
+            line.add(next)
+            if (next is GLineBreak) break
+        } while (source.hasNext())
+        return line
+    }
 
     fun parseLine(tokens: List<GToken>): GLine {
         val semantic = semantic(tokens)
@@ -133,14 +164,3 @@ class GSemanticParser {
         }
     }
 }
-
-data class GParameterWord<out V : GValue>(
-    override val id: GIdentifier,
-    override val value: V,
-    override val raw: List<GToken> = listOf(id, value),
-) : GParameter<V>
-
-data class GFlagWord(
-    override val id: GIdentifier,
-    override val raw: List<GToken> = listOf(id),
-) : GFlag()

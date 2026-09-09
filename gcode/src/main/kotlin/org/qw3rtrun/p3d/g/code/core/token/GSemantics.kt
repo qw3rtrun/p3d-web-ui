@@ -9,11 +9,18 @@ sealed interface GWord : GSemantic {
     fun isLetter(l: Char): Boolean = id.isLetter(l)
 }
 
-sealed interface GParameter<out V : GValue> : GWord {
-    val value: V
-}
+/** A field that carries a value: `X10`, `N1`, `*57`, and `X 10` - spec 2.1 lets a space separate. */
+data class GParameterWord<V : GValue>(
+    override val id: GIdentifier,
+    val value: V,
+    override val raw: List<GToken> = listOf(id, value),
+) : GWord
 
-sealed class GFlag : GWord
+/** A field with no value after it: the `X` of `G28 X Y`, or a `*` with nothing usable behind it. */
+data class GFlagWord(
+    override val id: GIdentifier,
+    override val raw: List<GToken> = listOf(id),
+) : GWord
 
 data class GMeaningless(override val raw: List<GToken>) : GSemantic {
     constructor(token: GToken) : this(listOf(token))

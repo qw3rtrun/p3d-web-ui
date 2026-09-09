@@ -276,7 +276,7 @@ class GTokensTest {
     inner class Hierarchy {
 
         @Test
-        fun `values and identifiers are elements`() {
+        fun `values and identifiers are tokens`() {
             val elements: List<GToken> = listOf(
                 GLetter('X'),
                 GChecksum,
@@ -287,7 +287,19 @@ class GTokensTest {
                 GUnknown("?")
             )
 
-            assertTrue(elements.all { it is GValue }) { "expected all of $elements to be GElement" }
+            assertTrue(elements.all { it is GToken }) { "expected all of $elements to be GToken" }
+        }
+
+        @Test
+        fun `values are GValue`() {
+            val values: List<GToken> = listOf(
+                GInt(1),
+                GFloat("1.5"),
+                GQuotedString("s"),
+                GRawExpression("{e}")
+            )
+
+            assertTrue(values.all { it is GValue }) { "expected all of $values to be GValue" }
         }
 
         @Test
@@ -356,10 +368,10 @@ class GTokensTest {
         }
 
         @Test
-        fun `toSeq of an element is a sequence of elements`() {
-            val elements: Sequence<GValue> = GLetter('X').toSeq()
+        fun `toSeq of a value is a sequence of values`() {
+            val elements: Sequence<GValue> = GInt(1).toSeq()
 
-            assertEquals(listOf(GLetter('X')), elements.toList())
+            assertEquals(listOf(GInt(1)), elements.toList())
         }
     }
 

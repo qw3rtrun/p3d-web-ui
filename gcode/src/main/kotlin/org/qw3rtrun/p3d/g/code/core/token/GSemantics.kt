@@ -15,7 +15,7 @@ sealed interface GParameter<out V : GValue> : GWord {
 
 sealed class GFlag : GWord
 
-class GMeaningless(override val raw: List<GToken>) : GSemantic {
+data class GMeaningless(override val raw: List<GToken>) : GSemantic {
     constructor(token: GToken) : this(listOf(token))
 }
 

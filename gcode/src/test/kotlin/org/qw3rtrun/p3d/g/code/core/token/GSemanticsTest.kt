@@ -17,87 +17,108 @@ class GSemanticsTest {
 
         @Test
         fun `a bare command renders letter and number`() {
-            assertEquals("G28", GCommand(GLetter('G'), listOf(GInt(28))).print())
+            assertEquals(listOf(GLetter('G'), GInt(28)), GCommand(GLetter('G'), GInt(28)).print())
         }
 
         @Test
         fun `a command without params renders just its head`() {
-            assertEquals("G", GCommand(GLetter('G')).print())
+            assertEquals(listOf(GLetter('G'), GInt(28)), GCommand(GLetter('G'), GInt(28)).print())
         }
 
         @Test
         fun `params default to an empty list`() {
-            assertEquals(emptyList<GValue>(), GCommand(GLetter('G')).params)
+            assertEquals(emptyList<GWord>(), GCommand(GLetter('G'), GInt(28)).params)
         }
 
         @Test
         fun `a command renders its parameter words`() {
             val command = GCommand(
                 GLetter('G'),
-                listOf(GInt(1), GLetter('X'), GFloat("10.5"), GLetter('F'), GInt(1800))
+                GInt(1),
+                listOf(
+                    GParameterWord(GLetter('X'), GFloat("10.5")),
+                    GParameterWord(GLetter('F'), GInt(1800))
+                )
             )
 
-            assertEquals("G1X10.5F1800", command.print())
+            assertEquals(
+                listOf(GLetter('G'), GInt(1), GLetter('X'), GFloat("10.5"), GLetter('F'), GInt(1800)),
+                command.print()
+            )
         }
 
         @Test
         fun `a command renders a quoted string parameter`() {
-            val command = GCommand(GLetter('M'), listOf(GInt(117), GQuotedString("Hello!")))
+            val command = GCommand(
+                GLetter('M'),
+                GInt(117),
+                listOf(GParameterWord(GLetter('S'), GQuotedString("Hello!")))
+            )
 
-            assertEquals("M117\"Hello!\"", command.print())
+            assertEquals(
+                listOf(GLetter('M'), GInt(117), GLetter('S'), GQuotedString("Hello!")),
+                command.print()
+            )
         }
 
         @Test
         fun `a command renders an expression parameter`() {
-            val command = GCommand(GLetter('M'), listOf(GInt(140), GLetter('S'), GRawExpression("{bed[0]}")))
+            val command = GCommand(
+                GLetter('M'),
+                GInt(140),
+                listOf(GParameterWord(GLetter('S'), GRawExpression("{bed[0]}")))
+            )
 
-            assertEquals("M140S{bed[0]}", command.print())
+            assertEquals(
+                listOf(GLetter('M'), GInt(140), GLetter('S'), GRawExpression("{bed[0]}")),
+                command.print()
+            )
         }
 
         @Test
-        fun `the pair constructor prepends the head value to the params`() {
-            val fromPair = GCommand(GLetter('M') to GInt(104), listOf(GLetter('S'), GInt(200)))
-            val explicit = GCommand(GLetter('M'), listOf(GInt(104), GLetter('S'), GInt(200)))
+        fun `the identifier and number constructor creates expected head`() {
+            val fromIdAndNum = GCommand(GLetter('M'), GInt(104), listOf(GParameterWord(GLetter('S'), GInt(200))))
+            val explicit = GCommand(GParameterWord(GLetter('M'), GInt(104)), listOf(GParameterWord(GLetter('S'), GInt(200))))
 
-            assertEquals(explicit, fromPair)
-            assertEquals("M104S200", fromPair.print())
+            assertEquals(explicit, fromIdAndNum)
+            assertEquals(listOf(GLetter('M'), GInt(104), GLetter('S'), GInt(200)), fromIdAndNum.print())
         }
 
         @Test
-        fun `the pair constructor works without extra params`() {
-            val command = GCommand(GLetter('T') to GInt(0))
+        fun `the identifier and number constructor works without extra params`() {
+            val command = GCommand(GLetter('T'), GInt(0))
 
-            assertEquals(GLetter('T'), command.head)
-            assertEquals(listOf(GInt(0)), command.params)
-            assertEquals("T0", command.print())
+            assertEquals(GParameterWord(GLetter('T'), GInt(0)), command.head)
+            assertEquals(emptyList<GWord>(), command.params)
+            assertEquals(listOf(GLetter('T'), GInt(0)), command.print())
         }
 
         @Test
         fun `commands with equal head and params are equal`() {
             assertEquals(
-                GCommand(GLetter('G'), listOf(GInt(1))),
-                GCommand(GLetter('G'), listOf(GInt(1)))
+                GCommand(GLetter('G'), GInt(1)),
+                GCommand(GLetter('G'), GInt(1))
             )
-            assertFalse(GCommand(GLetter('G'), listOf(GInt(1))) == GCommand(GLetter('G'), listOf(GInt(2))))
+            assertFalse(GCommand(GLetter('G'), GInt(1)) == GCommand(GLetter('G'), GInt(2)))
         }
 
         @Test
-        fun `a command is a semantic node and not a line`() {
-            val command: GSemantic = GCommand(GLetter('G'), listOf(GInt(1)))
+        fun `a command is not a line`() {
+            val command = GCommand(GLetter('G'), GInt(1))
 
-            assertFalse(command is GLine)
+            assertFalse(command as Any is GLine)
         }
     }
 
     @Nested
     inner class Lines {
 
-        private val payload = listOf<GToken>(GLetter('G'), GInt(28))
+        private val payload = listOf<GSemantic>(GParameterWord(GLetter('G'), GInt(28)))
 
         @Test
-        fun `empty line has no payload by default`() {
-            assertEquals(emptyList<GToken>(), GEmptyLine().payload)
-            assertEquals(GEmptyLine(emptyList()), GEmptyLine())
+        fun `empty meaningless line has no payload by default`() {
+            assertEquals(emptyList<GSemantic>(), GMeaninglessLine(emptyList()).payload)
+            assertEquals(GMeaninglessLine(emptyList()), GMeaninglessLine(emptyList()))
         }
 
         @Test
@@ -106,30 +127,21 @@ class GSemanticsTest {
         }
 
         @Test
-        fun `command line keeps both commands and payload`() {
-            val commands = listOf(GCommand(GLetter('G'), listOf(GInt(28))))
-            val line = GCommandLine(commands, payload)
-
-            assertEquals(commands, line.cmds)
-            assertEquals(payload, line.payload)
-        }
-
-        @Test
-        fun `packet line exposes number checksum payload and tail`() {
-            val checksum = GCheckSumValue(GChecksum, GInt(57))
-            val tail = listOf<GToken>(GTailComment(" c"))
-            val line = GPacketLine(GInt(3), payload, checksum, tail)
+        fun `packet line exposes number checksum payload and raw`() {
+            val checksum = GParameterWord(GChecksum, GInt(57))
+            val raw = listOf<GSemantic>(GMeaningless(GTailComment(" c")))
+            val line = GPacketLine(GInt(3), payload, checksum, raw)
 
             assertEquals(GInt(3), line.number)
             assertEquals(checksum, line.checksum)
             assertEquals(payload, line.payload)
-            assertEquals(tail, line.tail)
+            assertEquals(raw, line.raw)
         }
 
         @Test
         fun `packet line is reachable through the ordered and checksum interfaces`() {
             val line: GLine = GPacketLine(
-                GInt(3), payload, GCheckSumValue(GChecksum, GInt(57)), emptyList()
+                GInt(3), payload, GParameterWord(GChecksum, GInt(57)), emptyList()
             )
 
             assertTrue(line is GOrdered)
@@ -148,16 +160,14 @@ class GSemanticsTest {
         }
 
         @Test
-        fun `every line kind is a semantic node`() {
+        fun `every line kind has payload`() {
             val lines: List<GLine> = listOf(
-                GEmptyLine(),
+                GMeaninglessLine(emptyList()),
                 GSimpleLine(payload),
-                GCommandLine(emptyList(), payload),
-                GPacketLine(GInt(1), payload, GCheckSumValue(GChecksum, GInt(1)), emptyList()),
-                GNotIdentifierError(GUnknown("?"), payload)
+                GPacketLine(GInt(1), payload, GParameterWord(GChecksum, GInt(1)), emptyList()),
+                GNotIdentifierError(GInt(1), payload)
             )
 
-            assertTrue(lines.all { it is GSemantic }) { "expected all of $lines to be GSemantic" }
             assertTrue(lines.all { it.payload == payload || it.payload.isEmpty() })
         }
 
@@ -165,22 +175,21 @@ class GSemanticsTest {
         fun `the line hierarchy dispatches exhaustively`() {
             // Compile-time guard: adding a GLine subtype without handling it breaks this `when`.
             fun kind(line: GLine): String = when (line) {
-                is GEmptyLine -> "empty"
+                is GMeaninglessLine -> "empty"
                 is GSimpleLine -> "simple"
-                is GCommandLine -> "command"
                 is GPacketLine -> "packet"
                 is GError -> "error"
             }
 
-            assertEquals("empty", kind(GEmptyLine()))
+            assertEquals("empty", kind(GMeaninglessLine(emptyList())))
             assertEquals("simple", kind(GSimpleLine(payload)))
-            assertEquals("command", kind(GCommandLine(emptyList(), payload)))
             assertEquals(
                 "packet",
-                kind(GPacketLine(GInt(1), payload, GCheckSumValue(GChecksum, GInt(1)), emptyList()))
+                kind(GPacketLine(GInt(1), payload, GParameterWord(GChecksum, GInt(1)), emptyList()))
             )
-            assertEquals("error", kind(GNotIdentifierError(GUnknown("?"), payload)))
+            assertEquals("error", kind(GNotIdentifierError(GInt(1), payload)))
         }
+
         @Test
         fun `the structural errors carry the line and a message`() {
             // GCODE_spec.md section 7.3 and section 9 - structural errors. Each one keeps the whole
@@ -214,38 +223,37 @@ class GSemanticsTest {
             assertEquals(GInt(42), GMissingChecksum(GInt(42), payload).number)
             assertEquals(null, GMissingChecksum(null, payload).number)
         }
-
     }
 
     @Nested
     inner class Checksums {
 
         @Test
-        fun `checksum value pairs the marker with its number`() {
-            val checksum = GCheckSumValue(GChecksum, GInt(57))
+        fun `checksum parameter word pairs the marker with its number`() {
+            val checksum = GParameterWord(GChecksum, GInt(57))
 
-            assertEquals(GChecksum, checksum.ident)
+            assertEquals(GChecksum, checksum.id)
             assertEquals(GInt(57), checksum.value)
         }
 
         @Test
-        fun `checksum values with the same number are equal`() {
-            assertEquals(GCheckSumValue(GChecksum, GInt(57)), GCheckSumValue(GChecksum, GInt(57)))
-            assertFalse(GCheckSumValue(GChecksum, GInt(57)) == GCheckSumValue(GChecksum, GInt(58)))
+        fun `checksum parameter words with the same number are equal`() {
+            assertEquals(GParameterWord(GChecksum, GInt(57)), GParameterWord(GChecksum, GInt(57)))
+            assertFalse(GParameterWord(GChecksum, GInt(57)) == GParameterWord(GChecksum, GInt(58)))
         }
     }
 
     @Nested
     inner class Errors {
 
-        private val payload = listOf<GToken>(GUnknown("?"), GLetter('G'))
+        private val payload = listOf<GSemantic>(GMeaningless(GUnknown("?")), GParameterWord(GLetter('G'), GInt(28)))
 
         @Test
         fun `a line that does not start with an identifier reports the offending element`() {
-            val error = GNotIdentifierError(GUnknown("?"), payload)
+            val error = GNotIdentifierError(GInt(5), payload)
 
-            assertEquals("GCode should start with a letter, but '?'", error.msg)
-            assertEquals(GUnknown("?"), error.head)
+            assertEquals("GCode should start with a letter, but '5'", error.msg)
+            assertEquals(GInt(5), error.head)
             assertEquals(payload, error.payload)
         }
 
@@ -263,7 +271,7 @@ class GSemanticsTest {
 
         @Test
         fun `an error is a line`() {
-            val error: GLine = GNotIdentifierError(GUnknown("?"), payload)
+            val error: GLine = GNotIdentifierError(GInt(5), payload)
 
             assertTrue(error is GError)
         }

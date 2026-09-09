@@ -165,7 +165,7 @@ class GCorpusTest {
         // and exactly two `N` lines with no checksum. GCODE_spec.md section 7.3 makes the last pair
         // a structural error over a link; in a file it is benign, which is why the liner reports
         // the structure rather than refusing the line. Pinned so the ratio cannot drift silently.
-        assertEquals(setOf("GSimpleLine", "GEmptyLine", "GMissingChecksum"), kinds.keys)
+        assertEquals(setOf("GSimpleLine", "GMeaninglessLine", "GMissingChecksum"), kinds.keys)
         assertEquals(2, kinds["GMissingChecksum"])
         assertEquals(lines.size, parsed.size)
         assertTrue(parsed.none { it is GPacketLine }) { "the corpus has no checksummed lines" }

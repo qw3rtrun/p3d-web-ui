@@ -12,13 +12,16 @@ class GSemanticParser {
         // spec 5 and 7.1: the line number, if present, is the first field of the line.
         val first = semantic[0]
         val lineNumber = when (first) {
+            is GParameterWord<*> if first.isLetter('N') && first.value !is GInt -> return GMalformedLineNumber(semantic)
             is GParameterWord<*> if first.isLetter('N') && first.value is GInt -> first.value
+            is GWord if first.isLetter('N') -> return GMalformedLineNumber(semantic)
             else -> null
         }
+
         val numbered = lineNumber != null
 
         val starIndex = semantic.indexOfLast { it is GParameterWord<*> && it.isLetter('*') }
-        val star = if (starIndex > 0) semantic[0] as GParameterWord<*>? else null
+        val star = if (starIndex > 0) semantic[starIndex] else null
         val checked = star != null
 
         // spec 7.3: a line number and a checksum must both be present or both be absent.
@@ -27,7 +30,9 @@ class GSemanticParser {
         if (!checked) return GMissingChecksum(lineNumber, semantic)
 
         // spec 7.1 and 8.1: both markers are present, so both must be followed by an integer.
+        if (star !is GParameterWord<*>) return GMalformedChecksum(lineNumber, semantic)
         if (star.value !is GInt) return GMalformedChecksum(lineNumber, semantic)
+
 
         return GPacketLine(
             lineNumber,

@@ -42,7 +42,7 @@ class GLineIteratorTest {
                 GLetter('Y'),
                 GInt(20)
             ),
-            line.payload
+            line.raw()
         )
         assertFalse(iter.hasNext())
     }
@@ -64,7 +64,7 @@ class GLineIteratorTest {
                 GInt(10),
                 GLineBreak("\n")
             ),
-            line.payload
+            line.raw()
         )
         assertFalse(iter.hasNext())
     }
@@ -77,9 +77,9 @@ class GLineIteratorTest {
         assertEquals(3, lines.size)
         assertTrue(lines.all { it is GSimpleLine })
 
-        assertEquals(listOf(GLetter('G'), GInt(28), GLineBreak("\n")), lines[0].payload)
-        assertEquals(listOf(GLetter('M'), GInt(104), GSpace, GLetter('S'), GInt(200), GLineBreak("\n")), lines[1].payload)
-        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('Z'), GInt(5), GLineBreak("\n")), lines[2].payload)
+        assertEquals(listOf(GLetter('G'), GInt(28), GLineBreak("\n")), lines[0].raw())
+        assertEquals(listOf(GLetter('M'), GInt(104), GSpace, GLetter('S'), GInt(200), GLineBreak("\n")), lines[1].raw())
+        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('Z'), GInt(5), GLineBreak("\n")), lines[2].raw())
     }
 
     @Test
@@ -88,9 +88,9 @@ class GLineIteratorTest {
         val lines = GLineIterator(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(2, lines.size)
-        assertTrue(lines.all { it is GEmptyLine }) { "expected two empty lines, got $lines" }
-        assertEquals(listOf(GLineBreak("\n")), lines[0].payload)
-        assertEquals(listOf(GLineBreak("\n")), lines[1].payload)
+        assertTrue(lines.all { it is GMeaninglessLine }) { "expected two empty lines, got $lines" }
+        assertEquals(listOf(GLineBreak("\n")), lines[0].raw())
+        assertEquals(listOf(GLineBreak("\n")), lines[1].raw())
     }
 
     @Test
@@ -104,20 +104,30 @@ class GLineIteratorTest {
         val packet = line as GPacketLine
 
         assertEquals(GInt(100), packet.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(45)), packet.checksum)
+        assertEquals(GParameterWord(GChecksum, GInt(45)), packet.checksum)
         assertEquals(
             listOf(
-                GSpace,
-                GLetter('G'),
-                GInt(1),
-                GSpace,
-                GLetter('X'),
-                GInt(10),
-                GSpace
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('G'), GInt(1)),
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('X'), GInt(10)),
+                GMeaningless(GSpace)
             ),
             packet.payload
         )
-        assertEquals(emptyList<GToken>(), packet.tail)
+        assertEquals(
+            listOf(
+                GParameterWord(GLetter('N'), GInt(100)),
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('G'), GInt(1)),
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('X'), GInt(10)),
+                GMeaningless(GSpace),
+                GParameterWord(GChecksum, GInt(45)),
+                GMeaningless(GLineBreak("\n"))
+            ),
+            packet.raw
+        )
         assertFalse(iter.hasNext())
     }
 
@@ -132,20 +142,29 @@ class GLineIteratorTest {
         val packet = line as GPacketLine
 
         assertEquals(GInt(100), packet.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(45)), packet.checksum)
+        assertEquals(GParameterWord(GChecksum, GInt(45)), packet.checksum)
         assertEquals(
             listOf(
-                GSpace,
-                GLetter('G'),
-                GInt(1),
-                GSpace,
-                GLetter('X'),
-                GInt(10),
-                GSpace
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('G'), GInt(1)),
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('X'), GInt(10)),
+                GMeaningless(GSpace)
             ),
             packet.payload
         )
-        assertEquals(emptyList<GToken>(), packet.tail)
+        assertEquals(
+            listOf(
+                GParameterWord(GLetter('N'), GInt(100)),
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('G'), GInt(1)),
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('X'), GInt(10)),
+                GMeaningless(GSpace),
+                GParameterWord(GChecksum, GInt(45))
+            ),
+            packet.raw
+        )
         assertFalse(iter.hasNext())
     }
 
@@ -184,9 +203,21 @@ class GLineIteratorTest {
         val packet = line as GPacketLine
 
         assertEquals(GInt(1), packet.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(12)), packet.checksum)
-        assertEquals(listOf(GSpace, GLetter('G'), GInt(28), GSpace), packet.payload)
-        assertEquals(listOf(GSpace, GTailComment("homing")), packet.tail)
+        assertEquals(GParameterWord(GChecksum, GInt(12)), packet.checksum)
+        assertEquals(listOf(GMeaningless(GSpace), GParameterWord(GLetter('G'), GInt(28)), GMeaningless(GSpace)), packet.payload)
+        assertEquals(
+            listOf(
+                GParameterWord(GLetter('N'), GInt(1)),
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('G'), GInt(28)),
+                GMeaningless(GSpace),
+                GParameterWord(GChecksum, GInt(12)),
+                GMeaningless(GSpace),
+                GMeaningless(GTailComment("homing")),
+                GMeaningless(GLineBreak("\n"))
+            ),
+            packet.raw
+        )
     }
 
     @Test
@@ -195,8 +226,8 @@ class GLineIteratorTest {
         val lines = GLineIterator(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(2, lines.size)
-        assertInstanceOf(GEmptyLine::class.java, lines[0])
-        assertEquals(listOf(GTailComment(" full line comment"), GLineBreak("\n")), lines[0].payload)
+        assertInstanceOf(GMeaninglessLine::class.java, lines[0])
+        assertEquals(listOf(GTailComment(" full line comment"), GLineBreak("\n")), lines[0].raw())
 
         assertInstanceOf(GSimpleLine::class.java, lines[1])
         assertEquals(
@@ -210,7 +241,7 @@ class GLineIteratorTest {
                 GInt(1500),
                 GLineBreak("\n")
             ),
-            lines[1].payload
+            lines[1].raw()
         )
     }
 
@@ -221,17 +252,17 @@ class GLineIteratorTest {
 
         assertEquals(4, lines.size)
         assertInstanceOf(GPacketLine::class.java, lines[0])
-        assertInstanceOf(GEmptyLine::class.java, lines[1])
+        assertInstanceOf(GMeaninglessLine::class.java, lines[1])
         assertInstanceOf(GSimpleLine::class.java, lines[2])
         assertInstanceOf(GPacketLine::class.java, lines[3])
 
         val firstPacket = lines[0] as GPacketLine
         assertEquals(GInt(1), firstPacket.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(125)), firstPacket.checksum)
+        assertEquals(GParameterWord(GChecksum, GInt(125)), firstPacket.checksum)
 
         val secondPacket = lines[3] as GPacketLine
         assertEquals(GInt(2), secondPacket.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(33)), secondPacket.checksum)
+        assertEquals(GParameterWord(GChecksum, GInt(33)), secondPacket.checksum)
     }
 
     @Test
@@ -245,14 +276,14 @@ class GLineIteratorTest {
 
         val line1 = iter.next()
         assertInstanceOf(GSimpleLine::class.java, line1)
-        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('X'), GInt(1), GLineBreak("\n")), line1.payload)
+        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('X'), GInt(1), GLineBreak("\n")), line1.raw())
 
         assertTrue(iter.hasNext())
         assertTrue(iter.hasNext())
 
         val line2 = iter.next()
         assertInstanceOf(GSimpleLine::class.java, line2)
-        assertEquals(listOf(GLetter('G'), GInt(2), GSpace, GLetter('X'), GInt(2), GLineBreak("\n")), line2.payload)
+        assertEquals(listOf(GLetter('G'), GInt(2), GSpace, GLetter('X'), GInt(2), GLineBreak("\n")), line2.raw())
 
         assertFalse(iter.hasNext())
         assertFalse(iter.hasNext())
@@ -273,8 +304,8 @@ class GLineIteratorTest {
         val lines = GLineIterator(tokenizer.parse("   \n").iterator()).asSequence().toList()
 
         assertEquals(1, lines.size)
-        assertInstanceOf(GEmptyLine::class.java, lines[0])
-        assertEquals(listOf(GSpace, GSpace, GSpace, GLineBreak("\n")), lines[0].payload)
+        assertInstanceOf(GMeaninglessLine::class.java, lines[0])
+        assertEquals(listOf(GSpace, GSpace, GSpace, GLineBreak("\n")), lines[0].raw())
     }
 
     @Test
@@ -283,7 +314,7 @@ class GLineIteratorTest {
         val lines = GLineIterator(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(5, lines.size)
-        assertEquals(input, lines.joinToString("") { line -> line.payload.joinToString("") { it.rawText() } })
+        assertEquals(input, lines.joinToString("") { line -> line.raw().joinToString("") { it.rawText() } })
     }
 
     @Test
@@ -325,8 +356,8 @@ class GLineIteratorTest {
         val packet = GLineIterator(tokenizer.parse("N0 G28*0\n").iterator()).next() as GPacketLine
 
         assertEquals(GInt(0), packet.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(0)), packet.checksum)
-        assertEquals(listOf(GSpace, GLetter('G'), GInt(28)), packet.payload)
+        assertEquals(GParameterWord(GChecksum, GInt(0)), packet.checksum)
+        assertEquals(listOf(GMeaningless(GSpace), GParameterWord(GLetter('G'), GInt(28))), packet.payload)
     }
 
     @Test
@@ -334,7 +365,7 @@ class GLineIteratorTest {
         val packet = GLineIterator(tokenizer.parse("N999999 G28*255\n").iterator()).next() as GPacketLine
 
         assertEquals(GInt(999999), packet.number)
-        assertEquals(GCheckSumValue(GChecksum, GInt(255)), packet.checksum)
+        assertEquals(GParameterWord(GChecksum, GInt(255)), packet.checksum)
     }
 
     @Test
@@ -360,11 +391,11 @@ class GLineIteratorTest {
         // real N-1 is a packet carrying -1 and a missing number is a different type entirely.
         // Spec 7.1 - Marlin tolerates a sign after N, so N-1 is not itself an error.
         val parsed = GLineIterator(tokenizer.parse("N-1 G28*12\n").iterator()).next()
-        val missing = GLineIterator(tokenizer.parse("N G28*12\n").iterator()).next()
+        val mailformed = GLineIterator(tokenizer.parse("N G28*12\n").iterator()).next()
 
         assertInstanceOf(GPacketLine::class.java, parsed)
         assertEquals(GInt(-1, "-1"), (parsed as GPacketLine).number)
-        assertInstanceOf(GMalformedLineNumber::class.java, missing)
+        assertInstanceOf(GMalformedLineNumber::class.java, mailformed)
     }
 
     @Test
@@ -416,24 +447,56 @@ class GLineIteratorTest {
         }
 
         @Test
-        fun `a packet without a terminator keeps its whole tail`() {
+        fun `a packet without a terminator keeps its whole raw tokens`() {
             val packet = line("N1 G28*12 ;c") as GPacketLine
 
-            assertEquals(listOf(GSpace, GTailComment("c")), packet.tail)
+            assertEquals(
+                listOf(
+                    GParameterWord(GLetter('N'), GInt(1)),
+                    GMeaningless(GSpace),
+                    GParameterWord(GLetter('G'), GInt(28)),
+                    GMeaningless(GSpace),
+                    GParameterWord(GChecksum, GInt(12)),
+                    GMeaningless(GSpace),
+                    GMeaningless(GTailComment("c"))
+                ),
+                packet.raw
+            )
         }
 
         @Test
-        fun `a packet with a terminator does not keep it in the tail`() {
+        fun `a packet with a terminator keeps its raw tokens including terminator`() {
             val packet = line("N1 G28*12 ;c\n") as GPacketLine
 
-            assertEquals(listOf(GSpace, GTailComment("c")), packet.tail)
+            assertEquals(
+                listOf(
+                    GParameterWord(GLetter('N'), GInt(1)),
+                    GMeaningless(GSpace),
+                    GParameterWord(GLetter('G'), GInt(28)),
+                    GMeaningless(GSpace),
+                    GParameterWord(GChecksum, GInt(12)),
+                    GMeaningless(GSpace),
+                    GMeaningless(GTailComment("c")),
+                    GMeaningless(GLineBreak("\n"))
+                ),
+                packet.raw
+            )
         }
 
         @Test
-        fun `a CRLF terminator is stripped from the tail too`() {
+        fun `a CRLF terminator is in raw tokens too`() {
             val packet = line("N1 G28*12\r\n") as GPacketLine
 
-            assertEquals(emptyList<GToken>(), packet.tail)
+            assertEquals(
+                listOf(
+                    GParameterWord(GLetter('N'), GInt(1)),
+                    GMeaningless(GSpace),
+                    GParameterWord(GLetter('G'), GInt(28)),
+                    GParameterWord(GChecksum, GInt(12)),
+                    GMeaningless(GLineBreak("\r\n"))
+                ),
+                packet.raw
+            )
         }
 
         @Test
@@ -456,7 +519,7 @@ class GLineIteratorTest {
         @ParameterizedTest
         @ValueSource(strings = ["\n", "\r\n", "   \n", "\t\n", "; comment\n", "(comment)\n", "  ; c  \n"])
         fun `a line with no command element is empty`(gcode: String) {
-            assertInstanceOf(GEmptyLine::class.java, line(gcode))
+            assertInstanceOf(GMeaninglessLine::class.java, line(gcode))
         }
 
         @Test
@@ -466,7 +529,7 @@ class GLineIteratorTest {
 
         @Test
         fun `an empty line keeps its tokens so the input is not lost`() {
-            assertEquals(listOf(GTailComment(" c"), GLineBreak("\n")), line("; c\n").payload)
+            assertEquals(listOf(GTailComment(" c"), GLineBreak("\n")), line("; c\n").raw())
         }
 
         @Test
@@ -476,9 +539,8 @@ class GLineIteratorTest {
         }
 
         @Test
-        fun `an unknown token still counts as a command element`() {
-            // GUnknown is a GElement: a line of junk is a simple line, not a no-op.
-            assertInstanceOf(GSimpleLine::class.java, line("?\n"))
+        fun `an unknown token still counts as a meaningless line`() {
+            assertInstanceOf(GMeaninglessLine::class.java, line("?\n"))
         }
     }
 
@@ -510,7 +572,15 @@ class GLineIteratorTest {
             val packet = line("N1 M110 N7*125\n") as GPacketLine
 
             assertEquals(GInt(1), packet.number)
-            assertEquals(listOf(GSpace, GLetter('M'), GInt(110), GSpace, GLetter('N'), GInt(7)), packet.payload)
+            assertEquals(
+                listOf(
+                    GMeaningless(GSpace),
+                    GParameterWord(GLetter('M'), GInt(110)),
+                    GMeaningless(GSpace),
+                    GParameterWord(GLetter('N'), GInt(7))
+                ),
+                packet.payload
+            )
         }
 
         @Test
@@ -530,14 +600,8 @@ class GLineIteratorTest {
     @Nested
     inner class NothingIsLost {
 
-        private fun reassemble(line: GLine): String = when (line) {
-            is GPacketLine -> "N" + line.number.rawText() +
-                    line.payload.joinToString("") { it.rawText() } +
-                    line.checksum.ident.rawText() + line.checksum.value.rawText() +
-                    line.tail.joinToString("") { it.rawText() }
-
-            else -> line.payload.joinToString("") { it.rawText() }
-        }
+        private fun reassemble(line: GLine): String =
+            line.raw().joinToString("") { it.rawText() }
 
         @ParameterizedTest
         @ValueSource(
@@ -551,12 +615,9 @@ class GLineIteratorTest {
             ]
         )
         fun `the lines together reproduce the input, terminators aside`(gcode: String) {
-            // A GPacketLine does not model its own terminator, so compare against the input with
-            // line breaks removed. Every other token must survive.
-            val expected = gcode.replace("\r", "").replace("\n", "")
-            val actual = lines(gcode).joinToString("") { reassemble(it) }.replace("\r", "").replace("\n", "")
+            val actual = lines(gcode).joinToString("") { reassemble(it) }
 
-            assertEquals(expected, actual)
+            assertEquals(gcode, actual)
         }
     }
 }

@@ -49,7 +49,11 @@ class TemperatureReportedDecoder : GEventDecoder<TemperatureReportedEvent> {
     }
 
     private fun processPower(matcher: Matcher, powers: MutableMap<String, Int>) {
-        powers[matcher.group(4)] = matcher.group(5).toInt()
+        // spec 9: a digit run too wide for Int is malformed input off the wire, not a crash. Drop
+        // the field; the completeness check in decode() then turns the whole line into absence.
+        // The group is [0-9]+, so toIntOrNull() never sees a non-ASCII digit here.
+        val power = matcher.group(5).toIntOrNull() ?: return
+        powers[matcher.group(4)] = power
     }
 
     private fun processTempReport(
@@ -57,13 +61,20 @@ class TemperatureReportedDecoder : GEventDecoder<TemperatureReportedEvent> {
         temps: MutableMap<String, Double>,
         targets: MutableMap<String, Double>
     ) {
-        temps[matcher.group(1)] = matcher.group(2).toDouble()
-        targets[matcher.group(1)] = matcher.group(3).toDouble()
+        // spec 9: same rule as processPower - an unparsable value drops its field rather than
+        // throwing. Both halves are stored or neither, so a half-read field cannot be decoded.
+        val temp = matcher.group(2).toDoubleOrNull() ?: return
+        val target = matcher.group(3).toDoubleOrNull() ?: return
+        temps[matcher.group(1)] = temp
+        targets[matcher.group(1)] = target
     }
 
     companion object {
         private val TEMP_REPORT_PATTERN = Pattern.compile(
-            "(?>([TtBb]\\d?): *[+-]?((?>[0-9]*.)?[0-9]+) */ *((?>[0-9]*.)?[0-9]+) *)|(?>([TtBb]?@\\d?): *[+-]?([0-9]+) *)"
+            // The dot is escaped: an unescaped `.` in `[0-9]*.` matched any character, so
+            // `B:x1` parsed as a number and reached toDouble(). spec 3.1 shape: digits, an
+            // optional `.` and more digits.
+            "(?>([TtBb]\\d?): *[+-]?((?>[0-9]*\\.)?[0-9]+) */ *((?>[0-9]*\\.)?[0-9]+) *)|(?>([TtBb]?@\\d?): *[+-]?([0-9]+) *)"
         )
     }
 }

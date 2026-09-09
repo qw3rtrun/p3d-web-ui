@@ -302,6 +302,8 @@ a quote it never had. A bare `"` at end of input yields `GQuotedString("")`.
 
 ### 1.8 Packet detection is case- and position-exact — `GLiner.kt:34` — FIXED
 
+**Regressed in `286461b` and re-fixed — see [1.19](#119-classification-regressions-from-286461b--gsemanticparserkt--fixed).**
+
 *Fixed: the line is classified from its **elements** - the tokens that are neither separators nor
 comments - so leading whitespace cannot change the answer, and the letter is matched with an explicit
 ASCII comparison (`letter == 'N' || letter == 'n'`). Not `equals(ignoreCase = true)`: the skill rules
@@ -543,8 +545,88 @@ source-dependently.*
       `GInt(1, "١")` and `X1١` as `GInt(11, "1١")`, because `String.toIntOrNull()` is Unicode-aware
       as well. Narrowing the class is what keeps a non-ASCII digit away from it.*
 
+### 1.19 Classification regressions from `286461b` — `GSemanticParser.kt` — ✅ FIXED
+
+The `GSemantic` refactor moved line classification out of `GLiner.kt` into `GSemanticParser.kt` and
+lost three properties that [1.3](#13-gpacketlinetail-is-off-by-one-and-can-crash--glinerkt51-glinerkt56---fixed)
+and [1.8](#18-packet-detection-is-case--and-position-exact--glinerkt34--fixed) had established. All
+three are one-line consequences of the move, all three were blessed by an edited test, and all three
+are visible in the *Commit B verification* block of the appendix as the behaviour that used to hold.
+
+- [x] **The checksum marker in first position was invisible.** `val star = if (starIndex > 0) ...`
+      treated `indexOfLast`'s legitimate `0` as “not found”, so `*12` classified as `GSimpleLine`
+      instead of `GMissingLineNumber` — spec [§7.3](../specs/GCODE_spec.md#73-pairing-rule) says the
+      pairing rule holds wherever the marker sits. `G28*12`, one position later, was already right.
+      *Fixed: the marker index is compared with `>= 0`, and the search is now an explicit loop.*
+- [x] **Packet detection was position-dependent again (a regression of 1.8).** The line number was
+      read as `semantic[0]`, so for ` N1 G28*18` element 0 was the `GMeaningless(GSpace)` and the
+      line reported `GMissingLineNumber` — “checksum without a line number” for a line that plainly
+      has one. Same for a leading tab or a leading comment. Spec
+      [§2.1](../specs/GCODE_spec.md#21-whitespace) makes whitespace a separator only.
+      *Fixed: one pass scans for the first **word**, which is what spec §5 means by the first field;
+      `GPacketLine.payload` is now bounded from that word rather than from index 1.*
+- [x] **A garbled checksum reported as a missing one.** The marker search matched only
+      `GParameterWord`, but the same commit moved `GLetter`/`GUnknown` out of the value hierarchy, so
+      `*ABC` and a bare `*` became a `GFlagWord` and fell out of the search: `N1*`, `N1 G28*` and
+      `N100 G1 X10 *ABC` all yielded `GMissingChecksum`. That is the one distinction a host needs to
+      tell [§7.3](../specs/GCODE_spec.md#73-pairing-rule) (unpaired, reframe) from
+      [§8.1](../specs/GCODE_spec.md#81-syntax) (garbled, resend —
+      [§8.5](../specs/GCODE_spec.md#85-failure-handling-and-the-resend-protocol)).
+      *Fixed: the search matches any word whose identifier is `GChecksum`; the value test then
+      separates `GMalformedChecksum` from `GMissingChecksum`.*
+- [x] Two `*` markers on one line — no coverage before, no behaviour change now. `N1 G28*12*13` is a
+      `GPacketLine` with `checksum = GInt(13)`: spec [§5](../specs/GCODE_spec.md#5-line-block-structure)
+      orders the checksum last, so the **last** marker is the field and `*12` stays in the payload,
+      where it is also part of the bytes the checksum covers
+      ([§8.3](../specs/GCODE_spec.md#83-what-the-checksum-covers)). Marlin agrees —
+      `get_serial_commands` uses `strrchr(command, '*')`, not `strchr`. Recorded in spec Appendix B.3.
+
+*The three edited tests are un-frozen and now assert the spec-correct result; the `PacketDetection`
+KDoc, which had gone on documenting the correct behaviour while its test asserted the wrong one, is
+unchanged. Still dead after the re-fix: `stripTerminator`, `elementIndices`, `isLetter`, `checksumAt`
+and `numberAfter` in `GLiner.kt:37-65`, the element-based machinery the refactor left behind — zero
+references, and `elementIndices`' `is GValue` filter no longer matches identifiers anyway. Deleting
+them is a separate hygiene change ([07](./07-hygiene-and-naming.md)), **done in 1.20**.*
+
 ---
 
+### 1.20 `GLine.raw()` dropped a packet's framing — `GSemantics.kt:24` — ✅ FIXED
+
+The fourth loss from `286461b`, and the one that broke a non-negotiable: `GLine.raw()` was
+`payload.flatMap { it.raw }`, but a `GPacketLine` is the one line type that **decomposes** its input —
+`payload` is bounded to the body, so the `N` field, the `*` field and the terminator were not in it.
+A parsed packet re-printed as its body alone:
+
+```
+"N1 G28*18\n"   →   raw()   →   " G28"
+```
+
+On a link that means resending `G28` where `N1 G28*18` was received. Spec Appendix B states the
+invariant this violates: *"Every token exposes `rawText()`, so a token stream round-trips."*
+
+- [x] **The whole line was kept, in a field named `raw`** (`GSemantics.kt:49`), which **shadowed the
+      `raw()` function by name**. That collision is why review and the round-trip suite both missed
+      it, and it is why the fix is a rename rather than only an override.
+      *Fixed: the field is `GPacketLine.whole`, and `GPacketLine` overrides `raw()` over it.*
+- [x] **The one test that would have caught it had been routed around it.** `NothingIsLost`'s
+      `reassemble` helper carried an `is GPacketLine -> line.raw.flatMap {...}` branch, so the suite
+      passed by reading the intact field while `raw()` stayed broken — the round-trip property was
+      asserted of everything *except* the only type that could fail it.
+      *Fixed: `reassemble` is `line.raw()` for every line type, which is what the `@Nested` KDoc
+      claimed all along; the KDoc now names `GPacketLine` as the type at risk instead.*
+- [x] Two assertions added where there were none: `a packet line reproduces its own bytes through
+      raw` (`GLineIteratorTest`), and `packet line prints whole, not payload` (`GSemanticsTest`).
+      Both were run red first — ` G28` vs `N1 G28*18\n` — before the fix.
+
+*Also in this change, closing 1.19's leftover: `stripTerminator`, `elementIndices`, `isLetter`,
+`checksumAt` and `numberAfter` are **deleted** from `GLiner.kt`. They had zero references and
+`elementIndices`' `is GValue` filter no longer matched identifiers, so they would have returned
+silently wrong indices to anyone who revived them. `GLineIterator` is now grouping only — its KDoc
+says so and points at `GSemanticParser` for the classification rules.*
+
+*Not fixed, found while here: `GSemanticsTest.kt:229` `assertTrue(errors.all { it is GLine })` is a
+compile-time tautology over a `List<GError>`, the same dead-assertion class as `GTokensTest.kt:290`.
+Both are pre-existing and belong with a test-quality pass, not with this fix.*
 
 ---
 
@@ -924,3 +1006,47 @@ GCodeReader           | deleted
   hit this (`N100 M110`, `N101 M110 N100`) are legal in a file and only an error over a link, which
   is why the liner reports the structure instead of rejecting the line.
 
+### Regression re-fix verification, 2026-09-09 (branch `agentic`)
+
+The three [1.19](#119-classification-regressions-from-286461b--gsemanticparserkt--fixed) regressions
+from `286461b`, before and after. Probe output, not a reading: a throwaway `ZProbeTest` over
+`GLineIterator`, run with `--tests '*ZProbeTest*' -i`, once with `GSemanticParser.kt` at `286461b` and
+once with the fix. `(was ...)` marks the lines that moved.
+
+```
+*                      | GMissingLineNumber   (was GSimpleLine)
+*\n                    | GMissingLineNumber   (was GSimpleLine)
+*12                    | GMissingLineNumber   (was GSimpleLine)
+* 12                   | GMissingLineNumber   (was GSimpleLine)
+*ABC                   | GMissingLineNumber   (was GSimpleLine)
+N1 G28*18              | GPacketLine number=1 checksum=18 payload=[ G28]
+n1 G28*18              | GPacketLine number=1 checksum=18 payload=[ G28]
+ N1 G28*18             | GPacketLine number=1 checksum=18 payload=[ G28]   (was GMissingLineNumber)
+\tN1 G28*18            | GPacketLine number=1 checksum=18 payload=[ G28]   (was GMissingLineNumber)
+(c)N1 G28*18           | GPacketLine number=1 checksum=18 payload=[ G28]   (was GMissingLineNumber)
+N 1 G28 * 12           | GPacketLine number=1 checksum=12 payload=[ G28 ]
+N1 G28*12*13           | GPacketLine number=1 checksum=13 payload=[ G28*12]
+N1 G28                 | GMissingChecksum
+N1*                    | GMalformedChecksum   (was GMissingChecksum)
+N1 G1*                 | GMalformedChecksum   (was GMissingChecksum)
+N1 G28*                | GMalformedChecksum   (was GMissingChecksum)
+N1 G28*X               | GMalformedChecksum   (was GMissingChecksum)
+N1 G28*10.5            | GMalformedChecksum
+N100 G1 X10 *ABC       | GMalformedChecksum   (was GMissingChecksum)
+N*                     | GMalformedLineNumber
+NX*12                  | GMalformedLineNumber
+G28*12                 | GMissingLineNumber
+G1 X10                 | GSimpleLine
+  ; c  \n              | GMeaninglessLine
+?\n                    | GMeaninglessLine
+corpus line count      | 414
+corpus line kinds      | {GSimpleLine=301, GMissingChecksum=2, GMeaninglessLine=111}
+:gcode:test                | 466 tests, 0 failures, 0 skipped   (458 before; +8 un-frozen and new cases)
+JVM modules build          | SUCCESSFUL
+```
+
+Nothing else moved: the corpus is line-for-line the same as in the *Commit B verification* block
+above, `N100 M110` / `N101 M110 N100` still the only two `GMissingChecksum` lines in it. The three
+reclassifications a caller sees are `*`-in-first-position (`GSimpleLine` → `GMissingLineNumber`),
+whitespace/comment before `N` (`GMissingLineNumber` → `GPacketLine`) and a marker with no integer
+after it (`GMissingChecksum` → `GMalformedChecksum`).

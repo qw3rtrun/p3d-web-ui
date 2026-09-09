@@ -17,17 +17,21 @@ class CapabilityReportDecoder : GEventDecoder<CapabilityReportEvent> {
         }
 
         val capability = parts[1]
-        val enabled = parts[2]
+        // spec 9: a value that will not fit an Int is malformed input off the wire, so the line
+        // decodes to absence instead of throwing. The raw text still reaches the caller through
+        // the unknown-line decoder.
+        val enabled = parseEnabled(parts[2]) ?: return Optional.empty()
         return if (StringUtils.isNotBlank(capability)) {
-            Optional.of(CapabilityReport(line, capability, parseEnabled(enabled)))
+            Optional.of(CapabilityReport(line, capability, enabled))
         } else {
             Optional.empty()
         }
     }
 
-    internal fun parseEnabled(enabled: String): Boolean {
+    // null means the value could not be read at all; false means read and off.
+    internal fun parseEnabled(enabled: String): Boolean? {
         if (StringUtils.isNumeric(enabled)) {
-            return enabled.toInt() > 0
+            return (enabled.toIntOrNull() ?: return null) > 0
         }
         return "true".equals(enabled, ignoreCase = true)
     }

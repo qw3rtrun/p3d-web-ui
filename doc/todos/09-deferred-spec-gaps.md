@@ -60,16 +60,18 @@ payload budget (≤ 76 characters) is what makes rounding decisions matter in
 - [ ] Decide where it belongs: the liner can detect it on input, and the encoder must respect it on
       output. The encoder side is the one that actually prevents breakage.
 
-## CRC16 — [§8.4](../specs/GCODE_spec.md#84-crc16-reprapfirmware)
+## CRC16 — [§8.4](../specs/GCODE_spec.md#84-crc16-reprapfirmware) — moved to [04](./04-encoder-and-checksum.md)
 
-CCITT CRC-16, polynomial `0x1021`, emitted as five zero-padded decimal digits over the same byte
-range as the XOR checksum. Strictly stronger, preferred by RepRapFirmware where supported.
+**No longer deferred.** [04](./04-encoder-and-checksum.md) makes `GPacketLine` mean *verified by
+construction*, and under that invariant a 5-digit CRC that the module cannot check has nowhere to go —
+it is neither a verified packet nor a failed one. Modelling a third "well formed but unverifiable"
+line type costs more than the CRC does, so `Crc16CheckSum` is built there, as a second
+`CheckSumCalculator` alongside `XorCheckSum`.
 
-- [ ] Write it in the same streaming shape as `XorCheckSum` — one byte in, integer state, mask out —
-      so it drops into the same interface. A lookup table, if used, is an `IntArray` literal.
-- [ ] **The digit count selects the algorithm**: 1–3 digits XOR, 5 digits CRC16.
-      [04](./04-encoder-and-checksum.md) is asked to leave room for this in whatever type carries the
-      checksum; if it did, this becomes a small addition rather than a signature change.
+Note for whoever picks that up: §8.4 pins the polynomial and the output width but **not** the initial
+value, bit order, or final XOR — four different algorithms answer to "CCITT CRC-16 with poly 0x1021"
+and they disagree on every input. 04 carries the comparison table and treats pinning the variant
+against ground truth as blocking.
 
 ## Module extractability
 

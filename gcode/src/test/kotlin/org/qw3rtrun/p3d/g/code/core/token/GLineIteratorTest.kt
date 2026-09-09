@@ -126,7 +126,7 @@ class GLineIteratorTest {
                 GParameterWord(GChecksum, GInt(45)),
                 GMeaningless(GLineBreak("\n"))
             ),
-            packet.raw
+            packet.whole
         )
         assertFalse(iter.hasNext())
     }
@@ -163,7 +163,7 @@ class GLineIteratorTest {
                 GMeaningless(GSpace),
                 GParameterWord(GChecksum, GInt(45))
             ),
-            packet.raw
+            packet.whole
         )
         assertFalse(iter.hasNext())
     }
@@ -186,12 +186,14 @@ class GLineIteratorTest {
     }
 
     @Test
-    fun `a star that is not followed by a value is a missing checksum`() {
+    fun `a star followed by letters is a malformed checksum, not a missing one`() {
+        // spec 8.1 (garbled value), not spec 7.3 (no value at all): the marker is on the wire, so
+        // the host's decision is a resend of this line (spec 8.5), not a framing complaint.
         val line = GLineIterator(tokenizer.parse("N100 G1 X10 *ABC\n").iterator()).next()
 
-        assertInstanceOf(GMissingChecksum::class.java, line)
-        assertEquals(GInt(100), (line as GMissingChecksum).number)
-        assertEquals("line number 100 has no checksum", line.msg)
+        assertInstanceOf(GMalformedChecksum::class.java, line)
+        assertEquals(GInt(100), (line as GMalformedChecksum).number)
+        assertEquals("'*' is not followed by a checksum value on line 100", line.msg)
     }
 
     @Test
@@ -225,7 +227,7 @@ class GLineIteratorTest {
                 GMeaningless(GTailComment("homing")),
                 GMeaningless(GLineBreak("\n"))
             ),
-            packet.raw
+            packet.whole
         )
     }
 
@@ -450,8 +452,10 @@ class GLineIteratorTest {
 
         @Test
         fun `a checksum marker as the last token does not throw`() {
-            assertInstanceOf(GMissingChecksum::class.java, line("N1*"))
-            assertInstanceOf(GMissingChecksum::class.java, line("N1 G1*"))
+            // The marker is present with nothing after it: spec 8.1 malformed, not spec 7.3
+            // missing. A truncated line and an unpaired line are different faults for a host.
+            assertInstanceOf(GMalformedChecksum::class.java, line("N1*"))
+            assertInstanceOf(GMalformedChecksum::class.java, line("N1 G1*"))
             assertInstanceOf(GMalformedLineNumber::class.java, line("N*"))
         }
 
@@ -468,7 +472,7 @@ class GLineIteratorTest {
                     GMeaningless(GSpace),
                     GMeaningless(GTailComment("c"))
                 ),
-                packet.raw
+                packet.whole
             )
         }
 
@@ -486,7 +490,7 @@ class GLineIteratorTest {
                     GMeaningless(GTailComment("c")),
                     GMeaningless(GLineBreak("\n"))
                 ),
-                packet.raw
+                packet.whole
             )
         }
 
@@ -502,14 +506,25 @@ class GLineIteratorTest {
                     GParameterWord(GChecksum, GInt(12)),
                     GMeaningless(GLineBreak("\r\n"))
                 ),
-                packet.raw
+                packet.whole
             )
         }
 
         @Test
-        fun `a lone checksum marker is a simple line, not a crash`() {
-            assertInstanceOf(GSimpleLine::class.java, line("*"))
-            assertInstanceOf(GSimpleLine::class.java, line("*\n"))
+        fun `a checksum marker in first position is a checksum without a line number`() {
+            // spec 7.3: `*` without `N` is a pairing error wherever the marker sits - first
+            // position included. The marker search used to skip index 0.
+            assertInstanceOf(GMissingLineNumber::class.java, line("*12"))
+            assertInstanceOf(GMissingLineNumber::class.java, line("*12\n"))
+        }
+
+        @Test
+        fun `a lone checksum marker with no value is a checksum without a line number`() {
+            // The pairing rule (spec 7.3) is tested before the field syntax (spec 8.1), so a `*`
+            // with nothing after it reports the missing line number: a host cannot act on the
+            // checksum value of a line that is not framed in the first place.
+            assertInstanceOf(GMissingLineNumber::class.java, line("*"))
+            assertInstanceOf(GMissingLineNumber::class.java, line("*\n"))
         }
 
         @Test
@@ -568,10 +583,23 @@ class GLineIteratorTest {
         }
 
         @ParameterizedTest
-        @ValueSource(strings = [" N1 G28*18", "\tN1 G28*18", "   n1 G28*18"])
-        fun `a line with leading whitespace before N is not a packet`(gcode: String) {
-            val error = line(gcode)
-            assertInstanceOf(GMissingLineNumber::class.java, error)
+        @ValueSource(strings = [" N1 G28*18", "\tN1 G28*18", "   n1 G28*18", "\t N1 G28*18"])
+        fun `leading whitespace before N does not stop the line being a packet`(gcode: String) {
+            // spec 2.1: space and tab are separators only, so the `N` is still the first *field*.
+            val packet = line(gcode) as GPacketLine
+
+            assertEquals(GInt(1), packet.number)
+            assertEquals(GInt(18), packet.checksum.value)
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = ["(c)N1 G28*18", "(c) N1 G28*18"])
+        fun `a leading comment before N does not stop the line being a packet`(gcode: String) {
+            // spec 6: a comment is not a field either, so it cannot displace the line number.
+            val packet = line(gcode) as GPacketLine
+
+            assertEquals(GInt(1), packet.number)
+            assertEquals(GInt(18), packet.checksum.value)
         }
 
         @Test
@@ -606,16 +634,66 @@ class GLineIteratorTest {
     }
 
     /**
+     * Spec section 8.1 - the checksum field is `*` followed by an integer - and section 5, which
+     * puts that field last before any comment.
+     */
+    @Nested
+    inner class ChecksumField {
+
+        @Test
+        fun `whitespace between the marker and its value is allowed`() {
+            // spec 2.1: whitespace is a separator, so the field assembles across it exactly as
+            // `N 1` does. It still changes the bytes the checksum covers (spec 8.3).
+            val packet = line("N1 G28 * 12\n") as GPacketLine
+
+            assertEquals(GInt(12), packet.checksum.value)
+        }
+
+        @Test
+        fun `a spaced marker with no line number is still a pairing error`() {
+            assertInstanceOf(GMissingLineNumber::class.java, line("* 12"))
+        }
+
+        @Test
+        fun `with two markers the last one is the checksum field`() {
+            // spec 5 orders the checksum last, so the last `*` is the field and the earlier one
+            // stays in the payload - where it is also part of the bytes the checksum covers
+            // (spec 8.3). Marlin agrees: `get_serial_commands` uses `strrchr(command, '*')` and
+            // XORs everything before it.
+            val packet = line("N1 G28*12*13\n") as GPacketLine
+
+            assertEquals(GInt(1), packet.number)
+            assertEquals(GInt(13), packet.checksum.value)
+            assertEquals(
+                listOf(
+                    GMeaningless(GSpace),
+                    GParameterWord(GLetter('G'), GInt(28)),
+                    GParameterWord(GChecksum, GInt(12))
+                ),
+                packet.payload
+            )
+        }
+    }
+
+    /**
      * Every token the tokenizer produced must appear in exactly one line, so the liner is a pure
-     * regrouping of the stream. `payload` is the whole line for every type except `GPacketLine`,
-     * which decomposes it - so packets are checked by reassembling their parts.
+     * regrouping of the stream. `GLine.raw()` is the single way to ask a line for its bytes back,
+     * and it must hold for every line type - a `GPacketLine` decomposes its line, so it is the type
+     * that can silently lose the `N` field, the `*` field and the terminator (TODO 1.20).
      */
     @Nested
     inner class NothingIsLost {
 
-        private fun reassemble(line: GLine): String = when (line) {
-            is GPacketLine -> line.raw.flatMap { it.raw }.joinToString("") { it.rawText() }
-            else -> line.raw().joinToString("") { it.rawText() }
+        private fun reassemble(line: GLine): String =
+            line.raw().joinToString("") { it.rawText() }
+
+        @Test
+        fun `a packet line reproduces its own bytes through raw`() {
+            val gcode = "N1 G28*18\n"
+
+            val packet = lines(gcode).single() as GPacketLine
+
+            assertEquals(gcode, packet.raw().joinToString("") { it.rawText() })
         }
 
         @ParameterizedTest
@@ -626,7 +704,10 @@ class GLineIteratorTest {
                 "N1 G28*12 ;homing\n",
                 "  \n\t\nG1 X1\n",
                 "G1 X1\r\nG1 X2\r\n",
-                "N100 M110\nN101 M110 N100\n"
+                "N100 M110\nN101 M110 N100\n",
+                // a packet whose line number is not element 0: `payload` starts after the `N`
+                // field, so whatever precedes it is carried by `whole` alone and must still print
+                " N1 G28*18\n\t(c) N2 G1 X10*33\n"
             ]
         )
         fun `the lines together reproduce the input, terminators aside`(gcode: String) {

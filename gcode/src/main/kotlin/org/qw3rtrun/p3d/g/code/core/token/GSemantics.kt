@@ -42,12 +42,26 @@ data class GMeaninglessLine(override val payload: List<GSemantic>) : GLine
 
 data class GSimpleLine(override val payload: List<GSemantic>) : GLine
 
+/**
+ * A framed line: `N<n> <body>*<cs>`. It is the only line type that **decomposes** its input - the
+ * `N` field, the `*` field and anything after them are not in [payload] - so it is the only one that
+ * has to say how to print itself back. [whole] carries every element, in wire order.
+ */
 data class GPacketLine(
     override val number: GInt,
     override val payload: List<GSemantic>,
     override val checksum: GParameterWord<GInt>,
-    val raw: List<GSemantic>,
-) : GLine, GOrdered, GCheckSumControlled
+    val whole: List<GSemantic>,
+) : GLine, GOrdered, GCheckSumControlled {
+
+    /**
+     * Over [whole], not [payload]: the inherited `payload.flatMap` silently dropped the line number,
+     * the checksum and the terminator, so a parsed packet re-printed as its own body alone -
+     * `N1 G28*12` came back as ` G28` (TODO 1.20). The lost field was also named `raw`, which
+     * shadowed this function and is why the round-trip suite could not see it.
+     */
+    override fun raw(): List<GToken> = whole.flatMap { it.raw }
+}
 
 data class GCommand(val head: GParameterWord<GInt>, val params: List<GWord> = emptyList()) {
     constructor(cmdId: GIdentifier, cmdNum: GInt, params: List<GWord> = emptyList()) : this(

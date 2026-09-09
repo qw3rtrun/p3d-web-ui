@@ -127,15 +127,28 @@ class GSemanticsTest {
         }
 
         @Test
-        fun `packet line exposes number checksum payload and raw`() {
+        fun `packet line exposes number checksum payload and whole`() {
             val checksum = GParameterWord(GChecksum, GInt(57))
-            val raw = listOf<GSemantic>(GMeaningless(GTailComment(" c")))
-            val line = GPacketLine(GInt(3), payload, checksum, raw)
+            val whole = listOf<GSemantic>(GMeaningless(GTailComment(" c")))
+            val line = GPacketLine(GInt(3), payload, checksum, whole)
 
             assertEquals(GInt(3), line.number)
             assertEquals(checksum, line.checksum)
             assertEquals(payload, line.payload)
-            assertEquals(raw, line.raw)
+            assertEquals(whole, line.whole)
+        }
+
+        @Test
+        fun `packet line prints whole, not payload`() {
+            val whole = listOf<GSemantic>(
+                GParameterWord(GLetter('N'), GInt(3)),
+                GMeaningless(GSpace),
+                GParameterWord(GLetter('T'), GInt(0)),
+                GParameterWord(GChecksum, GInt(57)),
+            )
+            val line = GPacketLine(GInt(3), payload, GParameterWord(GChecksum, GInt(57)), whole)
+
+            assertEquals("N3 T0*57", line.raw().joinToString("") { it.rawText() })
         }
 
         @Test

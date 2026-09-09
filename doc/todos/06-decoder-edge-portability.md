@@ -13,28 +13,29 @@ replies with constructs the module's style rules exclude. The attributions below
 were verified by grep — an earlier version of this file mis-assigned three of them, so check before
 widening the scope.
 
-- **`java.util.regex`** — three files, not four: `OkDecoder.kt:46-48` (`ADVANCED_OK_PATTERN`),
-  `TemperatureReportedDecoder.kt:65-67` (`TEMP_REPORT_PATTERN`), `FirmwareReportDecoder.kt:33`
+- **`java.util.regex`** — three files, not four: `OkDecoder.kt:53-57` (`ADVANCED_OK_PATTERN`),
+  `TemperatureReportedDecoder.kt:73-77` (`TEMP_REPORT_PATTERN`), `FirmwareReportDecoder.kt:33`
   (`((?<field>[A-Z_]+):)+` — the named group `field` is never read, and a `+` over a group is the
   classic backtracking shape). No equivalent semantics across four languages, hides backtracking
   cost, and — the reason that matters here — a regex cannot be reviewed line by line against a byte
   spec. **`CapabilityReportDecoder` uses no regex**: it is a length/prefix guard plus
-  `line.split(":")` (`:11-17`).
+  `line.split(":")` (`:11-17`). Line numbers below are as of the crash-path fix recorded under
+  *Already fixed*.
 - **`java.util.Optional`** — all eight files, *and* the `GEventDecoder` interface itself
   (`GEventDecoder.kt:8-14`). This is the one item that is **not** mechanical: the interface is a
   `fun interface` extending `java.util.function.Function<String, Optional<G>>` and
   `Predicate<String>`, so the JVM types are in the supertype list, not just the return position. See
   *Do* for the ordering that follows from that.
 - **`org.apache.commons.lang3.StringUtils`** — one file, not three: `CapabilityReportDecoder.kt:3`,
-  for `isNotBlank` (`:21`) and `isNumeric` (`:29`). Both are a two-line loop. `FirmwareReportDecoder`
+  for `isNotBlank` (`:24`) and `isNumeric` (`:33`). Both are a two-line loop. `FirmwareReportDecoder`
   and `WaitReceivedDecoder` are clean — `WaitReceivedDecoder` is now four lines of
   `length != 4 || !startsWith(...)`. Note `commons-lang3` arrives on the classpath via
   `buildSrc/.../p3d.java-conventions.gradle`, not through `:gcode`'s own dependencies, so nothing
   currently stops it spreading.
 - **Locale-dependent and allocating string ops the skill's deny table names** — missing from every
   earlier version of this file, and the most numerous item here:
-  - `ignoreCase = true` — 8 sites in 5 files: `CapabilityReportDecoder.kt:11, 32`,
-    `FirmwareReportDecoder.kt:11`, `OkDecoder.kt:13, 16, 38`, `TemperatureReportedDecoder.kt:32`,
+  - `ignoreCase = true` — 8 sites in 5 files: `CapabilityReportDecoder.kt:11, 36`,
+    `FirmwareReportDecoder.kt:11`, `OkDecoder.kt:13, 16, 45`, `TemperatureReportedDecoder.kt:32`,
     `WaitReceivedDecoder.kt:9`. Kotlin's `ignoreCase` is locale-dependent and has no portable
     equivalent; the wire format is ASCII
     ([§1.1](../specs/GCODE_spec.md#11-character-set-and-encoding)), so these want an ASCII case fold.
@@ -52,29 +53,64 @@ reimplement every one of them, and today there is no reviewable statement of wha
 
 ## The 02 coupling
 
-`TemperatureReportedDecoder.kt:60-61` parses temperatures with `String.toDouble()` into
+`TemperatureReportedDecoder.kt:66-69` parses temperatures with `String.toDoubleOrNull()` into
 `Map<String, Double>` and hands them to `TemperatureReport`. [02](./02-number-representation.md)
 decides what a number holds in this module and removes the `Double` path from the core. If 02 lands
 first, this decoder adopts whatever it decided rather than re-introducing `Double` at the edge; if 06
-lands first, leave `:60-61` alone and say so in the commit so that 02 finds it. `TemperatureReport`
+lands first, leave `:66-69` alone and say so in the commit so that 02 finds it. `TemperatureReport`
 lives in `:backend:core`, so changing its field types is out of scope for both files — that is why
 this is a note and not a blocker.
 
+## Already fixed: the three `NumberFormatException` crash paths
+
+Done ahead of this file, because malformed input off a serial link reaching a `Flux` as an exception
+terminated the printer's event stream. **Only the throwing conversions changed** — the regexes,
+`Optional`, `StringUtils` and the `ignoreCase`/`.trim()` sites below are all still there, so
+everything in *Do* stands.
+
+- [x] `TemperatureReportedDecoder.kt` — the number pattern was `((?>[0-9]*.)?[0-9]+)` with an
+      **unescaped** `.`, so `[0-9]*.` matched any character: `ok T:21.0 /0.0 B:x1 /0.0 @:0 B@:0`
+      matched and `x1` reached `toDouble()`. Dot escaped, and both `toDouble()` and the `@` power's
+      `toInt()` are now `…OrNull()` that drop the field, so the line decodes to absence
+      ([§9](../specs/GCODE_spec.md#9-error-handling)).
+- [x] `OkDecoder.kt` — `([0-9]+)` is unbounded, so `ok P9999999999 B1` overflowed `toInt()`. All
+      four conversions are `toIntOrNull()` and a value that will not fit an `Int` yields absence
+      rather than a truncated queue depth or line number.
+- [x] `CapabilityReportDecoder.kt` — `StringUtils.isNumeric` accepted an 11-digit run and `toInt()`
+      then overflowed on `Cap:AUTOREPORT_TEMP:99999999999`. `parseEnabled` now returns `Boolean?`,
+      `null` meaning "could not be read", and `decode` turns that into absence.
+
+Two adjacent defects were found while doing that and **deliberately left alone**, both verified by
+running:
+
+- `TemperatureReportedDecoder`'s `[+-]?` sits *outside* the capture group, so a negative temperature
+  loses its sign: `ok T:-5.0 /0.0 B:1.0 /0.0 @:0 B@:0` decodes as `current=5.0`. Wrong value, not a
+  crash; fix it with the rewrite in *Do* (a scanner makes the sign part of the number, per
+  [§3.1](../specs/GCODE_spec.md#31-numeric-values)).
+- `FirmwareReport` in `:backend:core` throws from its **accessors**, not from decoding:
+  `extruderCount()` on `EXTRUDER_COUNT:99999999999` throws `NumberFormatException` (its
+  `StringUtils.isNumeric` guard admits the value), and `uuid()` on a malformed UUID throws
+  `IllegalArgumentException`. Different module and a caller-triggered path, so it is not this file's
+  and not `:gcode`'s.
+
 ## Where the tests already are
 
-Three decoders have tests, in `gcode/src/test/kotlin/org/qw3rtrun/p3d/g/decoder/` — note the package
-is `g.decoder`, **not** `g.marlin.decoder`, which is why they are easy to miss:
+All five wired decoders now have tests, in `gcode/src/test/kotlin/org/qw3rtrun/p3d/g/decoder/` — note
+the package is `g.decoder`, **not** `g.marlin.decoder`, which is why they are easy to miss:
 
 | Decoder | Test | Size |
 |---|---|---|
-| `OkDecoder` | `OkDecoderTest.kt` | 4 parameterized methods, 0 `@Test` |
-| `TemperatureReportedDecoder` | `TemperatureReportedDecoderTest.kt` | 2 parameterized methods |
-| `FirmwareReportDecoder` | `FirmwareReportDecoderTest.kt` | 1 `@Test` |
-| `CapabilityReportDecoder` | **none** | — |
+| `OkDecoder` | `OkDecoderTest.kt` | 5 parameterized methods, 1 `@Test` |
+| `TemperatureReportedDecoder` | `TemperatureReportedDecoderTest.kt` | 2 parameterized methods, 1 `@Test` |
+| `FirmwareReportDecoder` | `FirmwareReportDecoderTest.kt` | 1 parameterized method, 2 `@Test` |
+| `CapabilityReportDecoder` | `CapabilityReportDecoderTest.kt` | 2 parameterized methods, 4 `@Test` |
 | `WaitReceivedDecoder` | **none** | — |
 | `CompositeDecoder`, `UnknownStringDecoder`, `GEventDecoder` | **none** | — |
 
-The two with zero coverage are the two that need it most. `CapabilityReportDecoder` is the only
+Each of the four covers its malformed-number cases and its no-match cases; none of them covers the
+hostile-input pass in *Verify* in full, and `FirmwareReportDecoderTest` carries one explicit
+characterisation point (a lower-case `firmware_name:` passes the `ignoreCase` prefix guard and then
+matches nothing, so it decodes to absence). `CapabilityReportDecoder` is still the only
 `StringUtils` user. And `WaitReceivedDecoder` is **not wired into production at all** —
 `PrinterReactor.java:33-39` builds its `CompositeDecoder` from `OkDecoder`,
 `TemperatureReportedDecoder`, `CapabilityReportDecoder`, `FirmwareReportDecoder` and

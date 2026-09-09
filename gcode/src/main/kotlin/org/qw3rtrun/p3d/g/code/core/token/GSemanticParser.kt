@@ -5,38 +5,66 @@ class GSemanticParser {
     fun parseLine(tokens: List<GToken>): GLine {
         val semantic = semantic(tokens)
 
-        // spec 5: a line of nothing but whitespace and/or comments is a no-op. It keeps its tokens
-        // so that the line still reproduces its input.
-        if (semantic.none { it is GWord }) return GMeaninglessLine(semantic)
-
-        // spec 5 and 7.1: the line number, if present, is the first field of the line.
-        val first = semantic[0]
-        val lineNumber = when (first) {
-            is GParameterWord<*> if first.isLetter('N') && first.value !is GInt -> return GMalformedLineNumber(semantic)
-            is GParameterWord<*> if first.isLetter('N') && first.value is GInt -> first.value
-            is GWord if first.isLetter('N') -> return GMalformedLineNumber(semantic)
-            else -> null
+        // One pass over the elements gets both fields the line shape is read from: the first word
+        // and the last `*` word.
+        //
+        // spec 5 and 7.1: the line number, if present, is the first *field* of the line. A field is
+        // a word; spec 2.1 makes whitespace a separator and spec 6 leaves a comment out of the
+        // field sequence, so the first field is not necessarily element 0 and has to be scanned
+        // for. Reading semantic[0] positionally is what made ` N1 G28*18` report as unnumbered
+        // (TODO 1.8, twice now).
+        var head: GWord? = null
+        var headIndex = -1
+        var star: GWord? = null
+        var starIndex = -1
+        for (i in semantic.indices) {
+            val e = semantic[i]
+            if (e !is GWord) continue
+            if (head == null) {
+                head = e
+                headIndex = i
+            }
+            // Any word whose identifier is the `*` token, not only one that carries a value: a
+            // marker with nothing usable after it (`*`, `*ABC`) is a GFlagWord, and skipping those
+            // reported a garbled checksum as an absent one. spec 5 puts the field last, so the
+            // last marker wins and no `break` here.
+            if (e.id == GChecksum) {
+                star = e
+                starIndex = i
+            }
         }
 
-        val numbered = lineNumber != null
+        // spec 5: a line of nothing but whitespace and/or comments is a no-op - i.e. it has no
+        // field at all. It keeps its tokens so that the line still reproduces its input.
+        if (head == null) return GMeaninglessLine(semantic)
 
-        val starIndex = semantic.indexOfLast { it is GParameterWord<*> && it.isLetter('*') }
-        val star = if (starIndex > 0) semantic[starIndex] else null
-        val checked = star != null
+        // spec 7.1: `N` is followed by an integer. A flag word (`N` alone) or any other value is
+        // a malformed line number, and that is decided by the head field alone.
+        var lineNumber: GInt? = null
+        if (head.isLetter('N')) {
+            val value = if (head is GParameterWord<*>) head.value else null
+            if (value !is GInt) return GMalformedLineNumber(semantic)
+            lineNumber = value
+        }
 
-        // spec 7.3: a line number and a checksum must both be present or both be absent.
-        if (!numbered && !checked) return GSimpleLine(semantic)
-        if (!numbered) return GMissingLineNumber(semantic)
-        if (!checked) return GMissingChecksum(lineNumber, semantic)
+        // spec 7.3: a line number and a checksum must both be present or both be absent. Presence
+        // of the marker is what pairs, not whether its value parsed - the pairing question is
+        // answered before the field-syntax one, so `*` alone is unpaired rather than malformed.
+        if (lineNumber == null && star == null) return GSimpleLine(semantic)
+        if (lineNumber == null) return GMissingLineNumber(semantic)
+        if (star == null) return GMissingChecksum(lineNumber, semantic)
 
-        // spec 7.1 and 8.1: both markers are present, so both must be followed by an integer.
-        if (star !is GParameterWord<*>) return GMalformedChecksum(lineNumber, semantic)
-        if (star.value !is GInt) return GMalformedChecksum(lineNumber, semantic)
-
+        // spec 8.1: `*<unsigned-int>`. A marker with no integer after it - `N1*`, `*ABC`, `*10.5` -
+        // is a *malformed* checksum, never a missing one: a host tells spec 7.3 (unpaired, reframe)
+        // from spec 8.1 (garbled, resend the line - spec 8.5) by exactly this distinction.
+        val checksum = if (star is GParameterWord<*>) star.value else null
+        if (checksum !is GInt) return GMalformedChecksum(lineNumber, semantic)
 
         return GPacketLine(
             lineNumber,
-            semantic.subList(1, starIndex),
+            // From after the line-number field to the `*`, not from 1: with leading whitespace or a
+            // comment the head field is not at index 0. `raw` below still holds the whole line.
+            semantic.subList(headIndex + 1, starIndex),
             star as GParameterWord<GInt>,
             semantic
         )

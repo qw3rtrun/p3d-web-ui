@@ -665,7 +665,7 @@ quoted strings are unaffected — `marlin.gcode` keeps the `’` and `µ` in its
 digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` from lexing as
 `GFloat(1.2)`.
 
-### B.3 Line model — `token/GSemantics.kt`, `token/GLiner.kt`
+### B.3 Line model — `token/GSemantics.kt`, `token/GLiner.kt`, `token/GSemanticParser.kt`
 
 | Spec concept | Type |
 |---|---|
@@ -678,26 +678,35 @@ digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` f
 | One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GIdentifier, params: List<GElement>)` |
 | Structural error ([§9](#9-error-handling)) | `GError`, e.g. `GNotIdentifierError` |
 
-`GLineIterator` splits a token stream at `GLineBreak` and classifies each line off its *elements* —
-the tokens that are neither separators nor comments — so leading whitespace never changes the answer
-([§2.1](#21-whitespace)) and a `*` the lexer put inside a comment or a string is not a checksum
-marker. A line is a *packet* when its first element is `N`/`n` **and** some element is `GChecksum`,
-and both markers must be followed by an integer, so the [§7.3](#73-pairing-rule) pairing rule is
-enforced as four typed [§9](#9-error-handling) variants rather than by falling back to `GSimpleLine`:
+`GLineIterator` splits a token stream at `GLineBreak` and hands each line to `GSemanticParser`,
+which first groups the tokens into **elements** — a *word* (`GParameterWord`, an identifier plus its
+value, or `GFlagWord`, an identifier alone) or a `GMeaningless` (separator, comment, anything else)
+— and then classifies the line off those elements. One pass finds the two the shape needs: the
+**first word**, which is the line's first field ([§5](#5-line-block-structure) — whitespace
+([§2.1](#21-whitespace)) and comments ([§6](#6-comments)) are not fields, so the first field is not
+necessarily element 0), and the **last word whose identifier is `GChecksum`**, since
+[§5](#5-line-block-structure) puts the checksum last. A `*` the lexer put inside a comment or a
+string never becomes a word, so it cannot be mistaken for the marker.
+
+The [§7.3](#73-pairing-rule) pairing rule is decided on the *presence* of the two markers and is
+decided **before** the [§7.1](#71-syntax) / [§8.1](#81-syntax) field-syntax rules, so it is reported
+as four typed [§9](#9-error-handling) variants rather than by falling back to `GSimpleLine`:
 
 | Input | Result |
 |---|---|
-| `N1 G28*12`, `n1 G28*12`, ` N1 G28*12` | `GPacketLine` — the match is case-insensitive ([§2.2](#22-case)) and position-tolerant |
+| `N1 G28*12`, `n1 G28*12`, ` N1 G28*12`, `\tN1 G28*12`, `(c)N1 G28*12` | `GPacketLine` — the match is case-insensitive ([§2.2](#22-case)) and position-tolerant |
+| `N 1 G28 * 12` | `GPacketLine` — both fields assemble across whitespace ([§2.1](#21-whitespace)) |
+| `N1 G28*12*13` | `GPacketLine(number = GInt(1), checksum = GInt(13))` — the **last** `*` is the field ([§5](#5-line-block-structure)) and `*12` stays in the payload, where it is also part of the bytes the checksum covers ([§8.3](#83-what-the-checksum-covers)). Marlin agrees: `get_serial_commands` uses `strrchr(command, '*')` |
 | `N1 G28` | `GMissingChecksum(number = GInt(1))` |
-| `G28*12` | `GMissingLineNumber` |
+| `G28*12`, `*12`, `* 12`, `*`, `*ABC` | `GMissingLineNumber` — the marker is unpaired wherever it sits and whether or not it carries a value |
 | `N*`, `NX*12` | `GMalformedLineNumber` |
-| `N1 G28*`, `N1 G28*X` | `GMalformedChecksum(number = GInt(1))` |
+| `N1 G28*`, `N1*`, `N1 G28*X`, `N1 G28*10.5` | `GMalformedChecksum(number = GInt(1))` — the marker is present but its value is not an integer ([§8.1](#81-syntax)); a host tells this from `GMissingChecksum` to decide a resend ([§8.5](#85-failure-handling-and-the-resend-protocol)) |
 
-`GPacketLine.payload` is the raw tokens (separators included) between the line number and the `*`;
-`tail` is what follows the checksum *value*, and the error variants carry the whole line. The trailing
-break is dropped by **testing** for it rather than by computing a bound from `size`, so an
-unterminated line keeps its last token and a short line does not throw —
-`N*` yields `GMalformedLineNumber`, not `IllegalArgumentException` (TODO 1.3).
+`GPacketLine.payload` is the elements between the line-number field and the `*` (separators
+included); anything *before* the line number — leading whitespace, a leading comment — appears only
+in `raw`, which is the whole line. Nothing is dropped by index arithmetic: the trailing line break is
+kept as a `GMeaningless` element, so an unterminated line keeps its last token and a short line does
+not throw — `N*` yields `GMalformedLineNumber`, not `IllegalArgumentException` (TODO 1.3).
 
 `GCommandParser.isCommand()` treats `G`, `M` and (line-initially) `T` as command letters, which is
 the [§4.1](#41-command-letters) set minus Marlin's development-only `D`; the class is not reachable

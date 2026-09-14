@@ -60,18 +60,19 @@ payload budget (≤ 76 characters) is what makes rounding decisions matter in
 - [ ] Decide where it belongs: the liner can detect it on input, and the encoder must respect it on
       output. The encoder side is the one that actually prevents breakage.
 
-## CRC16 — [§8.4](../specs/GCODE_spec.md#84-crc16-reprapfirmware) — moved to [04](./04-encoder-and-checksum.md)
+## ~~CRC16~~ — [§8.4](../specs/GCODE_spec.md#84-crc16-reprapfirmware) — **done in [04](./04-encoder-and-checksum.md)**
 
-**No longer deferred.** [04](./04-encoder-and-checksum.md) makes `GPacketLine` mean *verified by
-construction*, and under that invariant a 5-digit CRC that the module cannot check has nowhere to go —
-it is neither a verified packet nor a failed one. Modelling a third "well formed but unverifiable"
-line type costs more than the CRC does, so `Crc16CheckSum` is built there, as a second
-`CheckSumCalculator` alongside `XorCheckSum`.
+Left this file for 04 and landed there. It stopped being deferrable once 04 made `GPacketLine` mean
+*verified by construction*: under that invariant a 5-digit CRC the module cannot check has nowhere to
+go — neither a verified packet nor a failed one — and modelling a third "well formed but
+unverifiable" line type costs more than the CRC does. `Crc16CheckSum` is a second
+`CheckSumCalculator` alongside `XorCheckSum`, selected on the field's digit count.
 
-Note for whoever picks that up: §8.4 pins the polynomial and the output width but **not** the initial
-value, bit order, or final XOR — four different algorithms answer to "CCITT CRC-16 with poly 0x1021"
-and they disagree on every input. 04 carries the comparison table and treats pinning the variant
-against ground truth as blocking.
+The variant question this file raised — §8.4 pinned the polynomial and the output width but **not**
+the initial value, bit order or final XOR, and four algorithms answer to "CCITT CRC-16 with poly
+0x1021" — was answered from RepRapFirmware's own source rather than by choosing the famous one:
+**CRC-16/XMODEM**, init `0x0000`, MSB-first, no final XOR. §8.4 now carries the parameter table, the
+vectors that separate it from its three lookalikes, and the citations.
 
 ## Module extractability
 

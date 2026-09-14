@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
+import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.junit.jupiter.api.Test
 
 /**
@@ -17,12 +18,12 @@ class GSemanticsTest {
 
         @Test
         fun `a bare command renders letter and number`() {
-            assertEquals(listOf(GLetter('G'), GInt(28)), GCommand(GLetter('G'), GInt(28)).print())
+            assertEquals("G28", GEncoder.encode(GCommand(GLetter('G'), GInt(28))))
         }
 
         @Test
         fun `a command without params renders just its head`() {
-            assertEquals(listOf(GLetter('G'), GInt(28)), GCommand(GLetter('G'), GInt(28)).print())
+            assertEquals("G28", GEncoder.encode(GCommand(GLetter('G'), GInt(28))))
         }
 
         @Test
@@ -41,10 +42,7 @@ class GSemanticsTest {
                 )
             )
 
-            assertEquals(
-                listOf(GLetter('G'), GInt(1), GLetter('X'), GFloat("10.5"), GLetter('F'), GInt(1800)),
-                command.print()
-            )
+            assertEquals("G1 X10.5 F1800", GEncoder.encode(command))
         }
 
         @Test
@@ -55,10 +53,7 @@ class GSemanticsTest {
                 listOf(GParameterWord(GLetter('S'), GQuotedString("Hello!")))
             )
 
-            assertEquals(
-                listOf(GLetter('M'), GInt(117), GLetter('S'), GQuotedString("Hello!")),
-                command.print()
-            )
+            assertEquals("M117 S\"Hello!\"", GEncoder.encode(command))
         }
 
         @Test
@@ -69,10 +64,7 @@ class GSemanticsTest {
                 listOf(GParameterWord(GLetter('S'), GRawExpression("{bed[0]}")))
             )
 
-            assertEquals(
-                listOf(GLetter('M'), GInt(140), GLetter('S'), GRawExpression("{bed[0]}")),
-                command.print()
-            )
+            assertEquals("M140 S{bed[0]}", GEncoder.encode(command))
         }
 
         @Test
@@ -81,7 +73,7 @@ class GSemanticsTest {
             val explicit = GCommand(GParameterWord(GLetter('M'), GInt(104)), listOf(GParameterWord(GLetter('S'), GInt(200))))
 
             assertEquals(explicit, fromIdAndNum)
-            assertEquals(listOf(GLetter('M'), GInt(104), GLetter('S'), GInt(200)), fromIdAndNum.print())
+            assertEquals("M104 S200", GEncoder.encode(fromIdAndNum))
         }
 
         @Test
@@ -90,7 +82,7 @@ class GSemanticsTest {
 
             assertEquals(GParameterWord(GLetter('T'), GInt(0)), command.head)
             assertEquals(emptyList<GWord>(), command.params)
-            assertEquals(listOf(GLetter('T'), GInt(0)), command.print())
+            assertEquals("T0", GEncoder.encode(command))
         }
 
         @Test

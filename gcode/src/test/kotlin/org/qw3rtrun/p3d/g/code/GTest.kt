@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.g.code
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GFloat
 import org.qw3rtrun.p3d.g.code.core.token.GInt
@@ -31,7 +32,7 @@ class GTest {
         g.G(28)
 
         assertEquals(GCommand(GLetter('G'), GInt(28)), single())
-        assertEquals(listOf(GLetter('G'), GInt(28)), single().print())
+        assertEquals("G28", GEncoder.encode(single()))
     }
 
     @Test
@@ -39,7 +40,7 @@ class GTest {
         g.M(105)
 
         assertEquals(GCommand(GLetter('M'), GInt(105)), single())
-        assertEquals(listOf(GLetter('M'), GInt(105)), single().print())
+        assertEquals("M105", GEncoder.encode(single()))
     }
 
     @Test
@@ -47,7 +48,7 @@ class GTest {
         g.T(0)
 
         assertEquals(GCommand(GLetter('T'), GInt(0)), single())
-        assertEquals(listOf(GLetter('T'), GInt(0)), single().print())
+        assertEquals("T0", GEncoder.encode(single()))
     }
 
     @Test
@@ -62,7 +63,7 @@ class GTest {
             ),
             single()
         )
-        assertEquals(listOf(GLetter('G'), GInt(1), GLetter('X'), GFloat(BigDecimal("10.5")), GLetter('F'), GInt(1800)), single().print())
+        assertEquals("G1 X10.5 F1800", GEncoder.encode(single()))
     }
 
     @Test
@@ -70,7 +71,7 @@ class GTest {
         g.M(117, GParameterWord(GLetter('S'), "Hello!".toToken()))
 
         assertEquals(GCommand(GLetter('M'), GInt(117), listOf(GParameterWord(GLetter('S'), GQuotedString("Hello!")))), single())
-        assertEquals(listOf(GLetter('M'), GInt(117), GLetter('S'), GQuotedString("Hello!")), single().print())
+        assertEquals("M117 S\"Hello!\"", GEncoder.encode(single()))
     }
 
     @Test
@@ -102,12 +103,8 @@ class GTest {
 
         assertEquals(3, emitted.size)
         assertEquals(
-            listOf(
-                listOf(GLetter('M'), GInt(140), GLetter('S'), GInt(60)),
-                listOf(GLetter('G'), GInt(28)),
-                listOf(GLetter('T'), GInt(1))
-            ),
-            emitted.map { it.print() }
+            listOf("M140 S60", "G28", "T1"),
+            emitted.map { GEncoder.encode(it) }
         )
         assertEquals(listOf(GLetter('M'), GLetter('G'), GLetter('T')), emitted.map { it.head.id })
     }

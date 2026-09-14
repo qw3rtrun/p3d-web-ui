@@ -65,6 +65,10 @@ That collapses six of the eight items from "decide per suite" into **one deletio
       [09](./09-deferred-spec-gaps.md)'s bare rest-of-line strings. Port all three as `@CsvSource`
       rows and check they pass — if one does not, that is a checksum bug, not a bad vector.
 
+      **Done in [04](./04-encoder-and-checksum.md).** All three are `@CsvSource` rows in
+      `XorCheckSumTest.kt` and all three passed on the first run, so `XorCheckSum` was right and the
+      vectors were good. This checkbox is closed; the dead-Java-island decision above is not.
+
 ## The inversion worth naming
 
 `GTest.java` is listed above as covering `g/G.java`, and that is the item: **the live class is

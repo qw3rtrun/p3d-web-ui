@@ -1,222 +1,156 @@
 # 04 — Encoder and checksum verification
 
-**Goal.** The module can emit a wire-ready line and can tell whether a received one is intact. Closes
-spec [§8](../specs/GCODE_spec.md#8-checksum-and-crc) — including
-[§8.4](../specs/GCODE_spec.md#84-crc16-reprapfirmware) CRC16, pulled in from
-[09](./09-deferred-spec-gaps.md) — and finishes
-[§7](../specs/GCODE_spec.md#7-line-numbering)'s syntax half.
+**Status: done.** Spec [§8](../specs/GCODE_spec.md#8-checksum-and-crc) is implemented, including
+[§8.4](../specs/GCODE_spec.md#84-crc16-reprapfirmware) CRC16 pulled in from
+[09](./09-deferred-spec-gaps.md), and [§7](../specs/GCODE_spec.md#7-line-numbering)'s syntax half is
+finished. `XorCheckSum` had zero callers; it has two now, and a second algorithm beside it.
 
-**Depends on:** [03](./03-word-and-command-layer.md) — an encoder emits words. Also on the
-`GPacketLine.raw` → `whole` rename: verification reads that field, and the name currently collides
-with `GLine.raw()`.
-**Blocks:** [05](./05-line-numbering-and-session.md) — the resend protocol reacts to a verified packet.
+**Depended on:** [03](./03-word-and-command-layer.md) and the `GPacketLine.raw` → `whole` rename,
+both already in. **Blocks:** [05](./05-line-numbering-and-session.md) — unblocked; the resend
+protocol now has a verified packet, and a `GCheckSumFailedLine`, to react to.
 
-## Why
+## What the spec was wrong about
 
-Two orphans meet here.
+Two corrections landed with the code, and both were settled by reading firmware rather than by
+reasoning. They are the most valuable part of this item.
 
-`GCommand.print()` (`GSemantics.kt:57`) is the module's only encoder and it is wrong: `rawText()`
-values are concatenated with no separator, so adjacent numbers fuse.
+### The CRC16 variant — `0x1021` alone is not a specification
 
-```
-GCommand(GLetter('G'), listOf(GInt(1), GInt(2))).print()   →   "G12"
-```
+§8.4 named the polynomial and the output width and nothing else. **Four** algorithms answer to
+"CCITT CRC-16 with polynomial 0x1021" and they agree on no input:
 
-That is [1.10](./99-completed.md#110-gcommandprint-can-emit-invalid-g-code--gsemanticskt38-44), and
-it is not really a bug to patch — it is a placeholder standing where a real encoder belongs. Nothing
-emits `N`/`*` framing at all.
+| variant | init | bit order | final XOR | `N3 T0` |
+|---|---|---|---|---|
+| **XMODEM** ← the answer | `0x0000` | MSB-first | none | **`06939`** |
+| CCITT-FALSE | `0xFFFF` | MSB-first | none | `02583` |
+| KERMIT | `0x0000` | LSB-first | none | `20362` |
+| X-25 | `0xFFFF` | LSB-first | `0xFFFF` | `33021` |
 
-`XorCheckSum` (`code/core/XorCheckSum.kt`) is **correct** — 17 tests including the byte-by-byte
-worked example from [spec §8.3](../specs/GCODE_spec.md#83-what-the-checksum-covers) — and has
-**zero callers**. It is a finished component wired to nothing.
+Guessing would have rejected every genuine line, which is worse than not checking at all — hence
+this file treating the question as blocking. Settled from RepRapFirmware, the only firmware that
+accepts the field: `src/Storage/CRC16.h` declares "initial CRC value Zero", `CRC16.cpp` is an
+MSB-first table update returning the accumulator unmodified, and `StringParser.cpp` is what wires it
+to the `*` field. §8.4 now carries the parameter table, the discriminating vectors and the
+citations, so the next reader does not have to repeat the search.
 
-Together they are what makes the `G.kt` DSL unusable over a serial link, and they are the difference
-between the *structural* errors the liner reports today and the *framing* errors of
-[spec §9](../specs/GCODE_spec.md#9-error-handling), which the module still cannot detect at all.
+### Where the covered byte range *starts*
 
-## The decision that shapes this item
+§8.3 said the checksum runs over "the bytes transmitted before the `*`" without saying where the
+range began, which reads as *from the start of the line*. It is not. **Both** implementations start
+at the `N`:
 
-**`GPacketLine` is constructed only for a packet whose checksum has been verified.** Verification
-moves into `GSemanticParser.parseLine`, ahead of the construction; a well-formed checksum field that
-does not match the bytes yields `GCheckSumFailedLine` instead. So the type carries the invariant —
-holding a `GPacketLine` means the line is intact, with no `verify()` for a caller to forget.
+- **Marlin** (`Marlin/src/gcode/queue.cpp`, 2.1.x) advances past leading spaces —
+  `while (*command == ' ') command++;` — *before* taking the pointer it checksums from, requires `N`
+  to be the first character at that point, and XORs `command[0 .. apos-1]`.
+- **RepRapFirmware** (`StringParser.cpp`) accumulates in `AddToChecksum`, whose body is guarded by
+  `if (hadLineNumber)` and so does nothing until the `N` is seen.
 
-This replaces the lazy `GPacketLine.verify()` sketched in earlier drafts of this file. It is also why
-CRC16 is no longer deferred: under this invariant an unverifiable 5-digit checksum could be neither a
-`GPacketLine` nor a `GCheckSumFailedLine`, and modelling a third "well formed but unverifiable" line
-type costs more than the ~12 lines CRC16 actually takes.
+So indentation is **not** covered. The difference is visible only on an indented line, which is why
+it survived: for a line beginning at its `N` the two readings agree byte for byte. On `" N1 G28"`
+they do not — 50 counting the leading space, 18 without — and 18 is what firmware computes.
 
-## Do
+Corroboration worth recording: **the existing fixtures already assumed the firmware rule.**
+`" N1 G28*18"`, `"\tN1 G28*18"` and `"(c)N1 G28*18"` all carried 18, which is only correct if
+indentation is excluded, and all three passed unchanged the moment verification was switched on.
+Had this file's original vector table been applied instead, they would have been "corrected" to
+50/27/80 and the module would have been wrong in a way its own tests certified.
 
-- [ ] **Pin the CRC16 variant before writing any of it — this is blocking.**
-      [§8.4](../specs/GCODE_spec.md#84-crc16-reprapfirmware) gives the polynomial (`0x1021`) and the
-      output width (5 zero-padded decimal digits) but **not** the initial value, the bit order, or the
-      final XOR. Those three choices are what separate four different algorithms that all answer to
-      "CCITT CRC-16 with poly 0x1021", and they do not agree:
+Two further facts fell out of the same two sources and are now in §8.3: **the last `*` wins** (Marlin
+uses `strrchr`), and **a line whose first non-space character is not `N` carries no checksum at all**
+as far as either firmware is concerned.
 
-      | variant | init | bit order | final XOR | `N3 T0` | `N1 M115` | `N1 G28` |
-      |---|---|---|---|---|---|---|
-      | XMODEM | `0x0000` | MSB-first | none | `06939` | `30753` | `14291` |
-      | CCITT-FALSE | `0xFFFF` | MSB-first | none | `02583` | `35311` | `14787` |
-      | KERMIT | `0x0000` | LSB-first | none | `20362` | `27219` | `55583` |
-      | X-25 | `0xFFFF` | LSB-first | `0xFFFF` | `33021` | `58915` | `11920` |
+## What was built
 
-      Get ground truth — RepRapFirmware's own CRC16 source, or one captured `N…*<5 digits>` line from
-      real firmware — and record the vector *in the spec* next to the XOR worked example, so §8.4 is
-      as pinned as §8.2 is. Do not pick a variant by plausibility: an unverifiable guess here rejects
-      every genuine line, which is worse than the current state of not checking at all.
+- **`Crc16CheckSum`**, a second `CheckSumCalculator` beside `XorCheckSum` — one algorithm per class,
+  no flags, no mode parameter. Bitwise, 8 shifts per byte, no lookup table, so a port carries no
+  static data. `get()` returns `GInt(crc, lexeme = five zero-padded digits)`, and the padding is
+  load-bearing: an unpadded `6939` is four digits, a width §8.1 does not recognise.
+- **`checkSumCalculatorFor(lexeme)`**, one selector dispatching on **digit count, not value**. Read
+  off the lexeme because `*00057` is a five-digit CRC field carrying 57, whose `int` looks like two
+  digits — and a CRC is zero-padded by definition, so this is the common case, not a corner one.
+- **Verification inside `parseLine`**, after the pairing (§7.3) and field-syntax (§8.1) checks, so
+  `N1 G28*ABC` stays `GMalformedChecksum` and `*ABC` stays `GMissingLineNumber`. The byte range is
+  `semantic.subList(headIndex, starIndex)` — a slice of elements already in hand, never a
+  reassembly.
+- **`GPacketLine` now means verified by construction.** No `verify()` for a caller to forget.
+- **`GCheckSumFailedLine`** — number, recomputed `expected`, carried `received`, and the full element
+  list as `payload` so it round-trips for free. `GOrdered` for §8.5's resend; deliberately **not**
+  `GCheckSumControlled`.
+- **`GEncoder`** — `encode(command)` and `frame(number, command, checksum)`. It produces a `String`,
+  not a `List<GToken>`, and that is the design: the checksum covers the bytes as transmitted, so
+  whitespace is output rather than something a later stage inserts. `frame` prepends the `N` prefix
+  first, checksums the finished string second, appends `*` last, and never touches the whitespace
+  afterwards. No space before the marker.
+- **`GCommand.print()` is gone**, replaced rather than patched.
 
-- [ ] **`Crc16CheckSum` as a second `CheckSumCalculator`.** Keep `XorCheckSum` and the CRC in
-      separate classes behind the existing interface (`XorCheckSum.kt:10`) — one algorithm per class,
-      no flags, no mode parameter. Bitwise, 8 shifts per byte; no lookup table, so a port carries no
-      static data. Mask to `0xffff` on the way out of `get()`.
-      Its `get()` must return `GInt(crc, lexeme = crc padded to 5 digits)`: `GInt` keeps a `lexeme`
-      alongside its `int` (`GTokens.kt:100`), and the zero-padding is load-bearing — an unpadded
-      `6939` is four digits, which §8.4's width rule does not recognise as a CRC at all.
+## Decisions this file left open
 
-- [ ] **One selector, dispatching on digit count, not on value.** 1–3 digits → `XorCheckSum`, 5 →
-      `Crc16CheckSum`, anything else → unrecognised. Read the width off
-      `checksum.value.lexeme.length`; reading it off `int` silently misreads a zero-padded `*00057` as
-      two digits. Keep the dispatch in one function so neither calculator learns about the other.
+- **A width no algorithm claims** (4, 6+ digits) is `GMalformedChecksum`, not a mismatch — nothing
+  has been computed at the point it is decided, so there is nothing to mismatch. RRF rejects the
+  same way.
+- **A 1–3 digit value above 255** *is* a mismatch, not a malformed field. §8.2 puts the XOR result in
+  0–255 so `*300` cannot be any line's checksum, but both firmwares compare the parsed number and
+  ask for a resend, and matching firmware behaviour is the point of the exercise.
+- **A signed value is not a checksum field.** §8.1 spells it `*<unsigned-int>`; `+18` would otherwise
+  be three characters carrying 18 and would verify.
+- **Comparison is on `.int`, never `GInt` equality**, which includes the lexeme and would fail every
+  zero-padded line.
+- **The encoder is standalone, not driven by `GDescription`.** The descriptor is the right source of
+  truth for *which* fields a command carries and their defaults — a validation and defaulting
+  question, one layer up. Emitting bytes is a separate job, and separating them is what lets the
+  encoder handle a command the module has no descriptor for, which today is nearly all of them.
 
-- [ ] **Verify inside `parseLine`, last.** After the pairing check (§7.3) and the field-syntax check
-      (§8.1), so `N1 G28*ABC` stays `GMalformedChecksum` and a bare `*ABC` stays
-      `GMissingLineNumber` — neither reaches a calculator. The byte range is
-      **every token of `whole[0 until starIndex]`** — a slice, not a reassembly. Traced byte-exact
-      against `SemanticIterator`:
-      - a word absorbs whitespace between its identifier and value (`N 1` → `[N, GSpace, GInt(1)]`),
-        so the head field's own bytes are covered;
-      - a space *before* `*` is not absorbed by the star word (`following` must be a `GValue`, and
-        `*` is a `GIdentifier`, so it is pushed back), and becomes its own `GMeaningless` at
-        `starIndex - 1` — included, as §8.3 requires;
-      - a space *after* `*` (`N1 G28* 12`) sits *inside* the star element's raw, so excluding the
-        whole star element excludes it, which is correct;
-      - the terminator is a `GMeaningless` *after* the star element and falls outside the slice —
-        independent of the still-dead `stripTerminator`.
+## Finding 1.10, honestly
 
-- [ ] **`GCheckSumFailedLine`** — a well-formed checksum field that does not match the bytes:
+The Verify list asked for `GCommand(GLetter('G'), listOf(GInt(1), GInt(2)))` to stop encoding as
+`G12`. **That reproducer no longer compiles**: [03](./03-word-and-command-layer.md) gave `GCommand` a
+head/params shape in which every parameter is a `GWord` and so begins with an identifier, which makes
+two adjacent bare numbers unconstructible. So 1.10 was closed by 03's type change, not by this item —
+the encoder's contribution is canonical separation and being byte-oriented at all. `GEncoderTest`
+pins the live equivalent (two number-bearing words stay two words) as a regression net.
 
-      ```kotlin
-      data class GCheckSumFailedLine(
-          override val number: GInt,
-          val expected: GInt,   // recomputed
-          val received: GInt,   // as carried on the wire
-          override val payload: List<GSemantic>,
-      ) : GError, GOrdered
-      ```
+## Verified
 
-      It takes the full element list as `payload`, like every other error type, so it round-trips for
-      free and needs no `whole` of its own — only `GPacketLine` is lossy, because only it decomposes
-      the line. `GOrdered` because §8.5's `Resend: <n>` needs the number. Deliberately **not**
-      `GCheckSumControlled`: consumers matching that interface should get trustworthy lines only.
+Run, not read — `:gcode:test` is **581 tests, 0 failures, 0 skipped**, and `:gcode`,
+`:backend:core`, `:backend:api` and `:backend:terminal` all build.
 
-- [ ] **Compare `.int`, never `GInt` equality.** `GInt` is a data class whose `equals` includes
-      `lexeme`, so a recomputed `GInt(57, "57")` is `!=` a carried `GInt(57, "057")` despite being the
-      same number. Structural equality here fails every zero-padded line — and every CRC, which is
-      zero-padded by definition.
+- §8.3's worked example round-trips both ways: `frame(3, T0)` is `N3 T0*57`, and `N3 T0*57` parses to
+  a `GPacketLine`.
+- §8.4's vector likewise: `N3 T0*06939`, and a zero-padded five-digit field is read as a CRC rather
+  than as a four-digit unknown.
+- [08](./08-test-and-doc-debt.md)'s three unported vectors pass as fixtures — `N1 M115` → 39,
+  `N1 M155 S1` → 97, `N2 M117 Hello World!` → 7 — closing that item's last checkbox. All three passed
+  first time, so `XorCheckSum` was right and the vectors were good.
+- Encode-then-parse is the identity on commands under both algorithms; parse-then-encode is the
+  identity on bytes for lines the encoder could have produced.
+- A one-byte corruption anywhere before the `*` is detected — asserted over **every byte of every
+  line of the packet corpus**, not one hand-written case. A transposition is **not** detected by XOR,
+  and the test says so out loud rather than leaving it implied; the same transposition under a CRC is
+  caught, which is what makes §8.4 "strictly stronger" a claim rather than a slogan.
+- Whitespace sensitivity is asserted: `N1 G1 X0` and `N1 G1X0` differ, a space before the marker is
+  covered and a space after it is not, and indentation changes nothing.
+- Both calculators have production callers, checked by grep, since "has zero callers" is how
+  `XorCheckSum` got into this file.
+- **A packet-bearing corpus exists**: `marlin-packets.gcode`, 28 lines of framed host-to-firmware
+  traffic, 22 XOR and 6 CRC. Its checksums were computed **outside this module**, from the spec — a
+  fixture generated by `GEncoder` would agree with the verifier by construction and would go on
+  agreeing with it through a shared bug.
 
-- [ ] **Decide what an out-of-range value is.** §8.2 puts the XOR result in `0`–`255`, so a 1–3 digit
-      field above 255 (`*300`) cannot be any line's checksum. That is a malformed field, not a
-      mismatch; pick the error deliberately rather than letting it fall out of the comparison.
+## Notes for later
 
-- [ ] **A real command encoder.** Separate words so nothing fuses. Simplest correct rule: always a
-      single space between words. Replace `GCommand.print()` with it rather than patching `print()` —
-      and decide whether the encoder is a function on `GCommand`, a standalone `GEncoder`, or driven
-      by `GDescription`. Note that the descriptor already knows a command's fields and their
-      defaults, which is the natural source of truth.
+**TDD, honestly reported.** `Crc16CheckSum` and `GEncoder` were done red-first against a stub. The
+verification code in `parseLine` was not — its tests were written afterwards, so they were checked by
+breaking the implementation instead: disabling the comparison reds 7 of them, and starting the
+covered range at index 0 rather than at the `N` reds 7 more. One real bug was caught that way —
+`@CsvSource` trims by default and was silently stripping the indentation the indented cases exist to
+carry, so they were passing without testing anything.
 
-- [ ] **A line/framing encoder**: `GCommand`(s) → `N<n> <payload>*<cs>`. The checksum rules are
-      exacting and [§8.3](../specs/GCODE_spec.md#83-what-the-checksum-covers) states them precisely —
-      read it before writing this:
-      - the XOR runs over **exactly the bytes transmitted before the `*`**, nothing normalised;
-      - the `N` and its digits **are** included, so the checksum must be computed *after* the prefix
-        is prepended;
-      - every space actually sent is included — `N1 G1 X0*x` and `N1 G1X0*y` differ;
-      - the terminator and any comment after the `*` are **not** covered;
-      - therefore: build the final byte string, *then* checksum it, and never touch the whitespace
-        afterwards. Emitting no space before `*` is the convention.
+**`add(ch: Char)` is characters, not bytes**, in both calculators. For ASCII the two coincide and
+§1.1 keeps the protocol in ASCII, so this is correct for every line Marlin will send. It stops being
+correct for a non-ASCII byte before the `*` — a UTF-8 quoted string — where a UTF-16 code unit is not
+a byte. Documented on the interface; the interface was not widened for a case the spec excludes.
 
-- [ ] Keep the streaming shape of both calculators — one character in, integer state, mask on the way
-      out. They already work on a growing serial buffer and must keep doing so; do not add a variant
-      that buffers the whole line.
-
-- [ ] **Recompute the suite's fabricated checksums.** 37 test sites expect a `GPacketLine`, and most
-      carry an invented checksum that the new invariant turns into a `GCheckSumFailedLine`. Actual XOR
-      values:
-
-      | literal | carried | correct |
-      |---|---|---|
-      | `N1 G28*12` | 12 | **18** |
-      | `N0 G28*0` | 0 | **19** |
-      | `N2 G1 X10*33` | 33 | **83** |
-      | `N2 G1 X10 *33` | 33 | **115** |
-      | `G1 X10*45` | 45 | **15** |
-      | `N100 G1 X10 *45` | 45 | **112** |
-      | `N42 G1 X1 F100*9` | 9 | **0** |
-      | `N42 G1 X10.5 F1800*9 ; move` | 9 | **19** |
-      | `N999999 G28*255` | 255 | **35** |
-      | `G1 N5*10` | 10 | **45** |
-      | `N1 M110 N7*125` | 125 | **123** |
-      | `N1 G28*12*13` | 13 | **59** |
-      | `N1 G28 *12 ;homing` | 12 | **50** |
-      | `N1 G28*18`, `N3 T0*57`, `N2 G28*17`, `N1 M110 N1*125` | | already correct |
-
-      The leading-context cases added by the 1.19 re-fix are all fabricated too, and each differs
-      because the bytes before `N` are covered (§8.3):
-
-      | literal | carried | correct |
-      |---|---|---|
-      | `" N1 G28*18"` | 18 | **50** |
-      | `"\tN1 G28*18"` | 18 | **27** |
-      | `"\t N1 G28*18"` | 18 | **59** |
-      | `"(c) N1 G28*18"` | 18 | **80** |
-      | `"(c)N1 G28*18"` | 18 | **112** |
-      | `"\t(c) N2 G1 X10*33"` | 33 | **24** |
-      | `"N 1 G28*18"` | 18 | **50** |
-      | `"n1 G28*18"` | 18 | **50** |
-      | `"   n1 G28*18"` | 18 | 18 — **correct by coincidence** |
-
-      That last row is a trap, so leave a comment on it when you touch it: three spaces XOR to `0x20`
-      and `0x20 ^ 'n'` is `'N'`, so `"   n1 G28"` and `"N1 G28"` have the same checksum. The test
-      passes verification for a reason that has nothing to do with what it is testing.
-
-      Each is a decision, not a find-and-replace: a test about *classification* gets a corrected
-      checksum, while a test that wants a genuinely bad line keeps its wrong one and switches its
-      expectation to `GCheckSumFailedLine`. This is the bulk of the work in this item.
-
-## Verify
-
-- [ ] The spec's worked example round-trips both ways: encoding `T0` as line 3 yields `N3 T0*57`, and
-      verifying `N3 T0*57` succeeds.
-- [ ] [08](./08-test-and-doc-debt.md)'s three unported vectors pass as fixtures — `N1 M115` → 39,
-      `N1 M155 S1` → 97, `N2 M117 Hello World!` → 7 — which closes that item's last checkbox.
-- [ ] The pinned CRC16 vector verifies, and a zero-padded 5-digit CRC (`06939`-shaped) is accepted
-      rather than read as a 4-digit unknown.
-- [ ] Encoding then parsing is the identity on commands, and parsing then encoding is the identity on
-      bytes for any line the encoder could have produced.
-- [ ] A one-byte corruption anywhere before the `*` is detected. A transposition is **not** — XOR is
-      commutative — and a test should state that limitation rather than leave it implied.
-- [ ] Whitespace sensitivity is asserted, not implied: `N1 G1 X0` and `N1 G1X0` have different
-      checksums, and a leading space changes the answer (` N1 G28` is 50, `N1 G28` is 18).
-- [ ] `GCommand(GLetter('G'), listOf(GInt(1), GInt(2)))` no longer encodes to `G12`. This is the
-      assertion that closes 1.10, and it is the one deliberate coverage gap left in the suite.
-- [ ] Both calculators gain a caller — check by grep, since "has zero callers" is how `XorCheckSum`
-      got here.
-- [ ] A packet-bearing corpus fixture exists. `GCorpusTest.kt:171` currently asserts `marlin.gcode`
-      contains **zero** `GPacketLine`s, so §7 and §8 have no realistic regression net today.
-
-## Notes
-
-**The reassembly question is answered.** Earlier drafts of this file worried that `GPacketLine`
-decomposes its line and cannot rebuild the checksummed bytes, and said the honest fix would be to
-carry the raw token list. `286461b` added exactly that field (`raw`, being renamed `whole`), so
-verification is a slice of it and no reassembly is needed. The field now has a second consumer, which
-is the argument it was missing when it was added.
-
-**`add(ch: Char)` is characters, not bytes.** For ASCII the two coincide, and spec §1.1 keeps the
-protocol in ASCII, so this is correct for every line Marlin will send. It stops being correct for a
-non-ASCII byte before the `*` — a UTF-8 quoted string — where a UTF-16 code unit is not a byte. Both
-calculators inherit this from the interface. Document the limit; do not widen the interface for a case
-the spec excludes.
-
-**CRC16 is no longer [09](./09-deferred-spec-gaps.md)'s.** Update that file when this one lands.
+**255 is unreachable.** §8.2 gives the XOR result the range 0–255, but §1.1 keeps the wire in 7-bit
+ASCII, so every covered byte is below `0x80` and so is their XOR. The true maximum for any legal line
+is **127**. A fixture asserting "the maximum checksum" with 255 was testing a value no generator
+could produce.

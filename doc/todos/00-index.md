@@ -13,7 +13,7 @@ before/after, the conformance and coverage tables — is in
 
 ## Status
 
-`:gcode:test` — **499 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
+`:gcode:test` — **581 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
 
 Lexing ([spec §2](../specs/GCODE_spec.md#2-lexical-structure-tokens), §3) and line framing
 ([§5](../specs/GCODE_spec.md#5-line-block-structure), [§7.3](../specs/GCODE_spec.md#73-pairing-rule))
@@ -21,11 +21,17 @@ are correct and fully covered, and as of 01 the character classes are ASCII-expl
 ([§1.1](../specs/GCODE_spec.md#11-character-set-and-encoding)). No test freezes a known bug — three
 did until the `GSemantic` refactor's classification regressions were re-fixed
 ([1.19](./99-completed.md#119-classification-regressions-from-286461b--gsemanticparserkt--fixed)).
-What is missing is everything **above** the line: there is no word→command assembly, no encoder, and no
-checksum verification, so
-[spec §4](../specs/GCODE_spec.md#4-identifiers-field-letters) and
-[§8](../specs/GCODE_spec.md#8-checksum-and-crc) are unimplemented in practice even though the types
-for them exist.
+
+The layer **above** the line is now in too: 03 built word→command assembly
+([spec §4](../specs/GCODE_spec.md#4-identifiers-field-letters)) and 04 the encoder and checksum
+verification ([§8](../specs/GCODE_spec.md#8-checksum-and-crc), CRC16 included), so a `GPacketLine`
+means *verified by construction* and the module can both emit a wire-ready line and tell whether a
+received one is intact. Two spec errors were found and corrected while doing it — the CRC16 variant
+was underspecified, and §8.3 was wrong about where the covered byte range starts; both were settled
+against Marlin's and RepRapFirmware's source, and [04](./04-encoder-and-checksum.md) records them.
+
+What is left is the **session** layer ([05](./05-line-numbering-and-session.md)) and the cleanups in
+06–09.
 
 ## The queue
 
@@ -33,13 +39,13 @@ for them exist.
 |---|---|---|---|
 | ~~01~~ | [ascii-and-lexer-portability](./01-ascii-and-lexer-portability.md) | ~~Explicit ASCII character classes, drop the `Stream` overload, stray CR in tail comments~~ **done — `c92bfe6`** | — |
 | ~~02~~ | [number-representation](./02-number-representation.md) | ~~Decide what a number token holds.~~ **done** — decided to *keep* `BigDecimal` and record it as the core's one admitted portability liability; dropped the `Double` path, renamed `GFloat.float` → `value` and `GDDoubleField` → `GDDecimalField` | — |
-| 03 | [word-and-command-layer](./03-word-and-command-layer.md) | `GCommandParser` done: commands, flag params, subcodes, structural-field skip. Two items deferred to 04/05 | 04 |
-| 04 | [encoder-and-checksum](./04-encoder-and-checksum.md) | A real encoder, `N`/`*` framing, parser-side checksum verification over XOR and CRC16 | 05 |
-| 05 | [line-numbering-and-session](./05-line-numbering-and-session.md) | Line-number continuity, `M110`, the resend window | — |
+| ~~03~~ | [word-and-command-layer](./03-word-and-command-layer.md) | ~~`GCommandParser`~~ **done** — commands, flag params, subcodes, structural-field skip. Two items were deferred to 04/05 | — |
+| ~~04~~ | [encoder-and-checksum](./04-encoder-and-checksum.md) | ~~A real encoder, `N`/`*` framing, checksum verification~~ **done** — `GEncoder`, `Crc16CheckSum` (XMODEM, pinned from RRF source), verification inside `parseLine`, `GCheckSumFailedLine`, a packet-bearing corpus. Corrected §8.3 and §8.4 | — |
+| **05** | [line-numbering-and-session](./05-line-numbering-and-session.md) | **Next.** Line-number continuity, `M110`, the resend window | — |
 | 06 | [decoder-edge-portability](./06-decoder-edge-portability.md) | Replace regex / `Optional` / `commons-lang3` / `ignoreCase` in `marlin/decoder/**` | — |
 | 07 | [hygiene-and-naming](./07-hygiene-and-naming.md) | File and property renames, `GTokenizer` as an object, leftover semicolons | — |
-| 08 | [test-and-doc-debt](./08-test-and-doc-debt.md) | Retire one island of dead Java classes; port three `XorCheckSum` vectors | — |
-| 09 | [deferred-spec-gaps](./09-deferred-spec-gaps.md) | Bare rest-of-line strings, RS274 parameters, block delete, line length | — |
+| 08 | [test-and-doc-debt](./08-test-and-doc-debt.md) | Retire one island of dead Java classes. ~~Port three `XorCheckSum` vectors~~ — done in 04 | — |
+| 09 | [deferred-spec-gaps](./09-deferred-spec-gaps.md) | Bare rest-of-line strings, RS274 parameters, block delete, line length. ~~CRC16~~ — done in 04 | — |
 
 ## Why this order
 
@@ -60,11 +66,11 @@ which by design returns the `lexeme` — a plain `String` — and never touches 
 real 02→04 coupling was `GDescription`: `GDDecimalField.default: BigDecimal?` is what 04 proposes to
 drive the encoder from, and 02 owned that type. The ordering stood; only the stated reason was wrong.
 
-**03 → 04 → 05** is a strict dependency chain: the encoder emits words, so word assembly comes first;
-the checksum is computed over encoded bytes, so the encoder comes before verification; the resend
-protocol addresses lines by number and needs a verified packet to react to. **03 is already in** —
-`GCommandParser` landed ahead of the queue order, with two items deferred into 04 and 05, so
-**04 is next.**
+**03 → 04 → 05** was a strict dependency chain: the encoder emits words, so word assembly came
+first; the checksum is computed over encoded bytes, so the encoder came before verification; the
+resend protocol addresses lines by number and needs a verified packet to react to. 03 and 04 are both
+in, so **05 is next** and its dependency is satisfied — it has a `GPacketLine` that means *verified*
+and a `GCheckSumFailedLine` to drive a resend from.
 
 **06 through 09 are effectively independent** and can be picked up whenever. One qualification: 06
 has a single-line coupling to 02 (`TemperatureReportedDecoder` parses `Double`), documented in 06

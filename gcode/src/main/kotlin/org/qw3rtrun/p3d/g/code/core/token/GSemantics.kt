@@ -80,7 +80,11 @@ data class GCommand(val head: GParameterWord<GNumber>, val params: List<GWord> =
         GParameterWord(cmdId, cmdNum), params
     )
 
-    fun print(): List<GToken> = head.raw + params.flatMap { it.raw }
+    // There is deliberately no print() here any more. It returned `head.raw + params.flatMap { raw }`
+    // - a token list with no separators in it - and left the caller to join them, which is how it
+    // could emit bytes that depended on the values happening to be self-delimiting (finding 1.10).
+    // Encoding is `GEncoder`, it produces a String, and it is a String because the checksum covers
+    // the bytes as transmitted (spec 8.3) and so whitespace is part of the output, not an afterthought.
 }
 
 sealed interface GError : GLine {

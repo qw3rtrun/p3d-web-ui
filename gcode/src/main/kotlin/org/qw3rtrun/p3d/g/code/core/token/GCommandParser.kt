@@ -116,17 +116,32 @@ class GCommandParser {
      * value cannot tell them apart, while a sign or a bare trailing dot has to be rejected and only
      * the lexeme still shows it.
      */
-    private fun isCommandNumber(lexeme: String): Boolean {
-        var i = 0
-        while (i < lexeme.length && isDigit(lexeme[i])) i++
-        if (i == 0) return false                    // a sign, a leading dot, or no digits at all
-        if (i == lexeme.length) return true         // plain command number
-        if (lexeme[i] != '.') return false
-        i++
-        val subcodeStart = i
-        while (i < lexeme.length && isDigit(lexeme[i])) i++
-        return i > subcodeStart && i == lexeme.length
-    }
+    private fun isCommandNumber(lexeme: String): Boolean = Companion.isCommandNumber(lexeme)
 
     private fun isDigit(c: Char) = c >= '0' && c <= '9'
+
+    companion object {
+
+        /**
+         * The same rule, reachable without a parser instance.
+         *
+         * Shared with the command builders in `code/G.kt` so that the DSL cannot construct a command
+         * this parser would refuse to read back. That symmetry is the point: a builder and a parser
+         * disagreeing about what a command number is would let a round-trip test pass on input no
+         * firmware accepts.
+         */
+        fun isCommandNumber(lexeme: String): Boolean {
+            var i = 0
+            while (i < lexeme.length && digit(lexeme[i])) i++
+            if (i == 0) return false                    // a sign, a leading dot, or no digits at all
+            if (i == lexeme.length) return true         // plain command number
+            if (lexeme[i] != '.') return false
+            i++
+            val subcodeStart = i
+            while (i < lexeme.length && digit(lexeme[i])) i++
+            return i > subcodeStart && i == lexeme.length
+        }
+
+        private fun digit(c: Char) = c >= '0' && c <= '9'
+    }
 }

@@ -54,7 +54,7 @@ data object GChecksum : GIdentifier {
         get() = "*"
 }
 
-sealed interface GComment : GToken {
+sealed interface GComment : GToken, GBlockPart {
     val string: String
 }
 

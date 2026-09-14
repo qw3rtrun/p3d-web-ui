@@ -75,7 +75,33 @@ data class GPacketLine(
  * because spec 4.1 lets a command number carry a **subcode** - `G29.1` is one command word whose
  * value is `GFloat("29.1")`, and keeping the lexeme is what re-emits `29.1` rather than `29` + `.1`.
  */
-data class GCommand(val head: GParameterWord<GNumber>, val params: List<GWord> = emptyList()) {
+/**
+ * Something that can stand in a [GBlock]: a [GCommand] or a [GComment].
+ *
+ * This is the *build* direction, and it is deliberately not [GSemantic], which is the *parse*
+ * direction. A parsed line is a list of elements carrying the exact bytes it was read from,
+ * whitespace included; a block being built carries only what the author chose, and the encoder
+ * decides the bytes. Keeping them apart is what lets [GEncoder] emit one canonical spelling instead
+ * of having to guess which of a parsed line's spaces were meaningful.
+ */
+sealed interface GBlockPart
+
+/**
+ * A line being built: spec section 5's "line (block)", as a value the encoder can render.
+ *
+ * Ordered, and general enough for every shape section 5 allows - a command, a command with a
+ * trailing comment, a comment on its own, several commands, or a comment between two of them. What
+ * it does **not** carry is the `N` field or the `*` field: those are framing, they are added by
+ * `GEncoder.frame`, and a block that carried them could be framed twice.
+ */
+data class GBlock(val parts: List<GBlockPart>) {
+    constructor(vararg parts: GBlockPart) : this(parts.toList())
+
+    /** The commands in wire order, comments dropped. */
+    fun commands(): List<GCommand> = parts.filterIsInstance<GCommand>()
+}
+
+data class GCommand(val head: GParameterWord<GNumber>, val params: List<GWord> = emptyList()) : GBlockPart {
     constructor(cmdId: GIdentifier, cmdNum: GNumber, params: List<GWord> = emptyList()) : this(
         GParameterWord(cmdId, cmdNum), params
     )

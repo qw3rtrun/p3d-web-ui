@@ -13,7 +13,7 @@ before/after, the conformance and coverage tables — is in
 
 ## Status
 
-`:gcode:test` — **634 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
+`:gcode:test` — **654 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
 
 Lexing ([spec §2](../specs/GCODE_spec.md#2-lexical-structure-tokens), §3) and line framing
 ([§5](../specs/GCODE_spec.md#5-line-block-structure), [§7.3](../specs/GCODE_spec.md#73-pairing-rule))
@@ -51,6 +51,7 @@ critical path.
 | 07 | [hygiene-and-naming](./07-hygiene-and-naming.md) | File and property renames, `GTokenizer` as an object, leftover semicolons | — |
 | 08 | [test-and-doc-debt](./08-test-and-doc-debt.md) | Retire one island of dead Java classes. ~~Port three `XorCheckSum` vectors~~ — done in 04 | — |
 | 09 | [deferred-spec-gaps](./09-deferred-spec-gaps.md) | Bare rest-of-line strings, RS274 parameters, block delete, line length. ~~CRC16~~ — done in 04 | — |
+| 10 | [command-dsl](./10-command-dsl.md) | The `G.kt` writing facade. **`:gcode` half done** — `GBlock`, `GWords.kt`, line builders, 303/303 corpus lines expressible. Replacing `G.java` needs three `:backend` files | — |
 
 ## Why this order
 

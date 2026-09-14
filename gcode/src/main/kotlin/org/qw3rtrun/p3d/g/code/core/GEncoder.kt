@@ -1,6 +1,8 @@
 package org.qw3rtrun.p3d.g.code.core
 
+import org.qw3rtrun.p3d.g.code.core.token.GBlock
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
+import org.qw3rtrun.p3d.g.code.core.token.GComment
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 
@@ -45,6 +47,72 @@ object GEncoder {
             appendWord(out, command.params[i])
         }
         return out.toString()
+    }
+
+    /**
+     * A whole line: every part in order, **separated by a single space**, per spec section 5.
+     *
+     * A comment renders through its own `rawText()`, so the caller's choice of `;` or `( )` and of
+     * whether to leave a space after the marker is preserved - `GTailComment(" move")` is `; move`
+     * and `GTailComment("move")` is `;move`. Both are legal (section 6) and the difference is the
+     * author's, not the encoder's.
+     */
+    fun encode(block: GBlock): String {
+        val out = StringBuilder()
+        for (i in block.parts.indices) {
+            if (i > 0) out.append(' ')
+            appendPart(out, block.parts[i])
+        }
+        return out.toString()
+    }
+
+    /**
+     * A framed line built from a whole [block]: `N<number> <payload>*<checksum> <trailing comment>`.
+     *
+     * **A trailing comment goes after the checksum and is not covered by it** (section 5 puts the
+     * `*` field last before any comment, and section 8.3 excludes what follows it). A comment that
+     * is *not* trailing - one sitting between two commands - is part of the payload and **is**
+     * covered, because those are the bytes that get transmitted before the `*`.
+     *
+     * So the split is positional: everything up to and including the last non-comment part is
+     * payload, and only the run of comments after it is appended past the marker. A block that is
+     * nothing but comments has no payload and cannot be framed - there is nothing to acknowledge or
+     * resend - so it comes back as its own text, unnumbered.
+     */
+    fun frame(number: Int, block: GBlock, checksum: CheckSumCalculator = XorCheckSum()): String {
+        var lastPayload = -1
+        for (i in block.parts.indices) if (block.parts[i] !is GComment) lastPayload = i
+        if (lastPayload < 0) return encode(block)
+
+        val out = StringBuilder()
+        out.append('N').append(number)
+        for (i in 0..lastPayload) {
+            out.append(' ')
+            appendPart(out, block.parts[i])
+        }
+
+        val covered = out.toString()
+        for (i in 0 until covered.length) checksum.add(covered[i])
+        out.append('*').append(checksum.get().lexeme)
+
+        for (i in lastPayload + 1 until block.parts.size) {
+            out.append(' ')
+            appendPart(out, block.parts[i])
+        }
+        return out.toString()
+    }
+
+    private fun appendPart(out: StringBuilder, part: org.qw3rtrun.p3d.g.code.core.token.GBlockPart) {
+        when (part) {
+            is GCommand -> {
+                appendWord(out, part.head)
+                for (i in part.params.indices) {
+                    out.append(' ')
+                    appendWord(out, part.params[i])
+                }
+            }
+            is GComment -> out.append(part.rawText())
+        }
     }
 
     /**

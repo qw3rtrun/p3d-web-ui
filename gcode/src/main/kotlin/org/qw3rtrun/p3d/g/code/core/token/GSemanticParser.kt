@@ -1,5 +1,7 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
+import org.qw3rtrun.p3d.g.code.core.checkSumCalculatorFor
+
 /**
  * Turns a token stream into a stream of classified lines, per GCODE_spec.md section 5.
  *
@@ -10,6 +12,11 @@ package org.qw3rtrun.p3d.g.code.core.token
  *
  * One instance consumes one token stream. [parseLine] is independent of that state and can be called
  * directly on a line's tokens.
+ *
+ * **A [GPacketLine] is only ever built for a line whose checksum has been verified** (spec section
+ * 8). Verification happens here, ahead of the construction, so the type carries the invariant and
+ * there is no `verify()` for a caller to forget: holding a `GPacketLine` means the line is intact.
+ * A well-formed checksum field that does not match its bytes yields [GCheckSumFailedLine] instead.
  */
 class GSemanticParser(private val source: Iterator<GToken>) : Iterator<GLine> {
 
@@ -90,6 +97,40 @@ class GSemanticParser(private val source: Iterator<GToken>) : Iterator<GLine> {
         // from spec 8.1 (garbled, resend the line - spec 8.5) by exactly this distinction.
         val checksum = if (star is GParameterWord<*>) star.value else null
         if (checksum !is GInt) return GMalformedChecksum(lineNumber, semantic)
+
+        // spec 8.1: the digit count selects the algorithm, and a width neither algorithm claims is
+        // still a syntax answer - there is nothing to compare `*1234` against.
+        val calculator = checkSumCalculatorFor(checksum.lexeme)
+            ?: return GMalformedChecksum(lineNumber, semantic)
+
+        // spec 8.3: from the `N`, inclusive, up to but not including the `*`. A slice of the
+        // elements already in hand, never a reassembly - `whole` carries every token in wire order.
+        //
+        // headIndex is the `N` field: control only reaches here when the head word is an `N`
+        // carrying an integer, which is what made `lineNumber` non-null above. The head word also
+        // absorbs any whitespace between the identifier and its value (`N 1` is one element whose
+        // raw is [N, GSpace, GInt(1)]), so the field's own bytes are covered without special-casing.
+        //
+        // Where the range *ends* is equally deliberate. A space before the `*` is not absorbed by
+        // the star word - `following` must be a GValue and `*` is a GIdentifier, so it is pushed
+        // back - and becomes its own GMeaningless at starIndex - 1, which the slice includes, as
+        // section 8.3 requires. A space *after* the `*` sits inside the star element's raw, so
+        // excluding the whole star element excludes it. The terminator is an element after the star
+        // and falls outside the slice.
+        for (element in semantic.subList(headIndex, starIndex)) {
+            for (token in element.raw) {
+                val text = token.rawText()
+                for (i in 0 until text.length) calculator.add(text[i])
+            }
+        }
+
+        // Compare `int`, never `GInt` equality: `GInt` is a data class whose `equals` includes the
+        // lexeme, so a recomputed GInt(57, "57") is != a carried GInt(57, "057"). That would fail
+        // every zero-padded line, and a CRC is zero-padded by definition (spec 8.4).
+        val expected = calculator.get()
+        if (expected.int != checksum.int) {
+            return GCheckSumFailedLine(lineNumber, expected, checksum, semantic)
+        }
 
         return GPacketLine(
             lineNumber,

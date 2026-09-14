@@ -70,8 +70,13 @@ data class GPacketLine(
     override fun raw(): List<GToken> = whole.flatMap { it.raw }
 }
 
-data class GCommand(val head: GParameterWord<GInt>, val params: List<GWord> = emptyList()) {
-    constructor(cmdId: GIdentifier, cmdNum: GInt, params: List<GWord> = emptyList()) : this(
+/**
+ * One command and its parameters, per spec section 4. [head] carries a `GNumber`, not a `GInt`,
+ * because spec 4.1 lets a command number carry a **subcode** - `G29.1` is one command word whose
+ * value is `GFloat("29.1")`, and keeping the lexeme is what re-emits `29.1` rather than `29` + `.1`.
+ */
+data class GCommand(val head: GParameterWord<GNumber>, val params: List<GWord> = emptyList()) {
+    constructor(cmdId: GIdentifier, cmdNum: GNumber, params: List<GWord> = emptyList()) : this(
         GParameterWord(cmdId, cmdNum), params
     )
 
@@ -112,8 +117,40 @@ data class GMalformedLineNumber(override val payload: List<GSemantic>) : GError 
         get() = "'N' is not followed by a line number"
 }
 
-/** Spec section 8.1: `*` is present and paired with an `N`, but is not followed by an integer. */
+/**
+ * Spec section 8.1: `*` is paired with an `N`, but what follows it is not a well-formed checksum
+ * field. Two shapes, both decided on syntax alone and before any algorithm runs:
+ *
+ * - nothing usable after the marker - `N1*`, `*ABC`, `*10.5`;
+ * - an integer of a width no algorithm claims. Section 8.1 gives the digit count the job of choosing
+ *   between them, so 1-3 digits and 5 digits are checksum fields and **4, 6 or more are not**.
+ *   `*1234` is not a mismatch: there is nothing to compare it against.
+ */
 data class GMalformedChecksum(val number: GInt, override val payload: List<GSemantic>) : GError {
     override val msg: String
         get() = "'*' is not followed by a checksum value on line ${number.rawText()}"
+}
+
+/**
+ * Spec section 8.5: the line is framed correctly and its checksum field is well formed, but the
+ * value on the wire is not the value the bytes produce. The line is corrupt in transit and a host
+ * answers it with `Resend: <number>`.
+ *
+ * [expected] is recomputed from the covered bytes, [received] is what the wire carried. Both are
+ * kept because a host's diagnostic quotes them together, and because the pair is what tells a
+ * genuine corruption from a generator that is checksumming the wrong byte range.
+ *
+ * It takes the full element list as [payload], like every other error type, so the line round-trips
+ * for free. [GOrdered] because the resend request is addressed by line number. Deliberately **not**
+ * [GCheckSumControlled]: a consumer matching on that interface is asking for lines it can trust.
+ */
+data class GCheckSumFailedLine(
+    override val number: GInt,
+    val expected: GInt,
+    val received: GInt,
+    override val payload: List<GSemantic>,
+) : GError, GOrdered {
+    override val msg: String
+        get() = "checksum mismatch on line ${number.rawText()}: " +
+                "computed ${expected.rawText()}, received ${received.rawText()}"
 }

@@ -51,7 +51,14 @@ class XorCheckSumTest {
             "N1 M110 N1|125",
             "N42 G1 X10.5 Y-3 E0.42 F1800|9",
             "N0 M110|35",
-            "A|65"
+            "A|65",
+            // Ported from the retired Java suite (todo 08): its three vectors were disjoint from
+            // the set above, so deleting it would have lost them. `N2 M117 Hello World!` is the
+            // valuable one - a payload carrying spaces and punctuation, which is exactly the byte
+            // range section 8.3 is precise about.
+            "N1 M115|39",
+            "N1 M155 S1|97",
+            "N2 M117 Hello World!|7"
         ],
         delimiter = '|'
     )

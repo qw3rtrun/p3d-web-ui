@@ -441,12 +441,13 @@ Properties:
 
 ### 8.3 What the checksum covers
 
-The XOR runs over **exactly the bytes that are transmitted before the `*`** — nothing is normalised
-first. Therefore:
+The covered range runs **from the `N` of the line-number field, inclusive, up to but not including
+the `*`** — the bytes as transmitted, nothing normalised first. Therefore:
 
 * the `N` and the line-number digits **are** included;
 * every space that is actually sent **is** included — `N1 G1 X0*x` and `N1 G1X0*y` have different
   checksums;
+* anything *before* the `N` — leading spaces or tabs used as indentation — is **not** covered;
 * a comment placed *after* the `*` is **not** covered;
 * the line terminator is **not** covered;
 * consequently, generators must checksum the final byte string, and **must not** add or remove
@@ -460,11 +461,80 @@ Worked example — the line `N3 T0`:
 
 `78 ^ 51 = 125`; `125 ^ 32 = 93`; `93 ^ 84 = 9`; `9 ^ 48 = 57` → `N3 T0*57`.
 
+**Where the range starts is not a detail, and earlier revisions of this section had it wrong.** They
+said the checksum ran over "the bytes transmitted before the `*`" without saying where the range
+began, which reads as "from the start of the line". Both firmwares that implement this field start at
+the `N` instead, and they were read to settle it:
+
+* **Marlin** ([`Marlin/src/gcode/queue.cpp`](https://github.com/MarlinFirmware/Marlin/blob/2.1.x/Marlin/src/gcode/queue.cpp),
+  2.1.x) advances past leading spaces (`while (*command == ' ') command++;`) *before* taking the
+  pointer it checksums from, requires `N` to be the first character at that point, and XORs
+  `command[0 .. apos-1]`.
+* **RepRapFirmware** ([`src/GCodes/GCodeBuffer/StringParser.cpp`](https://github.com/Duet3D/RepRapFirmware/blob/3.5-dev/src/GCodes/GCodeBuffer/StringParser.cpp))
+  accumulates in `AddToChecksum`, whose body is guarded by `if (hadLineNumber)` and so does nothing
+  until the `N` is seen; the `N` case sets that flag, resets the CRC and then adds the `N` itself.
+
+The difference is only visible on an indented line, which is why it survived so long: for a line that
+begins at its `N` the two readings agree byte for byte. On `" N1 G28"` they do not — 50 counting the
+leading space, 18 without — and 18 is what firmware computes.
+
+Two further consequences fall out of the same two sources:
+
+* **The last `*` wins, not the first.** Marlin uses `strrchr`, so `N1 G28*12*13` is checksummed over
+  `N1 G28*12` with a declared value of 13.
+* **A line whose first non-space character is not `N` carries no checksum at all** as far as either
+  firmware is concerned — neither starts accumulating, so the `*` field is never validated. A parser
+  that reports on such a line (`(c)N1 G28*…`) is describing syntax, not predicting firmware.
+
 ### 8.4 CRC16 (RepRapFirmware)
 
-RepRapFirmware also accepts a CRC in the same `*` field: CCITT CRC-16, polynomial `0x1021`, emitted as
-**5 decimal digits** (zero-padded), computed over the same byte range. It is strictly stronger than the
-XOR checksum and is preferred where supported.
+RepRapFirmware also accepts a CRC in the same `*` field, emitted as **5 decimal digits**
+(zero-padded) and computed over the same byte range as [§8.3](#83-what-the-checksum-covers). It is
+strictly stronger than the XOR checksum — it is not commutative, so it catches the transpositions
+§8.2 misses — and is preferred where supported.
+
+**The variant is CRC-16/XMODEM.**
+
+| parameter | value |
+|---|---|
+| polynomial | `0x1021` (CCITT, `x¹⁶ + x¹² + x⁵ + 1`) |
+| initial value | `0x0000` |
+| bit order | MSB-first; input and output unreflected |
+| final XOR | none |
+| width of the emitted field | 5 decimal digits, zero-padded |
+
+"CCITT CRC-16 with polynomial 0x1021" names **four** different algorithms, and they agree on no
+input. Naming the polynomial alone — as earlier revisions of this section did — is therefore not a
+specification: an implementer who picks the most famous variant rejects every genuine line, which is
+worse than not checking at all.
+
+| variant | init | bit order | final XOR | `N3 T0` | `N1 M115` | `N1 G28` |
+|---|---|---|---|---|---|---|
+| **XMODEM** ← this one | `0x0000` | MSB-first | none | **`06939`** | **`30753`** | **`14291`** |
+| CCITT-FALSE | `0xFFFF` | MSB-first | none | `02583` | `35311` | `14787` |
+| KERMIT | `0x0000` | LSB-first | none | `20362` | `27219` | `55583` |
+| X-25 | `0xFFFF` | LSB-first | `0xFFFF` | `33021` | `58915` | `11920` |
+
+**Source.** Read off RepRapFirmware, the only firmware that accepts this field, rather than inferred:
+[`src/Storage/CRC16.h`](https://github.com/Duet3D/RepRapFirmware/blob/3.5-dev/src/Storage/CRC16.h)
+declares "CRC16 CCIT with initial CRC value Zero";
+[`src/Storage/CRC16.cpp`](https://github.com/Duet3D/RepRapFirmware/blob/3.5-dev/src/Storage/CRC16.cpp)
+is a table-driven MSB-first update, `crc = (crc << 8) ^ table[((crc >> 8) ^ c) & 0xff]`, whose table
+row 1 is `0x1021`, and returns the accumulator unmodified.
+[`src/GCodes/GCodeBuffer/StringParser.cpp`](https://github.com/Duet3D/RepRapFirmware/blob/3.5-dev/src/GCodes/GCodeBuffer/StringParser.cpp)
+is what wires it to this field: `crc16.Reset(0)` on the `N`, `crc16.Update(c)` per covered character,
+and a validation step that switches on the digit count — 1–3 compare against the XOR checksum, 5
+against `crc16.Get()`, anything else is rejected outright.
+
+**Worked vector** — the same line as §8.3's XOR example, so the two can be compared directly:
+
+```
+N3 T0*06939
+```
+
+Note the leading zero. The digit count is what selects the algorithm ([§8.1](#81-syntax)), so this
+value written as `6939` is not a CRC with a missing digit — it is a four-digit field, which is
+neither algorithm's width and is rejected.
 
 ### 8.5 Failure handling and the resend protocol
 

@@ -13,7 +13,7 @@ before/after, the conformance and coverage tables — is in
 
 ## Status
 
-`:gcode:test` — **581 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
+`:gcode:test` — **634 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
 
 Lexing ([spec §2](../specs/GCODE_spec.md#2-lexical-structure-tokens), §3) and line framing
 ([§5](../specs/GCODE_spec.md#5-line-block-structure), [§7.3](../specs/GCODE_spec.md#73-pairing-rule))
@@ -30,8 +30,13 @@ received one is intact. Two spec errors were found and corrected while doing it 
 was underspecified, and §8.3 was wrong about where the covered byte range starts; both were settled
 against Marlin's and RepRapFirmware's source, and [04](./04-encoder-and-checksum.md) records them.
 
-What is left is the **session** layer ([05](./05-line-numbering-and-session.md)) and the cleanups in
-06–09.
+The **session** layer is in as well ([05](./05-line-numbering-and-session.md)): continuity, `M110`
+and both ends of the resend protocol, in a new `code/core/session/` package that holds the module's
+only mutable state. Everything the spec describes is now implemented except the gaps
+[09](./09-deferred-spec-gaps.md) lists.
+
+What is left is **cleanup, not capability**: 06–09. None of them blocks anything, and none is on a
+critical path.
 
 ## The queue
 
@@ -41,7 +46,7 @@ What is left is the **session** layer ([05](./05-line-numbering-and-session.md))
 | ~~02~~ | [number-representation](./02-number-representation.md) | ~~Decide what a number token holds.~~ **done** — decided to *keep* `BigDecimal` and record it as the core's one admitted portability liability; dropped the `Double` path, renamed `GFloat.float` → `value` and `GDDoubleField` → `GDDecimalField` | — |
 | ~~03~~ | [word-and-command-layer](./03-word-and-command-layer.md) | ~~`GCommandParser`~~ **done** — commands, flag params, subcodes, structural-field skip. Two items were deferred to 04/05 | — |
 | ~~04~~ | [encoder-and-checksum](./04-encoder-and-checksum.md) | ~~A real encoder, `N`/`*` framing, checksum verification~~ **done** — `GEncoder`, `Crc16CheckSum` (XMODEM, pinned from RRF source), verification inside `parseLine`, `GCheckSumFailedLine`, a packet-bearing corpus. Corrected §8.3 and §8.4 | — |
-| **05** | [line-numbering-and-session](./05-line-numbering-and-session.md) | **Next.** Line-number continuity, `M110`, the resend window | — |
+| ~~05~~ | [line-numbering-and-session](./05-line-numbering-and-session.md) | ~~Line-number continuity, `M110`, the resend window~~ **done** — `GCodeReader`, `GSendWindow`, a three-branch receipt type (a repeat is *not* an error). Corrected §5, §7.2 and §8.5 | — |
 | 06 | [decoder-edge-portability](./06-decoder-edge-portability.md) | Replace regex / `Optional` / `commons-lang3` / `ignoreCase` in `marlin/decoder/**` | — |
 | 07 | [hygiene-and-naming](./07-hygiene-and-naming.md) | File and property renames, `GTokenizer` as an object, leftover semicolons | — |
 | 08 | [test-and-doc-debt](./08-test-and-doc-debt.md) | Retire one island of dead Java classes. ~~Port three `XorCheckSum` vectors~~ — done in 04 | — |
@@ -68,18 +73,17 @@ drive the encoder from, and 02 owned that type. The ordering stood; only the sta
 
 **03 → 04 → 05** was a strict dependency chain: the encoder emits words, so word assembly came
 first; the checksum is computed over encoded bytes, so the encoder came before verification; the
-resend protocol addresses lines by number and needs a verified packet to react to. 03 and 04 are both
-in, so **05 is next** and its dependency is satisfied — it has a `GPacketLine` that means *verified*
-and a `GCheckSumFailedLine` to drive a resend from.
+resend protocol addresses lines by number and needs a verified packet to react to. All three are in,
+and the order paid off — 05 drives its resends from 04's `GCheckSumFailedLine` and frames its lines
+with 04's encoder, neither of which existed when the chain was written down.
 
-**06 through 09 are effectively independent** and can be picked up whenever. One qualification: 06
-has a single-line coupling to 02 (`TemperatureReportedDecoder` parses `Double`), documented in 06
-under *The 02 coupling* — it was a note about which file yields, not a blocker, and 02 has now
-resolved it: the decoder keeps its `Double`, because it is outside the portable core and reads
-firmware output rather than authored G-code. 06 and 09 are the largest; 07 and 08 are small and make
-good filler. Note that 07 deliberately holds a pure rename
+**Pick up 06–09 in any order** — they are independent of each other and nothing blocks them. 07 and
+08 are small; 06 and 09 are the large ones. Note that 07 deliberately holds a pure rename
 (`GLiner.kt` → something honest) that would otherwise muddy a behavioural diff — do it between other
-files, not inside one.
+files, not inside one. 06's one-line coupling to 02 (`TemperatureReportedDecoder` parses `Double`)
+was a note about which file yields rather than a blocker, and 02 resolved it: the decoder keeps its
+`Double`, because it is outside the portable core and reads firmware output rather than authored
+G-code.
 
 ## Conventions
 

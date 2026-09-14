@@ -326,8 +326,12 @@ The canonical, fully-decorated line is:
 Example, with every optional element present:
 
 ```
-N42 G1 X10.5 Y-3 E0.42 F1800*118 ; move and extrude
+N42 G1 X10.5 Y-3 E0.42 F1800*9 ; move and extrude
 ```
+
+(The checksum is 9, over `N42 G1 X10.5 Y-3 E0.42 F1800` per [§8.3](#83-what-the-checksum-covers).
+Earlier revisions of this example printed `*118`, which is not the XOR of anything on the line — the
+module's own `XorCheckSumTest` has carried the correct value for this exact payload all along.)
 
 Ordering constraints:
 
@@ -389,11 +393,25 @@ N<unsigned-int>
 Line numbers exist for **transport reliability**, not for flow control: there is no `GOTO`, and a line
 number never identifies a jump target.
 
-* The number must be **exactly the previous number + 1**. A gap or repeat means a line was lost or
-  duplicated; the firmware rejects the line
-  (`Error:Line Number is not Last Line Number+1, Last Line: <n>`) and asks for retransmission.
+* The number must be **exactly the previous number + 1**. A gap means a line was lost; the firmware
+  rejects the line (`Error:Line Number is not Last Line Number+1, Last Line: <n>`) and asks for
+  retransmission.
+* **A repeat is not an error.** Marlin accepts `last_N` and `last_N - 1` and *silently discards* the
+  line — no error, no resend request, and the counter does not move
+  (`queue.cpp`: `if (WITHIN(gcode_N, serial.last_N - 1, serial.last_N)) continue;`). The reason is a
+  race that the resend protocol itself creates: a host that has already retransmitted when the
+  firmware's resend request arrives sends the same line twice, and treating the second copy as a
+  fault would request a resend of a line that is already in flight, which does not converge. So the
+  rejection rule is *below* the window, not *outside* it: `n < last_N - 1` or `n > last_N + 1`.
 * `M110 N<n>` sets the current line-number counter, which is how a host resynchronises or starts a
   session (`M110 N0`).
+* **An `M110` line is exempt from the continuity check** — `queue.cpp` guards it with
+  `if (gcode_N != serial.last_N + 1 && !M110)`. It has to be: resynchronising is the one thing a host
+  does *because* the sequence is already broken, so a counter reset that had to arrive in sequence
+  would be useless. Note also that Marlin decides a line is an `M110` by searching the raw text for
+  the substring (`strstr_P(command, PSTR("M110"))`), and then takes the **second** `N` on the line as
+  the new counter value (`strchr(command + 4, 'N')`), which is why `M110`'s argument has to survive
+  parsing as a parameter rather than being skipped as a line number.
 * Line numbers are **optional**, and are conventionally omitted for G-code stored in files
   (SD card / internal storage), where there is no lossy link to protect.
 * Because a line number changes the byte content of the line, it changes the checksum: the checksum
@@ -542,7 +560,11 @@ Checksums are only useful together with line numbers, because retransmission is 
 number. The classic host↔firmware loop is:
 
 1. Host sends `N<k> <payload>*<cs>`.
-2. Firmware validates the checksum, then the line number.
+2. Firmware validates the checksum and the line number. **The two firmwares disagree on the
+   order**, which decides which error a line that is both corrupt and out of sequence reports:
+   RepRapFirmware checks the checksum first, at buffer-fill time in `StringParser::Put`, before the
+   line number is looked at anywhere; Marlin checks the line number first and only then the checksum
+   (`queue.cpp`). Either is defensible, since both reject the line and both ask for the same resend.
 3. On success it executes/queues the line and replies `ok` (optionally with buffer/position data).
 4. On failure it replies with an error naming the last good line and requests a resend:
 

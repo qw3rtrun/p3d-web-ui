@@ -602,7 +602,7 @@ raw capture. The rules are recorded in the `low-level-protocol-dev` skill
 | Letter identifier | `GLetter(letter: Char)` : `GIdentifier` |
 | Checksum marker `*` | `GChecksum` (object, `name == "*"`) : `GIdentifier` |
 | Integer | `GInt(int: Int, lexeme: String = int.toString())` : `GNumber` |
-| Decimal | `GFloat(float: BigDecimal, lexeme: String = float.toString())` : `GNumber` |
+| Decimal | `GFloat(value: BigDecimal, lexeme: String = value.toString())` : `GNumber` |
 | Quoted string | `GQuotedString(string: String)` : `GString` — `rawText()` re-doubles `"` |
 | Expression `{ … }` | `GRawExpression` : `GExpression` |
 | Tail comment `;` | `GTailComment(string, key = ";")` : `GComment` |
@@ -618,7 +618,19 @@ Notable choices: **decimals are `BigDecimal`**, so no precision is lost at parse
 quoted-string escape is the **RepRapFirmware doubling** rule; and a **number carries the lexeme it
 was read from** alongside its value, so `+5`, `01`, `.5` and `1.` re-print as written. The lexeme is
 part of token identity — `GInt(1) != GInt(1, "01")` — and value comparison goes through `int` /
-`float.compareTo`.
+`value.compareTo`. There is no `Double` entry point into `GFloat`: a `Double` cannot hold most
+authored decimals and gives the caller no way to state the lexeme the value should render as, so a
+caller holding one passes a `String` or rounds explicitly.
+
+**`BigDecimal` is this core's one admitted portability liability.** Arbitrary-precision decimal
+exists in none of the port targets (JS/TS, C, Rust) without a library, so a port cannot transliterate
+this type and must choose a replacement — a scaled integer pair (`mantissa × 10⁻ˢᶜᵃˡᵉ`) is the
+equivalent that preserves the scale-sensitive identity above; a binary float is not. The cost is
+bounded because **nothing in the module reads the parsed value**: `rawText()` returns the lexeme, so
+round-tripping never touches `BigDecimal`, and a port that carries only the lexeme still lexes and
+re-emits correctly. The same liability appears once more outside the token layer, as
+`GDDecimalField.default` in `GDescription.kt`. Recorded rather than fixed, per
+[`doc/todos/02-number-representation.md`](../todos/02-number-representation.md).
 
 ### B.2 Tokenizer — `token/GTokenizer.kt`
 
@@ -665,7 +677,7 @@ quoted strings are unaffected — `marlin.gcode` keeps the `’` and `µ` in its
 digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` from lexing as
 `GFloat(1.2)`.
 
-### B.3 Line model — `token/GSemantics.kt`, `token/GSemanticParser.kt`
+### B.3 Line model — `token/GSemantics.kt`, `token/GSemanticParser.kt`, `token/GCommandParser.kt`
 
 | Spec concept | Type |
 |---|---|
@@ -675,12 +687,27 @@ digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` f
 | Unnumbered line | `GSimpleLine` |
 | `N…*…` framed line ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GPacketLine(number, payload, checksum, whole)` — also `GOrdered`, `GCheckSumControlled` |
 | Checksum field | `GParameterWord<GInt>` whose `id` is `GChecksum` |
-| One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GInt>, params: List<GWord>)` |
+| One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GNumber>, params: List<GWord>)` |
 | Structural error ([§9](#9-error-handling)) | `GError`: `GNotIdentifierError`, `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum` |
 
 `payload` is the whole line for every type except `GPacketLine`, which decomposes its input — so
 `GPacketLine` keeps every element in `whole` and overrides `raw()` over it. `raw()`, not `payload`,
 is what round-trips a line.
+
+`GCommandParser` is the third pass, from a line's words to its commands. It splits at each `G`/`M`
+word ([§4.3](#43-rules) — Marlin executes only the first, but the parser reports what is there), and
+at a `T` word **only while no command has started**, since [§4.2](#42-parameter-letters) also makes
+`T` a conventional parameter letter: `G29 T` and `G12 P1 S1 T3` are one command each. The two
+structural letters, `N` ([§7](#7-line-numbering)) and `*` ([§8](#8-checksum-and-crc)), are skipped —
+they belong to the line, not to a command, and they are present in the words of any line that is not
+a well-formed packet. A command number is accepted only as `<unsigned-int>[.<unsigned-int>]`
+([§4.1](#41-command-letters)), so `G29.1` is one command word carrying `GFloat("29.1")` — the subcode
+stays on the number, which is what re-emits `29.1` rather than `29` and `.1`.
+
+Verified by running: the whole corpus is one command per line except `G53 G0 X0 Y0 Z0` and
+`G53 G1 X20` (two each — `G53` is a modal prefix) and `M815 G0 X0 Y0|G0 Z10|M300 S440 P50` (four,
+because [§3.4](#34-string-values)'s bare rest-of-line strings are not implemented, so the words
+inside `M815`'s argument still split the line).
 
 `GSemanticParser` is a single `Iterator<GLine>`: it splits a token stream at `GLineBreak` and, for
 each line, first groups the tokens into **elements** — a *word* (`GParameterWord`, an identifier plus its

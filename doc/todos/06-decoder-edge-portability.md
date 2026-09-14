@@ -3,8 +3,8 @@
 **Goal.** The reply half of the protocol is hand-rolled scanners that can be reviewed against
 [spec §9](../specs/GCODE_spec.md#9-error-handling) and transliterated to a port.
 
-**Depends on:** [02](./02-number-representation.md), but only for one line — see *The 02 coupling*
-below. Everything else here is independent of the 02→05 chain. **Blocks:** nothing.
+**Depends on:** nothing. The one coupling to [02](./02-number-representation.md) is resolved — see
+*The 02 coupling* below. **Blocks:** nothing.
 
 ## Why
 
@@ -47,19 +47,27 @@ widening the scope.
   - `asSequence().map { }.firstOrNull { }` — `CompositeDecoder.kt:10-12`. A three-stage pipeline
     where a `for` over `encoders` with an early return is the in-house idiom.
 
-These are the **edge**, not the portable core, so this is lower priority than
-[02](./02-number-representation.md). But they are also the reply half of the protocol: a port has to
-reimplement every one of them, and today there is no reviewable statement of what they accept.
+These are the **edge**, not the portable core, which is why they sat behind the core work in the
+queue order. But they are also the reply half of the protocol: a port has to reimplement every one of
+them, and today there is no reviewable statement of what they accept.
 
-## The 02 coupling
+## The 02 coupling — resolved, leave `:66-69` alone
 
 `TemperatureReportedDecoder.kt:66-69` parses temperatures with `String.toDoubleOrNull()` into
-`Map<String, Double>` and hands them to `TemperatureReport`. [02](./02-number-representation.md)
-decides what a number holds in this module and removes the `Double` path from the core. If 02 lands
-first, this decoder adopts whatever it decided rather than re-introducing `Double` at the edge; if 06
-lands first, leave `:66-69` alone and say so in the commit so that 02 finds it. `TemperatureReport`
-lives in `:backend:core`, so changing its field types is out of scope for both files — that is why
-this is a note and not a blocker.
+`Map<String, Double>` and hands them to `TemperatureReport`.
+[02](./02-number-representation.md) has landed, and it **kept `BigDecimal`** in the core while
+deleting only the `Double` *construction path into `GFloat`*. Neither half reaches this decoder:
+
+- it never builds a token, so the deleted `GFloat(Double)` constructor and `Double.toToken()` were
+  never on its path;
+- `TemperatureReport` lives in `:backend:core` and declares its fields as `Double`, so the type here
+  is fixed by a consumer outside this module's scope;
+- this is the decoder edge, not the portable core. The core's dependency-free rule is about
+  `code/core/**`, and the temperatures being parsed are firmware output, not authored G-code whose
+  exact digits have to round-trip.
+
+So `:66-69` stays as it is. Everything else in *Do* — the regexes, `Optional`, `commons-lang3`,
+`ignoreCase` — is untouched by 02 and stands unchanged.
 
 ## Already fixed: the three `NumberFormatException` crash paths
 

@@ -40,7 +40,7 @@ class GDescriptionTest {
 
         @Test
         fun `a double field carries a big decimal default`() {
-            val field = GDDoubleField('X', BigDecimal("10.50"))
+            val field = GDDecimalField('X', BigDecimal("10.50"))
 
             assertEquals('X', field.letter)
             assertEquals(BigDecimal("10.50"), field.default)
@@ -75,7 +75,7 @@ class GDescriptionTest {
         fun `all field kinds share the field interface`() {
             val fields: List<GDField<*>> = listOf(
                 GDIntField('S'),
-                GDDoubleField('X'),
+                GDDecimalField('X'),
                 GDFlagField('H'),
                 GDStringField('P')
             )
@@ -117,12 +117,12 @@ class GDescriptionTest {
         fun `a descriptor can mix field types`() {
             val descriptor = GDescriptor(
                 'G', 1, false,
-                listOf(GDDoubleField('X'), GDDoubleField('Y'), GDIntField('F'), GDFlagField('S'))
+                listOf(GDDecimalField('X'), GDDecimalField('Y'), GDIntField('F'), GDFlagField('S'))
             )
 
             assertEquals(4, descriptor.fields.size)
             assertEquals(1, descriptor.fields.count { it is GDIntField })
-            assertEquals(2, descriptor.fields.count { it is GDDoubleField })
+            assertEquals(2, descriptor.fields.count { it is GDDecimalField })
             assertEquals(1, descriptor.fields.count { it is GDFlagField })
         }
 

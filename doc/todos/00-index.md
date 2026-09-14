@@ -13,7 +13,7 @@ before/after, the conformance and coverage tables — is in
 
 ## Status
 
-`:gcode:test` — **468 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
+`:gcode:test` — **499 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
 
 Lexing ([spec §2](../specs/GCODE_spec.md#2-lexical-structure-tokens), §3) and line framing
 ([§5](../specs/GCODE_spec.md#5-line-block-structure), [§7.3](../specs/GCODE_spec.md#73-pairing-rule))
@@ -32,8 +32,8 @@ for them exist.
 | # | File | What it is | Blocks |
 |---|---|---|---|
 | ~~01~~ | [ascii-and-lexer-portability](./01-ascii-and-lexer-portability.md) | ~~Explicit ASCII character classes, drop the `Stream` overload, stray CR in tail comments~~ **done — `c92bfe6`** | — |
-| 02 | [number-representation](./02-number-representation.md) | Decide what a number token holds; remove `BigDecimal` and the `Double` path from the core | 03, 04 |
-| 03 | [word-and-command-layer](./03-word-and-command-layer.md) | Wire up `GCommandParser`: words across whitespace, flag params, subcodes | 04 |
+| ~~02~~ | [number-representation](./02-number-representation.md) | ~~Decide what a number token holds.~~ **done** — decided to *keep* `BigDecimal` and record it as the core's one admitted portability liability; dropped the `Double` path, renamed `GFloat.float` → `value` and `GDDoubleField` → `GDDecimalField` | — |
+| 03 | [word-and-command-layer](./03-word-and-command-layer.md) | `GCommandParser` done: commands, flag params, subcodes, structural-field skip. Two items deferred to 04/05 | 04 |
 | 04 | [encoder-and-checksum](./04-encoder-and-checksum.md) | A real encoder, `N`/`*` framing, parser-side checksum verification over XOR and CRC16 | 05 |
 | 05 | [line-numbering-and-session](./05-line-numbering-and-session.md) | Line-number continuity, `M110`, the resend window | — |
 | 06 | [decoder-edge-portability](./06-decoder-edge-portability.md) | Replace regex / `Optional` / `commons-lang3` / `ignoreCase` in `marlin/decoder/**` | — |
@@ -45,27 +45,33 @@ for them exist.
 
 **01 first** — done in `c92bfe6`. It depended on nothing and closed the last correctness gap in the
 lexer, so every later change is now written against ASCII-explicit code rather than copying the
-Unicode predicates. **02 is next.**
+Unicode predicates.
 
-**02 before 03 and 04** because it changes the public shape of `GInt` / `GFloat` / `GDDoubleField`.
-Building word assembly and an encoder on `BigDecimal` and then removing it would mean writing those
-two twice. This is the one genuinely hard decision in the queue and it wants making before anything
-is built on top.
+**02 before 03 and 04** because it owned the public shape of `GInt` / `GFloat` / `GDDecimalField`.
+That block is now lifted: 02 decided to **keep `BigDecimal`** and write the portability liability
+down — on `GNumber`, in the file, and in Appendix B — rather than change the representation and pay a
+call-site churn for portability the module cannot yet spend. The shape is settled and will not move
+under 03 or 04. The replacement a port should reach for (`mantissa × 10^-scale`) is recorded in both
+places, so the decision is half-made for whoever starts one.
 
-One correction to that reasoning, since a dev who checks it will otherwise conclude the dependency is
-fake: **04 does not build on the number type.** The encoder consumes `rawText()`, which by design
-returns the `lexeme` — a plain `String` — and never touches the numeric value. The real 02→04
-coupling is `GDescription`: `GDDoubleField.default: BigDecimal?` is what 04 proposes to drive the
-encoder from, and 02 owns that type. The ordering stands; only the stated reason was wrong.
+One correction to the original ordering rationale, since a dev who checks it will otherwise conclude
+the dependency was fake: **04 does not build on the number type.** The encoder consumes `rawText()`,
+which by design returns the `lexeme` — a plain `String` — and never touches the numeric value. The
+real 02→04 coupling was `GDescription`: `GDDecimalField.default: BigDecimal?` is what 04 proposes to
+drive the encoder from, and 02 owned that type. The ordering stood; only the stated reason was wrong.
 
 **03 → 04 → 05** is a strict dependency chain: the encoder emits words, so word assembly comes first;
 the checksum is computed over encoded bytes, so the encoder comes before verification; the resend
-protocol addresses lines by number and needs a verified packet to react to.
+protocol addresses lines by number and needs a verified packet to react to. **03 is already in** —
+`GCommandParser` landed ahead of the queue order, with two items deferred into 04 and 05, so
+**04 is next.**
 
 **06 through 09 are effectively independent** and can be picked up whenever. One qualification: 06
 has a single-line coupling to 02 (`TemperatureReportedDecoder` parses `Double`), documented in 06
-under *The 02 coupling* — it is a note about which file yields, not a blocker. 06 and 09 are the
-largest; 07 and 08 are small and make good filler. Note that 07 deliberately holds a pure rename
+under *The 02 coupling* — it was a note about which file yields, not a blocker, and 02 has now
+resolved it: the decoder keeps its `Double`, because it is outside the portable core and reads
+firmware output rather than authored G-code. 06 and 09 are the largest; 07 and 08 are small and make
+good filler. Note that 07 deliberately holds a pure rename
 (`GLiner.kt` → something honest) that would otherwise muddy a behavioural diff — do it between other
 files, not inside one.
 

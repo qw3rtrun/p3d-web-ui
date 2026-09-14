@@ -16,8 +16,27 @@ sealed interface GLiteral : GValue
 sealed interface GIdentifier : GToken {
     val name: String
     override fun rawText() = name
-    fun isLetter(l: Char): Boolean = name == l.toString().lowercase() || name == l.toString().uppercase()
+
+    /**
+     * spec 2.2: the dialects are case-insensitive.
+     *
+     * Explicit ASCII folding rather than `lowercase()`/`uppercase()`, which were wrong three ways:
+     * locale-dependent (a Turkish locale changes `i`/`I`), Unicode-wide - U+212A KELVIN SIGN
+     * lowercases to `k`, so it matched `GLetter('k')` against spec 1.1's 7-bit wire format - and
+     * they allocated two or three Strings on a path that runs for every element of every line.
+     *
+     * The name is wider than it says: `GChecksum.isLetter('*')` is true, because `*` folds to
+     * itself. Preserved deliberately; renaming is queued as hygiene (todo 07).
+     */
+    fun isLetter(l: Char): Boolean = name.length == 1 && asciiFold(name[0]) == asciiFold(l)
 }
+
+/**
+ * spec 1.1: the wire format is 7-bit ASCII, so `a`-`z` are the only characters that fold. Anything
+ * else is returned unchanged - including a Unicode letter that happens to lowercase to an ASCII one -
+ * and therefore compares unequal to every ASCII identifier.
+ */
+private fun asciiFold(c: Char): Char = if (c >= 'a' && c <= 'z') (c.code - 32).toChar() else c
 
 data class GUnknown(val str: String) : GToken {
     constructor(ch: Char) : this(ch.toString())
@@ -77,6 +96,30 @@ sealed interface GString : GLiteral {
  * are not interchangeable: `01`, `+5`, `.5` and `1.` are all valid input whose canonical rendering
  * differs from what was written. [rawText] returns the lexeme, so the token stream reproduces its
  * input byte for byte; the lexeme is part of token identity for the same reason.
+ *
+ * **The parsed value of a decimal is a `java.math.BigDecimal`, and that is a deliberate, recorded
+ * exception to this module's dependency-free rule** (todo 02). Arbitrary-precision decimal exists in
+ * none of the port targets - JS/TS, C, Rust - without a library, so a port cannot carry this type
+ * across and has to choose its own replacement. Two things make that cost affordable and bounded:
+ *
+ * - Nothing in this module reads the value. [rawText] reads the [lexeme], so round-tripping - the
+ *   invariant the whole token layer is built on - never touches `BigDecimal`. A port that drops the
+ *   parsed value entirely still lexes and re-emits correctly.
+ * - `BigDecimal` is exact for every decimal a G-code file can contain, and its scale is what makes
+ *   `1.0` and `1.00` distinct tokens. A port replacing it wants the same property: a scaled integer
+ *   pair (`mantissa x 10^-scale`) is the portable equivalent, not a binary float.
+ *
+ * The alternative - dropping the parsed value, or storing mantissa and scale as two `Int`s - was
+ * considered and deferred. It buys portability the module cannot yet spend, at the cost of a public
+ * shape change across every caller. Spec Appendix B states the same liability for a reader who never
+ * opens this file.
+ *
+ * There is deliberately **no `Double` entry point**. A `Double` cannot hold most authored decimals,
+ * and unlike every other construction path it gives the caller no way to state the lexeme the value
+ * should render as: `(0.1 + 0.2)` renders as `0.30000000000000004`, 19 characters against the <= 76
+ * payload budget (spec section 1.3) and against the 3-5 decimals section 3.1 asks generators to round
+ * to. That rounding is a call-site decision. A caller holding a `Double` passes a [String] or rounds
+ * explicitly.
  */
 sealed interface GNumber : GLiteral {
     val number: Number
@@ -102,15 +145,12 @@ data class GInt(val int: Int, override val lexeme: String = int.toString()) : GN
         get() = int
 }
 
-data class GFloat(val float: BigDecimal, override val lexeme: String = float.toString()) : GNumber {
+data class GFloat(val value: BigDecimal, override val lexeme: String = value.toString()) : GNumber {
     constructor(string: String) : this(BigDecimal(string), string)
     constructor(int: Int) : this(BigDecimal(int))
 
-    // BigDecimal(Double) would expand the exact binary value (1.05 -> 1.05000000000000004440892...).
-    constructor(float: Double) : this(BigDecimal.valueOf(float))
-
     override val number: Number
-        get() = float
+        get() = value
 }
 
 sealed interface GExpression : GValue {
@@ -123,7 +163,6 @@ data class GRawExpression(override val exception: String) : GExpression {
 
 
 fun Int.toToken() = GInt(this)
-fun Double.toToken() = GFloat(this)
 fun BigDecimal.toToken() = GFloat(this)
 fun Char.toToken() = GLetter(this)
 fun String.toToken() = GQuotedString(this)

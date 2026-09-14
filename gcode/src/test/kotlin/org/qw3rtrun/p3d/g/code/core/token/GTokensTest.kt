@@ -36,6 +36,26 @@ class GTokensTest {
         }
 
         @Test
+        fun `isLetter folds case in both directions`() {
+            // spec 2.2: the dialects are case-insensitive.
+            assertTrue(GLetter('G').isLetter('G'))
+            assertTrue(GLetter('G').isLetter('g'))
+            assertTrue(GLetter('g').isLetter('G'))
+            assertTrue(GLetter('g').isLetter('g'))
+            assertFalse(GLetter('G').isLetter('M'))
+        }
+
+        @Test
+        fun `isLetter does not match a non-ASCII character`() {
+            // spec 1.1: the wire format is 7-bit ASCII. U+212A KELVIN SIGN lowercases to 'k' and
+            // U+0130 LATIN CAPITAL I WITH DOT ABOVE lowercases to 'i', so folding an identifier
+            // through lowercase()/uppercase() let both match an ASCII letter.
+            assertFalse(GLetter('k').isLetter('\u212A'))
+            assertFalse(GLetter('K').isLetter('\u212A'))
+            assertFalse(GLetter('i').isLetter('\u0130'))
+        }
+
+        @Test
         fun `checksum marker is an identifier named star`() {
             assertEquals("*", GChecksum.name)
             assertEquals("*", GChecksum.rawText())
@@ -76,7 +96,7 @@ class GTokensTest {
         fun `float exposes big decimal as number and raw text`() {
             val float = GFloat(BigDecimal("10.5"))
 
-            assertEquals(BigDecimal("10.5"), float.float)
+            assertEquals(BigDecimal("10.5"), float.value)
             assertEquals(BigDecimal("10.5"), float.number)
             assertEquals("10.5", float.rawText())
         }
@@ -120,7 +140,7 @@ class GTokensTest {
         fun `float carries the lexeme it was parsed from`() {
             val float = GFloat(BigDecimal("0.5"), ".5")
 
-            assertEquals(0, float.float.compareTo(BigDecimal("0.5")))
+            assertEquals(0, float.value.compareTo(BigDecimal("0.5")))
             assertEquals(".5", float.rawText())
         }
 
@@ -132,20 +152,11 @@ class GTokensTest {
         }
 
         @Test
-        fun `float from a double does not expand the binary representation`() {
-            // BigDecimal(1.05) is 1.0500000000000000444...; BigDecimal.valueOf(1.05) is 1.05.
-            assertEquals("1.05", GFloat(1.05).rawText())
-            assertEquals("1.05", 1.05.toToken().rawText())
-            assertEquals("-0.1", GFloat(-0.1).rawText())
-            assertEquals("0.0", GFloat(0.0).rawText())
-        }
-
-        @Test
         fun `float equality is scale sensitive`() {
             // Intentional: GFloat keeps BigDecimal semantics so that rawText() round-trips the exact
             // digits that were parsed. 1.0 and 1.00 are different lexemes, hence different tokens.
             assertNotEquals(GFloat("1.0"), GFloat("1.00"))
-            assertEquals(0, GFloat("1.0").float.compareTo(GFloat("1.00").float))
+            assertEquals(0, GFloat("1.0").value.compareTo(GFloat("1.00").value))
         }
     }
 

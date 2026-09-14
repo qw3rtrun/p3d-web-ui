@@ -128,7 +128,7 @@ class GTokenizerTest {
             val result = tokens("X.5")
 
             assertEquals(".5", result[1].rawText())
-            assertEquals(0, (result[1] as GFloat).float.compareTo(GFloat("0.5").float))
+            assertEquals(0, (result[1] as GFloat).value.compareTo(GFloat("0.5").value))
         }
 
         @Test

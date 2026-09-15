@@ -1,7 +1,7 @@
 # 10 — The command-building DSL (`code/dsl`)
 
-**Status: the `:gcode` half is done.** One step remains and it is outside this module — see
-*What is left* at the bottom.
+**Status: done.** `G.java` is deleted and all three `:backend` callers are on `GSender` — see
+*How it finished* at the bottom.
 
 **Goal.** The `code/dsl` package is the facade for *writing* G-code — `G.kt` for commands and
 lines, `GWords.kt` for parameters — and the rule it is held to is: **any valid G-code can be
@@ -94,19 +94,49 @@ None is a gap in the DSL, and they are pinned in the test with this breakdown:
 - **1 × `G92 .1 ;TODO`** — a value with no letter in front of it, which is not a word at all (§4), so
   no command carries it.
 
-## What is left
+## How it finished
 
-**`G.java` still exists and `:backend` still imports it.** `GSender` is a drop-in for it — same named
-operations (`m105`, `m115`, `m155`, `m140`, `tempReport`, `autoReportTemp`, `firmwareInfo`,
-`setBedTemperature`) and a `Consumer<String>` constructor so `new GSender(this::onG)` compiles from
-Java, pinned by a Java-language test. Finishing the replacement means editing three files outside
-`:gcode`, which the module-only scope rules out for now. All three currently
-`import org.qw3rtrun.p3d.g.G` and would swap that line for
-`import org.qw3rtrun.p3d.g.code.dsl.GSender`:
+**`G.java` is deleted; all three `:backend` callers construct a `GSender`.** The import swap was the
+easy half. Two things made it more than a rename:
 
-- `backend/terminal/.../GFlux.java` — `new G(this::onG)` → `new GSender(this::onG)`.
-- `backend/api/.../PrinterState.java` — field and `onOnline(G)` parameter types.
-- `backend/api/.../PrinterReactor.java` — `new G(...)`, plus its reflective dispatch over
-  `GEncodable`, which is the dead Java island [08](./08-test-and-doc-debt.md) still has to decide
-  about. `GSender.send` takes a `GBlock`/`GCommand`, not a `GEncodable`, so that decision and this
-  migration are the same piece of work.
+**`G.code(GEncodable)` had no counterpart, and should not have got one.** The old facade's real work
+was `consumer.accept(code.encode())` — each command record encoded *itself* with a `String.format`.
+`GSender.send` takes a `GBlock`/`GCommand`, and giving it a `GEncodable` overload would have pulled
+the Java island into the DSL, backwards. Instead `PrinterState`'s four `handle(…)` methods now name
+the operation they mean (`g.m104(index, temp)`, `g.m140(temp)`, `g.m105(index)`, `g.m155(period)`),
+which is what `GSender`'s named operations are for. `m104` was the one missing — added with tests.
+
+**The formatting was a live bug.** `SetBedTemperature.encode()` was
+`format("M140 S%.2f", temp)` with no `Locale`, so under a comma-decimal default locale it put
+
+```
+M140 S60,00
+```
+
+on the wire — not a number by [§3.1](../specs/GCODE_spec.md#31-numeric-values), and a command the
+firmware rejects. Observed, not reasoned: `String.format(Locale.GERMANY, "M140 S%.2f", 60.0)`
+returns exactly that. `PrinterState.wireTemp` now builds the `BigDecimal` itself
+(`BigDecimal.valueOf(c).setScale(2, HALF_UP)`), which is locale-independent, and the DSL writes the
+scale it is handed. The two-decimal shape is unchanged, so every other byte is identical.
+
+Pinned by `backend/api/.../PrinterStateGcodeTest` — eight cases, every expectation captured from the
+old facade *before* it was deleted, so it passes against both implementations. The exception is the
+locale case, which the old code failed.
+
+### What this leaves for [08](./08-test-and-doc-debt.md)
+
+The island is smaller and its shape is now clear, which is the input that decision was waiting on:
+
+- **`GEncodable.encode()` has no caller on the wire path any more.** `G.java:70` was the only one.
+  It is not dead, though — each record's `toString()` calls it, and `PrinterReactor` logs
+  `"-> {}"`, so `encode()` is now a *debug representation*. If it stays, it should say so.
+- **`GEncodable` survives as a marker**, for `PrinterReactor`'s reflective dispatch filter and the
+  `handle(Mono<T extends GEncodable>)` bound. Nothing else needs it.
+- **Four of the five records are live and not removable**: `SetHotendTemperature`,
+  `SetBedTemperature`, `AutoReportHotendTemperature` and `ReportHotendTemperature` are
+  `@RequestBody` types on `PrinterController`, deserialised by Jackson.
+- **`g.code.FirmwareInfo` is now unreferenced** — `G.java` was its only user. It is the one class in
+  the island that can just go.
+- **`@GCode` and `@GParam` are read by nothing**, which is why nobody noticed that
+  `ReportHotendTemperature` is annotated `@GParam("I")` while its `encode()` emitted `T`. Harmless
+  today; a trap if anyone ever writes the annotation processor the island implies.

@@ -1,14 +1,14 @@
 package org.qw3rtrun.p3d.terminal;
 
-import org.qw3rtrun.p3d.g.G;
+import org.qw3rtrun.p3d.g.code.dsl.GSender;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 
 public class GFlux {
 
-    private final G g;
+    private final GSender g;
 
-    public G getG() {
+    public GSender getG() {
         return g;
     }
 
@@ -21,7 +21,7 @@ public class GFlux {
 
     public GFlux() {
         this.flux = Flux.create(sink -> this.sink = sink);
-        this.g = new G(this::onG);
+        this.g = new GSender(this::onG);
     }
 
     private void onG(String gcode) {

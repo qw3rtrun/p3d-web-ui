@@ -51,7 +51,7 @@ critical path.
 | 07 | [hygiene-and-naming](./07-hygiene-and-naming.md) | File and property renames, `GTokenizer` as an object, leftover semicolons | — |
 | 08 | [test-and-doc-debt](./08-test-and-doc-debt.md) | Retire one island of dead Java classes. ~~Port three `XorCheckSum` vectors~~ — done in 04 | — |
 | 09 | [deferred-spec-gaps](./09-deferred-spec-gaps.md) | Bare rest-of-line strings, RS274 parameters, block delete, line length. ~~CRC16~~ — done in 04 | — |
-| 10 | [command-dsl](./10-command-dsl.md) | The `code/dsl` writing facade — `G.kt` and `GWords.kt`, host-side beside the portable core. **`:gcode` half done** — `GBlock`, per-letter parameter words, line builders, 303/303 corpus lines expressible. Replacing `G.java` needs three `:backend` files | — |
+| ~~10~~ | [command-dsl](./10-command-dsl.md) | ~~The `code/dsl` writing facade — `G.kt` and `GWords.kt`, host-side beside the portable core.~~ **done** — `GBlock`, per-letter parameter words, line builders, 303/303 corpus lines expressible; `G.java` deleted and all three `:backend` callers on `GSender`, which fixed a locale-dependent `%.2f` that put `M140 S60,00` on the wire. Narrowed what [08](./08-test-and-doc-debt.md) has to decide | — |
 
 ## Why this order
 

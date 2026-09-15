@@ -255,6 +255,25 @@ class GTest {
         }
 
         @Test
+        fun `m104 carries the tool index and the temperature`() {
+            g.m104(0, BigDecimal("60.00"))
+            g.m104(1, BigDecimal("210.50"))
+
+            assertEquals(listOf("M104 T0 S60.00", "M104 T1 S210.50"), sent)
+        }
+
+        @Test
+        fun `a temperature is written with the scale it carries`() {
+            // The `%.2f` this replaces was not only locale-dependent, it also decided the scale for
+            // its caller. Here the BigDecimal's own scale is the wire format, which is what lets
+            // PrinterState keep emitting two decimals without the DSL knowing about temperatures.
+            g.m104(0, BigDecimal("60"))
+            g.m140(BigDecimal("60.000"))
+
+            assertEquals(listOf("M104 T0 S60", "M140 S60.000"), sent)
+        }
+
+        @Test
         fun `the aliases agree with the numbered operations`() {
             g.firmwareInfo()
             g.m115()
@@ -264,11 +283,14 @@ class GTest {
             g.m155(2)
             g.setBedTemperature(BigDecimal("60"))
             g.m140(BigDecimal("60"))
+            g.setHotendTemperature(1, BigDecimal("60"))
+            g.m104(1, BigDecimal("60"))
 
             assertEquals(sent[0], sent[1])
             assertEquals(sent[2], sent[3])
             assertEquals(sent[4], sent[5])
             assertEquals(sent[6], sent[7])
+            assertEquals(sent[8], sent[9])
         }
     }
 }

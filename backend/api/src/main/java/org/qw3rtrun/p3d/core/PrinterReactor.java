@@ -2,8 +2,8 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.core.msg.*;
-import org.qw3rtrun.p3d.g.G;
 import org.qw3rtrun.p3d.g.code.descr.GEncodable;
+import org.qw3rtrun.p3d.g.code.dsl.GSender;
 import org.qw3rtrun.p3d.g.marlin.decoder.*;
 import org.qw3rtrun.p3d.terminal.HostTerminal;
 import org.qw3rtrun.p3d.terminal.PublisherQueue;
@@ -113,9 +113,22 @@ public class PrinterReactor {
         this.terminal = terminal;
         Mono<Void> events = gEvent();
         Mono<Void> gcodes = gCode();
-        printer.onOnline(new G(str -> commandQueue.addPublisher(Priority.REGULAR, Mono.just(str))));
+        printer.onOnline(new GSender(this::enqueue));
         return Mono.zip(events, gcodes)
                 .then();
+    }
+
+    /**
+     * The sink {@link GSender} writes into.
+     *
+     * <p>A method reference rather than a lambda on purpose: {@code GSender} has both a
+     * {@code Consumer<String>} and a Kotlin {@code (String) -> Unit} constructor, and an
+     * implicitly-typed lambda whose body returns a value is potentially compatible with each, so
+     * {@code new GSender(str -> …)} does not compile. An exact {@code void} method reference picks
+     * the {@code Consumer} overload, which is the one that exists for Java callers.
+     */
+    private void enqueue(String gcode) {
+        commandQueue.addPublisher(Priority.REGULAR, Mono.just(gcode));
     }
 
     private Mono<Void> gEvent() {

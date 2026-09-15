@@ -1,0 +1,180 @@
+package org.qw3rtrun.p3d.core;
+
+import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.core.msg.ConnectCmd;
+import org.qw3rtrun.p3d.core.msg.FirmwareInfoReportEvent;
+import org.qw3rtrun.p3d.core.msg.GEvent;
+import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
+import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
+import org.qw3rtrun.p3d.g.code.SetBedTemperature;
+import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
+import org.qw3rtrun.p3d.g.code.dsl.GSender;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+/**
+ * The bytes {@link PrinterState} puts on the wire, pinned across the move from the old {@code G}
+ * facade to {@link GSender}.
+ *
+ * <p>Every expectation here was captured from the old facade before it was deleted, so this is a
+ * characterisation test in the strict sense: it passes against both implementations, which is what
+ * makes it evidence that the swap changed nothing observable. The one deliberate exception is
+ * {@link #aTemperatureIsNotFormattedThroughTheDefaultLocale()} — the old code failed it.
+ */
+class PrinterStateGcodeTest {
+
+    private final List<String> sent = new ArrayList<>();
+    private final List<GEvent> events = new ArrayList<>();
+
+    /**
+     * An exact {@code void} method reference, not {@code sent::add}: {@code List.add} is overloaded,
+     * which makes the reference inexact and therefore ambiguous across {@code GSender}'s two
+     * constructors. The same reason {@code PrinterReactor} uses one.
+     */
+    private void capture(String gcode) {
+        sent.add(gcode);
+    }
+
+    /** A printer that has completed the online handshake, leaving it in {@link #sent}. */
+    private PrinterState online() {
+        PrinterState printer = new PrinterState(UUID.randomUUID());
+        printer.setEmitter(events::add);
+        printer.onOnline(new GSender(this::capture));
+        return printer;
+    }
+
+    private PrinterState onlineWithExtruders(int count) {
+        PrinterState printer = online();
+        printer.on(firmwareReporting(count));
+        sent.clear();
+        return printer;
+    }
+
+    @Test
+    void theOnlineHandshakeAsksForFirmwareInfoThenAutoReporting() {
+        online();
+
+        assertEquals(List.of("M115", "M155 S1"), sent);
+    }
+
+    @Test
+    void aBedTemperatureIsSentAsM140WithTwoDecimals() {
+        PrinterState printer = online();
+        sent.clear();
+
+        printer.handle(new SetBedTemperature(60.0));
+        printer.handle(SetBedTemperature.m140(60.456));
+
+        assertEquals(List.of("M140 S60.00", "M140 S60.46"), sent);
+    }
+
+    @Test
+    void aHotendTemperatureIsSentAsM104WithTheToolIndex() {
+        PrinterState printer = onlineWithExtruders(2);
+
+        printer.handle(new SetHotendTemperature(0, 60.0));
+        printer.handle(new SetHotendTemperature(1, 210.5));
+
+        assertEquals(List.of("M104 T0 S60.00", "M104 T1 S210.50"), sent);
+    }
+
+    @Test
+    void aHotendIndexTheFirmwareDoesNotHaveSendsNothing() {
+        PrinterState printer = onlineWithExtruders(2);
+
+        printer.handle(new SetHotendTemperature(5, 60.0));
+
+        assertEquals(List.of(), sent);
+    }
+
+    @Test
+    void aTemperatureReportIsSentAsM105WithTheToolIndex() {
+        PrinterState printer = online();
+        sent.clear();
+
+        printer.handle(ReportHotendTemperature.m105());
+        printer.handle(ReportHotendTemperature.m105(2));
+
+        assertEquals(List.of("M105 T0", "M105 T2"), sent);
+    }
+
+    @Test
+    void autoReportingIsSentAsM155WithThePeriod() {
+        PrinterState printer = online();
+        sent.clear();
+
+        printer.handle(AutoReportHotendTemperature.m155(1));
+        printer.handle(AutoReportHotendTemperature.m155());
+
+        assertEquals(List.of("M155 S1", "M155 S0"), sent);
+    }
+
+    @Test
+    void disconnectingTurnsAutoReportingOff() {
+        PrinterState printer = online();
+        printer.handle(new ConnectCmd(true));
+        sent.clear();
+
+        printer.handle(new ConnectCmd(false));
+
+        assertEquals(List.of("M155 S0"), sent);
+    }
+
+    /**
+     * The one behaviour that changed, and the reason it had to. {@code String.format("%.2f", …)}
+     * used the default locale, so this emitted {@code M140 S60,00} under a comma-decimal locale —
+     * not a number by spec §3.1, and a command the firmware rejects.
+     */
+    @Test
+    void aTemperatureIsNotFormattedThroughTheDefaultLocale() {
+        Locale original = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.GERMANY);
+
+            PrinterState printer = online();
+            sent.clear();
+            printer.handle(new SetBedTemperature(60.0));
+
+            assertEquals(List.of("M140 S60.00"), sent);
+        } finally {
+            Locale.setDefault(original);
+        }
+    }
+
+    private static FirmwareInfoReportEvent firmwareReporting(int extruderCount) {
+        return new FirmwareInfoReportEvent() {
+            public String fullReportString() {
+                return "FIRMWARE_NAME:Test EXTRUDER_COUNT:" + extruderCount;
+            }
+
+            public UUID uuid() {
+                return UUID.randomUUID();
+            }
+
+            public String firmwareName() {
+                return "Test";
+            }
+
+            public String srcCodeUrl() {
+                return "";
+            }
+
+            public String protocolVersion() {
+                return "";
+            }
+
+            public String machineType() {
+                return "";
+            }
+
+            public int extruderCount() {
+                return extruderCount;
+            }
+        };
+    }
+}

@@ -9,12 +9,19 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Written in Java on purpose: it is the shape {@code G.java}'s callers use, and the point of this
- * test is that they can move to {@link GSender} without changing it.
+ * Written in Java on purpose: this is the shape the {@code G.java} facade's callers used, and this
+ * test is what let them move to {@link GSender} unchanged. They have now all moved and {@code G}
+ * is deleted, so this is the only place left that holds the Java-facing contract.
  *
- * {@code GFlux} does {@code new G(this::onG)}, which does not compile against a Kotlin
- * {@code (String) -> Unit} because {@code void} is not {@code Unit}. The {@code Consumer} overload
- * is what makes the swap mechanical.
+ * <p>{@code new GSender(this::onG)} does not compile against a Kotlin {@code (String) -> Unit},
+ * because {@code void} is not {@code Unit}; the {@code Consumer} overload is what makes it work.
+ *
+ * <p>It has to be a <b>method reference</b>, and that is the second half of the contract. With two
+ * constructors — {@code Consumer<String>} and {@code Function1<String, Unit>} — an implicitly typed
+ * lambda whose body is an expression is potentially compatible with both, and
+ * {@code new GSender(str -> queue.add(str))} fails with "reference to GSender is ambiguous". An
+ * exact {@code void} method reference resolves it, which is why {@code GFlux} and
+ * {@code PrinterReactor} both use one.
  */
 class GSenderJavaInteropTest {
 

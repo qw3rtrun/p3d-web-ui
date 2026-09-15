@@ -389,7 +389,7 @@ corpus.*
 field, so the next call emits a second `GLineBreak("\n")`:
 
 ```
-marlin.gcode (415 CRLF lines)  →  GLineIterator produces 703 lines
+marlin.gcode (414 CRLF lines)  →  GLineIterator produces 703 lines
 whole-file rawText             →  8745 chars out of 8454 in  (one extra \n per CRLF)
 ```
 
@@ -712,7 +712,7 @@ production packages: everything for `core.token` lives in
 | `GTokenizerTest` | 181 | one nested group per token kind (letters, numbers incl. signed, non-canonical and malformed ones, quoted strings, tail/inline comments, expressions, separators incl. tabs and LF/CRLF/CR, checksum marker, unknown chars), unterminated literals, iterator contract, sequence re-iteration, `parseLines`, all five input overloads, whole-line integration, 37 round-trip cases |
 | `GLineIteratorTest` | 83 | line splitting, packet recognition and the four structural errors, plus four nested groups added in Commit B: `BufferBoundaries` (26 no-throw cases, tail with/without terminator, CRLF, `*`-last, `N`-last), `EmptyLines` (spec §5 no-ops), `PacketDetection` (case and leading whitespace, N-must-be-first, whitespace inside the N word), `NothingIsLost` (the lines reassemble into the input) |
 | `GSemanticsTest` | 26 | `GCommand.print()`, both constructors, line-type hierarchy, exhaustive `when` guard over `GLine`, `GCheckSumValue`, error messages |
-| `GCorpusTest` | 10 | `marlin.gcode` (415 lines, parsed as checked out): tokenizes without failing, expected token kinds present, liner line count, one break token per `\n`, per-line round-trip, the exact set of characters the lexer still does not understand, and the line-kind census (301 simple, 111 empty, 2 `GMissingChecksum`) |
+| `GCorpusTest` | 10 | `marlin.gcode` (414 lines, parsed as checked out): tokenizes without failing, expected token kinds present, liner line count, one break token per `\n`, per-line round-trip, the exact set of characters the lexer still does not understand, and the line-kind census (301 simple, 111 empty, 2 `GMissingChecksum`) |
 | `XorCheckSumTest` | 17 | spec §8.2/§8.3 including the byte-by-byte worked example, known-line values, masking, order independence, streaming contract |
 | `GDescriptionTest` | 11 | descriptor/field defaults, `optional`, mixed field types, equality |
 | `GTest` | 9 | DSL: every `G`/`M`/`T` overload, parameter appending, emission order and count |
@@ -784,7 +784,7 @@ unintentional rather than a decision.
 - [ ] Decide per suite: port to Kotlin, or record why it is obsolete.
       `XorCheckSumTest` and `GAwareDecoderTest` cover code that is still live.
 
-**Fixture now in use.** `gcode/src/test/resources/marlin.gcode` (415 lines, 8.5 KB of real
+**Fixture now in use.** `gcode/src/test/resources/marlin.gcode` (414 lines, 8.5 KB of real
 Marlin-flavoured G-code) is driven by `GCorpusTest`. Designing that test is what surfaced bugs
 [1.12](#112-crlf-yields-two-line-breaks--gtokenizerkt52-58---fixed) and
 [1.13](#113-leading-dot-decimals-duplicate-a-digit--gtokenizerkt64-94---fixed).

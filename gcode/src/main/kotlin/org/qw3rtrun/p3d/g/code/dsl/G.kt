@@ -164,6 +164,15 @@ class GSender(private val out: (String) -> Unit) {
     /** `M140` - set bed temperature. */
     fun m140(temp: BigDecimal) = send(M(140, S(temp)))
 
+    /**
+     * `M104` - set the hotend temperature of tool [index].
+     *
+     * [temp] is written with the digits it carries, so the caller chooses the wire format by
+     * choosing the scale: `BigDecimal("60.00")` is `S60.00` and `BigDecimal("60")` is `S60`. That
+     * decision belongs to the caller and not here, because it is what the firmware sees.
+     */
+    fun m104(index: Int, temp: BigDecimal) = send(M(104, word('T', index), S(temp)))
+
     fun tempReport(tool: Int? = null) = m105(tool)
 
     fun autoReportTemp(period: Int? = null) = m155(period)
@@ -171,4 +180,6 @@ class GSender(private val out: (String) -> Unit) {
     fun firmwareInfo() = m115()
 
     fun setBedTemperature(temp: BigDecimal) = m140(temp)
+
+    fun setHotendTemperature(index: Int, temp: BigDecimal) = m104(index, temp)
 }

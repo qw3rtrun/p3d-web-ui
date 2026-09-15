@@ -69,26 +69,44 @@ That collapses six of the eight items from "decide per suite" into **one deletio
       `XorCheckSumTest.kt` and all three passed on the first run, so `XorCheckSum` was right and the
       vectors were good. This checkbox is closed; the dead-Java-island decision above is not.
 
-## The inversion worth naming
+## The inversion worth naming — ✅ RESOLVED by [10](./10-command-dsl.md)
 
-`GTest.java` is listed above as covering `g/G.java`, and that is the item: **the live class is
-untested and the tested class is dead.**
+The item was: **the live class is untested and the tested class is dead.** `G.java` was the only
+`:gcode` type another module imported and had zero tests since `f0d0944`; `code/dsl/G.kt`, which
+`GTest.kt` covers, had zero production callers.
 
-- `gcode/src/main/java/org/qw3rtrun/p3d/g/G.java` is the **only** `:gcode` type any other module
-  imports — three production files: `backend/api/.../PrinterReactor.java`,
-  `backend/api/.../PrinterState.java`, `backend/terminal/.../GFlux.java`. It has had **zero** tests
-  since `f0d0944`.
-- `gcode/src/main/kotlin/org/qw3rtrun/p3d/g/code/dsl/G.kt` — the Kotlin DSL that the current
-  `GTest.kt` covers — has **zero** production callers.
+Both halves have flipped. `G.java` is **deleted**, and its three callers —
+`backend/api/.../PrinterReactor.java`, `backend/api/.../PrinterState.java`,
+`backend/terminal/.../GFlux.java` — now construct a `GSender`. The survivor is the tested one, and
+the migration added `backend/api/.../PrinterStateGcodeTest` so the `:backend` side is covered too.
 
 The deleted `GTest.java` asserted `"M105 T0"`, *with* a separating space, so the pre-Kotlin encoder
-used the single-space rule that [04](./04-encoder-and-checksum.md) proposes to adopt. Hand that
-observation to 04; it is evidence, not a coincidence.
+used the single-space rule that [04](./04-encoder-and-checksum.md) adopted. Hand that observation to
+04; it is evidence, not a coincidence.
 
-- [ ] Decide which `G` survives, then give the survivor tests. If it is `G.java`, port
-      `GTest.java`'s four assertions against it. If the intent is that `code/dsl/G.kt` replaces it, then
-      `:backend`'s three imports are the migration work and that belongs in a new queue file, not
-      here — say so and close this item.
+- [x] Decide which `G` survives, then give the survivor tests.
+      *Resolved: `code/dsl/G.kt` survives and `G.java` is gone. The `:backend` migration was done
+      under 10 rather than in a new queue file, because `G.code(GEncodable)` had no `GSender`
+      counterpart and that made the island's shape part of the same change.*
+
+### What the migration settled about the island
+
+The decision below was waiting on exactly this, and the answers are now observed rather than guessed
+(full write-up in [10](./10-command-dsl.md#what-this-leaves-for-08)):
+
+- **`GEncodable.encode()` has no wire caller.** `G.java:70` was the only one. It is *not* dead —
+  every record's `toString()` calls it and `PrinterReactor` logs `"-> {}"` — so it is now a debug
+  representation. If it stays, it should say so.
+- **`GEncodable` survives as a marker**, needed by `PrinterReactor`'s reflective dispatch filter and
+  the `handle(Mono<T extends GEncodable>)` bound. Nothing else uses it.
+- **Four records are live and not removable**: `SetHotendTemperature`, `SetBedTemperature`,
+  `AutoReportHotendTemperature`, `ReportHotendTemperature` are `@RequestBody` types on
+  `PrinterController`, deserialised by Jackson. The island is a **DTO layer**, not a G-code layer —
+  which is the honest name for it and probably the answer to what it should become.
+- **`g.code.FirmwareInfo` is now unreferenced.** `G.java` was its only user; it can simply go.
+- **`@GCode` and `@GParam` are read by nothing.** Which is why nobody noticed
+  `ReportHotendTemperature` is annotated `@GParam("I")` while its `encode()` emitted `T`. Harmless
+  today, a trap for whoever writes the annotation processor the island implies.
 
 ## Documentation
 
@@ -104,7 +122,7 @@ list, and nothing about `:gcode` beyond one accurate line describing the module 
 
 ## A gap worth filling
 
-- [ ] **There is no fixture of firmware replies.** `gcode/src/test/resources/marlin.gcode` is 415
+- [ ] **There is no fixture of firmware replies.** `gcode/src/test/resources/marlin.gcode` is 414
       lines of real commands *sent*, and it is what surfaced several of the lexer bugs. Nothing
       equivalent exists for what comes *back* — `ok`, temperature reports, `Resend:`, the capability
       report. Capturing one session would materially de-risk

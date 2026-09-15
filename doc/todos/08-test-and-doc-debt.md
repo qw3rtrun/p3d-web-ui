@@ -78,7 +78,7 @@ untested and the tested class is dead.**
   imports — three production files: `backend/api/.../PrinterReactor.java`,
   `backend/api/.../PrinterState.java`, `backend/terminal/.../GFlux.java`. It has had **zero** tests
   since `f0d0944`.
-- `gcode/src/main/kotlin/org/qw3rtrun/p3d/g/code/G.kt` — the Kotlin DSL that the current
+- `gcode/src/main/kotlin/org/qw3rtrun/p3d/g/code/dsl/G.kt` — the Kotlin DSL that the current
   `GTest.kt` covers — has **zero** production callers.
 
 The deleted `GTest.java` asserted `"M105 T0"`, *with* a separating space, so the pre-Kotlin encoder
@@ -86,7 +86,7 @@ used the single-space rule that [04](./04-encoder-and-checksum.md) proposes to a
 observation to 04; it is evidence, not a coincidence.
 
 - [ ] Decide which `G` survives, then give the survivor tests. If it is `G.java`, port
-      `GTest.java`'s four assertions against it. If the intent is that `code/G.kt` replaces it, then
+      `GTest.java`'s four assertions against it. If the intent is that `code/dsl/G.kt` replaces it, then
       `:backend`'s three imports are the migration work and that belongs in a new queue file, not
       here — say so and close this item.
 

@@ -1,10 +1,11 @@
-# 10 — The command-building DSL (`G.kt`)
+# 10 — The command-building DSL (`code/dsl`)
 
 **Status: the `:gcode` half is done.** One step remains and it is outside this module — see
 *What is left* at the bottom.
 
-**Goal.** `G.kt` is the facade for *writing* G-code, and the rule it is held to is: **any valid
-G-code can be written with it.** [`GDslCorpusTest`](../../gcode/src/test/kotlin/org/qw3rtrun/p3d/g/code/GDslCorpusTest.kt)
+**Goal.** The `code/dsl` package is the facade for *writing* G-code — `G.kt` for commands and
+lines, `GWords.kt` for parameters — and the rule it is held to is: **any valid G-code can be
+written with it.** [`GDslCorpusTest`](../../gcode/src/test/kotlin/org/qw3rtrun/p3d/g/code/dsl/GDslCorpusTest.kt)
 makes that a number rather than an aspiration.
 
 ## Why it needed work
@@ -34,10 +35,11 @@ lines carry one. 41% of a real corpus was unreachable for that reason alone.
   after the `*` and is not covered ([§5](../specs/GCODE_spec.md#5-line-block-structure),
   [§8.3](../specs/GCODE_spec.md#83-what-the-checksum-covers)). A comment *between* commands is
   transmitted before the `*` and so **is** covered.
-- **`GWords.kt`** — a parameter builder per letter in [§4.2](../specs/GCODE_spec.md#42-parameter-letters),
+- **`GWords.kt` in `code/dsl`** — a parameter builder per letter in [§4.2](../specs/GCODE_spec.md#42-parameter-letters),
   each in five shapes (`Int`, lexeme `String`, `BigDecimal`, `GValue`, and a flag), plus generic
   `word`/`flag`/`text`/`expr`/`tailComment`/`inlineComment` for everything the table does not list.
-- **`G.kt`** — command builders returning values, line builders, and `GSender` as a thin sink.
+- **`G.kt` in `code/dsl`** — command builders returning values, line builders, and `GSender` as a
+  thin sink.
 
 ## Decisions
 
@@ -51,9 +53,13 @@ lines carry one. 41% of a real corpus was unreachable for that reason alone.
 - **Command numbers are validated with the parser's own rule.** `GCommandParser.isCommandNumber` was
   lifted to a companion so the DSL shares it. A builder and a parser disagreeing about what a command
   number is would let a round-trip test pass on input no firmware accepts.
-- **Full Kotlin is allowed here.** The layering rule makes only `code/core` portable; `code/G.kt` is a
-  host-side facade over it, so infix and extension functions are fine. A port re-implements the core
-  and writes its own facade.
+- **Full Kotlin is allowed here, and the package boundary is what says so.** The layering rule makes
+  only `code/core` portable. The DSL sits beside it in its own package — `code/dsl`
+  (`org.qw3rtrun.p3d.g.code.dsl`), holding `G.kt` and `GWords.kt` — as a host-side facade over the
+  core, so infix and extension functions, `BigDecimal` and `java.util.function.Consumer` are all
+  fine there. The dependency runs one way only: `dsl` imports `code/core` and `code/core/token`, and
+  nothing in the core imports `dsl`. That is what makes the core portable on its own — a port
+  re-implements `code/core` and writes its own facade, and never has to look inside `code/dsl`.
 
 ## Findings
 
@@ -94,7 +100,9 @@ None is a gap in the DSL, and they are pinned in the test with this breakdown:
 operations (`m105`, `m115`, `m155`, `m140`, `tempReport`, `autoReportTemp`, `firmwareInfo`,
 `setBedTemperature`) and a `Consumer<String>` constructor so `new GSender(this::onG)` compiles from
 Java, pinned by a Java-language test. Finishing the replacement means editing three files outside
-`:gcode`, which the module-only scope rules out for now:
+`:gcode`, which the module-only scope rules out for now. All three currently
+`import org.qw3rtrun.p3d.g.G` and would swap that line for
+`import org.qw3rtrun.p3d.g.code.dsl.GSender`:
 
 - `backend/terminal/.../GFlux.java` — `new G(this::onG)` → `new GSender(this::onG)`.
 - `backend/api/.../PrinterState.java` — field and `onOnline(G)` parameter types.

@@ -26,8 +26,15 @@ verbosity here, it is the only way the behaviour is reviewable against a spec.
 | Layer | Where | May depend on |
 |---|---|---|
 | **Portable core** | `gcode/src/main/kotlin/.../code/core/**` — tokens, tokenizer, liner, checksums, encoders | Kotlin stdlib basics only (see the allow-list). No JVM library, no third-party, no other module |
+| **Writing facade** | `gcode/src/main/kotlin/.../code/dsl/**` — `G.kt`, `GWords.kt`, `GSender` | The core. **Not governed by this skill** — see below |
 | **Domain edge** | `gcode/.../decoder/**`, `gcode/.../event/**` | The core, plus `:backend:core` message types |
 | **Transport / app** | `:backend:terminal` (Netty), `:backend:api` (WebFlux), `:app` | Anything. Reactor, Spring, coroutines all live here |
+
+**`code/dsl` is not this skill's territory, and several rules below invert there.** It is the
+host-side facade for *writing* G-code, it is never ported, and full Kotlin — infix and extension
+functions, `BigDecimal`, JVM types, and `require(...)` throwing on a bad argument — is correct in
+it. Load [`gcode-dsl-dev`](../gcode-dsl-dev/SKILL.md) for that package instead. Being under
+`code/` does not make a file part of the portable core; only `code/core/**` is.
 
 Keep the JVM at the edges. A `Mono`, a `Flux`, a Spring bean or a coroutine must never appear inside
 the core: the core is a pure function from bytes to tokens and back, driven by whatever transport the

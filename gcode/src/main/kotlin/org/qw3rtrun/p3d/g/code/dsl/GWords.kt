@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.code
+package org.qw3rtrun.p3d.g.code.dsl
 
 import org.qw3rtrun.p3d.g.code.core.token.*
 import java.math.BigDecimal

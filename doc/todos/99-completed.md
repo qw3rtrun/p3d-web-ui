@@ -630,6 +630,40 @@ Both are pre-existing and belong with a test-quality pass, not with this fix.*
 
 ---
 
+### 1.21 `GIdentifier.isLetter` folded case through Unicode — `GTokens.kt:19` — ✅ FIXED
+
+Introduced by `286461b`, which replaced an explicit ASCII comparison with
+
+```kotlin
+fun isLetter(l: Char): Boolean = name == l.toString().lowercase() || name == l.toString().uppercase()
+```
+
+Filed as a style violation — `lowercase()`/`uppercase()` are on the skill's deny list — but it is a
+behavioural bug as well, and that is what the fix was tested against:
+
+```
+GLetter('k').isLetter('\u212A')   →   true      (U+212A KELVIN SIGN lowercases to 'k')
+```
+
+Spec [§1.1](../specs/GCODE_spec.md#11-character-set-and-encoding) puts the wire format in 7-bit
+ASCII, so a Unicode character that merely *folds* to an ASCII letter must not match one — this is the
+same class as todo 01's `Char.isLetter()` removal, reintroduced one layer up.
+
+- [x] Three problems, one line: locale-dependent (a Turkish locale changes `i`/`I`), Unicode-wide
+      (the Kelvin sign above; U+0130 likewise folds to `i`), and two or three String allocations per
+      call on a path that runs for every element of every line — it is called under the head-and-star
+      scan in `GSemanticParser.parseLine`.
+      *Fixed: `name.length == 1 && asciiFold(name[0]) == asciiFold(l)`, with `asciiFold` a one-line
+      top-level function folding `a`-`z` only. Red first: the Kelvin-sign case failed, the
+      case-insensitivity cases passed before and after, pinning that nothing intended changed.*
+
+*Deliberately preserved: `GChecksum.isLetter('*')` is still true, since `*` folds to itself. Nothing
+depends on it — the checksum search uses `id == GChecksum` since 1.19 — but the name being wider than
+it says is a rename, queued as hygiene ([07](./07-hygiene-and-naming.md)), not a behaviour change to
+fold into a bug fix.*
+
+---
+
 ## 2. Conformance with `GCODE_spec.md`
 
 Well covered: balanced `{}` expressions, `""`-doubling quoted strings

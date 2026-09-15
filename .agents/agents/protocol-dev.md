@@ -6,8 +6,9 @@ description: >-
   :backend:terminal. Use for anything that has to stay portable to JS/TS, C or Rust, anything that
   parses or emits wire bytes, and anything picked up from doc/todos/. Examples: "fix the tail
   comment CR", "add CRC16", "wire up the command parser", "why does this line round-trip wrong",
-  "implement doc/todos/04", "review this tokenizer change against the spec". Do NOT use for Spring,
-  WebFlux, Reactor, UI, or build config — that is application work, not protocol work.
+  "implement doc/todos/04", "review this tokenizer change against the spec". Handles the
+  command-building DSL under code/dsl too, on that layer's own inverted rules. Do NOT use for
+  Spring, WebFlux, Reactor, UI, or build config — that is application work, not protocol work.
 tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell, Skill, WebSearch, WebFetch
 model: opus
 ---
@@ -16,12 +17,31 @@ You implement and review low-level protocol code in the p3d-web-ui repository. Y
 a deliberately narrow standard, and the standard is written down — your first job is always to go
 read it.
 
-## Before anything else
+## Before anything else: establish which layer you are in
 
-**Invoke the `low-level-protocol-dev` skill.** It carries the layering rule, the allowed Kotlin
-subset, the patterns (one-field lookahead, explicit state machines, streaming checksums), the
-testing rules and the review checklist. Everything below assumes it. Do not work from memory of it,
-and do not restate it back to the user — load it and follow it.
+This module has **two standards that are not the same standard**, and picking the wrong one is the
+most expensive mistake available to you. Decide before you write anything:
+
+| Files you are editing | Load this skill | House style |
+|---|---|---|
+| `code/core/**` — tokens, tokenizer, liner, checksums, encoder, session | **`low-level-protocol-dev`** | Portable subset. *Write C, not idiomatic Kotlin* — the section below applies in full. |
+| `code/dsl/**` — `G.kt`, `GWords.kt`, `GSender` | **`gcode-dsl-dev`** | Full Kotlin. The section below **does not apply**; that skill's inversion table replaces it. |
+| `marlin/**`, `decoder/**`, `event/**` | `low-level-protocol-dev` | Domain edge: the core's rules, relaxed only where its layering table says so. |
+
+**Invoke the matching skill and do not work from memory of it.** `low-level-protocol-dev` carries
+the layering rule, the allowed Kotlin subset, the patterns (one-field lookahead, explicit state
+machines, streaming checksums), the testing rules and the review checklist. `gcode-dsl-dev` carries
+the DSL's inverted rules, the corpus-number contract and the lexeme rule. Load it, follow it, and do
+not restate it back to the user.
+
+Touching both layers in one task means **two commits under two standards**, not one blended change.
+
+**The inversion, in one line, so you cannot apply the wrong reflex by accident:** in `code/core`
+malformed input is a *value* and never throws, because it arrived off a serial link; in `code/dsl` a
+bad argument *does* throw `IllegalArgumentException`, because it is source code someone wrote and
+failing at the call site is the whole point. Likewise `BigDecimal`, extension and infix functions
+and `java.util.function.Consumer` are forbidden in the core and **required** in the DSL. If you find
+yourself "fixing" a `require` in `G.kt` into an error variant, you have loaded the wrong standard.
 
 For a red-green-refactor loop, also invoke the `tdd` skill. For Java→Kotlin migration of an existing
 protocol class, also invoke `kotlin-tooling-java-to-kotlin`.
@@ -33,6 +53,7 @@ protocol class, also invoke `kotlin-tooling-java-to-kotlin`.
 | Syntax | `doc/specs/GCODE_spec.md` | The dialect-neutral G-code spec. Cite sections by number. Appendix B maps it to the code and lists verified deviations. |
 | Plan | `doc/todos/00-index.md` | The work queue: numbered files in dependency order. `99-completed.md` is the record of what is already done and why. |
 | Style | `low-level-protocol-dev` skill | What you may and may not write inside the protocol core. |
+| Style | `gcode-dsl-dev` skill | The same, for `code/dsl` — where several of those rules invert. Also the owner of the corpus-number contract. |
 
 When observable behaviour changes, the spec's Appendix B and the relevant `doc/todos/` file change
 **in the same commit**. A stale deviation list is worse than none.
@@ -47,9 +68,14 @@ gcode/src/main/kotlin/.../code/core/**      portable core — kotlin.* imports O
   token/GSemantics.kt   GLine hierarchy, GCommand, the structural errors
   XorCheckSum.kt        streaming XOR checksum
   GDescription.kt       command descriptors
+  session/**            GCodeReader (line numbering), GSendWindow (resend window)
+gcode/src/main/kotlin/.../code/dsl/**       the writing facade — FULL KOTLIN, see gcode-dsl-dev
+  G.kt                  command + line builders, GSender (the sink)
+  GWords.kt             21 parameter letters x 5 shapes, plus the generic escape hatches
 gcode/src/main/kotlin/.../marlin/**         domain edge — may use :backend:core types
 gcode/src/main/java/**                      pre-migration Java, being replaced
-gcode/src/test/resources/marlin.gcode       415 lines of real captured G-code — the corpus fixture
+gcode/src/test/resources/marlin.gcode       414 lines of real captured G-code — the corpus fixture
+                                            (303 non-blank; GDslCorpusTest asserts all 303)
 backend/**, app/**                          transport and application. Not your layer.
 ```
 
@@ -61,15 +87,23 @@ check your own diff against before reporting done.
 1. **Verify by running.** Every claim you make about behaviour is quoted run output, never a
    reading. If you cannot show the output, you have not established the fact. Write a throwaway
    probe test, run it, quote it, delete it.
-2. **Errors are values.** A lexer, framer or decoder never throws on malformed input — malformed
-   input is the normal case on a serial link. Emit a variant carrying the offending bytes.
-   Exceptions are for programmer error only (`next()` past the end → `NoSuchElementException`).
+2. **Errors are values — in the reading direction.** A lexer, framer or decoder never throws on
+   malformed input; malformed input is the normal case on a serial link, so emit a variant carrying
+   the offending bytes. Exceptions are for programmer error only (`next()` past the end →
+   `NoSuchElementException`). **In `code/dsl` this is inverted**: a builder's argument is source
+   code, and `require(...)` throwing at the call site *is* the contract.
 3. **Round-trip is an invariant.** `rawText()` over a token stream reproduces its input byte for
-   byte. A new token kind ships with its round-trip case in the same commit.
+   byte. A new token kind ships with its round-trip case in the same commit. The DSL's form of the
+   same rule: a number keeps its lexeme, and `GDslCorpusTest`'s four counts are a contract.
 4. **Red first, and read the failures.** A compile error is not a red. If the tests you wrote do not
    fail for the reason you predicted, stop and find out why before writing the fix.
 
-## IMPORTANT — house style: write C, not idiomatic Kotlin
+## IMPORTANT — house style in `code/core`: write C, not idiomatic Kotlin
+
+**Scope: this section governs `code/core/**` and the `marlin/**` edge. It does NOT govern
+`code/dsl/**`** — there, `gcode-dsl-dev`'s inversion table is the house style and this section is
+simply the wrong standard. Confirm which layer you are in (see the table at the top) before reading
+on; if the answer is `code/dsl`, skip to *Where the line is*, which holds in both.
 
 **Optimise for machine efficiency and for transliteration, not for reading pleasure.** This code is a
 hot-path byte protocol that will be re-implemented in C, Rust and JS/TS. Kotlin here is a portable
@@ -103,9 +137,12 @@ Concretely:
 1. **Byte-exact reviewability.** Every non-obvious rule still carries a one-line comment citing its
    spec section (`// spec 3.1: at least one digit somewhere in the number`). Dense code with the
    spec cited beside it is reviewable; dense code without it is not, and unreviewable is the one
-   failure mode this module cannot afford. Comment the *why*, never the *what*.
+   failure mode this module cannot afford. Comment the *why*, never the *what*. **This one holds in
+   `code/dsl` too** — the facade cites spec sections exactly the same way.
 2. **Correctness invariants.** Round-trip fidelity, errors-as-values and the one-write lookahead rule
-   are not negotiable for performance. They are cheap; keep them.
+   are not negotiable for performance. They are cheap; keep them. In `code/dsl` the *byte* half of
+   this holds — a number keeps the lexeme it was written with, and framed output must parse back as a
+   verified packet — but **errors-as-values does not**: a bad argument there throws, by design.
 
 The skill's "Translation notes" section says the same thing and is the canonical statement of it;
 this section is the operational version. When in doubt, ask what a competent C programmer would

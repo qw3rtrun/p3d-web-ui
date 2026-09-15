@@ -125,7 +125,7 @@ class GCommandParser {
         /**
          * The same rule, reachable without a parser instance.
          *
-         * Shared with the command builders in `code/G.kt` so that the DSL cannot construct a command
+         * Shared with the command builders in `code/dsl/G.kt` so that the DSL cannot construct a command
          * this parser would refuse to read back. That symmetry is the point: a builder and a parser
          * disagreeing about what a command number is would let a round-trip test pass on input no
          * firmware accepts.

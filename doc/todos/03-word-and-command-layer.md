@@ -51,9 +51,9 @@ collapses two concerns into one type and makes the packet/command distinction aw
       - so `G-1` and `G29.` are not commands.
 - [ ] **`GCommand.head` tightened to `GLetter`** — still open, deliberately. `head` is now a
       `GParameterWord<GNumber>` whose `id` is a `GIdentifier`, so `GChecksum` is still admissible by
-      type; the parser refuses it, but nothing in the type system does. Making it structural means
-      `GCommand` carrying `letter: GLetter` and `code: GNumber` as separate fields, which is a change
-      to what the encoder emits from — so it belongs with [04](./04-encoder-and-checksum.md), not here.
+  type; the parser refuses it, but nothing in the type system does. Making it structural means
+      `GRQ` carrying `letter: GLetter` and `code: GNumber` as separate fields, which is a change
+  to what the encoder emits from — so it belongs with [04](./04-encoder-and-checksum.md), not here.
 - [ ] **`GNotIdentifierError` is still never constructed** — and this item should be dropped rather
       than done. It asks for "a line whose first element is not a command letter" to be an error, but
       spec [4.1](../specs/GCODE_spec.md#41-command-letters) says the opposite: with

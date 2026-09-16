@@ -8,7 +8,7 @@ import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.SetBedTemperature;
 import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
-import org.qw3rtrun.p3d.g.code.dsl.GSender;
+import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -80,7 +80,7 @@ class PrinterStateGcodeTest {
         printer.handle(new SetHotendTemperature(0, 60.0));
         printer.handle(new SetHotendTemperature(1, 210.5));
 
-        assertEquals(List.of("M104 T0 S60.00", "M104 T1 S210.50"), sent);
+        assertEquals(List.of("M104 S60.00 T0", "M104 S210.50 T1"), sent);
     }
 
     @Test

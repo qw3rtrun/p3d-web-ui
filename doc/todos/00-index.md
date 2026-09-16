@@ -13,7 +13,7 @@ before/after, the conformance and coverage tables — is in
 
 ## Status
 
-`:gcode:test` — **654 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
+`:gcode:test` — **681 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
 
 Lexing ([spec §2](../specs/GCODE_spec.md#2-lexical-structure-tokens), §3) and line framing
 ([§5](../specs/GCODE_spec.md#5-line-block-structure), [§7.3](../specs/GCODE_spec.md#73-pairing-rule))
@@ -52,6 +52,7 @@ critical path.
 | 08 | [test-and-doc-debt](./08-test-and-doc-debt.md) | Retire one island of dead Java classes. ~~Port three `XorCheckSum` vectors~~ — done in 04 | — |
 | 09 | [deferred-spec-gaps](./09-deferred-spec-gaps.md) | Bare rest-of-line strings, RS274 parameters, block delete, line length. ~~CRC16~~ — done in 04 | — |
 | ~~10~~ | [command-dsl](./10-command-dsl.md) | ~~The `code/dsl` writing facade — `G.kt` and `GWords.kt`, host-side beside the portable core.~~ **done** — `GBlock`, per-letter parameter words, line builders, 303/303 corpus lines expressible; `G.java` deleted and all three `:backend` callers on `GSender`, which fixed a locale-dependent `%.2f` that put `M140 S60,00` on the wire. Narrowed what [08](./08-test-and-doc-debt.md) has to decide | — |
+| 11 | [marlin-commands](./11-marlin-commands.md) | The Marlin command set: 295 classes over 287 codes and 1044 parameters, generated from Marlin's own docs into `marlin/MarlinGRQ.kt`, `MarlinMRQ.kt` and `MarlinTRQ.kt`, with the registry in `marlin/MCommands.kt`. **Command set in** — three follow-ups left, all upstream doc gaps or the bare-string block from [09](./09-deferred-spec-gaps.md) | — |
 
 ## Why this order
 

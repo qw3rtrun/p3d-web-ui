@@ -1,9 +1,6 @@
 package org.qw3rtrun.p3d.g.code.dsl
 
-import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.*
-import java.math.BigDecimal
-import java.util.function.Consumer
 
 /**
  * The command-building DSL: a facade over the model in `code/core`, for writing G-code rather than
@@ -26,7 +23,7 @@ import java.util.function.Consumer
  * ```
  *
  * **Builders return values.** Nothing here emits, so a command can be built, inspected and asserted
- * on before anything is sent; [GSender] is a thin sink layered on top for callers that want one.
+ * on before anything is sent; [org.qw3rtrun.p3d.terminal.GSender] is a thin sink layered on top for callers that want one.
  * The facade this replaces took its sink in the constructor and returned `Unit`, which is why its
  * own test had to keep a mutable list to see what it had produced.
  *
@@ -124,62 +121,3 @@ fun commentLine(text: String): GBlock = GBlock(listOf(tailComment(text)))
 // The sink
 // ---------------------------------------------------------------------------
 
-/**
- * Renders what the builders produce and hands the text to [out].
- *
- * Deliberately thin, and deliberately separate from the builders: it holds no line number and no
- * window, because that is `GCodeReader`/`GSendWindow`'s job (todo 05) and duplicating it here would
- * give a caller two counters that could disagree. Send framed lines by passing
- * `GEncoder.frame(...)` output to a window instead.
- *
- * The named operations below exist to carry over the Java facade this replaces, so its callers can
- * move across unchanged. They are a convenience layer with no privileges - each is one line of DSL.
- */
-class GSender(private val out: (String) -> Unit) {
-
-    /**
-     * For Java callers, who cannot pass a method reference where a Kotlin `(String) -> Unit` is
-     * expected - `void` is not `Unit`, so `new GSender(this::onG)` would not compile against the
-     * primary constructor. `java.util.function.Consumer` is a JVM type and would not be allowed in
-     * `code/core`; here it is, and it is what lets the Java facade this replaces be swapped out
-     * without touching its callers' shape.
-     */
-    constructor(out: Consumer<String>) : this({ text -> out.accept(text) })
-
-    fun send(block: GBlock) = out(GEncoder.encode(block))
-
-    fun send(command: GCommand) = send(command.line())
-
-    /** `M105` - report hotend temperature, optionally for one tool. */
-    fun m105(index: Int? = null) =
-        send(if (index == null) M(105) else M(105, word('T', index)))
-
-    /** `M115` - firmware info. */
-    fun m115() = send(M(115))
-
-    /** `M155` - auto-report temperature, optionally every [period] seconds. */
-    fun m155(period: Int? = null) =
-        send(if (period == null) M(155) else M(155, S(period)))
-
-    /** `M140` - set bed temperature. */
-    fun m140(temp: BigDecimal) = send(M(140, S(temp)))
-
-    /**
-     * `M104` - set the hotend temperature of tool [index].
-     *
-     * [temp] is written with the digits it carries, so the caller chooses the wire format by
-     * choosing the scale: `BigDecimal("60.00")` is `S60.00` and `BigDecimal("60")` is `S60`. That
-     * decision belongs to the caller and not here, because it is what the firmware sees.
-     */
-    fun m104(index: Int, temp: BigDecimal) = send(M(104, word('T', index), S(temp)))
-
-    fun tempReport(tool: Int? = null) = m105(tool)
-
-    fun autoReportTemp(period: Int? = null) = m155(period)
-
-    fun firmwareInfo() = m115()
-
-    fun setBedTemperature(temp: BigDecimal) = m140(temp)
-
-    fun setHotendTemperature(index: Int, temp: BigDecimal) = m104(index, temp)
-}

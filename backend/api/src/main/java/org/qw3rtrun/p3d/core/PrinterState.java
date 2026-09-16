@@ -11,7 +11,7 @@ import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
 import org.qw3rtrun.p3d.g.code.SetBedTemperature;
 import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
-import org.qw3rtrun.p3d.g.code.dsl.GSender;
+import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

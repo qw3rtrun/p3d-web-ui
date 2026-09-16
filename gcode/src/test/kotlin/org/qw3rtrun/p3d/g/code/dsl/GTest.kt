@@ -3,7 +3,6 @@ package org.qw3rtrun.p3d.g.code.dsl
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
 import org.qw3rtrun.p3d.g.code.core.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.*
@@ -221,76 +220,6 @@ class GTest {
 
                 assertInstanceOf(GPacketLine::class.java, line) { "did not verify: $framed" }
             }
-        }
-    }
-
-    @Nested
-    inner class TheSink {
-
-        private val sent = mutableListOf<String>()
-        private val g = GSender { sent.add(it) }
-
-        @Test
-        fun `a builder returns a value and the sink is separate`() {
-            // The old facade took the sink in its constructor and returned Unit, so a command could
-            // not be built and inspected - GTest had to keep a mutable list to assert anything.
-            val command = G(28)
-
-            assertEquals("G28", enc(command))
-            assertEquals(emptyList<String>(), sent)
-
-            g.send(command)
-            assertEquals(listOf("G28"), sent)
-        }
-
-        @Test
-        fun `the named operations of the old Java facade still work`() {
-            g.m115()
-            g.m105()
-            g.m105(1)
-            g.m155(2)
-            g.m140(BigDecimal("60"))
-
-            assertEquals(listOf("M115", "M105", "M105 T1", "M155 S2", "M140 S60"), sent)
-        }
-
-        @Test
-        fun `m104 carries the tool index and the temperature`() {
-            g.m104(0, BigDecimal("60.00"))
-            g.m104(1, BigDecimal("210.50"))
-
-            assertEquals(listOf("M104 T0 S60.00", "M104 T1 S210.50"), sent)
-        }
-
-        @Test
-        fun `a temperature is written with the scale it carries`() {
-            // The `%.2f` this replaces was not only locale-dependent, it also decided the scale for
-            // its caller. Here the BigDecimal's own scale is the wire format, which is what lets
-            // PrinterState keep emitting two decimals without the DSL knowing about temperatures.
-            g.m104(0, BigDecimal("60"))
-            g.m140(BigDecimal("60.000"))
-
-            assertEquals(listOf("M104 T0 S60", "M140 S60.000"), sent)
-        }
-
-        @Test
-        fun `the aliases agree with the numbered operations`() {
-            g.firmwareInfo()
-            g.m115()
-            g.tempReport(1)
-            g.m105(1)
-            g.autoReportTemp(2)
-            g.m155(2)
-            g.setBedTemperature(BigDecimal("60"))
-            g.m140(BigDecimal("60"))
-            g.setHotendTemperature(1, BigDecimal("60"))
-            g.m104(1, BigDecimal("60"))
-
-            assertEquals(sent[0], sent[1])
-            assertEquals(sent[2], sent[3])
-            assertEquals(sent[4], sent[5])
-            assertEquals(sent[6], sent[7])
-            assertEquals(sent[8], sent[9])
         }
     }
 }

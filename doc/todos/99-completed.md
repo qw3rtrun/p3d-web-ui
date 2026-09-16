@@ -66,7 +66,7 @@ removed by testing for it, and **no input makes the liner throw**.
 lexing or framing, and no test freezes a bug any more. Next step: [§0.1](./00-index.md).
 
 - [ ] **Refresh `.junie/GCODEK.md`** — §1 "Current Status & Blocker Analysis" is stale. It claims
-  `:gcode:compileKotlin` fails with unresolved `GCommand` / `GCommandLine` and leaves Phase 1
+  `:gcode:compileKotlin` fails with unresolved `GRQ` / `GCommandLine` and leaves Phase 1
   unchecked; `GSemantics.kt` now defines both and Phase 1 is effectively complete. *(re-probed)
   Still stale at `90b19aa`: `GCODEK.md:26` states the module fails to compile, `:249` sets Phase 1's
   goal as resolving those errors, and `:361-362` leaves the phase unchecked, while `:gcode:test`
@@ -673,7 +673,7 @@ lone `\r` handling, and `rawText()` round-tripping as an explicit design invaria
 | Spec section | Status |
 |---|---|
 | §3.1 signed numbers | ✓ sign, leading zeros, leading and trailing dot all lex and round-trip |
-| §4.1 subcodes (`G29.1`) | ✗ lexed as `GFloat(29.1)`; no subcode concept on `GCommand` |
+| §4.1 subcodes (`G29.1`) | ✗ lexed as `GFloat(29.1)`; no subcode concept on `GRQ` |
 | §3.2 value-less flag params | ~ representable as tokens, but nothing groups them into words/commands |
 | §3.4a bare rest-of-line strings | ✗ `M117 Hello World` → one `GLetter` per character; `M30 /path/to/f.gco` → `GUnknown(/)`, letters, `GUnknown(.)` |
 | §7.2 line-number continuity, `M110` | ✗ absent — needs a stateful reader, [§0.1](./00-index.md) step 5 |

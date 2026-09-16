@@ -70,7 +70,7 @@ cited by URL and not copied. The example command lines are taken, as a test fixt
 **The reference implementation's `decode` threw for every input.** `ReportHotendTemperature`
 searched its *parameters* for the letter `M` — the command letter, which never appears among them —
 so `find` returned null and the non-null cast threw. `M105 T2` included. Fixed to read `T`, and
-`MCommandsTest` now pins it.
+`MarlinRQTest` now pins it.
 
 **`toString()` printed the token tree.** The Java record it replaced returned a `String` from
 `encode()`; the Kotlin one returns a `GCommand`, so `"(" + encode() + ')'` interpolated the whole

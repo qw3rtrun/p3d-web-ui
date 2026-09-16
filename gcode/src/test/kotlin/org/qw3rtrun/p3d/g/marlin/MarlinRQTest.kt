@@ -18,7 +18,7 @@ import java.math.BigDecimal
  * the contract is stated in prose somewhere a reader will find it, and so the two bugs the
  * original reference had can never come back.
  */
-class MCommandsTest {
+class MarlinRQTest {
 
     private fun enc(rq: ReportHotendTemperature) = GEncoder.encode(rq.encode())
 

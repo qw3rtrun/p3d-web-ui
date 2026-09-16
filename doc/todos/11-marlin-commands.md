@@ -3,15 +3,16 @@
 **Status: the command set is in.** 295 classes covering 287 distinct codes, generated from Marlin's
 own documentation, split by command letter across `marlin/MarlinGRQ.kt`, `MarlinMRQ.kt` and
 `MarlinTRQ.kt` — each implementing `GRQ` and each written the way the `ReportHotendTemperature`
-reference is written. `MarlinCommands`, the prototype registry and decode lookup, is an `object` in
-`marlin/MCommands.kt` alongside the `MarlinG` shortcuts; the classes are top-level in one package,
+reference is written. `MarlinCommands`, the registry and decode lookup, is an `object` in
+`marlin/MarlinRQ.kt` alongside the `MarlinG` shortcuts; the classes are top-level in one package,
 so which file a class lives in is invisible to callers. Three follow-ups are listed
 under *What is left*.
 
 **Goal.** A named, typed Kotlin class per G-code Marlin supports, sitting on top of the
-[`code/dsl`](./10-command-dsl.md) builders: `encode()` produces a `GCommand`, `decodeParams` reads
-one back. Where [10](./10-command-dsl.md) answers *can this project write any valid G-code*, this
-answers *does it know what Marlin's commands are called and what they take*.
+[`code/dsl`](./10-command-dsl.md) builders: `encode()` produces a `GCommand`, and the class's
+companion object — its `GRQDecoder` — reads one back with `decodeParams`/`decode`. Where
+[10](./10-command-dsl.md) answers *can this project write any valid G-code*, this answers *does it
+know what Marlin's commands are called and what they take*.
 
 ## Why it is generated
 
@@ -43,9 +44,16 @@ cited by URL and not copied. The example command lines are taken, as a test fixt
   emitted `T0`, so the common bare form was unreachable.
 - **Flags are `Boolean = false`, not nullable.** For a letter that carries no value, absent and
   false are the same statement.
-- **The 46 documented-as-required parameters also get defaults.** `GRQ.decode` is an instance
-  method, so the registry needs a no-argument prototype of every command. The KDoc marks them
-  required; the type system does not. A cost worth knowing about.
+- **The 46 documented-as-required parameters also get defaults.** Every class is then constructible
+  bare, which is what makes `MarlinCommands.all` an enumeration of what the module can write and
+  what the generated cover asserts against. The KDoc marks them required; the type system does not.
+  A cost worth knowing about.
+- **Decoding is on the companion, not on the instance.** `head()` and `decodeParams()` describe the
+  command *type*, so they live in a `companion object : GRQDecoder<T>` and call sites read
+  `ReportHotendTemperature.decode(cmd)`. `GRQ<T>` itself is now only `encode()`. This mirrors the
+  `GRS`/`GRSDecoder` split the response side already had, and it is why `MarlinCommands` gained a
+  `decoders` list — `byHead` is built from decoders, and the 295 instances in `all` are no longer
+  needed to answer a decode.
 - **Decimals go out through their lexeme.** `word(letter, v.toPlainString())`, so the number is
   validated as a G-code number on the way in and can never reach the wire in scientific notation —
   [10](./10-command-dsl.md)'s lexeme rule, applied one layer up.

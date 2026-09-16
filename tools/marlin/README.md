@@ -54,6 +54,17 @@ that the extracted letters match what Marlin's own authors write.
   optional, and `M105` and `M105 T0` are different commands, so an unset parameter must not reach
   the wire. Flags are `Boolean = false` rather than nullable, because absent and false are the same
   thing for a letter that carries no value.
+- **The reading half is a `companion object : GRQDecoder<T>`.** `head()` and `decodeParams()`
+  describe the command *type*, not one command, so they sit on the companion and a call site reads
+  `ReportHotendTemperature.decode(cmd)` with no instance. `MarlinCommands.decoders` lists the 295
+  companions and `byHead` is built from that; `MarlinCommands.all` stays as the bare-instance
+  enumeration the tests sweep. `all`, `info` and `decoders` are index-aligned.
+- **The 93 parameterless classes keep a hand-rolled `equals`/`hashCode`.** They are `class X`, not
+  `object`, because `X()` call sites exist in the facade and in hand-written tests, and their
+  companion's `decodeParams` therefore has to return `X()` rather than `this`. The `hashCode`
+  literal is `zlib.crc32(name)`, **not** Python's `hash()` — string hashing is salted per process,
+  so `hash()` made every regeneration emit 93 different constants and a diff of pure churn. The
+  generator now aborts if two class names collide on that literal.
 - **A code can be documented more than once.** Marlin has six `G29` pages, one per bed-leveling
   system, and two each for `G34`, `M665` and `M666`. Each becomes its own class, named from its
   title (`BedLevelingUnified`, `BedLevelingBilinear`), so none is lost. `MarlinCommands.decode`

@@ -13,8 +13,9 @@ import java.math.BigDecimal
  * Reading one parameter back out of a command's word list, one accessor per shape a Marlin
  * parameter can take.
  *
- * Hand-written, and the generated command classes in `MarlinCommands.kt` are built on it: a fix
- * here reaches all 295 of them, which is the point of keeping it out of the generated file.
+ * Hand-written, and the generated command classes in `MarlinGRQ.kt`, `MarlinMRQ.kt` and
+ * `MarlinTRQ.kt` are built on it: a fix here reaches all 295 of them, which is the point of
+ * keeping it out of the generated files.
  *
  * Every accessor returns `null` for "the command does not carry this letter", because on this side
  * of the DSL an absent optional parameter is the normal case - 831 of Marlin's 882 documented

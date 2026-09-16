@@ -5,7 +5,7 @@
 
 Writes, all under gcode/src/.../org/qw3rtrun/p3d/g/marlin/:
     MarlinGRQ.kt, MarlinMRQ.kt, MarlinTRQ.kt  - the command classes, split by command letter
-    MCommands.kt                              - the MarlinCommands registry and the MarlinG facade
+    MarlinRQ.kt                               - the MarlinCommands registry and the MarlinG facade
     MarlinCommandsTest.kt (test source root)  - the generated cover for all of it
 
 Both are checked in, so the Gradle build never runs this. Re-run it only after re-running
@@ -17,9 +17,12 @@ Shape of a generated class, and why:
   optional, and an absent one must be absent from the wire - `M105` and `M105 T0` are different
   commands. A flag is `Boolean = false` rather than nullable because absent and false mean the
   same thing for a letter that carries no value.
-- **The 46 documented-as-required parameters also get defaults.** `GRQ.decode` is an instance
-  method, so the registry needs a no-argument prototype of every command to decode against. The
-  KDoc marks them required; the type system does not.
+- **The 46 documented-as-required parameters also get defaults.** Every class is then constructible
+  bare, which is what makes `all` an enumeration of what this module can write and what the
+  generated cover asserts against. The KDoc marks them required; the type system does not.
+- **Decoding lives on the companion, not on the instance.** `head()` and `decodeParams()` describe
+  the command *type*, so they sit in a `companion object : GRQDecoder<T>` and call sites read
+  `ReportHotendTemperature.decode(cmd)`. This mirrors `GRS`/`GRSDecoder`.
 - **Decimals go through the lexeme.** `word(letter, v.toPlainString())` rather than
   `word(letter, v)`, so the number is validated as a G-code number on the way in and never
   reaches the wire in scientific notation.
@@ -28,6 +31,7 @@ import json
 import os
 import re
 import sys
+import zlib
 
 KOTLIN_KEYWORDS = {
     "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
@@ -68,6 +72,7 @@ SAMPLES = {
 MARLIN_MAIN = os.path.join("gcode", "src", "main", "kotlin", "org", "qw3rtrun", "p3d", "g",
                            "marlin")
 LETTER_FILES = [("G", "MarlinGRQ.kt"), ("M", "MarlinMRQ.kt"), ("T", "MarlinTRQ.kt")]
+REGISTRY_FILE = "MarlinRQ.kt"
 
 # Class names that do not come from the doc title. `M105`'s page is titled "Report Temperatures",
 # but this project already calls it ReportHotendTemperature -- the name the Java record it replaces
@@ -75,6 +80,17 @@ LETTER_FILES = [("G", "MarlinGRQ.kt"), ("M", "MarlinMRQ.kt"), ("T", "MarlinTRQ.k
 NAME_OVERRIDES = {
     "M105": "ReportHotendTemperature",
 }
+
+
+def stable_hash(name):
+    """The `hashCode` constant for a parameterless command class.
+
+    CRC32 and not Python's own `hash()`: string hashing is salted per process (PYTHONHASHSEED), so
+    `hash()` emitted a different constant on every run and every regeneration produced a diff of
+    93 meaningless line changes. Any deterministic function of the name will do; this one is in the
+    standard library and is checked for collisions in main().
+    """
+    return zlib.crc32(name.encode()) % 1000000
 
 
 def pascal(text):
@@ -155,6 +171,7 @@ def imports_for(letter, text):
         (r"\bGWord\b", "org.qw3rtrun.p3d.g.code.core.token.GWord"),
         (None, "org.qw3rtrun.p3d.g.code.dsl.%s" % letter),
         (None, "org.qw3rtrun.p3d.g.code.dsl.GRQ"),
+        (None, "org.qw3rtrun.p3d.g.code.dsl.GRQDecoder"),
         (r"\bflag\(", "org.qw3rtrun.p3d.g.code.dsl.flag"),
         (r"\btext\(", "org.qw3rtrun.p3d.g.code.dsl.text"),
         (r"\bword\(", "org.qw3rtrun.p3d.g.code.dsl.word"),
@@ -208,7 +225,7 @@ def gen_class(c, name):
         req = ", ".join("`%s`" % f["letter"] for f in fields if not f["optional"])
         out.append(" *")
         out.append(" * Marlin documents %s as required; every property here still defaults to" % req)
-        out.append(" * absent, because the decode registry needs a no-argument prototype.")
+        out.append(" * absent, so that every command class is constructible bare.")
     out.append(" *")
     out.append(" * @see <a href=\"%s\">MarlinFirmare %s doc</a>" % (doc_url, c["code"]))
     out.append(" */")
@@ -250,32 +267,41 @@ def gen_class(c, name):
         out.append("    override fun encode(): GCommand {")
         out.append("        return %s" % head_call)
         out.append("    }")
-    out.append("")
-    out.append("    override fun head(): GParameterWord<*> {")
-    out.append("        return %s.head" % head_call)
-    out.append("    }")
-    out.append("")
-    out.append("    override fun decodeParams(params: List<GWord>): %s {" % name)
-    if fields:
-        out.append("        return %s(" % name)
-        for f in fields:
-            out.append("            %s = %s," % (f["prop"], KINDS[f["kind"]][3](f["letter"])))
-        out.append("        )")
-    else:
-        out.append("        return this")
-    out.append("    }")
     if not fields:
+        # No properties to compare, so the generated equality is "same command", which is what
+        # keeps `X() == X()` true now that decodeParams can no longer answer `this`.
         out.append("")
         out.append("    override fun equals(other: Any?): Boolean {")
         out.append("        return other is %s" % name)
         out.append("    }")
         out.append("")
         out.append("    override fun hashCode(): Int {")
-        out.append("        return %d" % (abs(hash(name)) % 1000000))
+        out.append("        return %d" % stable_hash(name))
         out.append("    }")
     out.append("")
     out.append("    override fun toString(): String {")
     out.append("        return javaClass.simpleName + \"(\" + GEncoder.encode(encode()) + ')'")
+    out.append("    }")
+    out.append("")
+    # The reading half is a property of the command *type*, not of one command, so it lives on the
+    # companion - the same split GRS/GRSDecoder already uses. `%s.decode(cmd)` is the call site.
+    out.append("    companion object : GRQDecoder<%s> {" % name)
+    out.append("")
+    out.append("        override fun head(): GParameterWord<*> {")
+    out.append("            return %s.head" % head_call)
+    out.append("        }")
+    out.append("")
+    out.append("        override fun decodeParams(params: List<GWord>): %s {" % name)
+    if fields:
+        out.append("            return %s(" % name)
+        for f in fields:
+            out.append("                %s = %s," % (f["prop"], KINDS[f["kind"]][3](f["letter"])))
+        out.append("            )")
+    else:
+        # Not `this`: the companion is not an instance of the command. A fresh one compares equal
+        # by the hand-rolled equals above.
+        out.append("            return %s()" % name)
+    out.append("        }")
     out.append("    }")
     out.append("}")
     return "\n".join(out), fields
@@ -293,7 +319,7 @@ def main():
     # ---- the command classes, three files, one per command letter ------------------------------
     # 14k lines in one file is more than an editor, a reviewer or a diff wants to open, and the
     # command letter is the one split that needs no judgement: G, M and T are disjoint sets and a
-    # command never moves between them. Only MCommands.kt below has to know they were split - the
+    # command never moves between them. Only MarlinRQ.kt below has to know they were split - the
     # classes are top-level in one package either way, so no call site changes.
     bodies = []
     all_fields = {}
@@ -301,6 +327,19 @@ def main():
         body, fields = gen_class(c, names[i])
         bodies.append(body)
         all_fields[i] = fields
+
+    # The parameterless classes carry a hand-rolled hashCode, one literal per class. Two of them
+    # sharing a literal is legal but makes two commands collide in every HashMap for no reason, so
+    # the generator refuses rather than emitting it.
+    hashes = {}
+    for i in range(len(commands)):
+        if all_fields[i]:
+            continue
+        h = stable_hash(names[i])
+        if h in hashes:
+            sys.exit("hashCode collision: %s and %s both hash to %d"
+                     % (hashes[h], names[i], h))
+        hashes[h] = names[i]
 
     for letter, filename in LETTER_FILES:
         group = [i for i, c in enumerate(commands) if c["letter"] == letter]
@@ -317,14 +356,15 @@ def main():
             "//",
             "// Marlin's `%s` commands, one class each, all implementing GRQ and all written the same"
             % letter,
-            "// way: `encode()` builds the command with the code/dsl builders, `head()` names it, and",
-            "// `decodeParams` reads one back. Every parameter is optional and absent by default, so a",
-            "// bare instance encodes to the bare command - `M105` and `M105 T0` are different commands",
-            "// and both have to be sayable.",
+            "// way: `encode()` builds the command with the code/dsl builders, and the companion object",
+            "// implements GRQDecoder, so `head()` names the command and `decodeParams` reads one back",
+            "// without an instance - `SomeCommand.decode(cmd)`. Every parameter is optional and absent",
+            "// by default, so a bare instance encodes to the bare command - `M105` and `M105 T0` are",
+            "// different commands and both have to be sayable.",
             "//",
             "// %d classes over %d distinct codes and %d parameter slots. `G`, `M` and `T` are in three"
             % (len(group), codes, slots),
-            "// files only because there are %d classes in all; MCommands.kt registers every one of them"
+            "// files only because there are %d classes in all; MarlinRQ.kt registers every one of them"
             % len(commands),
             "// and is the single place that sees all three. Generated rather than typed because a",
             "// transposed parameter letter is invisible in review and shows up when a printer answers",
@@ -345,16 +385,38 @@ def main():
         "/**",
         " * Every Marlin command this module knows how to write, and the lookup that reads one back.",
         " *",
-        " * The list holds one prototype per command - all parameters absent - which is what makes",
-        " * [decode] possible: `GRQ.decode` is an instance method, so it needs an instance to ask.",
+        " * Three views of the same %d commands - [all], [info] and [decoders] - all built in `G`"
+        % len(commands),
+        " * then `M` then `T` order and all **index-aligned**, so `all[i]`, `info[i]` and",
+        " * `decoders[i]` are the same command. Callers that need to pair a class with its metadata",
+        " * or its decoder may rely on that.",
         " */",
         "object MarlinCommands {",
         "",
-        "    /** One prototype per command, in `G` then `M` then `T` order. */",
+        "    /**",
+        "     * One bare instance per command - every parameter absent.",
+        "     *",
+        "     * This is the enumeration of what the module can *write*: a bare instance encodes to",
+        "     * exactly its code, which is the claim the generated cover checks class by class.",
+        "     * Reading is [decoders]' job; nothing here needs an instance to decode against any",
+        "     * more, because `head()` and `decodeParams()` moved to each class's companion.",
+        "     */",
         "    val all: List<GRQ<*>> = listOf(",
     ]
     for i, c in enumerate(commands):
         registry.append("        %s()," % names[i])
+    registry += [
+        "    )",
+        "",
+        "    /**",
+        "     * The reading half: every command's companion object, which is its [GRQDecoder].",
+        "     *",
+        "     * A bare class name here *is* the companion - `LinearMoveG0`, not `LinearMoveG0()`.",
+        "     */",
+        "    val decoders: List<GRQDecoder<*>> = listOf(",
+    ]
+    for i, c in enumerate(commands):
+        registry.append("        %s," % names[i])
     registry += [
         "    )",
         "",
@@ -384,7 +446,7 @@ def main():
         "    )",
         "",
         "    /**",
-        "     * Prototypes by command head, so [decode] is a map lookup and not %d comparisons."
+        "     * Decoders by command head, so [decode] is a map lookup and not %d comparisons."
         % len(commands),
         "     *",
         "     * **A head can be claimed by more than one class** and this keeps the first. Marlin",
@@ -394,8 +456,8 @@ def main():
         "     * its firmware was compiled, which no amount of reading the line can tell you. Build",
         "     * with the variant class you mean; [decode] is a best effort for the rest.",
         "     */",
-        "    private val byHead: Map<GParameterWord<*>, GRQ<*>> =",
-        "        all.groupBy { it.head() }.mapValues { (_, protos) -> protos.first() }",
+        "    private val byHead: Map<GParameterWord<*>, GRQDecoder<*>> =",
+        "        decoders.groupBy { it.head() }.mapValues { (_, claimants) -> claimants.first() }",
         "",
         "    /** The codes above, whose [decode] is therefore approximate. */",
         "    val ambiguousCodes: List<String> = listOf(%s)"
@@ -408,13 +470,13 @@ def main():
         "     * the lexeme is part of a number's identity in this model.",
         "     */",
         "    fun decode(cmd: GCommand): GRQ<*>? {",
-        "        val proto = byHead[cmd.head] ?: return null",
-        "        return proto.decodeParams(cmd.params)",
+        "        val decoder = byHead[cmd.head] ?: return null",
+        "        return decoder.decodeParams(cmd.params)",
         "    }",
         "}",
     ]
 
-    # The hand-written facade that lived in MCommands.kt before it was generated. Kept verbatim in
+    # The hand-written facade that lived in the registry file before it was generated. Kept in
     # spirit, with `index` now nullable so `m105()` can say a bare `M105`.
     facade = [
         "/**",
@@ -491,12 +553,13 @@ def main():
         "import org.qw3rtrun.p3d.g.code.core.token.GCommand",
         "import org.qw3rtrun.p3d.g.code.core.token.GParameterWord",
         "import org.qw3rtrun.p3d.g.code.dsl.GRQ",
+        "import org.qw3rtrun.p3d.g.code.dsl.GRQDecoder",
         "import java.math.BigDecimal",
         "",
     ]
     main_kt = ("\n".join(registry_header) + "\n" + "\n".join(registry) + "\n\n"
                + "\n".join(facade) + "\n")
-    main_path = os.path.join(MARLIN_MAIN, "MCommands.kt")
+    main_path = os.path.join(MARLIN_MAIN, REGISTRY_FILE)
     with open(main_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(main_kt)
 
@@ -529,10 +592,12 @@ def main():
         "    @Test",
         "    fun `every command has a prototype`() {",
         "        assertEquals(%d, MarlinCommands.all.size)" % len(commands),
+        "        assertEquals(MarlinCommands.all.size, MarlinCommands.decoders.size)",
+        "        assertEquals(MarlinCommands.all.size, MarlinCommands.info.size)",
         "        // Fewer heads than classes, by exactly the variants Marlin documents separately.",
         "        assertEquals(",
         "            %d," % len({c["code"] for c in commands}),
-        "            MarlinCommands.all.map { it.head() }.toSet().size,",
+        "            MarlinCommands.decoders.map { it.head() }.toSet().size,",
         "        )",
         "        assertEquals(%s, MarlinCommands.ambiguousCodes)"
         % ("listOf(" + ", ".join('"%s"' % a for a in ambiguous) + ")"),
@@ -549,10 +614,12 @@ def main():
         "",
         "    @Test",
         "    fun `a bare command round-trips through its own class`() {",
-        "        // Through the class and not the registry: six classes answer to `G29`, so the",
-        "        // registry can only return one of them and equality would fail for the other five.",
-        "        for (proto in MarlinCommands.all) {",
-        "            assertEquals(proto, proto.decodeParams(proto.encode().params)) {",
+        "        // Through the class's own decoder and not the registry: six classes answer to",
+        "        // `G29`, so the registry can only return one of them and equality would fail for",
+        "        // the other five. `all` and `decoders` are index-aligned, so zip pairs each",
+        "        // command with its own companion.",
+        "        for ((proto, decoder) in MarlinCommands.all.zip(MarlinCommands.decoders)) {",
+        "            assertEquals(proto, decoder.decodeParams(proto.encode().params)) {",
         "                \"round trip failed for \" + GEncoder.encode(proto.encode())",
         "            }",
         "        }",
@@ -587,8 +654,8 @@ def main():
             for f in fields:
                 t.append('            assertTrue(text.contains(" %s")) { "%s missing %s in $text" }'
                          % (f["letter"], c["code"], f["letter"]))
-            t.append("            assertEquals(it, it.decodeParams(it.encode().params)) "
-                     "{ \"round trip: $text\" }")
+            t.append("            assertEquals(it, %s.decodeParams(it.encode().params)) "
+                     "{ \"round trip: $text\" }" % name)
             t.append("        }")
         t.append("    }")
         t.append("")

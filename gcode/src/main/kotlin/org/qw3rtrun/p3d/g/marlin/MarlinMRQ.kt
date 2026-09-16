@@ -6,10 +6,11 @@
 // How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md
 //
 // Marlin's `M` commands, one class each, all implementing GRQ and all written the same
-// way: `encode()` builds the command with the code/dsl builders, `head()` names it, and
-// `decodeParams` reads one back. Every parameter is optional and absent by default, so a
-// bare instance encodes to the bare command - `M105` and `M105 T0` are different commands
-// and both have to be sayable.
+// way: `encode()` builds the command with the code/dsl builders, and the companion object
+// implements GRQDecoder, so `head()` names the command and `decodeParams` reads one back
+// without an instance - `SomeCommand.decode(cmd)`. Every parameter is optional and absent
+// by default, so a bare instance encodes to the bare command - `M105` and `M105 T0` are
+// different commands and both have to be sayable.
 //
 // 233 classes over 231 distinct codes and 768 parameter slots. `G`, `M` and `T` are in three
 // files only because there are 295 classes in all; MarlinRQ.kt registers every one of them
@@ -24,6 +25,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.GRQ
+import org.qw3rtrun.p3d.g.code.dsl.GRQDecoder
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.flag
 import org.qw3rtrun.p3d.g.code.dsl.text
@@ -54,19 +56,22 @@ data class UnconditionalStopM0(
         return M(0, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(0).head
-    }
-
-    override fun decodeParams(params: List<GWord>): UnconditionalStopM0 {
-        return UnconditionalStopM0(
-            sec = params.intOf('S'),
-            ms = params.intOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<UnconditionalStopM0> {
+
+        override fun head(): GParameterWord<*> {
+            return M(0).head
+        }
+
+        override fun decodeParams(params: List<GWord>): UnconditionalStopM0 {
+            return UnconditionalStopM0(
+                sec = params.intOf('S'),
+                ms = params.intOf('P'),
+            )
+        }
     }
 }
 
@@ -94,19 +99,22 @@ data class UnconditionalStopM1(
         return M(1, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(1).head
-    }
-
-    override fun decodeParams(params: List<GWord>): UnconditionalStopM1 {
-        return UnconditionalStopM1(
-            sec = params.intOf('S'),
-            ms = params.intOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<UnconditionalStopM1> {
+
+        override fun head(): GParameterWord<*> {
+            return M(1).head
+        }
+
+        override fun decodeParams(params: List<GWord>): UnconditionalStopM1 {
+            return UnconditionalStopM1(
+                sec = params.intOf('S'),
+                ms = params.intOf('P'),
+            )
+        }
     }
 }
 
@@ -134,20 +142,23 @@ data class SpindleCWLaserOn(
         return M(3, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(3).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SpindleCWLaserOn {
-        return SpindleCWLaserOn(
-            power = params.intOf('S'),
-            o = params.intOf('O'),
-            mode = params.boolOf('I'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SpindleCWLaserOn> {
+
+        override fun head(): GParameterWord<*> {
+            return M(3).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SpindleCWLaserOn {
+            return SpindleCWLaserOn(
+                power = params.intOf('S'),
+                o = params.intOf('O'),
+                mode = params.boolOf('I'),
+            )
+        }
     }
 }
 
@@ -175,20 +186,23 @@ data class SpindleCCWLaserOn(
         return M(4, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(4).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SpindleCCWLaserOn {
-        return SpindleCCWLaserOn(
-            power = params.intOf('S'),
-            o = params.intOf('O'),
-            mode = params.boolOf('I'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SpindleCCWLaserOn> {
+
+        override fun head(): GParameterWord<*> {
+            return M(4).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SpindleCCWLaserOn {
+            return SpindleCCWLaserOn(
+                power = params.intOf('S'),
+                o = params.intOf('O'),
+                mode = params.boolOf('I'),
+            )
+        }
     }
 }
 
@@ -205,24 +219,27 @@ class SpindleLaserOff : GRQ<SpindleLaserOff> {
         return M(5)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(5).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SpindleLaserOff {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is SpindleLaserOff
     }
 
     override fun hashCode(): Int {
-        return 779338
+        return 153953
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SpindleLaserOff> {
+
+        override fun head(): GParameterWord<*> {
+            return M(5).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SpindleLaserOff {
+            return SpindleLaserOff()
+        }
     }
 }
 
@@ -239,24 +256,27 @@ class CoolantControlsM7 : GRQ<CoolantControlsM7> {
         return M(7)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(7).head
-    }
-
-    override fun decodeParams(params: List<GWord>): CoolantControlsM7 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is CoolantControlsM7
     }
 
     override fun hashCode(): Int {
-        return 921999
+        return 537586
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<CoolantControlsM7> {
+
+        override fun head(): GParameterWord<*> {
+            return M(7).head
+        }
+
+        override fun decodeParams(params: List<GWord>): CoolantControlsM7 {
+            return CoolantControlsM7()
+        }
     }
 }
 
@@ -273,24 +293,27 @@ class CoolantControlsM8 : GRQ<CoolantControlsM8> {
         return M(8)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(8).head
-    }
-
-    override fun decodeParams(params: List<GWord>): CoolantControlsM8 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is CoolantControlsM8
     }
 
     override fun hashCode(): Int {
-        return 633028
+        return 136419
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<CoolantControlsM8> {
+
+        override fun head(): GParameterWord<*> {
+            return M(8).head
+        }
+
+        override fun decodeParams(params: List<GWord>): CoolantControlsM8 {
+            return CoolantControlsM8()
+        }
     }
 }
 
@@ -307,24 +330,27 @@ class CoolantControlsM9 : GRQ<CoolantControlsM9> {
         return M(9)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(9).head
-    }
-
-    override fun decodeParams(params: List<GWord>): CoolantControlsM9 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is CoolantControlsM9
     }
 
     override fun hashCode(): Int {
-        return 658549
+        return 354229
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<CoolantControlsM9> {
+
+        override fun head(): GParameterWord<*> {
+            return M(9).head
+        }
+
+        override fun decodeParams(params: List<GWord>): CoolantControlsM9 {
+            return CoolantControlsM9()
+        }
     }
 }
 
@@ -341,24 +367,27 @@ class VacuumBlowerControlM10 : GRQ<VacuumBlowerControlM10> {
         return M(10)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(10).head
-    }
-
-    override fun decodeParams(params: List<GWord>): VacuumBlowerControlM10 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is VacuumBlowerControlM10
     }
 
     override fun hashCode(): Int {
-        return 383045
+        return 408713
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<VacuumBlowerControlM10> {
+
+        override fun head(): GParameterWord<*> {
+            return M(10).head
+        }
+
+        override fun decodeParams(params: List<GWord>): VacuumBlowerControlM10 {
+            return VacuumBlowerControlM10()
+        }
     }
 }
 
@@ -375,24 +404,27 @@ class VacuumBlowerControlM11 : GRQ<VacuumBlowerControlM11> {
         return M(11)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(11).head
-    }
-
-    override fun decodeParams(params: List<GWord>): VacuumBlowerControlM11 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is VacuumBlowerControlM11
     }
 
     override fun hashCode(): Int {
-        return 279362
+        return 352607
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<VacuumBlowerControlM11> {
+
+        override fun head(): GParameterWord<*> {
+            return M(11).head
+        }
+
+        override fun decodeParams(params: List<GWord>): VacuumBlowerControlM11 {
+            return VacuumBlowerControlM11()
+        }
     }
 }
 
@@ -412,24 +444,27 @@ class ExpectedPrinterCheck : GRQ<ExpectedPrinterCheck> {
         return M(16)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(16).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ExpectedPrinterCheck {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is ExpectedPrinterCheck
     }
 
     override fun hashCode(): Int {
-        return 186383
+        return 427281
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ExpectedPrinterCheck> {
+
+        override fun head(): GParameterWord<*> {
+            return M(16).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ExpectedPrinterCheck {
+            return ExpectedPrinterCheck()
+        }
     }
 }
 
@@ -478,27 +513,30 @@ data class EnableSteppers(
         return M(17, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(17).head
-    }
-
-    override fun decodeParams(params: List<GWord>): EnableSteppers {
-        return EnableSteppers(
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            a = params.hasWord('A'),
-            b = params.hasWord('B'),
-            c = params.hasWord('C'),
-            u = params.hasWord('U'),
-            v = params.hasWord('V'),
-            w = params.hasWord('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<EnableSteppers> {
+
+        override fun head(): GParameterWord<*> {
+            return M(17).head
+        }
+
+        override fun decodeParams(params: List<GWord>): EnableSteppers {
+            return EnableSteppers(
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                a = params.hasWord('A'),
+                b = params.hasWord('B'),
+                c = params.hasWord('C'),
+                u = params.hasWord('U'),
+                v = params.hasWord('V'),
+                w = params.hasWord('W'),
+            )
+        }
     }
 }
 
@@ -550,28 +588,31 @@ data class DisableSteppersM18(
         return M(18, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(18).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DisableSteppersM18 {
-        return DisableSteppersM18(
-            seconds = params.intOf('S'),
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            a = params.hasWord('A'),
-            b = params.hasWord('B'),
-            c = params.hasWord('C'),
-            u = params.hasWord('U'),
-            v = params.hasWord('V'),
-            w = params.hasWord('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DisableSteppersM18> {
+
+        override fun head(): GParameterWord<*> {
+            return M(18).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DisableSteppersM18 {
+            return DisableSteppersM18(
+                seconds = params.intOf('S'),
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                a = params.hasWord('A'),
+                b = params.hasWord('B'),
+                c = params.hasWord('C'),
+                u = params.hasWord('U'),
+                v = params.hasWord('V'),
+                w = params.hasWord('W'),
+            )
+        }
     }
 }
 
@@ -599,20 +640,23 @@ data class ListSDCard(
         return M(20, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(20).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ListSDCard {
-        return ListSDCard(
-            f = params.hasWord('F'),
-            l = params.hasWord('L'),
-            t = params.hasWord('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ListSDCard> {
+
+        override fun head(): GParameterWord<*> {
+            return M(20).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ListSDCard {
+            return ListSDCard(
+                f = params.hasWord('F'),
+                l = params.hasWord('L'),
+                t = params.hasWord('T'),
+            )
+        }
     }
 }
 
@@ -629,24 +673,27 @@ class InitSDCard : GRQ<InitSDCard> {
         return M(21)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(21).head
-    }
-
-    override fun decodeParams(params: List<GWord>): InitSDCard {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is InitSDCard
     }
 
     override fun hashCode(): Int {
-        return 557582
+        return 404835
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<InitSDCard> {
+
+        override fun head(): GParameterWord<*> {
+            return M(21).head
+        }
+
+        override fun decodeParams(params: List<GWord>): InitSDCard {
+            return InitSDCard()
+        }
     }
 }
 
@@ -663,24 +710,27 @@ class ReleaseSDCard : GRQ<ReleaseSDCard> {
         return M(22)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(22).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ReleaseSDCard {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is ReleaseSDCard
     }
 
     override fun hashCode(): Int {
-        return 388565
+        return 459804
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ReleaseSDCard> {
+
+        override fun head(): GParameterWord<*> {
+            return M(22).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ReleaseSDCard {
+            return ReleaseSDCard()
+        }
     }
 }
 
@@ -700,24 +750,27 @@ class SelectSDFile : GRQ<SelectSDFile> {
         return M(23)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(23).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectSDFile {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is SelectSDFile
     }
 
     override fun hashCode(): Int {
-        return 482933
+        return 631038
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectSDFile> {
+
+        override fun head(): GParameterWord<*> {
+            return M(23).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectSDFile {
+            return SelectSDFile()
+        }
     }
 }
 
@@ -742,19 +795,22 @@ data class StartOrResumeSDPrint(
         return M(24, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(24).head
-    }
-
-    override fun decodeParams(params: List<GWord>): StartOrResumeSDPrint {
-        return StartOrResumeSDPrint(
-            pos = params.longOf('S'),
-            time = params.longOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<StartOrResumeSDPrint> {
+
+        override fun head(): GParameterWord<*> {
+            return M(24).head
+        }
+
+        override fun decodeParams(params: List<GWord>): StartOrResumeSDPrint {
+            return StartOrResumeSDPrint(
+                pos = params.longOf('S'),
+                time = params.longOf('T'),
+            )
+        }
     }
 }
 
@@ -771,24 +827,27 @@ class PauseSDPrint : GRQ<PauseSDPrint> {
         return M(25)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(25).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PauseSDPrint {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is PauseSDPrint
     }
 
     override fun hashCode(): Int {
-        return 867817
+        return 726375
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PauseSDPrint> {
+
+        override fun head(): GParameterWord<*> {
+            return M(25).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PauseSDPrint {
+            return PauseSDPrint()
+        }
     }
 }
 
@@ -810,18 +869,21 @@ data class SetSDPosition(
         return M(26, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(26).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetSDPosition {
-        return SetSDPosition(
-            pos = params.longOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetSDPosition> {
+
+        override fun head(): GParameterWord<*> {
+            return M(26).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetSDPosition {
+            return SetSDPosition(
+                pos = params.longOf('S'),
+            )
+        }
     }
 }
 
@@ -846,19 +908,22 @@ data class ReportSDPrintStatus(
         return M(27, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(27).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ReportSDPrintStatus {
-        return ReportSDPrintStatus(
-            seconds = params.intOf('S'),
-            c = params.hasWord('C'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ReportSDPrintStatus> {
+
+        override fun head(): GParameterWord<*> {
+            return M(27).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ReportSDPrintStatus {
+            return ReportSDPrintStatus(
+                seconds = params.intOf('S'),
+                c = params.hasWord('C'),
+            )
+        }
     }
 }
 
@@ -878,24 +943,27 @@ class StartSDWrite : GRQ<StartSDWrite> {
         return M(28)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(28).head
-    }
-
-    override fun decodeParams(params: List<GWord>): StartSDWrite {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is StartSDWrite
     }
 
     override fun hashCode(): Int {
-        return 387996
+        return 25475
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<StartSDWrite> {
+
+        override fun head(): GParameterWord<*> {
+            return M(28).head
+        }
+
+        override fun decodeParams(params: List<GWord>): StartSDWrite {
+            return StartSDWrite()
+        }
     }
 }
 
@@ -912,24 +980,27 @@ class StopSDWrite : GRQ<StopSDWrite> {
         return M(29)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(29).head
-    }
-
-    override fun decodeParams(params: List<GWord>): StopSDWrite {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is StopSDWrite
     }
 
     override fun hashCode(): Int {
-        return 10912
+        return 449368
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<StopSDWrite> {
+
+        override fun head(): GParameterWord<*> {
+            return M(29).head
+        }
+
+        override fun decodeParams(params: List<GWord>): StopSDWrite {
+            return StopSDWrite()
+        }
     }
 }
 
@@ -949,24 +1020,27 @@ class DeleteSDFile : GRQ<DeleteSDFile> {
         return M(30)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(30).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DeleteSDFile {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is DeleteSDFile
     }
 
     override fun hashCode(): Int {
-        return 716931
+        return 823493
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DeleteSDFile> {
+
+        override fun head(): GParameterWord<*> {
+            return M(30).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DeleteSDFile {
+            return DeleteSDFile()
+        }
     }
 }
 
@@ -983,24 +1057,27 @@ class ReportPrintTime : GRQ<ReportPrintTime> {
         return M(31)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(31).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ReportPrintTime {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is ReportPrintTime
     }
 
     override fun hashCode(): Int {
-        return 351319
+        return 867522
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ReportPrintTime> {
+
+        override fun head(): GParameterWord<*> {
+            return M(31).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ReportPrintTime {
+            return ReportPrintTime()
+        }
     }
 }
 
@@ -1025,19 +1102,22 @@ data class SelectAndStart(
         return M(32, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(32).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectAndStart {
-        return SelectAndStart(
-            p = params.intOf('P'),
-            filepos = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectAndStart> {
+
+        override fun head(): GParameterWord<*> {
+            return M(32).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectAndStart {
+            return SelectAndStart(
+                p = params.intOf('P'),
+                filepos = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -1057,24 +1137,27 @@ class GetLongPath : GRQ<GetLongPath> {
         return M(33)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(33).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GetLongPath {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GetLongPath
     }
 
     override fun hashCode(): Int {
-        return 284803
+        return 612633
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GetLongPath> {
+
+        override fun head(): GParameterWord<*> {
+            return M(33).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GetLongPath {
+            return GetLongPath()
+        }
     }
 }
 
@@ -1099,19 +1182,22 @@ data class SDCardSorting(
         return M(34, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(34).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SDCardSorting {
-        return SDCardSorting(
-            s = params.decimalOf('S'),
-            f = params.intOf('F'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SDCardSorting> {
+
+        override fun head(): GParameterWord<*> {
+            return M(34).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SDCardSorting {
+            return SDCardSorting(
+                s = params.decimalOf('S'),
+                f = params.intOf('F'),
+            )
+        }
     }
 }
 
@@ -1121,7 +1207,7 @@ data class SDCardSorting(
  * Set Pin State (control).
  *
  * Marlin documents `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M42.html">MarlinFirmare M42 doc</a>
  */
@@ -1145,21 +1231,24 @@ data class SetPinState(
         return M(42, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(42).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetPinState {
-        return SetPinState(
-            i = params.boolOf('I'),
-            t = params.intOf('T'),
-            pin = params.intOf('P'),
-            state = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetPinState> {
+
+        override fun head(): GParameterWord<*> {
+            return M(42).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetPinState {
+            return SetPinState(
+                i = params.boolOf('I'),
+                t = params.intOf('T'),
+                pin = params.intOf('P'),
+                state = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -1196,23 +1285,26 @@ data class PinsDebugging(
         return M(43, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(43).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PinsDebugging {
-        return PinsDebugging(
-            pin = params.intOf('P'),
-            w = params.hasWord('W'),
-            e = params.boolOf('E'),
-            t = params.hasWord('T'),
-            s = params.hasWord('S'),
-            i = params.hasWord('I'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PinsDebugging> {
+
+        override fun head(): GParameterWord<*> {
+            return M(43).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PinsDebugging {
+            return PinsDebugging(
+                pin = params.intOf('P'),
+                w = params.hasWord('W'),
+                e = params.boolOf('E'),
+                t = params.hasWord('T'),
+                s = params.hasWord('S'),
+                i = params.hasWord('I'),
+            )
+        }
     }
 }
 
@@ -1255,25 +1347,28 @@ data class ProbeRepeatabilityTest(
         return M(48, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(48).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ProbeRepeatabilityTest {
-        return ProbeRepeatabilityTest(
-            c = params.boolOf('C'),
-            engage = params.boolOf('E'),
-            legs = params.intOf('L'),
-            count = params.intOf('P'),
-            s = params.intOf('S'),
-            level = params.intOf('V'),
-            pos = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ProbeRepeatabilityTest> {
+
+        override fun head(): GParameterWord<*> {
+            return M(48).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ProbeRepeatabilityTest {
+            return ProbeRepeatabilityTest(
+                c = params.boolOf('C'),
+                engage = params.boolOf('E'),
+                legs = params.intOf('L'),
+                count = params.intOf('P'),
+                s = params.intOf('S'),
+                level = params.intOf('V'),
+                pos = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+            )
+        }
     }
 }
 
@@ -1301,20 +1396,23 @@ data class SetPrintProgress(
         return M(73, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(73).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetPrintProgress {
-        return SetPrintProgress(
-            minutes = params.intOf('C'),
-            percent = params.intOf('P'),
-            r = params.intOf('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetPrintProgress> {
+
+        override fun head(): GParameterWord<*> {
+            return M(73).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetPrintProgress {
+            return SetPrintProgress(
+                minutes = params.intOf('C'),
+                percent = params.intOf('P'),
+                r = params.intOf('R'),
+            )
+        }
     }
 }
 
@@ -1334,24 +1432,27 @@ class StartPrintJobTimer : GRQ<StartPrintJobTimer> {
         return M(75)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(75).head
-    }
-
-    override fun decodeParams(params: List<GWord>): StartPrintJobTimer {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is StartPrintJobTimer
     }
 
     override fun hashCode(): Int {
-        return 916767
+        return 630488
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<StartPrintJobTimer> {
+
+        override fun head(): GParameterWord<*> {
+            return M(75).head
+        }
+
+        override fun decodeParams(params: List<GWord>): StartPrintJobTimer {
+            return StartPrintJobTimer()
+        }
     }
 }
 
@@ -1368,24 +1469,27 @@ class PausePrintJobTimer : GRQ<PausePrintJobTimer> {
         return M(76)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(76).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PausePrintJobTimer {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is PausePrintJobTimer
     }
 
     override fun hashCode(): Int {
-        return 496818
+        return 14112
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PausePrintJobTimer> {
+
+        override fun head(): GParameterWord<*> {
+            return M(76).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PausePrintJobTimer {
+            return PausePrintJobTimer()
+        }
     }
 }
 
@@ -1402,24 +1506,27 @@ class StopPrintJobTimer : GRQ<StopPrintJobTimer> {
         return M(77)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(77).head
-    }
-
-    override fun decodeParams(params: List<GWord>): StopPrintJobTimer {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is StopPrintJobTimer
     }
 
     override fun hashCode(): Int {
-        return 287197
+        return 748819
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<StopPrintJobTimer> {
+
+        override fun head(): GParameterWord<*> {
+            return M(77).head
+        }
+
+        override fun decodeParams(params: List<GWord>): StopPrintJobTimer {
+            return StopPrintJobTimer()
+        }
     }
 }
 
@@ -1436,24 +1543,27 @@ class PrintJobStats : GRQ<PrintJobStats> {
         return M(78)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(78).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PrintJobStats {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is PrintJobStats
     }
 
     override fun hashCode(): Int {
-        return 471037
+        return 636404
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PrintJobStats> {
+
+        override fun head(): GParameterWord<*> {
+            return M(78).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PrintJobStats {
+            return PrintJobStats()
+        }
     }
 }
 
@@ -1475,18 +1585,21 @@ data class PowerOn(
         return M(80, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(80).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PowerOn {
-        return PowerOn(
-            s = params.hasWord('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PowerOn> {
+
+        override fun head(): GParameterWord<*> {
+            return M(80).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PowerOn {
+            return PowerOn(
+                s = params.hasWord('S'),
+            )
+        }
     }
 }
 
@@ -1503,24 +1616,27 @@ class PowerOff : GRQ<PowerOff> {
         return M(81)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(81).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PowerOff {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is PowerOff
     }
 
     override fun hashCode(): Int {
-        return 403534
+        return 322433
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PowerOff> {
+
+        override fun head(): GParameterWord<*> {
+            return M(81).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PowerOff {
+            return PowerOff()
+        }
     }
 }
 
@@ -1537,24 +1653,27 @@ class EAbsolute : GRQ<EAbsolute> {
         return M(82)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(82).head
-    }
-
-    override fun decodeParams(params: List<GWord>): EAbsolute {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is EAbsolute
     }
 
     override fun hashCode(): Int {
-        return 840971
+        return 846223
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<EAbsolute> {
+
+        override fun head(): GParameterWord<*> {
+            return M(82).head
+        }
+
+        override fun decodeParams(params: List<GWord>): EAbsolute {
+            return EAbsolute()
+        }
     }
 }
 
@@ -1571,24 +1690,27 @@ class ERelative : GRQ<ERelative> {
         return M(83)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(83).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ERelative {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is ERelative
     }
 
     override fun hashCode(): Int {
-        return 646732
+        return 735552
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ERelative> {
+
+        override fun head(): GParameterWord<*> {
+            return M(83).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ERelative {
+            return ERelative()
+        }
     }
 }
 
@@ -1640,28 +1762,31 @@ data class DisableSteppersM84(
         return M(84, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(84).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DisableSteppersM84 {
-        return DisableSteppersM84(
-            seconds = params.intOf('S'),
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            a = params.hasWord('A'),
-            b = params.hasWord('B'),
-            c = params.hasWord('C'),
-            u = params.hasWord('U'),
-            v = params.hasWord('V'),
-            w = params.hasWord('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DisableSteppersM84> {
+
+        override fun head(): GParameterWord<*> {
+            return M(84).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DisableSteppersM84 {
+            return DisableSteppersM84(
+                seconds = params.intOf('S'),
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                a = params.hasWord('A'),
+                b = params.hasWord('B'),
+                c = params.hasWord('C'),
+                u = params.hasWord('U'),
+                v = params.hasWord('V'),
+                w = params.hasWord('W'),
+            )
+        }
     }
 }
 
@@ -1671,7 +1796,7 @@ data class DisableSteppersM84(
  * Inactivity Shutdown (control).
  *
  * Marlin documents `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M85.html">MarlinFirmare M85 doc</a>
  */
@@ -1686,18 +1811,21 @@ data class InactivityShutdown(
         return M(85, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(85).head
-    }
-
-    override fun decodeParams(params: List<GWord>): InactivityShutdown {
-        return InactivityShutdown(
-            seconds = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<InactivityShutdown> {
+
+        override fun head(): GParameterWord<*> {
+            return M(85).head
+        }
+
+        override fun decodeParams(params: List<GWord>): InactivityShutdown {
+            return InactivityShutdown(
+                seconds = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -1728,21 +1856,24 @@ data class HotendIdleTimeout(
         return M(86, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(86).head
-    }
-
-    override fun decodeParams(params: List<GWord>): HotendIdleTimeout {
-        return HotendIdleTimeout(
-            seconds = params.intOf('S'),
-            temp = params.intOf('T'),
-            e = params.intOf('E'),
-            b = params.intOf('B'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<HotendIdleTimeout> {
+
+        override fun head(): GParameterWord<*> {
+            return M(86).head
+        }
+
+        override fun decodeParams(params: List<GWord>): HotendIdleTimeout {
+            return HotendIdleTimeout(
+                seconds = params.intOf('S'),
+                temp = params.intOf('T'),
+                e = params.intOf('E'),
+                b = params.intOf('B'),
+            )
+        }
     }
 }
 
@@ -1759,24 +1890,27 @@ class DisableHotendIdleTimeout : GRQ<DisableHotendIdleTimeout> {
         return M(87)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(87).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DisableHotendIdleTimeout {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is DisableHotendIdleTimeout
     }
 
     override fun hashCode(): Int {
-        return 774953
+        return 390437
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DisableHotendIdleTimeout> {
+
+        override fun head(): GParameterWord<*> {
+            return M(87).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DisableHotendIdleTimeout {
+            return DisableHotendIdleTimeout()
+        }
     }
 }
 
@@ -1828,28 +1962,31 @@ data class SetAxisStepsPerUnit(
         return M(92, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(92).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetAxisStepsPerUnit {
-        return SetAxisStepsPerUnit(
-            steps = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            a = params.decimalOf('A'),
-            b = params.decimalOf('B'),
-            c = params.decimalOf('C'),
-            u = params.decimalOf('U'),
-            v = params.decimalOf('V'),
-            w = params.decimalOf('W'),
-            e = params.decimalOf('E'),
-            index = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetAxisStepsPerUnit> {
+
+        override fun head(): GParameterWord<*> {
+            return M(92).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetAxisStepsPerUnit {
+            return SetAxisStepsPerUnit(
+                steps = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                a = params.decimalOf('A'),
+                b = params.decimalOf('B'),
+                c = params.decimalOf('C'),
+                u = params.decimalOf('U'),
+                v = params.decimalOf('V'),
+                w = params.decimalOf('W'),
+                e = params.decimalOf('E'),
+                index = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -1880,21 +2017,24 @@ data class FreeMemory(
         return M(100, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(100).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FreeMemory {
-        return FreeMemory(
-            d = params.hasWord('D'),
-            f = params.hasWord('F'),
-            i = params.hasWord('I'),
-            n = params.intOf('C'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FreeMemory> {
+
+        override fun head(): GParameterWord<*> {
+            return M(100).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FreeMemory {
+            return FreeMemory(
+                d = params.hasWord('D'),
+                f = params.hasWord('F'),
+                i = params.hasWord('I'),
+                n = params.intOf('C'),
+            )
+        }
     }
 }
 
@@ -1916,18 +2056,21 @@ data class ConfigureBedDistanceSensor(
         return M(102, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(102).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ConfigureBedDistanceSensor {
-        return ConfigureBedDistanceSensor(
-            s = params.decimalOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ConfigureBedDistanceSensor> {
+
+        override fun head(): GParameterWord<*> {
+            return M(102).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ConfigureBedDistanceSensor {
+            return ConfigureBedDistanceSensor(
+                s = params.decimalOf('S'),
+            )
+        }
     }
 }
 
@@ -1961,22 +2104,25 @@ data class SetHotendTemperature(
         return M(104, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(104).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetHotendTemperature {
-        return SetHotendTemperature(
-            index = params.intOf('I'),
-            temp = params.decimalOf('S'),
-            factor = params.decimalOf('F'),
-            b = params.decimalOf('B'),
-            t = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetHotendTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(104).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetHotendTemperature {
+            return SetHotendTemperature(
+                index = params.intOf('I'),
+                temp = params.decimalOf('S'),
+                factor = params.decimalOf('F'),
+                b = params.decimalOf('B'),
+                t = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -2001,19 +2147,22 @@ data class ReportHotendTemperature(
         return M(105, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(105).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ReportHotendTemperature {
-        return ReportHotendTemperature(
-            r = params.hasWord('R'),
-            index = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ReportHotendTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(105).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ReportHotendTemperature {
+            return ReportHotendTemperature(
+                r = params.hasWord('R'),
+                index = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -2044,21 +2193,24 @@ data class SetFanSpeed(
         return M(106, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(106).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetFanSpeed {
-        return SetFanSpeed(
-            index = params.intOf('I'),
-            speed = params.intOf('S'),
-            p = params.intOf('P'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetFanSpeed> {
+
+        override fun head(): GParameterWord<*> {
+            return M(106).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetFanSpeed {
+            return SetFanSpeed(
+                index = params.intOf('I'),
+                speed = params.intOf('S'),
+                p = params.intOf('P'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -2080,18 +2232,21 @@ data class FanOff(
         return M(107, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(107).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FanOff {
-        return FanOff(
-            index = params.intOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FanOff> {
+
+        override fun head(): GParameterWord<*> {
+            return M(107).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FanOff {
+            return FanOff(
+                index = params.intOf('P'),
+            )
+        }
     }
 }
 
@@ -2108,24 +2263,27 @@ class BreakAndContinue : GRQ<BreakAndContinue> {
         return M(108)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(108).head
-    }
-
-    override fun decodeParams(params: List<GWord>): BreakAndContinue {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is BreakAndContinue
     }
 
     override fun hashCode(): Int {
-        return 61502
+        return 788940
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<BreakAndContinue> {
+
+        override fun head(): GParameterWord<*> {
+            return M(108).head
+        }
+
+        override fun decodeParams(params: List<GWord>): BreakAndContinue {
+            return BreakAndContinue()
+        }
     }
 }
 
@@ -2162,23 +2320,26 @@ data class WaitForHotendTemperature(
         return M(109, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(109).head
-    }
-
-    override fun decodeParams(params: List<GWord>): WaitForHotendTemperature {
-        return WaitForHotendTemperature(
-            index = params.intOf('I'),
-            temp = params.decimalOf('S'),
-            r = params.decimalOf('R'),
-            factor = params.decimalOf('F'),
-            b = params.decimalOf('B'),
-            t = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<WaitForHotendTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(109).head
+        }
+
+        override fun decodeParams(params: List<GWord>): WaitForHotendTemperature {
+            return WaitForHotendTemperature(
+                index = params.intOf('I'),
+                temp = params.decimalOf('S'),
+                r = params.decimalOf('R'),
+                factor = params.decimalOf('F'),
+                b = params.decimalOf('B'),
+                t = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -2188,7 +2349,7 @@ data class WaitForHotendTemperature(
  * Set / Get Line Number (hosts).
  *
  * Marlin documents `N` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M110.html">MarlinFirmare M110 doc</a>
  */
@@ -2203,18 +2364,21 @@ data class SetGetLineNumber(
         return M(110, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(110).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetGetLineNumber {
-        return SetGetLineNumber(
-            line = params.intOf('N'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetGetLineNumber> {
+
+        override fun head(): GParameterWord<*> {
+            return M(110).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetGetLineNumber {
+            return SetGetLineNumber(
+                line = params.intOf('N'),
+            )
+        }
     }
 }
 
@@ -2236,18 +2400,21 @@ data class DebugLevel(
         return M(111, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(111).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DebugLevel {
-        return DebugLevel(
-            flags = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DebugLevel> {
+
+        override fun head(): GParameterWord<*> {
+            return M(111).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DebugLevel {
+            return DebugLevel(
+                flags = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -2264,24 +2431,27 @@ class FullShutdown : GRQ<FullShutdown> {
         return M(112)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(112).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FullShutdown {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is FullShutdown
     }
 
     override fun hashCode(): Int {
-        return 581834
+        return 216893
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FullShutdown> {
+
+        override fun head(): GParameterWord<*> {
+            return M(112).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FullShutdown {
+            return FullShutdown()
+        }
     }
 }
 
@@ -2303,18 +2473,21 @@ data class HostKeepalive(
         return M(113, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(113).head
-    }
-
-    override fun decodeParams(params: List<GWord>): HostKeepalive {
-        return HostKeepalive(
-            seconds = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<HostKeepalive> {
+
+        override fun head(): GParameterWord<*> {
+            return M(113).head
+        }
+
+        override fun decodeParams(params: List<GWord>): HostKeepalive {
+            return HostKeepalive(
+                seconds = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -2342,20 +2515,23 @@ data class GetCurrentPosition(
         return M(114, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(114).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GetCurrentPosition {
-        return GetCurrentPosition(
-            d = params.hasWord('D'),
-            e = params.hasWord('E'),
-            r = params.hasWord('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GetCurrentPosition> {
+
+        override fun head(): GParameterWord<*> {
+            return M(114).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GetCurrentPosition {
+            return GetCurrentPosition(
+                d = params.hasWord('D'),
+                e = params.hasWord('E'),
+                r = params.hasWord('R'),
+            )
+        }
     }
 }
 
@@ -2372,24 +2548,27 @@ class FirmwareInfo : GRQ<FirmwareInfo> {
         return M(115)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(115).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FirmwareInfo {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is FirmwareInfo
     }
 
     override fun hashCode(): Int {
-        return 946656
+        return 811662
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FirmwareInfo> {
+
+        override fun head(): GParameterWord<*> {
+            return M(115).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FirmwareInfo {
+            return FirmwareInfo()
+        }
     }
 }
 
@@ -2409,24 +2588,27 @@ class SetLCDMessage : GRQ<SetLCDMessage> {
         return M(117)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(117).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetLCDMessage {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is SetLCDMessage
     }
 
     override fun hashCode(): Int {
-        return 534357
+        return 164658
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetLCDMessage> {
+
+        override fun head(): GParameterWord<*> {
+            return M(117).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetLCDMessage {
+            return SetLCDMessage()
+        }
     }
 }
 
@@ -2451,18 +2633,21 @@ data class SerialPrint(
         return M(118, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(118).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SerialPrint {
-        return SerialPrint(
-            p = params.intOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SerialPrint> {
+
+        override fun head(): GParameterWord<*> {
+            return M(118).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SerialPrint {
+            return SerialPrint(
+                p = params.intOf('P'),
+            )
+        }
     }
 }
 
@@ -2479,24 +2664,27 @@ class EndstopStates : GRQ<EndstopStates> {
         return M(119)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(119).head
-    }
-
-    override fun decodeParams(params: List<GWord>): EndstopStates {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is EndstopStates
     }
 
     override fun hashCode(): Int {
-        return 603653
+        return 294704
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<EndstopStates> {
+
+        override fun head(): GParameterWord<*> {
+            return M(119).head
+        }
+
+        override fun decodeParams(params: List<GWord>): EndstopStates {
+            return EndstopStates()
+        }
     }
 }
 
@@ -2513,24 +2701,27 @@ class EnableEndstops : GRQ<EnableEndstops> {
         return M(120)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(120).head
-    }
-
-    override fun decodeParams(params: List<GWord>): EnableEndstops {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is EnableEndstops
     }
 
     override fun hashCode(): Int {
-        return 120795
+        return 995130
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<EnableEndstops> {
+
+        override fun head(): GParameterWord<*> {
+            return M(120).head
+        }
+
+        override fun decodeParams(params: List<GWord>): EnableEndstops {
+            return EnableEndstops()
+        }
     }
 }
 
@@ -2547,24 +2738,27 @@ class DisableEndstops : GRQ<DisableEndstops> {
         return M(121)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(121).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DisableEndstops {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is DisableEndstops
     }
 
     override fun hashCode(): Int {
-        return 459236
+        return 441877
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DisableEndstops> {
+
+        override fun head(): GParameterWord<*> {
+            return M(121).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DisableEndstops {
+            return DisableEndstops()
+        }
     }
 }
 
@@ -2607,25 +2801,28 @@ data class TMCDebugging(
         return M(122, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(122).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TMCDebugging {
-        return TMCDebugging(
-            i = params.hasWord('I'),
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            v = params.hasWord('V'),
-            s = params.boolOf('S'),
-            ms = params.intOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TMCDebugging> {
+
+        override fun head(): GParameterWord<*> {
+            return M(122).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TMCDebugging {
+            return TMCDebugging(
+                i = params.hasWord('I'),
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                v = params.hasWord('V'),
+                s = params.boolOf('S'),
+                ms = params.intOf('P'),
+            )
+        }
     }
 }
 
@@ -2642,24 +2839,27 @@ class FanTachometers : GRQ<FanTachometers> {
         return M(123)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(123).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FanTachometers {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is FanTachometers
     }
 
     override fun hashCode(): Int {
-        return 711255
+        return 36749
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FanTachometers> {
+
+        override fun head(): GParameterWord<*> {
+            return M(123).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FanTachometers {
+            return FanTachometers()
+        }
     }
 }
 
@@ -2693,22 +2893,25 @@ data class ParkHead(
         return M(125, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(125).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ParkHead {
-        return ParkHead(
-            linear = params.decimalOf('L'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            p = params.boolOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ParkHead> {
+
+        override fun head(): GParameterWord<*> {
+            return M(125).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ParkHead {
+            return ParkHead(
+                linear = params.decimalOf('L'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                p = params.boolOf('P'),
+            )
+        }
     }
 }
 
@@ -2730,18 +2933,21 @@ data class Baricuda1Open(
         return M(126, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(126).head
-    }
-
-    override fun decodeParams(params: List<GWord>): Baricuda1Open {
-        return Baricuda1Open(
-            pressure = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<Baricuda1Open> {
+
+        override fun head(): GParameterWord<*> {
+            return M(126).head
+        }
+
+        override fun decodeParams(params: List<GWord>): Baricuda1Open {
+            return Baricuda1Open(
+                pressure = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -2758,24 +2964,27 @@ class Baricuda1Close : GRQ<Baricuda1Close> {
         return M(127)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(127).head
-    }
-
-    override fun decodeParams(params: List<GWord>): Baricuda1Close {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is Baricuda1Close
     }
 
     override fun hashCode(): Int {
-        return 897406
+        return 537594
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<Baricuda1Close> {
+
+        override fun head(): GParameterWord<*> {
+            return M(127).head
+        }
+
+        override fun decodeParams(params: List<GWord>): Baricuda1Close {
+            return Baricuda1Close()
+        }
     }
 }
 
@@ -2797,18 +3006,21 @@ data class Baricuda2Open(
         return M(128, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(128).head
-    }
-
-    override fun decodeParams(params: List<GWord>): Baricuda2Open {
-        return Baricuda2Open(
-            pressure = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<Baricuda2Open> {
+
+        override fun head(): GParameterWord<*> {
+            return M(128).head
+        }
+
+        override fun decodeParams(params: List<GWord>): Baricuda2Open {
+            return Baricuda2Open(
+                pressure = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -2825,24 +3037,27 @@ class Baricuda2Close : GRQ<Baricuda2Close> {
         return M(129)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(129).head
-    }
-
-    override fun decodeParams(params: List<GWord>): Baricuda2Close {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is Baricuda2Close
     }
 
     override fun hashCode(): Int {
-        return 894203
+        return 509396
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<Baricuda2Close> {
+
+        override fun head(): GParameterWord<*> {
+            return M(129).head
+        }
+
+        override fun decodeParams(params: List<GWord>): Baricuda2Close {
+            return Baricuda2Close()
+        }
     }
 }
 
@@ -2867,19 +3082,22 @@ data class SetBedTemperature(
         return M(140, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(140).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetBedTemperature {
-        return SetBedTemperature(
-            index = params.intOf('I'),
-            temp = params.decimalOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetBedTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(140).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetBedTemperature {
+            return SetBedTemperature(
+                index = params.intOf('I'),
+                temp = params.decimalOf('S'),
+            )
+        }
     }
 }
 
@@ -2901,18 +3119,21 @@ data class SetChamberTemperature(
         return M(141, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(141).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetChamberTemperature {
-        return SetChamberTemperature(
-            temp = params.decimalOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetChamberTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(141).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetChamberTemperature {
+            return SetChamberTemperature(
+                temp = params.decimalOf('S'),
+            )
+        }
     }
 }
 
@@ -2934,18 +3155,21 @@ data class SetLaserCoolerTemperature(
         return M(143, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(143).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetLaserCoolerTemperature {
-        return SetLaserCoolerTemperature(
-            temp = params.decimalOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetLaserCoolerTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(143).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetLaserCoolerTemperature {
+            return SetLaserCoolerTemperature(
+                temp = params.decimalOf('S'),
+            )
+        }
     }
 }
 
@@ -2976,21 +3200,24 @@ data class SetMaterialPreset(
         return M(145, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(145).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetMaterialPreset {
-        return SetMaterialPreset(
-            index = params.intOf('S'),
-            temp = params.intOf('H'),
-            b = params.intOf('B'),
-            speed = params.intOf('F'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetMaterialPreset> {
+
+        override fun head(): GParameterWord<*> {
+            return M(145).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetMaterialPreset {
+            return SetMaterialPreset(
+                index = params.intOf('S'),
+                temp = params.intOf('H'),
+                b = params.intOf('B'),
+                speed = params.intOf('F'),
+            )
+        }
     }
 }
 
@@ -3018,20 +3245,23 @@ data class SetTemperatureUnits(
         return M(149, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(149).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetTemperatureUnits {
-        return SetTemperatureUnits(
-            c = params.hasWord('C'),
-            f = params.hasWord('F'),
-            k = params.hasWord('K'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetTemperatureUnits> {
+
+        override fun head(): GParameterWord<*> {
+            return M(149).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetTemperatureUnits {
+            return SetTemperatureUnits(
+                c = params.hasWord('C'),
+                f = params.hasWord('F'),
+                k = params.hasWord('K'),
+            )
+        }
     }
 }
 
@@ -3074,25 +3304,28 @@ data class SetRGBWColor(
         return M(150, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(150).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetRGBWColor {
-        return SetRGBWColor(
-            intensity = params.intOf('R'),
-            u = params.intOf('U'),
-            b = params.intOf('B'),
-            w = params.intOf('W'),
-            p = params.intOf('P'),
-            pixel = params.intOf('I'),
-            strip = params.intOf('S'),
-            k = params.hasWord('K'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetRGBWColor> {
+
+        override fun head(): GParameterWord<*> {
+            return M(150).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetRGBWColor {
+            return SetRGBWColor(
+                intensity = params.intOf('R'),
+                u = params.intOf('U'),
+                b = params.intOf('B'),
+                w = params.intOf('W'),
+                p = params.intOf('P'),
+                pixel = params.intOf('I'),
+                strip = params.intOf('S'),
+                k = params.hasWord('K'),
+            )
+        }
     }
 }
 
@@ -3114,18 +3347,21 @@ data class PositionAutoReport(
         return M(154, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(154).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PositionAutoReport {
-        return PositionAutoReport(
-            seconds = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PositionAutoReport> {
+
+        override fun head(): GParameterWord<*> {
+            return M(154).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PositionAutoReport {
+            return PositionAutoReport(
+                seconds = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -3147,18 +3383,21 @@ data class TemperatureAutoReport(
         return M(155, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(155).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TemperatureAutoReport {
-        return TemperatureAutoReport(
-            seconds = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TemperatureAutoReport> {
+
+        override fun head(): GParameterWord<*> {
+            return M(155).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TemperatureAutoReport {
+            return TemperatureAutoReport(
+                seconds = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -3183,19 +3422,22 @@ data class SetMixFactor(
         return M(163, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(163).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetMixFactor {
-        return SetMixFactor(
-            index = params.intOf('S'),
-            factor = params.decimalOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetMixFactor> {
+
+        override fun head(): GParameterWord<*> {
+            return M(163).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetMixFactor {
+            return SetMixFactor(
+                index = params.intOf('S'),
+                factor = params.decimalOf('P'),
+            )
+        }
     }
 }
 
@@ -3205,7 +3447,7 @@ data class SetMixFactor(
  * Save Mix (mixing).
  *
  * Marlin documents `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M164.html">MarlinFirmare M164 doc</a>
  */
@@ -3220,18 +3462,21 @@ data class SaveMix(
         return M(164, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(164).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SaveMix {
-        return SaveMix(
-            index = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SaveMix> {
+
+        override fun head(): GParameterWord<*> {
+            return M(164).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SaveMix {
+            return SaveMix(
+                index = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -3268,23 +3513,26 @@ data class SetMix(
         return M(165, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(165).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetMix {
-        return SetMix(
-            factor = params.decimalOf('A'),
-            b = params.decimalOf('B'),
-            c = params.decimalOf('C'),
-            d = params.decimalOf('D'),
-            h = params.decimalOf('H'),
-            i = params.decimalOf('I'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetMix> {
+
+        override fun head(): GParameterWord<*> {
+            return M(165).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetMix {
+            return SetMix(
+                factor = params.decimalOf('A'),
+                b = params.decimalOf('B'),
+                c = params.decimalOf('C'),
+                d = params.decimalOf('D'),
+                h = params.decimalOf('H'),
+                i = params.decimalOf('I'),
+            )
+        }
     }
 }
 
@@ -3294,7 +3542,7 @@ data class SetMix(
  * Gradient Mix (mixing).
  *
  * Marlin documents `A`, `Z`, `I`, `J` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M166.html">MarlinFirmare M166 doc</a>
  */
@@ -3324,23 +3572,26 @@ data class GradientMix(
         return M(166, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(166).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GradientMix {
-        return GradientMix(
-            linear = params.decimalOf('A'),
-            z = params.decimalOf('Z'),
-            index = params.intOf('I'),
-            j = params.intOf('J'),
-            enable = params.boolOf('S'),
-            t = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GradientMix> {
+
+        override fun head(): GParameterWord<*> {
+            return M(166).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GradientMix {
+            return GradientMix(
+                linear = params.decimalOf('A'),
+                z = params.decimalOf('Z'),
+                index = params.intOf('I'),
+                j = params.intOf('J'),
+                enable = params.boolOf('S'),
+                t = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -3371,21 +3622,24 @@ data class WaitForBedTemperature(
         return M(190, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(190).head
-    }
-
-    override fun decodeParams(params: List<GWord>): WaitForBedTemperature {
-        return WaitForBedTemperature(
-            index = params.intOf('I'),
-            temp = params.decimalOf('S'),
-            r = params.decimalOf('R'),
-            seconds = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<WaitForBedTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(190).head
+        }
+
+        override fun decodeParams(params: List<GWord>): WaitForBedTemperature {
+            return WaitForBedTemperature(
+                index = params.intOf('I'),
+                temp = params.decimalOf('S'),
+                r = params.decimalOf('R'),
+                seconds = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -3410,19 +3664,22 @@ data class WaitForChamberTemperature(
         return M(191, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(191).head
-    }
-
-    override fun decodeParams(params: List<GWord>): WaitForChamberTemperature {
-        return WaitForChamberTemperature(
-            temp = params.decimalOf('S'),
-            r = params.decimalOf('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<WaitForChamberTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(191).head
+        }
+
+        override fun decodeParams(params: List<GWord>): WaitForChamberTemperature {
+            return WaitForChamberTemperature(
+                temp = params.decimalOf('S'),
+                r = params.decimalOf('R'),
+            )
+        }
     }
 }
 
@@ -3447,19 +3704,22 @@ data class WaitForProbeTemperature(
         return M(192, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(192).head
-    }
-
-    override fun decodeParams(params: List<GWord>): WaitForProbeTemperature {
-        return WaitForProbeTemperature(
-            temp = params.intOf('R'),
-            s = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<WaitForProbeTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(192).head
+        }
+
+        override fun decodeParams(params: List<GWord>): WaitForProbeTemperature {
+            return WaitForProbeTemperature(
+                temp = params.intOf('R'),
+                s = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -3481,18 +3741,21 @@ data class WaitForLaserCoolerTemperature(
         return M(193, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(193).head
-    }
-
-    override fun decodeParams(params: List<GWord>): WaitForLaserCoolerTemperature {
-        return WaitForLaserCoolerTemperature(
-            temp = params.decimalOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<WaitForLaserCoolerTemperature> {
+
+        override fun head(): GParameterWord<*> {
+            return M(193).head
+        }
+
+        override fun decodeParams(params: List<GWord>): WaitForLaserCoolerTemperature {
+            return WaitForLaserCoolerTemperature(
+                temp = params.decimalOf('S'),
+            )
+        }
     }
 }
 
@@ -3523,21 +3786,24 @@ data class VolumetricExtrusionDiameter(
         return M(200, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(200).head
-    }
-
-    override fun decodeParams(params: List<GWord>): VolumetricExtrusionDiameter {
-        return VolumetricExtrusionDiameter(
-            diameter = params.decimalOf('D'),
-            volume = params.decimalOf('L'),
-            s = params.intOf('S'),
-            index = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<VolumetricExtrusionDiameter> {
+
+        override fun head(): GParameterWord<*> {
+            return M(200).head
+        }
+
+        override fun decodeParams(params: List<GWord>): VolumetricExtrusionDiameter {
+            return VolumetricExtrusionDiameter(
+                diameter = params.decimalOf('D'),
+                volume = params.decimalOf('L'),
+                s = params.intOf('S'),
+                index = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -3577,24 +3843,27 @@ data class PrintTravelMoveLimits(
         return M(201, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(201).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PrintTravelMoveLimits {
-        return PrintTravelMoveLimits(
-            accel = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            e = params.decimalOf('E'),
-            index = params.intOf('T'),
-            f = params.intOf('F'),
-            percent = params.decimalOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PrintTravelMoveLimits> {
+
+        override fun head(): GParameterWord<*> {
+            return M(201).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PrintTravelMoveLimits {
+            return PrintTravelMoveLimits(
+                accel = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                e = params.decimalOf('E'),
+                index = params.intOf('T'),
+                f = params.intOf('F'),
+                percent = params.decimalOf('S'),
+            )
+        }
     }
 }
 
@@ -3628,22 +3897,25 @@ data class SetMaxFeedrate(
         return M(203, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(203).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetMaxFeedrate {
-        return SetMaxFeedrate(
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            e = params.decimalOf('E'),
-            index = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetMaxFeedrate> {
+
+        override fun head(): GParameterWord<*> {
+            return M(203).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetMaxFeedrate {
+            return SetMaxFeedrate(
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                e = params.decimalOf('E'),
+                index = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -3674,21 +3946,24 @@ data class SetStartingAcceleration(
         return M(204, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(204).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetStartingAcceleration {
-        return SetStartingAcceleration(
-            accel = params.decimalOf('P'),
-            r = params.decimalOf('R'),
-            t = params.decimalOf('T'),
-            s = params.decimalOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetStartingAcceleration> {
+
+        override fun head(): GParameterWord<*> {
+            return M(204).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetStartingAcceleration {
+            return SetStartingAcceleration(
+                accel = params.decimalOf('P'),
+                r = params.decimalOf('R'),
+                t = params.decimalOf('T'),
+                s = params.decimalOf('S'),
+            )
+        }
     }
 }
 
@@ -3731,25 +4006,28 @@ data class SetAdvancedSettings(
         return M(205, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(205).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetAdvancedSettings {
-        return SetAdvancedSettings(
-            jerk = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            e = params.decimalOf('E'),
-            b = params.intOf('B'),
-            s = params.decimalOf('S'),
-            t = params.decimalOf('T'),
-            deviation = params.decimalOf('J'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetAdvancedSettings> {
+
+        override fun head(): GParameterWord<*> {
+            return M(205).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetAdvancedSettings {
+            return SetAdvancedSettings(
+                jerk = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                e = params.decimalOf('E'),
+                b = params.intOf('B'),
+                s = params.decimalOf('S'),
+                t = params.decimalOf('T'),
+                deviation = params.decimalOf('J'),
+            )
+        }
     }
 }
 
@@ -3801,28 +4079,31 @@ data class SetHomeOffsets(
         return M(206, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(206).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetHomeOffsets {
-        return SetHomeOffsets(
-            offset = params.decimalOf('P'),
-            t = params.decimalOf('T'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            a = params.decimalOf('A'),
-            b = params.decimalOf('B'),
-            c = params.decimalOf('C'),
-            u = params.decimalOf('U'),
-            v = params.decimalOf('V'),
-            w = params.decimalOf('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetHomeOffsets> {
+
+        override fun head(): GParameterWord<*> {
+            return M(206).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetHomeOffsets {
+            return SetHomeOffsets(
+                offset = params.decimalOf('P'),
+                t = params.decimalOf('T'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                a = params.decimalOf('A'),
+                b = params.decimalOf('B'),
+                c = params.decimalOf('C'),
+                u = params.decimalOf('U'),
+                v = params.decimalOf('V'),
+                w = params.decimalOf('W'),
+            )
+        }
     }
 }
 
@@ -3853,21 +4134,24 @@ data class FirmwareRetractionSettings(
         return M(207, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(207).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FirmwareRetractionSettings {
-        return FirmwareRetractionSettings(
-            length = params.decimalOf('S'),
-            w = params.decimalOf('W'),
-            feedrate = params.decimalOf('F'),
-            z = params.decimalOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FirmwareRetractionSettings> {
+
+        override fun head(): GParameterWord<*> {
+            return M(207).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FirmwareRetractionSettings {
+            return FirmwareRetractionSettings(
+                length = params.decimalOf('S'),
+                w = params.decimalOf('W'),
+                feedrate = params.decimalOf('F'),
+                z = params.decimalOf('Z'),
+            )
+        }
     }
 }
 
@@ -3898,21 +4182,24 @@ data class FirmwareRecoverSettings(
         return M(208, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(208).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FirmwareRecoverSettings {
-        return FirmwareRecoverSettings(
-            length = params.decimalOf('S'),
-            w = params.decimalOf('W'),
-            feedrate = params.decimalOf('F'),
-            r = params.decimalOf('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FirmwareRecoverSettings> {
+
+        override fun head(): GParameterWord<*> {
+            return M(208).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FirmwareRecoverSettings {
+            return FirmwareRecoverSettings(
+                length = params.decimalOf('S'),
+                w = params.decimalOf('W'),
+                feedrate = params.decimalOf('F'),
+                r = params.decimalOf('R'),
+            )
+        }
     }
 }
 
@@ -3922,7 +4209,7 @@ data class FirmwareRecoverSettings(
  * Set Auto Retract (motion).
  *
  * Marlin documents `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M209.html">MarlinFirmare M209 doc</a>
  */
@@ -3937,18 +4224,21 @@ data class SetAutoRetract(
         return M(209, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(209).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetAutoRetract {
-        return SetAutoRetract(
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetAutoRetract> {
+
+        override fun head(): GParameterWord<*> {
+            return M(209).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetAutoRetract {
+            return SetAutoRetract(
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -3994,26 +4284,29 @@ data class HomingFeedrate(
         return M(210, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(210).head
-    }
-
-    override fun decodeParams(params: List<GWord>): HomingFeedrate {
-        return HomingFeedrate(
-            feedrate = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            a = params.decimalOf('A'),
-            b = params.decimalOf('B'),
-            c = params.decimalOf('C'),
-            u = params.decimalOf('U'),
-            v = params.decimalOf('V'),
-            w = params.decimalOf('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<HomingFeedrate> {
+
+        override fun head(): GParameterWord<*> {
+            return M(210).head
+        }
+
+        override fun decodeParams(params: List<GWord>): HomingFeedrate {
+            return HomingFeedrate(
+                feedrate = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                a = params.decimalOf('A'),
+                b = params.decimalOf('B'),
+                c = params.decimalOf('C'),
+                u = params.decimalOf('U'),
+                v = params.decimalOf('V'),
+                w = params.decimalOf('W'),
+            )
+        }
     }
 }
 
@@ -4035,18 +4328,21 @@ data class SoftwareEndstops(
         return M(211, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(211).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SoftwareEndstops {
-        return SoftwareEndstops(
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SoftwareEndstops> {
+
+        override fun head(): GParameterWord<*> {
+            return M(211).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SoftwareEndstops {
+            return SoftwareEndstops(
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -4131,39 +4427,42 @@ data class FilamentSwapParameters(
         return M(217, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(217).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FilamentSwapParameters {
-        return FilamentSwapParameters(
-            q = params.hasWord('Q'),
-            linear = params.decimalOf('S'),
-            b = params.decimalOf('B'),
-            e = params.decimalOf('E'),
-            feedrate = params.intOf('P'),
-            r = params.intOf('R'),
-            u = params.intOf('U'),
-            f = params.intOf('F'),
-            g = params.intOf('G'),
-            a = params.intOf('A'),
-            l = params.intOf('L'),
-            w = params.intOf('W'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            v = params.intOf('V'),
-            z = params.intOf('Z'),
-            i = params.decimalOf('I'),
-            j = params.decimalOf('J'),
-            k = params.decimalOf('K'),
-            c = params.decimalOf('C'),
-            h = params.decimalOf('H'),
-            o = params.decimalOf('O'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FilamentSwapParameters> {
+
+        override fun head(): GParameterWord<*> {
+            return M(217).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FilamentSwapParameters {
+            return FilamentSwapParameters(
+                q = params.hasWord('Q'),
+                linear = params.decimalOf('S'),
+                b = params.decimalOf('B'),
+                e = params.decimalOf('E'),
+                feedrate = params.intOf('P'),
+                r = params.intOf('R'),
+                u = params.intOf('U'),
+                f = params.intOf('F'),
+                g = params.intOf('G'),
+                a = params.intOf('A'),
+                l = params.intOf('L'),
+                w = params.intOf('W'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                v = params.intOf('V'),
+                z = params.intOf('Z'),
+                i = params.decimalOf('I'),
+                j = params.decimalOf('J'),
+                k = params.decimalOf('K'),
+                c = params.decimalOf('C'),
+                h = params.decimalOf('H'),
+                o = params.decimalOf('O'),
+            )
+        }
     }
 }
 
@@ -4194,21 +4493,24 @@ data class SetHotendOffset(
         return M(218, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(218).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetHotendOffset {
-        return SetHotendOffset(
-            index = params.intOf('T'),
-            offset = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetHotendOffset> {
+
+        override fun head(): GParameterWord<*> {
+            return M(218).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetHotendOffset {
+            return SetHotendOffset(
+                index = params.intOf('T'),
+                offset = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+            )
+        }
     }
 }
 
@@ -4236,20 +4538,23 @@ data class SetFeedratePercentage(
         return M(220, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(220).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetFeedratePercentage {
-        return SetFeedratePercentage(
-            percent = params.intOf('S'),
-            b = params.hasWord('B'),
-            r = params.hasWord('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetFeedratePercentage> {
+
+        override fun head(): GParameterWord<*> {
+            return M(220).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetFeedratePercentage {
+            return SetFeedratePercentage(
+                percent = params.intOf('S'),
+                b = params.hasWord('B'),
+                r = params.hasWord('R'),
+            )
+        }
     }
 }
 
@@ -4259,7 +4564,7 @@ data class SetFeedratePercentage(
  * Set Flow Percentage (motion).
  *
  * Marlin documents `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M221.html">MarlinFirmare M221 doc</a>
  */
@@ -4277,19 +4582,22 @@ data class SetFlowPercentage(
         return M(221, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(221).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetFlowPercentage {
-        return SetFlowPercentage(
-            percent = params.intOf('S'),
-            index = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetFlowPercentage> {
+
+        override fun head(): GParameterWord<*> {
+            return M(221).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetFlowPercentage {
+            return SetFlowPercentage(
+                percent = params.intOf('S'),
+                index = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -4299,7 +4607,7 @@ data class SetFlowPercentage(
  * Wait for Pin State (control).
  *
  * Marlin documents `P` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M226.html">MarlinFirmare M226 doc</a>
  */
@@ -4317,19 +4625,22 @@ data class WaitForPinState(
         return M(226, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(226).head
-    }
-
-    override fun decodeParams(params: List<GWord>): WaitForPinState {
-        return WaitForPinState(
-            pin = params.intOf('P'),
-            state = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<WaitForPinState> {
+
+        override fun head(): GParameterWord<*> {
+            return M(226).head
+        }
+
+        override fun decodeParams(params: List<GWord>): WaitForPinState {
+            return WaitForPinState(
+                pin = params.intOf('P'),
+                state = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -4384,29 +4695,32 @@ data class TriggerCamera(
         return M(240, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(240).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TriggerCamera {
-        return TriggerCamera(
-            offset = params.decimalOf('A'),
-            b = params.decimalOf('B'),
-            ms = params.intOf('D'),
-            feedrate = params.decimalOf('F'),
-            pos = params.decimalOf('I'),
-            j = params.decimalOf('J'),
-            p = params.intOf('P'),
-            length = params.decimalOf('R'),
-            s = params.decimalOf('S'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TriggerCamera> {
+
+        override fun head(): GParameterWord<*> {
+            return M(240).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TriggerCamera {
+            return TriggerCamera(
+                offset = params.decimalOf('A'),
+                b = params.decimalOf('B'),
+                ms = params.intOf('D'),
+                feedrate = params.decimalOf('F'),
+                pos = params.decimalOf('I'),
+                j = params.decimalOf('J'),
+                p = params.intOf('P'),
+                length = params.decimalOf('R'),
+                s = params.decimalOf('S'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+            )
+        }
     }
 }
 
@@ -4428,18 +4742,21 @@ data class LCDContrast(
         return M(250, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(250).head
-    }
-
-    override fun decodeParams(params: List<GWord>): LCDContrast {
-        return LCDContrast(
-            contrast = params.intOf('C'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<LCDContrast> {
+
+        override fun head(): GParameterWord<*> {
+            return M(250).head
+        }
+
+        override fun decodeParams(params: List<GWord>): LCDContrast {
+            return LCDContrast(
+                contrast = params.intOf('C'),
+            )
+        }
     }
 }
 
@@ -4461,18 +4778,21 @@ data class LCDSleepBacklightTimeout(
         return M(255, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(255).head
-    }
-
-    override fun decodeParams(params: List<GWord>): LCDSleepBacklightTimeout {
-        return LCDSleepBacklightTimeout(
-            minutes = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<LCDSleepBacklightTimeout> {
+
+        override fun head(): GParameterWord<*> {
+            return M(255).head
+        }
+
+        override fun decodeParams(params: List<GWord>): LCDSleepBacklightTimeout {
+            return LCDSleepBacklightTimeout(
+                minutes = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -4494,18 +4814,21 @@ data class LCDBrightness(
         return M(256, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(256).head
-    }
-
-    override fun decodeParams(params: List<GWord>): LCDBrightness {
-        return LCDBrightness(
-            brightness = params.intOf('B'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<LCDBrightness> {
+
+        override fun head(): GParameterWord<*> {
+            return M(256).head
+        }
+
+        override fun decodeParams(params: List<GWord>): LCDBrightness {
+            return LCDBrightness(
+                brightness = params.intOf('B'),
+            )
+        }
     }
 }
 
@@ -4536,21 +4859,24 @@ data class I2CSend(
         return M(260, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(260).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CSend {
-        return I2CSend(
-            addr = params.intOf('A'),
-            byte = params.intOf('B'),
-            r = params.hasWord('R'),
-            s = params.hasWord('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CSend> {
+
+        override fun head(): GParameterWord<*> {
+            return M(260).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CSend {
+            return I2CSend(
+                addr = params.intOf('A'),
+                byte = params.intOf('B'),
+                r = params.hasWord('R'),
+                s = params.hasWord('S'),
+            )
+        }
     }
 }
 
@@ -4560,7 +4886,7 @@ data class I2CSend(
  * I2C Request (i2c).
  *
  * Marlin documents `A`, `B` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M261.html">MarlinFirmare M261 doc</a>
  */
@@ -4581,20 +4907,23 @@ data class I2CRequest(
         return M(261, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(261).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CRequest {
-        return I2CRequest(
-            addr = params.intOf('A'),
-            count = params.intOf('B'),
-            s = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CRequest> {
+
+        override fun head(): GParameterWord<*> {
+            return M(261).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CRequest {
+            return I2CRequest(
+                addr = params.intOf('A'),
+                count = params.intOf('B'),
+                s = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -4611,24 +4940,27 @@ class ScanI2CBus : GRQ<ScanI2CBus> {
         return M(265)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(265).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ScanI2CBus {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is ScanI2CBus
     }
 
     override fun hashCode(): Int {
-        return 619050
+        return 27275
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ScanI2CBus> {
+
+        override fun head(): GParameterWord<*> {
+            return M(265).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ScanI2CBus {
+            return ScanI2CBus()
+        }
     }
 }
 
@@ -4638,7 +4970,7 @@ class ScanI2CBus : GRQ<ScanI2CBus> {
  * Servo Position (servos).
  *
  * Marlin documents `P`, `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M280.html">MarlinFirmare M280 doc</a>
  */
@@ -4656,19 +4988,22 @@ data class ServoPosition(
         return M(280, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(280).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ServoPosition {
-        return ServoPosition(
-            index = params.intOf('P'),
-            pos = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ServoPosition> {
+
+        override fun head(): GParameterWord<*> {
+            return M(280).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ServoPosition {
+            return ServoPosition(
+                index = params.intOf('P'),
+                pos = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -4678,7 +5013,7 @@ data class ServoPosition(
  * Edit Servo Angles (servos).
  *
  * Marlin documents `P` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M281.html">MarlinFirmare M281 doc</a>
  */
@@ -4699,20 +5034,23 @@ data class EditServoAngles(
         return M(281, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(281).head
-    }
-
-    override fun decodeParams(params: List<GWord>): EditServoAngles {
-        return EditServoAngles(
-            index = params.intOf('P'),
-            degrees = params.intOf('L'),
-            u = params.intOf('U'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<EditServoAngles> {
+
+        override fun head(): GParameterWord<*> {
+            return M(281).head
+        }
+
+        override fun decodeParams(params: List<GWord>): EditServoAngles {
+            return EditServoAngles(
+                index = params.intOf('P'),
+                degrees = params.intOf('L'),
+                u = params.intOf('U'),
+            )
+        }
     }
 }
 
@@ -4722,7 +5060,7 @@ data class EditServoAngles(
  * Detach Servo (servos).
  *
  * Marlin documents `P` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M282.html">MarlinFirmare M282 doc</a>
  */
@@ -4737,18 +5075,21 @@ data class DetachServo(
         return M(282, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(282).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DetachServo {
-        return DetachServo(
-            index = params.intOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DetachServo> {
+
+        override fun head(): GParameterWord<*> {
+            return M(282).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DetachServo {
+            return DetachServo(
+                index = params.intOf('P'),
+            )
+        }
     }
 }
 
@@ -4782,22 +5123,25 @@ data class Babystep(
         return M(290, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(290).head
-    }
-
-    override fun decodeParams(params: List<GWord>): Babystep {
-        return Babystep(
-            pos = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            s = params.decimalOf('S'),
-            p = params.boolOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<Babystep> {
+
+        override fun head(): GParameterWord<*> {
+            return M(290).head
+        }
+
+        override fun decodeParams(params: List<GWord>): Babystep {
+            return Babystep(
+                pos = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                s = params.decimalOf('S'),
+                p = params.boolOf('P'),
+            )
+        }
     }
 }
 
@@ -4822,19 +5166,22 @@ data class PlayTone(
         return M(300, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(300).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PlayTone {
-        return PlayTone(
-            ms = params.intOf('P'),
-            s = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PlayTone> {
+
+        override fun head(): GParameterWord<*> {
+            return M(300).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PlayTone {
+            return PlayTone(
+                ms = params.intOf('P'),
+                s = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -4874,24 +5221,27 @@ data class SetHotendPID(
         return M(301, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(301).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetHotendPID {
-        return SetHotendPID(
-            index = params.intOf('E'),
-            value = params.decimalOf('P'),
-            i = params.decimalOf('I'),
-            d = params.decimalOf('D'),
-            c = params.decimalOf('C'),
-            l = params.decimalOf('L'),
-            f = params.decimalOf('F'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetHotendPID> {
+
+        override fun head(): GParameterWord<*> {
+            return M(301).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetHotendPID {
+            return SetHotendPID(
+                index = params.intOf('E'),
+                value = params.decimalOf('P'),
+                i = params.decimalOf('I'),
+                d = params.decimalOf('D'),
+                c = params.decimalOf('C'),
+                l = params.decimalOf('L'),
+                f = params.decimalOf('F'),
+            )
+        }
     }
 }
 
@@ -4916,19 +5266,22 @@ data class ColdExtrude(
         return M(302, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(302).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ColdExtrude {
-        return ColdExtrude(
-            temp = params.decimalOf('S'),
-            p = params.boolOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ColdExtrude> {
+
+        override fun head(): GParameterWord<*> {
+            return M(302).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ColdExtrude {
+            return ColdExtrude(
+                temp = params.decimalOf('S'),
+                p = params.boolOf('P'),
+            )
+        }
     }
 }
 
@@ -4962,22 +5315,25 @@ data class PIDAutotune(
         return M(303, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(303).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PIDAutotune {
-        return PIDAutotune(
-            index = params.intOf('E'),
-            count = params.intOf('C'),
-            temp = params.decimalOf('S'),
-            u = params.boolOf('U'),
-            d = params.hasWord('D'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PIDAutotune> {
+
+        override fun head(): GParameterWord<*> {
+            return M(303).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PIDAutotune {
+            return PIDAutotune(
+                index = params.intOf('E'),
+                count = params.intOf('C'),
+                temp = params.decimalOf('S'),
+                u = params.boolOf('U'),
+                d = params.hasWord('D'),
+            )
+        }
     }
 }
 
@@ -5005,20 +5361,23 @@ data class SetBedPID(
         return M(304, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(304).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetBedPID {
-        return SetBedPID(
-            value = params.decimalOf('P'),
-            i = params.decimalOf('I'),
-            d = params.decimalOf('D'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetBedPID> {
+
+        override fun head(): GParameterWord<*> {
+            return M(304).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetBedPID {
+            return SetBedPID(
+                value = params.decimalOf('P'),
+                i = params.decimalOf('I'),
+                d = params.decimalOf('D'),
+            )
+        }
     }
 }
 
@@ -5052,22 +5411,25 @@ data class UserThermistorParameters(
         return M(305, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(305).head
-    }
-
-    override fun decodeParams(params: List<GWord>): UserThermistorParameters {
-        return UserThermistorParameters(
-            index = params.intOf('P'),
-            ohm = params.intOf('R'),
-            ohms = params.intOf('T'),
-            beta = params.intOf('B'),
-            coeff = params.decimalOf('C'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<UserThermistorParameters> {
+
+        override fun head(): GParameterWord<*> {
+            return M(305).head
+        }
+
+        override fun decodeParams(params: List<GWord>): UserThermistorParameters {
+            return UserThermistorParameters(
+                index = params.intOf('P'),
+                ohm = params.intOf('R'),
+                ohms = params.intOf('T'),
+                beta = params.intOf('B'),
+                coeff = params.decimalOf('C'),
+            )
+        }
     }
 }
 
@@ -5113,26 +5475,29 @@ data class ModelPredictiveTempControl(
         return M(306, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(306).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ModelPredictiveTempControl {
-        return ModelPredictiveTempControl(
-            value = params.decimalOf('A'),
-            c = params.decimalOf('C'),
-            index = params.intOf('E'),
-            f = params.decimalOf('F'),
-            h = params.decimalOf('H'),
-            p = params.decimalOf('P'),
-            r = params.decimalOf('R'),
-            s = params.intOf('S'),
-            t = params.hasWord('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ModelPredictiveTempControl> {
+
+        override fun head(): GParameterWord<*> {
+            return M(306).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ModelPredictiveTempControl {
+            return ModelPredictiveTempControl(
+                value = params.decimalOf('A'),
+                c = params.decimalOf('C'),
+                index = params.intOf('E'),
+                f = params.decimalOf('F'),
+                h = params.decimalOf('H'),
+                p = params.decimalOf('P'),
+                r = params.decimalOf('R'),
+                s = params.intOf('S'),
+                t = params.hasWord('T'),
+            )
+        }
     }
 }
 
@@ -5160,20 +5525,23 @@ data class SetChamberPID(
         return M(309, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(309).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetChamberPID {
-        return SetChamberPID(
-            value = params.decimalOf('P'),
-            i = params.decimalOf('I'),
-            d = params.decimalOf('D'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetChamberPID> {
+
+        override fun head(): GParameterWord<*> {
+            return M(309).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetChamberPID {
+            return SetChamberPID(
+                value = params.decimalOf('P'),
+                i = params.decimalOf('I'),
+                d = params.decimalOf('D'),
+            )
+        }
     }
 }
 
@@ -5225,28 +5593,31 @@ data class SetMicroStepping(
         return M(350, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(350).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetMicroStepping {
-        return SetMicroStepping(
-            b = params.intOf('B'),
-            s = params.intOf('S'),
-            x = params.intOf('X'),
-            y = params.intOf('Y'),
-            z = params.intOf('Z'),
-            a = params.intOf('A'),
-            c = params.intOf('C'),
-            u = params.intOf('U'),
-            v = params.intOf('V'),
-            w = params.intOf('W'),
-            e = params.intOf('E'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetMicroStepping> {
+
+        override fun head(): GParameterWord<*> {
+            return M(350).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetMicroStepping {
+            return SetMicroStepping(
+                b = params.intOf('B'),
+                s = params.intOf('S'),
+                x = params.intOf('X'),
+                y = params.intOf('Y'),
+                z = params.intOf('Z'),
+                a = params.intOf('A'),
+                c = params.intOf('C'),
+                u = params.intOf('U'),
+                v = params.intOf('V'),
+                w = params.intOf('W'),
+                e = params.intOf('E'),
+            )
+        }
     }
 }
 
@@ -5256,7 +5627,7 @@ data class SetMicroStepping(
  * Set Microstep Pins (control).
  *
  * Marlin documents `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M351.html">MarlinFirmare M351 doc</a>
  */
@@ -5286,23 +5657,26 @@ data class SetMicrostepPins(
         return M(351, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(351).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetMicrostepPins {
-        return SetMicrostepPins(
-            s = params.intOf('S'),
-            b = params.intOf('B'),
-            x = params.intOf('X'),
-            y = params.intOf('Y'),
-            z = params.intOf('Z'),
-            e = params.intOf('E'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetMicrostepPins> {
+
+        override fun head(): GParameterWord<*> {
+            return M(351).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetMicrostepPins {
+            return SetMicrostepPins(
+                s = params.intOf('S'),
+                b = params.intOf('B'),
+                x = params.intOf('X'),
+                y = params.intOf('Y'),
+                z = params.intOf('Z'),
+                e = params.intOf('E'),
+            )
+        }
     }
 }
 
@@ -5327,19 +5701,22 @@ data class CaseLightControl(
         return M(355, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(355).head
-    }
-
-    override fun decodeParams(params: List<GWord>): CaseLightControl {
-        return CaseLightControl(
-            p = params.intOf('P'),
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<CaseLightControl> {
+
+        override fun head(): GParameterWord<*> {
+            return M(355).head
+        }
+
+        override fun decodeParams(params: List<GWord>): CaseLightControl {
+            return CaseLightControl(
+                p = params.intOf('P'),
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -5356,24 +5733,27 @@ class SCARAThetaA : GRQ<SCARAThetaA> {
         return M(360)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(360).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SCARAThetaA {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is SCARAThetaA
     }
 
     override fun hashCode(): Int {
-        return 384276
+        return 850344
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SCARAThetaA> {
+
+        override fun head(): GParameterWord<*> {
+            return M(360).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SCARAThetaA {
+            return SCARAThetaA()
+        }
     }
 }
 
@@ -5390,24 +5770,27 @@ class SCARAThetaB : GRQ<SCARAThetaB> {
         return M(361)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(361).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SCARAThetaB {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is SCARAThetaB
     }
 
     override fun hashCode(): Int {
-        return 503637
+        return 538258
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SCARAThetaB> {
+
+        override fun head(): GParameterWord<*> {
+            return M(361).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SCARAThetaB {
+            return SCARAThetaB()
+        }
     }
 }
 
@@ -5424,24 +5807,27 @@ class SCARAPsiA : GRQ<SCARAPsiA> {
         return M(362)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(362).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SCARAPsiA {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is SCARAPsiA
     }
 
     override fun hashCode(): Int {
-        return 964494
+        return 576920
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SCARAPsiA> {
+
+        override fun head(): GParameterWord<*> {
+            return M(362).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SCARAPsiA {
+            return SCARAPsiA()
+        }
     }
 }
 
@@ -5458,24 +5844,27 @@ class SCARAPsiB : GRQ<SCARAPsiB> {
         return M(363)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(363).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SCARAPsiB {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is SCARAPsiB
     }
 
     override fun hashCode(): Int {
-        return 640091
+        return 962082
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SCARAPsiB> {
+
+        override fun head(): GParameterWord<*> {
+            return M(363).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SCARAPsiB {
+            return SCARAPsiB()
+        }
     }
 }
 
@@ -5492,24 +5881,27 @@ class SCARAPsiC : GRQ<SCARAPsiC> {
         return M(364)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(364).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SCARAPsiC {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is SCARAPsiC
     }
 
     override fun hashCode(): Int {
-        return 14019
+        return 774900
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SCARAPsiC> {
+
+        override fun head(): GParameterWord<*> {
+            return M(364).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SCARAPsiC {
+            return SCARAPsiC()
+        }
     }
 }
 
@@ -5531,18 +5923,21 @@ data class ActivateSolenoid(
         return M(380, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(380).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ActivateSolenoid {
-        return ActivateSolenoid(
-            index = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ActivateSolenoid> {
+
+        override fun head(): GParameterWord<*> {
+            return M(380).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ActivateSolenoid {
+            return ActivateSolenoid(
+                index = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -5564,18 +5959,21 @@ data class DeactivateSolenoids(
         return M(381, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(381).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DeactivateSolenoids {
-        return DeactivateSolenoids(
-            index = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DeactivateSolenoids> {
+
+        override fun head(): GParameterWord<*> {
+            return M(381).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DeactivateSolenoids {
+            return DeactivateSolenoids(
+                index = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -5592,24 +5990,27 @@ class FinishMoves : GRQ<FinishMoves> {
         return M(400)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(400).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FinishMoves {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is FinishMoves
     }
 
     override fun hashCode(): Int {
-        return 280576
+        return 143606
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FinishMoves> {
+
+        override fun head(): GParameterWord<*> {
+            return M(400).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FinishMoves {
+            return FinishMoves()
+        }
     }
 }
 
@@ -5637,20 +6038,23 @@ data class DeployProbe(
         return M(401, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(401).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DeployProbe {
-        return DeployProbe(
-            h = params.hasWord('H'),
-            s = params.boolOf('S'),
-            r = params.boolOf('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DeployProbe> {
+
+        override fun head(): GParameterWord<*> {
+            return M(401).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DeployProbe {
+            return DeployProbe(
+                h = params.hasWord('H'),
+                s = params.boolOf('S'),
+                r = params.boolOf('R'),
+            )
+        }
     }
 }
 
@@ -5672,18 +6076,21 @@ data class StowProbe(
         return M(402, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(402).head
-    }
-
-    override fun decodeParams(params: List<GWord>): StowProbe {
-        return StowProbe(
-            r = params.boolOf('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<StowProbe> {
+
+        override fun head(): GParameterWord<*> {
+            return M(402).head
+        }
+
+        override fun decodeParams(params: List<GWord>): StowProbe {
+            return StowProbe(
+                r = params.boolOf('R'),
+            )
+        }
     }
 }
 
@@ -5693,7 +6100,7 @@ data class StowProbe(
  * MMU2 Filament Type (control).
  *
  * Marlin documents `E`, `F` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M403.html">MarlinFirmare M403 doc</a>
  */
@@ -5711,19 +6118,22 @@ data class MMU2FilamentType(
         return M(403, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(403).head
-    }
-
-    override fun decodeParams(params: List<GWord>): MMU2FilamentType {
-        return MMU2FilamentType(
-            index = params.intOf('E'),
-            f = params.intOf('F'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<MMU2FilamentType> {
+
+        override fun head(): GParameterWord<*> {
+            return M(403).head
+        }
+
+        override fun decodeParams(params: List<GWord>): MMU2FilamentType {
+            return MMU2FilamentType(
+                index = params.intOf('E'),
+                f = params.intOf('F'),
+            )
+        }
     }
 }
 
@@ -5745,18 +6155,21 @@ data class FilamentWidthSensorNominalDiameter(
         return M(404, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(404).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FilamentWidthSensorNominalDiameter {
-        return FilamentWidthSensorNominalDiameter(
-            linear = params.decimalOf('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FilamentWidthSensorNominalDiameter> {
+
+        override fun head(): GParameterWord<*> {
+            return M(404).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FilamentWidthSensorNominalDiameter {
+            return FilamentWidthSensorNominalDiameter(
+                linear = params.decimalOf('W'),
+            )
+        }
     }
 }
 
@@ -5778,18 +6191,21 @@ data class FilamentWidthSensorOn(
         return M(405, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(405).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FilamentWidthSensorOn {
-        return FilamentWidthSensorOn(
-            d = params.intOf('D'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FilamentWidthSensorOn> {
+
+        override fun head(): GParameterWord<*> {
+            return M(405).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FilamentWidthSensorOn {
+            return FilamentWidthSensorOn(
+                d = params.intOf('D'),
+            )
+        }
     }
 }
 
@@ -5806,24 +6222,27 @@ class FilamentWidthSensorOff : GRQ<FilamentWidthSensorOff> {
         return M(406)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(406).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FilamentWidthSensorOff {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is FilamentWidthSensorOff
     }
 
     override fun hashCode(): Int {
-        return 553684
+        return 574854
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FilamentWidthSensorOff> {
+
+        override fun head(): GParameterWord<*> {
+            return M(406).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FilamentWidthSensorOff {
+            return FilamentWidthSensorOff()
+        }
     }
 }
 
@@ -5840,24 +6259,27 @@ class ReadFilamentWidth : GRQ<ReadFilamentWidth> {
         return M(407)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(407).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ReadFilamentWidth {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is ReadFilamentWidth
     }
 
     override fun hashCode(): Int {
-        return 134323
+        return 67696
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ReadFilamentWidth> {
+
+        override fun head(): GParameterWord<*> {
+            return M(407).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ReadFilamentWidth {
+            return ReadFilamentWidth()
+        }
     }
 }
 
@@ -5874,24 +6296,27 @@ class Quickstop : GRQ<Quickstop> {
         return M(410)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(410).head
-    }
-
-    override fun decodeParams(params: List<GWord>): Quickstop {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is Quickstop
     }
 
     override fun hashCode(): Int {
-        return 386061
+        return 285083
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<Quickstop> {
+
+        override fun head(): GParameterWord<*> {
+            return M(410).head
+        }
+
+        override fun decodeParams(params: List<GWord>): Quickstop {
+            return Quickstop()
+        }
     }
 }
 
@@ -5925,22 +6350,25 @@ data class FilamentRunout(
         return M(412, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(412).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FilamentRunout {
-        return FilamentRunout(
-            linear = params.decimalOf('D'),
-            h = params.boolOf('H'),
-            l = params.decimalOf('L'),
-            s = params.boolOf('S'),
-            r = params.boolOf('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FilamentRunout> {
+
+        override fun head(): GParameterWord<*> {
+            return M(412).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FilamentRunout {
+            return FilamentRunout(
+                linear = params.decimalOf('D'),
+                h = params.boolOf('H'),
+                l = params.decimalOf('L'),
+                s = params.boolOf('S'),
+                r = params.boolOf('R'),
+            )
+        }
     }
 }
 
@@ -5962,18 +6390,21 @@ data class PowerLossRecovery(
         return M(413, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(413).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PowerLossRecovery {
-        return PowerLossRecovery(
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PowerLossRecovery> {
+
+        override fun head(): GParameterWord<*> {
+            return M(413).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PowerLossRecovery {
+            return PowerLossRecovery(
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -5995,18 +6426,21 @@ data class LCDLanguage(
         return M(414, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(414).head
-    }
-
-    override fun decodeParams(params: List<GWord>): LCDLanguage {
-        return LCDLanguage(
-            languageIndex = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<LCDLanguage> {
+
+        override fun head(): GParameterWord<*> {
+            return M(414).head
+        }
+
+        override fun decodeParams(params: List<GWord>): LCDLanguage {
+            return LCDLanguage(
+                languageIndex = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -6043,23 +6477,26 @@ data class BedLevelingState(
         return M(420, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(420).head
-    }
-
-    override fun decodeParams(params: List<GWord>): BedLevelingState {
-        return BedLevelingState(
-            l = params.intOf('L'),
-            s = params.boolOf('S'),
-            v = params.boolOf('V'),
-            t = params.intOf('T'),
-            linear = params.decimalOf('Z'),
-            negativeOffset = params.decimalOf('C'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<BedLevelingState> {
+
+        override fun head(): GParameterWord<*> {
+            return M(420).head
+        }
+
+        override fun decodeParams(params: List<GWord>): BedLevelingState {
+            return BedLevelingState(
+                l = params.intOf('L'),
+                s = params.boolOf('S'),
+                v = params.boolOf('V'),
+                t = params.intOf('T'),
+                linear = params.decimalOf('Z'),
+                negativeOffset = params.decimalOf('C'),
+            )
+        }
     }
 }
 
@@ -6102,25 +6539,28 @@ data class SetMeshValue(
         return M(421, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(421).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetMeshValue {
-        return SetMeshValue(
-            index = params.intOf('I'),
-            j = params.intOf('J'),
-            linear = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            q = params.decimalOf('Q'),
-            c = params.boolOf('C'),
-            n = params.boolOf('N'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetMeshValue> {
+
+        override fun head(): GParameterWord<*> {
+            return M(421).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetMeshValue {
+            return SetMeshValue(
+                index = params.intOf('I'),
+                j = params.intOf('J'),
+                linear = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                q = params.decimalOf('Q'),
+                c = params.boolOf('C'),
+                n = params.boolOf('N'),
+            )
+        }
     }
 }
 
@@ -6154,22 +6594,25 @@ data class SetZMotorXY(
         return M(422, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(422).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetZMotorXY {
-        return SetZMotorXY(
-            r = params.hasWord('R'),
-            index = params.intOf('S'),
-            w = params.intOf('W'),
-            linear = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetZMotorXY> {
+
+        override fun head(): GParameterWord<*> {
+            return M(422).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetZMotorXY {
+            return SetZMotorXY(
+                r = params.hasWord('R'),
+                index = params.intOf('S'),
+                w = params.intOf('W'),
+                linear = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+            )
+        }
     }
 }
 
@@ -6206,23 +6649,26 @@ data class XTwistCompensation(
         return M(423, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(423).head
-    }
-
-    override fun decodeParams(params: List<GWord>): XTwistCompensation {
-        return XTwistCompensation(
-            r = params.hasWord('R'),
-            linear = params.decimalOf('A'),
-            e = params.decimalOf('E'),
-            i = params.decimalOf('I'),
-            index = params.intOf('X'),
-            z = params.decimalOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<XTwistCompensation> {
+
+        override fun head(): GParameterWord<*> {
+            return M(423).head
+        }
+
+        override fun decodeParams(params: List<GWord>): XTwistCompensation {
+            return XTwistCompensation(
+                r = params.hasWord('R'),
+                linear = params.decimalOf('A'),
+                e = params.decimalOf('E'),
+                i = params.decimalOf('I'),
+                index = params.intOf('X'),
+                z = params.decimalOf('Z'),
+            )
+        }
     }
 }
 
@@ -6256,22 +6702,25 @@ data class BacklashCompensation(
         return M(425, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(425).head
-    }
-
-    override fun decodeParams(params: List<GWord>): BacklashCompensation {
-        return BacklashCompensation(
-            value = params.decimalOf('F'),
-            linear = params.decimalOf('S'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<BacklashCompensation> {
+
+        override fun head(): GParameterWord<*> {
+            return M(425).head
+        }
+
+        override fun decodeParams(params: List<GWord>): BacklashCompensation {
+            return BacklashCompensation(
+                value = params.decimalOf('F'),
+                linear = params.decimalOf('S'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+            )
+        }
     }
 }
 
@@ -6288,24 +6737,27 @@ class HomeOffsetsHere : GRQ<HomeOffsetsHere> {
         return M(428)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(428).head
-    }
-
-    override fun decodeParams(params: List<GWord>): HomeOffsetsHere {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is HomeOffsetsHere
     }
 
     override fun hashCode(): Int {
-        return 954952
+        return 668937
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<HomeOffsetsHere> {
+
+        override fun head(): GParameterWord<*> {
+            return M(428).head
+        }
+
+        override fun decodeParams(params: List<GWord>): HomeOffsetsHere {
+            return HomeOffsetsHere()
+        }
     }
 }
 
@@ -6333,20 +6785,23 @@ data class PowerMonitor(
         return M(430, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(430).head
-    }
-
-    override fun decodeParams(params: List<GWord>): PowerMonitor {
-        return PowerMonitor(
-            i = params.boolOf('I'),
-            v = params.boolOf('V'),
-            w = params.boolOf('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<PowerMonitor> {
+
+        override fun head(): GParameterWord<*> {
+            return M(430).head
+        }
+
+        override fun decodeParams(params: List<GWord>): PowerMonitor {
+            return PowerMonitor(
+                i = params.boolOf('I'),
+                v = params.boolOf('V'),
+                w = params.boolOf('W'),
+            )
+        }
     }
 }
 
@@ -6380,22 +6835,25 @@ data class CancelObjects(
         return M(486, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(486).head
-    }
-
-    override fun decodeParams(params: List<GWord>): CancelObjects {
-        return CancelObjects(
-            c = params.hasWord('C'),
-            index = params.intOf('P'),
-            s = params.intOf('S'),
-            count = params.intOf('T'),
-            u = params.intOf('U'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<CancelObjects> {
+
+        override fun head(): GParameterWord<*> {
+            return M(486).head
+        }
+
+        override fun decodeParams(params: List<GWord>): CancelObjects {
+            return CancelObjects(
+                c = params.hasWord('C'),
+                index = params.intOf('P'),
+                s = params.intOf('S'),
+                count = params.intOf('T'),
+                u = params.intOf('U'),
+            )
+        }
     }
 }
 
@@ -6450,29 +6908,32 @@ data class FixedTimeMotion(
         return M(493, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(493).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FixedTimeMotion {
-        return FixedTimeMotion(
-            s = params.intOf('S'),
-            h = params.intOf('H'),
-            c = params.intOf('C'),
-            d = params.intOf('D'),
-            a = params.decimalOf('A'),
-            scale = params.decimalOf('F'),
-            zeta = params.decimalOf('I'),
-            vtol = params.decimalOf('Q'),
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FixedTimeMotion> {
+
+        override fun head(): GParameterWord<*> {
+            return M(493).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FixedTimeMotion {
+            return FixedTimeMotion(
+                s = params.intOf('S'),
+                h = params.intOf('H'),
+                c = params.intOf('C'),
+                d = params.intOf('D'),
+                a = params.decimalOf('A'),
+                scale = params.decimalOf('F'),
+                zeta = params.decimalOf('I'),
+                vtol = params.decimalOf('Q'),
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+            )
+        }
     }
 }
 
@@ -6509,23 +6970,26 @@ data class FTMotionTrajectorySmoothing(
         return M(494, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(494).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FTMotionTrajectorySmoothing {
-        return FTMotionTrajectorySmoothing(
-            t = params.hasWord('T'),
-            o = params.hasWord('O'),
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FTMotionTrajectorySmoothing> {
+
+        override fun head(): GParameterWord<*> {
+            return M(494).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FTMotionTrajectorySmoothing {
+            return FTMotionTrajectorySmoothing(
+                t = params.hasWord('T'),
+                o = params.hasWord('O'),
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+            )
+        }
     }
 }
 
@@ -6542,24 +7006,27 @@ class SaveSettings : GRQ<SaveSettings> {
         return M(500)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(500).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SaveSettings {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is SaveSettings
     }
 
     override fun hashCode(): Int {
-        return 924482
+        return 359397
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SaveSettings> {
+
+        override fun head(): GParameterWord<*> {
+            return M(500).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SaveSettings {
+            return SaveSettings()
+        }
     }
 }
 
@@ -6576,24 +7043,27 @@ class RestoreSettings : GRQ<RestoreSettings> {
         return M(501)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(501).head
-    }
-
-    override fun decodeParams(params: List<GWord>): RestoreSettings {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is RestoreSettings
     }
 
     override fun hashCode(): Int {
-        return 919036
+        return 848523
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<RestoreSettings> {
+
+        override fun head(): GParameterWord<*> {
+            return M(501).head
+        }
+
+        override fun decodeParams(params: List<GWord>): RestoreSettings {
+            return RestoreSettings()
+        }
     }
 }
 
@@ -6610,24 +7080,27 @@ class FactoryReset : GRQ<FactoryReset> {
         return M(502)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(502).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FactoryReset {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is FactoryReset
     }
 
     override fun hashCode(): Int {
-        return 12616
+        return 130213
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FactoryReset> {
+
+        override fun head(): GParameterWord<*> {
+            return M(502).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FactoryReset {
+            return FactoryReset()
+        }
     }
 }
 
@@ -6652,19 +7125,22 @@ data class ReportSettings(
         return M(503, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(503).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ReportSettings {
-        return ReportSettings(
-            s = params.hasWord('S'),
-            c = params.hasWord('C'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ReportSettings> {
+
+        override fun head(): GParameterWord<*> {
+            return M(503).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ReportSettings {
+            return ReportSettings(
+                s = params.hasWord('S'),
+                c = params.hasWord('C'),
+            )
+        }
     }
 }
 
@@ -6681,24 +7157,27 @@ class ValidateEEPROMContents : GRQ<ValidateEEPROMContents> {
         return M(504)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(504).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ValidateEEPROMContents {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is ValidateEEPROMContents
     }
 
     override fun hashCode(): Int {
-        return 352088
+        return 223955
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ValidateEEPROMContents> {
+
+        override fun head(): GParameterWord<*> {
+            return M(504).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ValidateEEPROMContents {
+            return ValidateEEPROMContents()
+        }
     }
 }
 
@@ -6715,24 +7194,27 @@ class LockMachine : GRQ<LockMachine> {
         return M(510)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(510).head
-    }
-
-    override fun decodeParams(params: List<GWord>): LockMachine {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is LockMachine
     }
 
     override fun hashCode(): Int {
-        return 16260
+        return 67795
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<LockMachine> {
+
+        override fun head(): GParameterWord<*> {
+            return M(510).head
+        }
+
+        override fun decodeParams(params: List<GWord>): LockMachine {
+            return LockMachine()
+        }
     }
 }
 
@@ -6742,7 +7224,7 @@ class LockMachine : GRQ<LockMachine> {
  * Unlock Machine (security).
  *
  * Marlin documents `P` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M511.html">MarlinFirmare M511 doc</a>
  */
@@ -6757,18 +7239,21 @@ data class UnlockMachine(
         return M(511, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(511).head
-    }
-
-    override fun decodeParams(params: List<GWord>): UnlockMachine {
-        return UnlockMachine(
-            passcode = params.intOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<UnlockMachine> {
+
+        override fun head(): GParameterWord<*> {
+            return M(511).head
+        }
+
+        override fun decodeParams(params: List<GWord>): UnlockMachine {
+            return UnlockMachine(
+                passcode = params.intOf('P'),
+            )
+        }
     }
 }
 
@@ -6793,19 +7278,22 @@ data class SetPasscode(
         return M(512, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(512).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetPasscode {
-        return SetPasscode(
-            password = params.intOf('P'),
-            s = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetPasscode> {
+
+        override fun head(): GParameterWord<*> {
+            return M(512).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetPasscode {
+            return SetPasscode(
+                password = params.intOf('P'),
+                s = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -6822,24 +7310,27 @@ class AbortSDPrint : GRQ<AbortSDPrint> {
         return M(524)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(524).head
-    }
-
-    override fun decodeParams(params: List<GWord>): AbortSDPrint {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is AbortSDPrint
     }
 
     override fun hashCode(): Int {
-        return 109281
+        return 873954
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<AbortSDPrint> {
+
+        override fun head(): GParameterWord<*> {
+            return M(524).head
+        }
+
+        override fun decodeParams(params: List<GWord>): AbortSDPrint {
+            return AbortSDPrint()
+        }
     }
 }
 
@@ -6849,7 +7340,7 @@ class AbortSDPrint : GRQ<AbortSDPrint> {
  * Endstops Abort SD (sdcard).
  *
  * Marlin documents `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M540.html">MarlinFirmare M540 doc</a>
  */
@@ -6864,18 +7355,21 @@ data class EndstopsAbortSD(
         return M(540, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(540).head
-    }
-
-    override fun decodeParams(params: List<GWord>): EndstopsAbortSD {
-        return EndstopsAbortSD(
-            flag = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<EndstopsAbortSD> {
+
+        override fun head(): GParameterWord<*> {
+            return M(540).head
+        }
+
+        override fun decodeParams(params: List<GWord>): EndstopsAbortSD {
+            return EndstopsAbortSD(
+                flag = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -6900,18 +7394,21 @@ data class MachineName(
         return M(550, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(550).head
-    }
-
-    override fun decodeParams(params: List<GWord>): MachineName {
-        return MachineName(
-            name = params.stringOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<MachineName> {
+
+        override fun head(): GParameterWord<*> {
+            return M(550).head
+        }
+
+        override fun decodeParams(params: List<GWord>): MachineName {
+            return MachineName(
+                name = params.stringOf('P'),
+            )
+        }
     }
 }
 
@@ -6936,19 +7433,22 @@ data class EthernetIPAddressNetworkIF(
         return M(552, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(552).head
-    }
-
-    override fun decodeParams(params: List<GWord>): EthernetIPAddressNetworkIF {
-        return EthernetIPAddressNetworkIF(
-            ipAddress = params.stringOf('P'),
-            s = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<EthernetIPAddressNetworkIF> {
+
+        override fun head(): GParameterWord<*> {
+            return M(552).head
+        }
+
+        override fun decodeParams(params: List<GWord>): EthernetIPAddressNetworkIF {
+            return EthernetIPAddressNetworkIF(
+                ipAddress = params.stringOf('P'),
+                s = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -6970,18 +7470,21 @@ data class EthernetSubnetMask(
         return M(553, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(553).head
-    }
-
-    override fun decodeParams(params: List<GWord>): EthernetSubnetMask {
-        return EthernetSubnetMask(
-            subnetMask = params.stringOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<EthernetSubnetMask> {
+
+        override fun head(): GParameterWord<*> {
+            return M(553).head
+        }
+
+        override fun decodeParams(params: List<GWord>): EthernetSubnetMask {
+            return EthernetSubnetMask(
+                subnetMask = params.stringOf('P'),
+            )
+        }
     }
 }
 
@@ -7003,18 +7506,21 @@ data class EthernetGatewayIPAddress(
         return M(554, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(554).head
-    }
-
-    override fun decodeParams(params: List<GWord>): EthernetGatewayIPAddress {
-        return EthernetGatewayIPAddress(
-            gateway = params.stringOf('P'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<EthernetGatewayIPAddress> {
+
+        override fun head(): GParameterWord<*> {
+            return M(554).head
+        }
+
+        override fun decodeParams(params: List<GWord>): EthernetGatewayIPAddress {
+            return EthernetGatewayIPAddress(
+                gateway = params.stringOf('P'),
+            )
+        }
     }
 }
 
@@ -7051,23 +7557,26 @@ data class SetTMCSteppingMode(
         return M(569, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(569).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetTMCSteppingMode {
-        return SetTMCSteppingMode(
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            i = params.intOf('I'),
-            t = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetTMCSteppingMode> {
+
+        override fun head(): GParameterWord<*> {
+            return M(569).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetTMCSteppingMode {
+            return SetTMCSteppingMode(
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                i = params.intOf('I'),
+                t = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -7077,7 +7586,7 @@ data class SetTMCSteppingMode(
  * Serial baud rate (hosts).
  *
  * Marlin documents `B` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M575.html">MarlinFirmare M575 doc</a>
  */
@@ -7095,19 +7604,22 @@ data class SerialBaudRate(
         return M(575, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(575).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SerialBaudRate {
-        return SerialBaudRate(
-            p = params.hasWord('P'),
-            baud = params.decimalOf('B'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SerialBaudRate> {
+
+        override fun head(): GParameterWord<*> {
+            return M(575).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SerialBaudRate {
+            return SerialBaudRate(
+                p = params.hasWord('P'),
+                baud = params.decimalOf('B'),
+            )
+        }
     }
 }
 
@@ -7138,21 +7650,24 @@ data class NonlinearExtrusionControl(
         return M(592, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(592).head
-    }
-
-    override fun decodeParams(params: List<GWord>): NonlinearExtrusionControl {
-        return NonlinearExtrusionControl(
-            coeff = params.decimalOf('A'),
-            b = params.decimalOf('B'),
-            c = params.decimalOf('C'),
-            s = params.hasWord('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<NonlinearExtrusionControl> {
+
+        override fun head(): GParameterWord<*> {
+            return M(592).head
+        }
+
+        override fun decodeParams(params: List<GWord>): NonlinearExtrusionControl {
+            return NonlinearExtrusionControl(
+                coeff = params.decimalOf('A'),
+                b = params.decimalOf('B'),
+                c = params.decimalOf('C'),
+                s = params.hasWord('S'),
+            )
+        }
     }
 }
 
@@ -7186,22 +7701,25 @@ data class ZVInputShaping(
         return M(593, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(593).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ZVInputShaping {
-        return ZVInputShaping(
-            zeta = params.decimalOf('D'),
-            hertz = params.decimalOf('F'),
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ZVInputShaping> {
+
+        override fun head(): GParameterWord<*> {
+            return M(593).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ZVInputShaping {
+            return ZVInputShaping(
+                zeta = params.decimalOf('D'),
+                hertz = params.decimalOf('F'),
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+            )
+        }
     }
 }
 
@@ -7247,26 +7765,29 @@ data class FilamentChange(
         return M(600, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(600).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FilamentChange {
-        return FilamentChange(
-            index = params.intOf('T'),
-            pos = params.decimalOf('E'),
-            u = params.decimalOf('U'),
-            l = params.decimalOf('L'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            beeps = params.intOf('B'),
-            temp = params.intOf('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FilamentChange> {
+
+        override fun head(): GParameterWord<*> {
+            return M(600).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FilamentChange {
+            return FilamentChange(
+                index = params.intOf('T'),
+                pos = params.decimalOf('E'),
+                u = params.decimalOf('U'),
+                l = params.decimalOf('L'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                beeps = params.intOf('B'),
+                temp = params.intOf('R'),
+            )
+        }
     }
 }
 
@@ -7294,20 +7815,23 @@ data class ConfigureFilamentChange(
         return M(603, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(603).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ConfigureFilamentChange {
-        return ConfigureFilamentChange(
-            index = params.intOf('T'),
-            pos = params.decimalOf('U'),
-            l = params.decimalOf('L'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ConfigureFilamentChange> {
+
+        override fun head(): GParameterWord<*> {
+            return M(603).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ConfigureFilamentChange {
+            return ConfigureFilamentChange(
+                index = params.intOf('T'),
+                pos = params.decimalOf('U'),
+                l = params.decimalOf('L'),
+            )
+        }
     }
 }
 
@@ -7317,7 +7841,7 @@ data class ConfigureFilamentChange(
  * Multi Nozzle Mode (control).
  *
  * Marlin documents `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M605.html">MarlinFirmare M605 doc</a>
  */
@@ -7344,22 +7868,25 @@ data class MultiNozzleMode(
         return M(605, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(605).head
-    }
-
-    override fun decodeParams(params: List<GWord>): MultiNozzleMode {
-        return MultiNozzleMode(
-            s = params.intOf('S'),
-            x = params.decimalOf('X'),
-            r = params.intOf('R'),
-            p = params.intOf('P'),
-            e = params.intOf('E'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<MultiNozzleMode> {
+
+        override fun head(): GParameterWord<*> {
+            return M(605).head
+        }
+
+        override fun decodeParams(params: List<GWord>): MultiNozzleMode {
+            return MultiNozzleMode(
+                s = params.intOf('S'),
+                x = params.decimalOf('X'),
+                r = params.intOf('R'),
+                p = params.intOf('P'),
+                e = params.intOf('E'),
+            )
+        }
     }
 }
 
@@ -7399,24 +7926,27 @@ data class SCARAConfiguration(
         return M(665, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(665).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SCARAConfiguration {
-        return SCARAConfiguration(
-            segmentsPerSecond = params.decimalOf('S'),
-            thetaPiOffset = params.decimalOf('P'),
-            thetaOffset = params.decimalOf('T'),
-            a = params.decimalOf('A'),
-            x = params.decimalOf('X'),
-            b = params.decimalOf('B'),
-            y = params.decimalOf('Y'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SCARAConfiguration> {
+
+        override fun head(): GParameterWord<*> {
+            return M(665).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SCARAConfiguration {
+            return SCARAConfiguration(
+                segmentsPerSecond = params.decimalOf('S'),
+                thetaPiOffset = params.decimalOf('P'),
+                thetaOffset = params.decimalOf('T'),
+                a = params.decimalOf('A'),
+                x = params.decimalOf('X'),
+                b = params.decimalOf('B'),
+                y = params.decimalOf('Y'),
+            )
+        }
     }
 }
 
@@ -7465,27 +7995,30 @@ data class DeltaConfiguration(
         return M(665, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(665).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DeltaConfiguration {
-        return DeltaConfiguration(
-            linear = params.decimalOf('H'),
-            l = params.decimalOf('L'),
-            r = params.decimalOf('R'),
-            s = params.decimalOf('S'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            a = params.decimalOf('A'),
-            b = params.decimalOf('B'),
-            c = params.decimalOf('C'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DeltaConfiguration> {
+
+        override fun head(): GParameterWord<*> {
+            return M(665).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DeltaConfiguration {
+            return DeltaConfiguration(
+                linear = params.decimalOf('H'),
+                l = params.decimalOf('L'),
+                r = params.decimalOf('R'),
+                s = params.decimalOf('S'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                a = params.decimalOf('A'),
+                b = params.decimalOf('B'),
+                c = params.decimalOf('C'),
+            )
+        }
     }
 }
 
@@ -7513,20 +8046,23 @@ data class DualEndstopOffsets(
         return M(666, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(666).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DualEndstopOffsets {
-        return DualEndstopOffsets(
-            adj = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DualEndstopOffsets> {
+
+        override fun head(): GParameterWord<*> {
+            return M(666).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DualEndstopOffsets {
+            return DualEndstopOffsets(
+                adj = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+            )
+        }
     }
 }
 
@@ -7554,20 +8090,23 @@ data class SetDeltaEndstopAdjustments(
         return M(666, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(666).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetDeltaEndstopAdjustments {
-        return SetDeltaEndstopAdjustments(
-            adj = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetDeltaEndstopAdjustments> {
+
+        override fun head(): GParameterWord<*> {
+            return M(666).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetDeltaEndstopAdjustments {
+            return SetDeltaEndstopAdjustments(
+                adj = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+            )
+        }
     }
 }
 
@@ -7584,24 +8123,27 @@ class DuetSmartEffectorSensitivity : GRQ<DuetSmartEffectorSensitivity> {
         return M(672)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(672).head
-    }
-
-    override fun decodeParams(params: List<GWord>): DuetSmartEffectorSensitivity {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is DuetSmartEffectorSensitivity
     }
 
     override fun hashCode(): Int {
-        return 18644
+        return 274420
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<DuetSmartEffectorSensitivity> {
+
+        override fun head(): GParameterWord<*> {
+            return M(672).head
+        }
+
+        override fun decodeParams(params: List<GWord>): DuetSmartEffectorSensitivity {
+            return DuetSmartEffectorSensitivity()
+        }
     }
 }
 
@@ -7611,7 +8153,7 @@ class DuetSmartEffectorSensitivity : GRQ<DuetSmartEffectorSensitivity> {
  * Load filament (control).
  *
  * Marlin documents `L` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M701.html">MarlinFirmare M701 doc</a>
  */
@@ -7632,20 +8174,23 @@ data class LoadFilament(
         return M(701, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(701).head
-    }
-
-    override fun decodeParams(params: List<GWord>): LoadFilament {
-        return LoadFilament(
-            extruder = params.intOf('T'),
-            distance = params.decimalOf('Z'),
-            l = params.decimalOf('L'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<LoadFilament> {
+
+        override fun head(): GParameterWord<*> {
+            return M(701).head
+        }
+
+        override fun decodeParams(params: List<GWord>): LoadFilament {
+            return LoadFilament(
+                extruder = params.intOf('T'),
+                distance = params.decimalOf('Z'),
+                l = params.decimalOf('L'),
+            )
+        }
     }
 }
 
@@ -7655,7 +8200,7 @@ data class LoadFilament(
  * Unload filament (control).
  *
  * Marlin documents `U` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M702.html">MarlinFirmare M702 doc</a>
  */
@@ -7676,20 +8221,23 @@ data class UnloadFilament(
         return M(702, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(702).head
-    }
-
-    override fun decodeParams(params: List<GWord>): UnloadFilament {
-        return UnloadFilament(
-            extruder = params.intOf('T'),
-            distance = params.decimalOf('Z'),
-            u = params.decimalOf('U'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<UnloadFilament> {
+
+        override fun head(): GParameterWord<*> {
+            return M(702).head
+        }
+
+        override fun decodeParams(params: List<GWord>): UnloadFilament {
+            return UnloadFilament(
+                extruder = params.intOf('T'),
+                distance = params.decimalOf('Z'),
+                u = params.decimalOf('U'),
+            )
+        }
     }
 }
 
@@ -7723,22 +8271,25 @@ data class ControllerFanSettings(
         return M(710, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(710).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ControllerFanSettings {
-        return ControllerFanSettings(
-            speed = params.intOf('S'),
-            i = params.intOf('I'),
-            a = params.boolOf('A'),
-            r = params.boolOf('R'),
-            seconds = params.intOf('D'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ControllerFanSettings> {
+
+        override fun head(): GParameterWord<*> {
+            return M(710).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ControllerFanSettings {
+            return ControllerFanSettings(
+                speed = params.intOf('S'),
+                i = params.intOf('I'),
+                a = params.boolOf('A'),
+                r = params.boolOf('R'),
+                seconds = params.intOf('D'),
+            )
+        }
     }
 }
 
@@ -7760,18 +8311,21 @@ data class RepeatMarker(
         return M(808, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(808).head
-    }
-
-    override fun decodeParams(params: List<GWord>): RepeatMarker {
-        return RepeatMarker(
-            l = params.intOf('L'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<RepeatMarker> {
+
+        override fun head(): GParameterWord<*> {
+            return M(808).head
+        }
+
+        override fun decodeParams(params: List<GWord>): RepeatMarker {
+            return RepeatMarker(
+                l = params.intOf('L'),
+            )
+        }
     }
 }
 
@@ -7791,24 +8345,27 @@ class GCodeMacrosM810 : GRQ<GCodeMacrosM810> {
         return M(810)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(810).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM810 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM810
     }
 
     override fun hashCode(): Int {
-        return 21389
+        return 753127
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM810> {
+
+        override fun head(): GParameterWord<*> {
+            return M(810).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM810 {
+            return GCodeMacrosM810()
+        }
     }
 }
 
@@ -7828,24 +8385,27 @@ class GCodeMacrosM811 : GRQ<GCodeMacrosM811> {
         return M(811)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(811).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM811 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM811
     }
 
     override fun hashCode(): Int {
-        return 772387
+        return 54001
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM811> {
+
+        override fun head(): GParameterWord<*> {
+            return M(811).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM811 {
+            return GCodeMacrosM811()
+        }
     }
 }
 
@@ -7865,24 +8425,27 @@ class GCodeMacrosM812 : GRQ<GCodeMacrosM812> {
         return M(812)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(812).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM812 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM812
     }
 
     override fun hashCode(): Int {
-        return 797430
+        return 963339
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM812> {
+
+        override fun head(): GParameterWord<*> {
+            return M(812).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM812 {
+            return GCodeMacrosM812()
+        }
     }
 }
 
@@ -7902,24 +8465,27 @@ class GCodeMacrosM813 : GRQ<GCodeMacrosM813> {
         return M(813)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(813).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM813 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM813
     }
 
     override fun hashCode(): Int {
-        return 393680
+        return 360285
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM813> {
+
+        override fun head(): GParameterWord<*> {
+            return M(813).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM813 {
+            return GCodeMacrosM813()
+        }
     }
 }
 
@@ -7939,24 +8505,27 @@ class GCodeMacrosM814 : GRQ<GCodeMacrosM814> {
         return M(814)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(814).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM814 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM814
     }
 
     override fun hashCode(): Int {
-        return 798350
+        return 522366
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM814> {
+
+        override fun head(): GParameterWord<*> {
+            return M(814).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM814 {
+            return GCodeMacrosM814()
+        }
     }
 }
 
@@ -7976,24 +8545,27 @@ class GCodeMacrosM815 : GRQ<GCodeMacrosM815> {
         return M(815)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(815).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM815 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM815
     }
 
     override fun hashCode(): Int {
-        return 983606
+        return 395688
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM815> {
+
+        override fun head(): GParameterWord<*> {
+            return M(815).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM815 {
+            return GCodeMacrosM815()
+        }
     }
 }
 
@@ -8013,24 +8585,27 @@ class GCodeMacrosM816 : GRQ<GCodeMacrosM816> {
         return M(816)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(816).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM816 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM816
     }
 
     override fun hashCode(): Int {
-        return 661386
+        return 897490
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM816> {
+
+        override fun head(): GParameterWord<*> {
+            return M(816).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM816 {
+            return GCodeMacrosM816()
+        }
     }
 }
 
@@ -8050,24 +8625,27 @@ class GCodeMacrosM817 : GRQ<GCodeMacrosM817> {
         return M(817)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(817).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM817 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM817
     }
 
     override fun hashCode(): Int {
-        return 991850
+        return 568644
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM817> {
+
+        override fun head(): GParameterWord<*> {
+            return M(817).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM817 {
+            return GCodeMacrosM817()
+        }
     }
 }
 
@@ -8087,24 +8665,27 @@ class GCodeMacrosM818 : GRQ<GCodeMacrosM818> {
         return M(818)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(818).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM818 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM818
     }
 
     override fun hashCode(): Int {
-        return 594208
+        return 370517
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM818> {
+
+        override fun head(): GParameterWord<*> {
+            return M(818).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM818 {
+            return GCodeMacrosM818()
+        }
     }
 }
 
@@ -8124,24 +8705,27 @@ class GCodeMacrosM819 : GRQ<GCodeMacrosM819> {
         return M(819)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(819).head
-    }
-
-    override fun decodeParams(params: List<GWord>): GCodeMacrosM819 {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is GCodeMacrosM819
     }
 
     override fun hashCode(): Int {
-        return 74716
+        return 951555
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<GCodeMacrosM819> {
+
+        override fun head(): GParameterWord<*> {
+            return M(819).head
+        }
+
+        override fun decodeParams(params: List<GWord>): GCodeMacrosM819 {
+            return GCodeMacrosM819()
+        }
     }
 }
 
@@ -8158,24 +8742,27 @@ class ReportGCodeMacros : GRQ<ReportGCodeMacros> {
         return M(820)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(820).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ReportGCodeMacros {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is ReportGCodeMacros
     }
 
     override fun hashCode(): Int {
-        return 79927
+        return 900254
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ReportGCodeMacros> {
+
+        override fun head(): GParameterWord<*> {
+            return M(820).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ReportGCodeMacros {
+            return ReportGCodeMacros()
+        }
     }
 }
 
@@ -8203,20 +8790,23 @@ data class XYZProbeOffset(
         return M(851, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(851).head
-    }
-
-    override fun decodeParams(params: List<GWord>): XYZProbeOffset {
-        return XYZProbeOffset(
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<XYZProbeOffset> {
+
+        override fun head(): GParameterWord<*> {
+            return M(851).head
+        }
+
+        override fun decodeParams(params: List<GWord>): XYZProbeOffset {
+            return XYZProbeOffset(
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+            )
+        }
     }
 }
 
@@ -8247,21 +8837,24 @@ data class BedSkewCompensation(
         return M(852, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(852).head
-    }
-
-    override fun decodeParams(params: List<GWord>): BedSkewCompensation {
-        return BedSkewCompensation(
-            i = params.hasWord('I'),
-            j = params.hasWord('J'),
-            k = params.hasWord('K'),
-            s = params.hasWord('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<BedSkewCompensation> {
+
+        override fun head(): GParameterWord<*> {
+            return M(852).head
+        }
+
+        override fun decodeParams(params: List<GWord>): BedSkewCompensation {
+            return BedSkewCompensation(
+                i = params.hasWord('I'),
+                j = params.hasWord('J'),
+                k = params.hasWord('K'),
+                s = params.hasWord('S'),
+            )
+        }
     }
 }
 
@@ -8313,28 +8906,31 @@ data class I2CPositionEncodersM860(
         return M(860, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(860).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM860 {
-        return I2CPositionEncodersM860(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM860> {
+
+        override fun head(): GParameterWord<*> {
+            return M(860).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM860 {
+            return I2CPositionEncodersM860(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -8386,28 +8982,31 @@ data class I2CPositionEncodersM861(
         return M(861, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(861).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM861 {
-        return I2CPositionEncodersM861(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM861> {
+
+        override fun head(): GParameterWord<*> {
+            return M(861).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM861 {
+            return I2CPositionEncodersM861(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -8459,28 +9058,31 @@ data class I2CPositionEncodersM862(
         return M(862, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(862).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM862 {
-        return I2CPositionEncodersM862(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM862> {
+
+        override fun head(): GParameterWord<*> {
+            return M(862).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM862 {
+            return I2CPositionEncodersM862(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -8532,28 +9134,31 @@ data class I2CPositionEncodersM863(
         return M(863, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(863).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM863 {
-        return I2CPositionEncodersM863(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM863> {
+
+        override fun head(): GParameterWord<*> {
+            return M(863).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM863 {
+            return I2CPositionEncodersM863(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -8605,28 +9210,31 @@ data class I2CPositionEncodersM864(
         return M(864, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(864).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM864 {
-        return I2CPositionEncodersM864(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM864> {
+
+        override fun head(): GParameterWord<*> {
+            return M(864).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM864 {
+            return I2CPositionEncodersM864(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -8678,28 +9286,31 @@ data class I2CPositionEncodersM865(
         return M(865, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(865).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM865 {
-        return I2CPositionEncodersM865(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM865> {
+
+        override fun head(): GParameterWord<*> {
+            return M(865).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM865 {
+            return I2CPositionEncodersM865(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -8751,28 +9362,31 @@ data class I2CPositionEncodersM866(
         return M(866, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(866).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM866 {
-        return I2CPositionEncodersM866(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM866> {
+
+        override fun head(): GParameterWord<*> {
+            return M(866).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM866 {
+            return I2CPositionEncodersM866(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -8824,28 +9438,31 @@ data class I2CPositionEncodersM867(
         return M(867, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(867).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM867 {
-        return I2CPositionEncodersM867(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM867> {
+
+        override fun head(): GParameterWord<*> {
+            return M(867).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM867 {
+            return I2CPositionEncodersM867(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -8897,28 +9514,31 @@ data class I2CPositionEncodersM868(
         return M(868, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(868).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM868 {
-        return I2CPositionEncodersM868(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM868> {
+
+        override fun head(): GParameterWord<*> {
+            return M(868).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM868 {
+            return I2CPositionEncodersM868(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -8970,28 +9590,31 @@ data class I2CPositionEncodersM869(
         return M(869, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(869).head
-    }
-
-    override fun decodeParams(params: List<GWord>): I2CPositionEncodersM869 {
-        return I2CPositionEncodersM869(
-            index = params.intOf('I'),
-            o = params.boolOf('O'),
-            axis = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.hasWord('E'),
-            u = params.boolOf('U'),
-            p = params.intOf('P'),
-            addr = params.intOf('S'),
-            r = params.boolOf('R'),
-            t = params.decimalOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<I2CPositionEncodersM869> {
+
+        override fun head(): GParameterWord<*> {
+            return M(869).head
+        }
+
+        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM869 {
+            return I2CPositionEncodersM869(
+                index = params.intOf('I'),
+                o = params.boolOf('O'),
+                axis = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.hasWord('E'),
+                u = params.boolOf('U'),
+                p = params.intOf('P'),
+                addr = params.intOf('S'),
+                r = params.boolOf('R'),
+                t = params.decimalOf('T'),
+            )
+        }
     }
 }
 
@@ -9028,23 +9651,26 @@ data class ProbeTemperatureConfig(
         return M(871, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(871).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ProbeTemperatureConfig {
-        return ProbeTemperatureConfig(
-            value = params.intOf('V'),
-            index = params.intOf('I'),
-            b = params.hasWord('B'),
-            p = params.hasWord('P'),
-            e = params.hasWord('E'),
-            r = params.hasWord('R'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ProbeTemperatureConfig> {
+
+        override fun head(): GParameterWord<*> {
+            return M(871).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ProbeTemperatureConfig {
+            return ProbeTemperatureConfig(
+                value = params.intOf('V'),
+                index = params.intOf('I'),
+                b = params.hasWord('B'),
+                p = params.hasWord('P'),
+                e = params.hasWord('E'),
+                r = params.hasWord('R'),
+            )
+        }
     }
 }
 
@@ -9054,7 +9680,7 @@ data class ProbeTemperatureConfig(
  * Handle Prompt Response (hosts).
  *
  * Marlin documents `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M876.html">MarlinFirmare M876 doc</a>
  */
@@ -9069,18 +9695,21 @@ data class HandlePromptResponse(
         return M(876, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(876).head
-    }
-
-    override fun decodeParams(params: List<GWord>): HandlePromptResponse {
-        return HandlePromptResponse(
-            response = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<HandlePromptResponse> {
+
+        override fun head(): GParameterWord<*> {
+            return M(876).head
+        }
+
+        override fun decodeParams(params: List<GWord>): HandlePromptResponse {
+            return HandlePromptResponse(
+                response = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -9111,21 +9740,24 @@ data class LinearAdvanceFactor(
         return M(900, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(900).head
-    }
-
-    override fun decodeParams(params: List<GWord>): LinearAdvanceFactor {
-        return LinearAdvanceFactor(
-            kfactor = params.decimalOf('K'),
-            l = params.decimalOf('L'),
-            slot = params.intOf('S'),
-            index = params.intOf('T'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<LinearAdvanceFactor> {
+
+        override fun head(): GParameterWord<*> {
+            return M(900).head
+        }
+
+        override fun decodeParams(params: List<GWord>): LinearAdvanceFactor {
+            return LinearAdvanceFactor(
+                kfactor = params.decimalOf('K'),
+                l = params.decimalOf('L'),
+                slot = params.intOf('S'),
+                index = params.intOf('T'),
+            )
+        }
     }
 }
 
@@ -9135,7 +9767,7 @@ data class LinearAdvanceFactor(
  * Stepper Motor Current.
  *
  * Marlin documents `I` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M906.html">MarlinFirmare M906 doc</a>
  */
@@ -9165,23 +9797,26 @@ data class StepperMotorCurrent(
         return M(906, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(906).head
-    }
-
-    override fun decodeParams(params: List<GWord>): StepperMotorCurrent {
-        return StepperMotorCurrent(
-            e = params.intOf('E'),
-            i = params.intOf('I'),
-            t = params.intOf('T'),
-            x = params.intOf('X'),
-            y = params.intOf('Y'),
-            z = params.intOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<StepperMotorCurrent> {
+
+        override fun head(): GParameterWord<*> {
+            return M(906).head
+        }
+
+        override fun decodeParams(params: List<GWord>): StepperMotorCurrent {
+            return StepperMotorCurrent(
+                e = params.intOf('E'),
+                i = params.intOf('I'),
+                t = params.intOf('T'),
+                x = params.intOf('X'),
+                y = params.intOf('Y'),
+                z = params.intOf('Z'),
+            )
+        }
     }
 }
 
@@ -9242,31 +9877,34 @@ data class TrimpotStepperMotorCurrent(
         return M(907, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(907).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TrimpotStepperMotorCurrent {
-        return TrimpotStepperMotorCurrent(
-            current = params.decimalOf('B'),
-            c = params.decimalOf('C'),
-            d = params.decimalOf('D'),
-            e = params.decimalOf('E'),
-            s = params.decimalOf('S'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            i = params.decimalOf('I'),
-            j = params.decimalOf('J'),
-            k = params.decimalOf('K'),
-            u = params.decimalOf('U'),
-            v = params.decimalOf('V'),
-            w = params.decimalOf('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TrimpotStepperMotorCurrent> {
+
+        override fun head(): GParameterWord<*> {
+            return M(907).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TrimpotStepperMotorCurrent {
+            return TrimpotStepperMotorCurrent(
+                current = params.decimalOf('B'),
+                c = params.decimalOf('C'),
+                d = params.decimalOf('D'),
+                e = params.decimalOf('E'),
+                s = params.decimalOf('S'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                i = params.decimalOf('I'),
+                j = params.decimalOf('J'),
+                k = params.decimalOf('K'),
+                u = params.decimalOf('U'),
+                v = params.decimalOf('V'),
+                w = params.decimalOf('W'),
+            )
+        }
     }
 }
 
@@ -9276,7 +9914,7 @@ data class TrimpotStepperMotorCurrent(
  * Set Trimpot Pins (control).
  *
  * Marlin documents `P`, `S` as required; every property here still defaults to
- * absent, because the decode registry needs a no-argument prototype.
+ * absent, so that every command class is constructible bare.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M908.html">MarlinFirmare M908 doc</a>
  */
@@ -9294,19 +9932,22 @@ data class SetTrimpotPins(
         return M(908, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(908).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetTrimpotPins {
-        return SetTrimpotPins(
-            address = params.intOf('P'),
-            current = params.intOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetTrimpotPins> {
+
+        override fun head(): GParameterWord<*> {
+            return M(908).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetTrimpotPins {
+            return SetTrimpotPins(
+                address = params.intOf('P'),
+                current = params.intOf('S'),
+            )
+        }
     }
 }
 
@@ -9323,24 +9964,27 @@ class ReportDACStepperCurrent : GRQ<ReportDACStepperCurrent> {
         return M(909)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(909).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ReportDACStepperCurrent {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is ReportDACStepperCurrent
     }
 
     override fun hashCode(): Int {
-        return 268576
+        return 323129
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ReportDACStepperCurrent> {
+
+        override fun head(): GParameterWord<*> {
+            return M(909).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ReportDACStepperCurrent {
+            return ReportDACStepperCurrent()
+        }
     }
 }
 
@@ -9357,24 +10001,27 @@ class CommitDACToEEPROM : GRQ<CommitDACToEEPROM> {
         return M(910)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(910).head
-    }
-
-    override fun decodeParams(params: List<GWord>): CommitDACToEEPROM {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is CommitDACToEEPROM
     }
 
     override fun hashCode(): Int {
-        return 858811
+        return 456428
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<CommitDACToEEPROM> {
+
+        override fun head(): GParameterWord<*> {
+            return M(910).head
+        }
+
+        override fun decodeParams(params: List<GWord>): CommitDACToEEPROM {
+            return CommitDACToEEPROM()
+        }
     }
 }
 
@@ -9391,24 +10038,27 @@ class TMCOTPreWarnCondition : GRQ<TMCOTPreWarnCondition> {
         return M(911)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(911).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TMCOTPreWarnCondition {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is TMCOTPreWarnCondition
     }
 
     override fun hashCode(): Int {
-        return 944873
+        return 479285
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TMCOTPreWarnCondition> {
+
+        override fun head(): GParameterWord<*> {
+            return M(911).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TMCOTPreWarnCondition {
+            return TMCOTPreWarnCondition()
+        }
     }
 }
 
@@ -9442,22 +10092,25 @@ data class ClearTMCOTPreWarn(
         return M(912, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(912).head
-    }
-
-    override fun decodeParams(params: List<GWord>): ClearTMCOTPreWarn {
-        return ClearTMCOTPreWarn(
-            i = params.intOf('I'),
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            e = params.decimalOf('E'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<ClearTMCOTPreWarn> {
+
+        override fun head(): GParameterWord<*> {
+            return M(912).head
+        }
+
+        override fun decodeParams(params: List<GWord>): ClearTMCOTPreWarn {
+            return ClearTMCOTPreWarn(
+                i = params.intOf('I'),
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                e = params.decimalOf('E'),
+            )
+        }
     }
 }
 
@@ -9512,29 +10165,32 @@ data class SetHybridThresholdSpeed(
         return M(913, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(913).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SetHybridThresholdSpeed {
-        return SetHybridThresholdSpeed(
-            i = params.intOf('I'),
-            t = params.intOf('T'),
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            a = params.intOf('A'),
-            b = params.intOf('B'),
-            c = params.intOf('C'),
-            u = params.intOf('U'),
-            v = params.intOf('V'),
-            w = params.intOf('W'),
-            e = params.hasWord('E'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SetHybridThresholdSpeed> {
+
+        override fun head(): GParameterWord<*> {
+            return M(913).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SetHybridThresholdSpeed {
+            return SetHybridThresholdSpeed(
+                i = params.intOf('I'),
+                t = params.intOf('T'),
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                a = params.intOf('A'),
+                b = params.intOf('B'),
+                c = params.intOf('C'),
+                u = params.intOf('U'),
+                v = params.intOf('V'),
+                w = params.intOf('W'),
+                e = params.hasWord('E'),
+            )
+        }
     }
 }
 
@@ -9583,27 +10239,30 @@ data class TMCBumpSensitivity(
         return M(914, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(914).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TMCBumpSensitivity {
-        return TMCBumpSensitivity(
-            i = params.intOf('I'),
-            x = params.intOf('X'),
-            y = params.intOf('Y'),
-            z = params.intOf('Z'),
-            a = params.intOf('A'),
-            b = params.intOf('B'),
-            c = params.intOf('C'),
-            u = params.intOf('U'),
-            v = params.intOf('V'),
-            w = params.intOf('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TMCBumpSensitivity> {
+
+        override fun head(): GParameterWord<*> {
+            return M(914).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TMCBumpSensitivity {
+            return TMCBumpSensitivity(
+                i = params.intOf('I'),
+                x = params.intOf('X'),
+                y = params.intOf('Y'),
+                z = params.intOf('Z'),
+                a = params.intOf('A'),
+                b = params.intOf('B'),
+                c = params.intOf('C'),
+                u = params.intOf('U'),
+                v = params.intOf('V'),
+                w = params.intOf('W'),
+            )
+        }
     }
 }
 
@@ -9628,19 +10287,22 @@ data class TMCZAxisCalibration(
         return M(915, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(915).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TMCZAxisCalibration {
-        return TMCZAxisCalibration(
-            s = params.intOf('S'),
-            z = params.decimalOf('Z'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TMCZAxisCalibration> {
+
+        override fun head(): GParameterWord<*> {
+            return M(915).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TMCZAxisCalibration {
+            return TMCZAxisCalibration(
+                s = params.intOf('S'),
+                z = params.decimalOf('Z'),
+            )
+        }
     }
 }
 
@@ -9686,26 +10348,29 @@ data class L6474ThermalWarningTest(
         return M(916, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(916).head
-    }
-
-    override fun decodeParams(params: List<GWord>): L6474ThermalWarningTest {
-        return L6474ThermalWarningTest(
-            j = params.intOf('J'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            e = params.decimalOf('E'),
-            feedrate = params.intOf('F'),
-            current = params.intOf('T'),
-            k = params.intOf('K'),
-            second = params.intOf('D'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<L6474ThermalWarningTest> {
+
+        override fun head(): GParameterWord<*> {
+            return M(916).head
+        }
+
+        override fun decodeParams(params: List<GWord>): L6474ThermalWarningTest {
+            return L6474ThermalWarningTest(
+                j = params.intOf('J'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                e = params.decimalOf('E'),
+                feedrate = params.intOf('F'),
+                current = params.intOf('T'),
+                k = params.intOf('K'),
+                second = params.intOf('D'),
+            )
+        }
     }
 }
 
@@ -9769,32 +10434,35 @@ data class L6474OvercurrentWarningTest(
         return M(917, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(917).head
-    }
-
-    override fun decodeParams(params: List<GWord>): L6474OvercurrentWarningTest {
-        return L6474OvercurrentWarningTest(
-            j = params.intOf('J'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            a = params.decimalOf('A'),
-            b = params.decimalOf('B'),
-            c = params.decimalOf('C'),
-            u = params.decimalOf('U'),
-            v = params.decimalOf('V'),
-            w = params.decimalOf('W'),
-            e = params.decimalOf('E'),
-            feedrate = params.intOf('F'),
-            current = params.intOf('I'),
-            t = params.intOf('T'),
-            k = params.intOf('K'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<L6474OvercurrentWarningTest> {
+
+        override fun head(): GParameterWord<*> {
+            return M(917).head
+        }
+
+        override fun decodeParams(params: List<GWord>): L6474OvercurrentWarningTest {
+            return L6474OvercurrentWarningTest(
+                j = params.intOf('J'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                a = params.decimalOf('A'),
+                b = params.decimalOf('B'),
+                c = params.decimalOf('C'),
+                u = params.decimalOf('U'),
+                v = params.decimalOf('V'),
+                w = params.decimalOf('W'),
+                e = params.decimalOf('E'),
+                feedrate = params.intOf('F'),
+                current = params.intOf('I'),
+                t = params.intOf('T'),
+                k = params.intOf('K'),
+            )
+        }
     }
 }
 
@@ -9840,26 +10508,29 @@ data class L6474SpeedWarningTest(
         return M(918, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(918).head
-    }
-
-    override fun decodeParams(params: List<GWord>): L6474SpeedWarningTest {
-        return L6474SpeedWarningTest(
-            j = params.intOf('J'),
-            x = params.decimalOf('X'),
-            y = params.decimalOf('Y'),
-            z = params.decimalOf('Z'),
-            e = params.decimalOf('E'),
-            current = params.intOf('I'),
-            t = params.intOf('T'),
-            k = params.intOf('K'),
-            microsteps = params.intOf('M'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<L6474SpeedWarningTest> {
+
+        override fun head(): GParameterWord<*> {
+            return M(918).head
+        }
+
+        override fun decodeParams(params: List<GWord>): L6474SpeedWarningTest {
+            return L6474SpeedWarningTest(
+                j = params.intOf('J'),
+                x = params.decimalOf('X'),
+                y = params.decimalOf('Y'),
+                z = params.decimalOf('Z'),
+                e = params.decimalOf('E'),
+                current = params.intOf('I'),
+                t = params.intOf('T'),
+                k = params.intOf('K'),
+                microsteps = params.intOf('M'),
+            )
+        }
     }
 }
 
@@ -9920,31 +10591,34 @@ data class TMCChopperTiming(
         return M(919, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(919).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TMCChopperTiming {
-        return TMCChopperTiming(
-            o = params.intOf('O'),
-            p = params.intOf('P'),
-            s = params.intOf('S'),
-            i = params.intOf('I'),
-            t = params.intOf('T'),
-            x = params.hasWord('X'),
-            y = params.hasWord('Y'),
-            z = params.hasWord('Z'),
-            a = params.hasWord('A'),
-            b = params.hasWord('B'),
-            c = params.hasWord('C'),
-            u = params.hasWord('U'),
-            v = params.hasWord('V'),
-            w = params.hasWord('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TMCChopperTiming> {
+
+        override fun head(): GParameterWord<*> {
+            return M(919).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TMCChopperTiming {
+            return TMCChopperTiming(
+                o = params.intOf('O'),
+                p = params.intOf('P'),
+                s = params.intOf('S'),
+                i = params.intOf('I'),
+                t = params.intOf('T'),
+                x = params.hasWord('X'),
+                y = params.hasWord('Y'),
+                z = params.hasWord('Z'),
+                a = params.hasWord('A'),
+                b = params.hasWord('B'),
+                c = params.hasWord('C'),
+                u = params.hasWord('U'),
+                v = params.hasWord('V'),
+                w = params.hasWord('W'),
+            )
+        }
     }
 }
 
@@ -9993,27 +10667,30 @@ data class TMCHomingCurrent(
         return M(920, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(920).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TMCHomingCurrent {
-        return TMCHomingCurrent(
-            i = params.intOf('I'),
-            x = params.intOf('X'),
-            y = params.intOf('Y'),
-            z = params.intOf('Z'),
-            a = params.intOf('A'),
-            b = params.intOf('B'),
-            c = params.intOf('C'),
-            u = params.intOf('U'),
-            v = params.intOf('V'),
-            w = params.intOf('W'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TMCHomingCurrent> {
+
+        override fun head(): GParameterWord<*> {
+            return M(920).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TMCHomingCurrent {
+            return TMCHomingCurrent(
+                i = params.intOf('I'),
+                x = params.intOf('X'),
+                y = params.intOf('Y'),
+                z = params.intOf('Z'),
+                a = params.intOf('A'),
+                b = params.intOf('B'),
+                c = params.intOf('C'),
+                u = params.intOf('U'),
+                v = params.intOf('V'),
+                w = params.intOf('W'),
+            )
+        }
     }
 }
 
@@ -10033,24 +10710,27 @@ class StartSDLogging : GRQ<StartSDLogging> {
         return M(928)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(928).head
-    }
-
-    override fun decodeParams(params: List<GWord>): StartSDLogging {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is StartSDLogging
     }
 
     override fun hashCode(): Int {
-        return 353206
+        return 48600
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<StartSDLogging> {
+
+        override fun head(): GParameterWord<*> {
+            return M(928).head
+        }
+
+        override fun decodeParams(params: List<GWord>): StartSDLogging {
+            return StartSDLogging()
+        }
     }
 }
 
@@ -10090,24 +10770,27 @@ data class MagneticParkingExtruder(
         return M(951, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(951).head
-    }
-
-    override fun decodeParams(params: List<GWord>): MagneticParkingExtruder {
-        return MagneticParkingExtruder(
-            l = params.decimalOf('L'),
-            r = params.decimalOf('R'),
-            i = params.decimalOf('I'),
-            j = params.decimalOf('J'),
-            h = params.decimalOf('H'),
-            d = params.decimalOf('D'),
-            c = params.decimalOf('C'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<MagneticParkingExtruder> {
+
+        override fun head(): GParameterWord<*> {
+            return M(951).head
+        }
+
+        override fun decodeParams(params: List<GWord>): MagneticParkingExtruder {
+            return MagneticParkingExtruder(
+                l = params.decimalOf('L'),
+                r = params.decimalOf('R'),
+                i = params.decimalOf('I'),
+                j = params.decimalOf('J'),
+                h = params.decimalOf('H'),
+                d = params.decimalOf('D'),
+                c = params.decimalOf('C'),
+            )
+        }
     }
 }
 
@@ -10124,24 +10807,27 @@ class BackUpFlashSettingsToSD : GRQ<BackUpFlashSettingsToSD> {
         return M(993)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(993).head
-    }
-
-    override fun decodeParams(params: List<GWord>): BackUpFlashSettingsToSD {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is BackUpFlashSettingsToSD
     }
 
     override fun hashCode(): Int {
-        return 265598
+        return 174573
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<BackUpFlashSettingsToSD> {
+
+        override fun head(): GParameterWord<*> {
+            return M(993).head
+        }
+
+        override fun decodeParams(params: List<GWord>): BackUpFlashSettingsToSD {
+            return BackUpFlashSettingsToSD()
+        }
     }
 }
 
@@ -10158,24 +10844,27 @@ class RestoreFlashFromSD : GRQ<RestoreFlashFromSD> {
         return M(994)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(994).head
-    }
-
-    override fun decodeParams(params: List<GWord>): RestoreFlashFromSD {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is RestoreFlashFromSD
     }
 
     override fun hashCode(): Int {
-        return 230901
+        return 538042
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<RestoreFlashFromSD> {
+
+        override fun head(): GParameterWord<*> {
+            return M(994).head
+        }
+
+        override fun decodeParams(params: List<GWord>): RestoreFlashFromSD {
+            return RestoreFlashFromSD()
+        }
     }
 }
 
@@ -10192,24 +10881,27 @@ class TouchScreenCalibration : GRQ<TouchScreenCalibration> {
         return M(995)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(995).head
-    }
-
-    override fun decodeParams(params: List<GWord>): TouchScreenCalibration {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is TouchScreenCalibration
     }
 
     override fun hashCode(): Int {
-        return 83948
+        return 2877
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<TouchScreenCalibration> {
+
+        override fun head(): GParameterWord<*> {
+            return M(995).head
+        }
+
+        override fun decodeParams(params: List<GWord>): TouchScreenCalibration {
+            return TouchScreenCalibration()
+        }
     }
 }
 
@@ -10226,24 +10918,27 @@ class FirmwareUpdate : GRQ<FirmwareUpdate> {
         return M(997)
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(997).head
-    }
-
-    override fun decodeParams(params: List<GWord>): FirmwareUpdate {
-        return this
-    }
-
     override fun equals(other: Any?): Boolean {
         return other is FirmwareUpdate
     }
 
     override fun hashCode(): Int {
-        return 448544
+        return 830502
     }
 
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<FirmwareUpdate> {
+
+        override fun head(): GParameterWord<*> {
+            return M(997).head
+        }
+
+        override fun decodeParams(params: List<GWord>): FirmwareUpdate {
+            return FirmwareUpdate()
+        }
     }
 }
 
@@ -10265,18 +10960,21 @@ data class STOPRestart(
         return M(999, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(999).head
-    }
-
-    override fun decodeParams(params: List<GWord>): STOPRestart {
-        return STOPRestart(
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<STOPRestart> {
+
+        override fun head(): GParameterWord<*> {
+            return M(999).head
+        }
+
+        override fun decodeParams(params: List<GWord>): STOPRestart {
+            return STOPRestart(
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -10325,26 +11023,29 @@ data class MAX7219Control(
         return M(7219, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return M(7219).head
-    }
-
-    override fun decodeParams(params: List<GWord>): MAX7219Control {
-        return MAX7219Control(
-            column = params.intOf('C'),
-            row = params.intOf('D'),
-            r = params.intOf('R'),
-            i = params.hasWord('I'),
-            f = params.hasWord('F'),
-            p = params.hasWord('P'),
-            index = params.intOf('U'),
-            bits = params.longOf('V'),
-            x = params.intOf('X'),
-            y = params.intOf('Y'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<MAX7219Control> {
+
+        override fun head(): GParameterWord<*> {
+            return M(7219).head
+        }
+
+        override fun decodeParams(params: List<GWord>): MAX7219Control {
+            return MAX7219Control(
+                column = params.intOf('C'),
+                row = params.intOf('D'),
+                r = params.intOf('R'),
+                i = params.hasWord('I'),
+                f = params.hasWord('F'),
+                p = params.hasWord('P'),
+                index = params.intOf('U'),
+                bits = params.longOf('V'),
+                x = params.intOf('X'),
+                y = params.intOf('Y'),
+            )
+        }
     }
 }

@@ -178,11 +178,12 @@ class MarlinDocExamplesTest {
                 val code = codeOf(cmd) ?: continue
                 if (code in restOfLineArgument || code in undocumentedCodes) continue
 
-                val variants = MarlinCommands.all.filter { proto ->
-                    MarlinCommands.info.any {
-                        it.code == code && it.className == proto.javaClass.simpleName
-                    }
-                }
+                // `info` and `decoders` are index-aligned, so the metadata picks the variants and
+                // the same indices give their decoders. Decoding is on the companion now, so the
+                // instances in `all` have nothing to answer with.
+                val variants = MarlinCommands.info.indices
+                    .filter { MarlinCommands.info[it].code == code }
+                    .map { MarlinCommands.decoders[it] }
                 if (variants.isEmpty()) continue
 
                 val undocumented = undocumentedUpstream[code] ?: emptySet()
@@ -191,8 +192,8 @@ class MarlinDocExamplesTest {
                     .filter { it !in undocumented }
                 if (wanted.isEmpty()) continue
 
-                val bestKept = variants.maxOf { proto ->
-                    val kept = proto.decodeParams(cmd.params).encode().params
+                val bestKept = variants.maxOf { decoder ->
+                    val kept = decoder.decodeParams(cmd.params).encode().params
                         .mapNotNull { (it.id as? GLetter)?.letter?.uppercaseChar() }
                         .toSet()
                     wanted.count { it in kept }

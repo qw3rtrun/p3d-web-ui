@@ -25,10 +25,12 @@ class MarlinCommandsTest {
     @Test
     fun `every command has a prototype`() {
         assertEquals(295, MarlinCommands.all.size)
+        assertEquals(MarlinCommands.all.size, MarlinCommands.decoders.size)
+        assertEquals(MarlinCommands.all.size, MarlinCommands.info.size)
         // Fewer heads than classes, by exactly the variants Marlin documents separately.
         assertEquals(
             287,
-            MarlinCommands.all.map { it.head() }.toSet().size,
+            MarlinCommands.decoders.map { it.head() }.toSet().size,
         )
         assertEquals(listOf("G29", "G34", "M665", "M666"), MarlinCommands.ambiguousCodes)
     }
@@ -334,10 +336,12 @@ class MarlinCommandsTest {
 
     @Test
     fun `a bare command round-trips through its own class`() {
-        // Through the class and not the registry: six classes answer to `G29`, so the
-        // registry can only return one of them and equality would fail for the other five.
-        for (proto in MarlinCommands.all) {
-            assertEquals(proto, proto.decodeParams(proto.encode().params)) {
+        // Through the class's own decoder and not the registry: six classes answer to
+        // `G29`, so the registry can only return one of them and equality would fail for
+        // the other five. `all` and `decoders` are index-aligned, so zip pairs each
+        // command with its own companion.
+        for ((proto, decoder) in MarlinCommands.all.zip(MarlinCommands.decoders)) {
+            assertEquals(proto, decoder.decodeParams(proto.encode().params)) {
                 "round trip failed for " + GEncoder.encode(proto.encode())
             }
         }
@@ -368,7 +372,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" E")) { "G0 missing E in $text" }
             assertTrue(text.contains(" F")) { "G0 missing F in $text" }
             assertTrue(text.contains(" S")) { "G0 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, LinearMoveG0.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         LinearMoveG1(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), a = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), u = BigDecimal("1.5"), v = BigDecimal("1.5"), w = BigDecimal("1.5"), e = BigDecimal("1.5"), rate = BigDecimal("1.5"), power = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -384,7 +388,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" E")) { "G1 missing E in $text" }
             assertTrue(text.contains(" F")) { "G1 missing F in $text" }
             assertTrue(text.contains(" S")) { "G1 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, LinearMoveG1.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ArcOrCircleMoveG2(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), a = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), u = BigDecimal("1.5"), v = BigDecimal("1.5"), w = BigDecimal("1.5"), offset = BigDecimal("1.5"), j = BigDecimal("1.5"), radius = BigDecimal("1.5"), e = BigDecimal("1.5"), rate = BigDecimal("1.5"), count = 1, power = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -404,7 +408,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" F")) { "G2 missing F in $text" }
             assertTrue(text.contains(" P")) { "G2 missing P in $text" }
             assertTrue(text.contains(" S")) { "G2 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ArcOrCircleMoveG2.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ArcOrCircleMoveG3(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), a = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), u = BigDecimal("1.5"), v = BigDecimal("1.5"), w = BigDecimal("1.5"), offset = BigDecimal("1.5"), j = BigDecimal("1.5"), radius = BigDecimal("1.5"), e = BigDecimal("1.5"), rate = BigDecimal("1.5"), count = 1, power = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -424,13 +428,13 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" F")) { "G3 missing F in $text" }
             assertTrue(text.contains(" P")) { "G3 missing P in $text" }
             assertTrue(text.contains(" S")) { "G3 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ArcOrCircleMoveG3.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         Dwell(time = 1, p = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "G4 missing S in $text" }
             assertTrue(text.contains(" P")) { "G4 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, Dwell.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BezierCubicSplineMove(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), e = BigDecimal("1.5"), rate = BigDecimal("1.5"), i = BigDecimal("1.5"), j = BigDecimal("1.5"), p = BigDecimal("1.5"), q = BigDecimal("1.5"), power = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -443,7 +447,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" P")) { "G5 missing P in $text" }
             assertTrue(text.contains(" Q")) { "G5 missing Q in $text" }
             assertTrue(text.contains(" S")) { "G5 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BezierCubicSplineMove.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DirectStepperMove(index = 1, rate = BigDecimal("1.5"), s = BigDecimal("1.5"), direction = 1, y = 1, z = 1, e = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -454,12 +458,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "G6 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G6 missing Z in $text" }
             assertTrue(text.contains(" E")) { "G6 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DirectStepperMove.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         Retract(s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "G10 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, Retract.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         CleanTheNozzle(p = 1, radius = BigDecimal("1.5"), count = 1, t = 1, x = true, y = true, z = true).let {
             val text = GEncoder.encode(it.encode())
@@ -470,7 +474,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "G12 missing X in $text" }
             assertTrue(text.contains(" Y")) { "G12 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G12 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, CleanTheNozzle.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         MeshValidationPattern(temp = 1, c = true, d = true, linear = BigDecimal("1.5"), h = BigDecimal("1.5"), index = 1, k = true, l = BigDecimal("1.5"), o = BigDecimal("1.5"), p = BigDecimal("1.5"), q = BigDecimal("1.5"), r = 1, s = BigDecimal("1.5"), u = BigDecimal("1.5"), x = BigDecimal("1.5"), y = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -490,12 +494,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "G26 missing U in $text" }
             assertTrue(text.contains(" X")) { "G26 missing X in $text" }
             assertTrue(text.contains(" Y")) { "G26 missing Y in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, MeshValidationPattern.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ParkToolhead(p = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "G27 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ParkToolhead.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         AutoHome(h = true, l = true, o = true, linear = BigDecimal("1.5"), x = true, y = true, z = true, a = true, b = true, c = true, u = true, v = true, w = true).let {
             val text = GEncoder.encode(it.encode())
@@ -512,7 +516,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "G28 missing U in $text" }
             assertTrue(text.contains(" V")) { "G28 missing V in $text" }
             assertTrue(text.contains(" W")) { "G28 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, AutoHome.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BedLeveling3Point(a = true, c = true, o = true, q = true, e = true, d = true, j = true, v = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -524,7 +528,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" D")) { "G29 missing D in $text" }
             assertTrue(text.contains(" J")) { "G29 missing J in $text" }
             assertTrue(text.contains(" V")) { "G29 missing V in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BedLeveling3Point.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BedLevelingBilinear(a = true, c = true, o = true, q = true, x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), w = true, rate = BigDecimal("1.5"), e = true, d = true, linear = BigDecimal("1.5"), f = BigDecimal("1.5"), b = BigDecimal("1.5"), l = BigDecimal("1.5"), r = BigDecimal("1.5"), j = true, v = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -546,7 +550,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" R")) { "G29 missing R in $text" }
             assertTrue(text.contains(" J")) { "G29 missing J in $text" }
             assertTrue(text.contains(" V")) { "G29 missing V in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BedLevelingBilinear.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BedLevelingLinear(a = true, c = true, o = true, q = true, x = 1, y = 1, p = 1, rate = BigDecimal("1.5"), e = true, d = true, t = true, linear = BigDecimal("1.5"), f = BigDecimal("1.5"), b = BigDecimal("1.5"), l = BigDecimal("1.5"), r = BigDecimal("1.5"), j = true, v = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -568,7 +572,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" R")) { "G29 missing R in $text" }
             assertTrue(text.contains(" J")) { "G29 missing J in $text" }
             assertTrue(text.contains(" V")) { "G29 missing V in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BedLevelingLinear.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BedLevelingManual(s = 1, index = 1, j = 1, count = 1, y = 1, linear = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -578,7 +582,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "G29 missing X in $text" }
             assertTrue(text.contains(" Y")) { "G29 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G29 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BedLevelingManual.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BedLevelingUnified(a = true, b = BigDecimal("1.5"), c = BigDecimal("1.5"), d = true, e = true, f = BigDecimal("1.5"), h = BigDecimal("1.5"), i = 1, j = 1, k = 1, l = 1, p = 1, q = 1, r = 1, slot = 1, t = 1, u = true, v = 1, w = true, x = BigDecimal("1.5"), y = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -603,7 +607,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" W")) { "G29 missing W in $text" }
             assertTrue(text.contains(" X")) { "G29 missing X in $text" }
             assertTrue(text.contains(" Y")) { "G29 missing Y in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BedLevelingUnified.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SingleZProbe(c = true, pos = BigDecimal("1.5"), y = BigDecimal("1.5"), e = true).let {
             val text = GEncoder.encode(it.encode())
@@ -611,7 +615,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "G30 missing X in $text" }
             assertTrue(text.contains(" Y")) { "G30 missing Y in $text" }
             assertTrue(text.contains(" E")) { "G30 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SingleZProbe.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DeltaAutoCalibration(c = BigDecimal("1.5"), e = true, f = 1, p = 1, t = true, v = 1, o = true, r = BigDecimal("1.5"), s = true, x = true, y = true, z = true).let {
             val text = GEncoder.encode(it.encode())
@@ -627,13 +631,13 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "G33 missing X in $text" }
             assertTrue(text.contains(" Y")) { "G33 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G33 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DeltaAutoCalibration.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         MechanicalGantryCalibration(s = 1, z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "G34 missing S in $text" }
             assertTrue(text.contains(" Z")) { "G34 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, MechanicalGantryCalibration.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ZSteppersAutoAlignment(l = true, z = 1, s = true, i = 1, t = BigDecimal("1.5"), a = BigDecimal("1.5"), e = true, r = true).let {
             val text = GEncoder.encode(it.encode())
@@ -645,12 +649,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" A")) { "G34 missing A in $text" }
             assertTrue(text.contains(" E")) { "G34 missing E in $text" }
             assertTrue(text.contains(" R")) { "G34 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ZSteppersAutoAlignment.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         TrammingAssistant(s = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "G35 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, TrammingAssistant.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ProbeTargetG38_2(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), rate = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -658,7 +662,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "G38.2 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G38.2 missing Z in $text" }
             assertTrue(text.contains(" F")) { "G38.2 missing F in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ProbeTargetG38_2.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ProbeTargetG38_3(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), rate = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -666,7 +670,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "G38.3 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G38.3 missing Z in $text" }
             assertTrue(text.contains(" F")) { "G38.3 missing F in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ProbeTargetG38_3.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ProbeTargetG38_4(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), rate = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -674,7 +678,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "G38.4 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G38.4 missing Z in $text" }
             assertTrue(text.contains(" F")) { "G38.4 missing F in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ProbeTargetG38_4.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ProbeTargetG38_5(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), rate = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -682,7 +686,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "G38.5 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G38.5 missing Z in $text" }
             assertTrue(text.contains(" F")) { "G38.5 missing F in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ProbeTargetG38_5.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         MoveToMeshCoordinate(pos = BigDecimal("1.5"), j = BigDecimal("1.5"), rate = BigDecimal("1.5"), p = true).let {
             val text = GEncoder.encode(it.encode())
@@ -690,7 +694,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" J")) { "G42 missing J in $text" }
             assertTrue(text.contains(" F")) { "G42 missing F in $text" }
             assertTrue(text.contains(" P")) { "G42 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, MoveToMeshCoordinate.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         StoredPositions(slot = 1, d = 1, q = 1, rate = BigDecimal("1.5"), x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), e = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -702,7 +706,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "G60 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G60 missing Z in $text" }
             assertTrue(text.contains(" E")) { "G60 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, StoredPositions.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ReturnToSavedPosition(rate = BigDecimal("1.5"), slot = 1, x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), e = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -712,13 +716,13 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "G61 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "G61 missing Z in $text" }
             assertTrue(text.contains(" E")) { "G61 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ReturnToSavedPosition.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ProbeTemperatureCalibration(b = true, p = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" B")) { "G76 missing B in $text" }
             assertTrue(text.contains(" P")) { "G76 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ProbeTemperatureCalibration.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetPosition(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), a = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), u = BigDecimal("1.5"), v = BigDecimal("1.5"), w = BigDecimal("1.5"), e = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -732,7 +736,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" V")) { "G92 missing V in $text" }
             assertTrue(text.contains(" W")) { "G92 missing W in $text" }
             assertTrue(text.contains(" E")) { "G92 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetPosition.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BacklashAndToolheadOffsetCalibration(b = true, index = 1, v = true, linear = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -740,33 +744,33 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "G425 missing T in $text" }
             assertTrue(text.contains(" V")) { "G425 missing V in $text" }
             assertTrue(text.contains(" U")) { "G425 missing U in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BacklashAndToolheadOffsetCalibration.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         UnconditionalStopM0(sec = 1, ms = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M0 missing S in $text" }
             assertTrue(text.contains(" P")) { "M0 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, UnconditionalStopM0.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         UnconditionalStopM1(sec = 1, ms = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M1 missing S in $text" }
             assertTrue(text.contains(" P")) { "M1 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, UnconditionalStopM1.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SpindleCWLaserOn(power = 1, o = 1, mode = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M3 missing S in $text" }
             assertTrue(text.contains(" O")) { "M3 missing O in $text" }
             assertTrue(text.contains(" I")) { "M3 missing I in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SpindleCWLaserOn.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SpindleCCWLaserOn(power = 1, o = 1, mode = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M4 missing S in $text" }
             assertTrue(text.contains(" O")) { "M4 missing O in $text" }
             assertTrue(text.contains(" I")) { "M4 missing I in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SpindleCCWLaserOn.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         EnableSteppers(x = true, y = true, z = true, e = true, a = true, b = true, c = true, u = true, v = true, w = true).let {
             val text = GEncoder.encode(it.encode())
@@ -780,7 +784,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "M17 missing U in $text" }
             assertTrue(text.contains(" V")) { "M17 missing V in $text" }
             assertTrue(text.contains(" W")) { "M17 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, EnableSteppers.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DisableSteppersM18(seconds = 1, x = true, y = true, z = true, e = true, a = true, b = true, c = true, u = true, v = true, w = true).let {
             val text = GEncoder.encode(it.encode())
@@ -795,20 +799,20 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "M18 missing U in $text" }
             assertTrue(text.contains(" V")) { "M18 missing V in $text" }
             assertTrue(text.contains(" W")) { "M18 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DisableSteppersM18.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ListSDCard(f = true, l = true, t = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" F")) { "M20 missing F in $text" }
             assertTrue(text.contains(" L")) { "M20 missing L in $text" }
             assertTrue(text.contains(" T")) { "M20 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ListSDCard.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         StartOrResumeSDPrint(pos = 1L, time = 1L).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M24 missing S in $text" }
             assertTrue(text.contains(" T")) { "M24 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, StartOrResumeSDPrint.decodeParams(it.encode().params)) { "round trip: $text" }
         }
     }
 
@@ -817,25 +821,25 @@ class MarlinCommandsTest {
         SetSDPosition(pos = 1L).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M26 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetSDPosition.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ReportSDPrintStatus(seconds = 1, c = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M27 missing S in $text" }
             assertTrue(text.contains(" C")) { "M27 missing C in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ReportSDPrintStatus.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SelectAndStart(p = 1, filepos = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M32 missing P in $text" }
             assertTrue(text.contains(" S")) { "M32 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SelectAndStart.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SDCardSorting(s = BigDecimal("1.5"), f = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M34 missing S in $text" }
             assertTrue(text.contains(" F")) { "M34 missing F in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SDCardSorting.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetPinState(i = true, t = 1, pin = 1, state = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -843,7 +847,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "M42 missing T in $text" }
             assertTrue(text.contains(" P")) { "M42 missing P in $text" }
             assertTrue(text.contains(" S")) { "M42 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetPinState.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         PinsDebugging(pin = 1, w = true, e = true, t = true, s = true, i = true).let {
             val text = GEncoder.encode(it.encode())
@@ -853,7 +857,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "M43 missing T in $text" }
             assertTrue(text.contains(" S")) { "M43 missing S in $text" }
             assertTrue(text.contains(" I")) { "M43 missing I in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, PinsDebugging.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ProbeRepeatabilityTest(c = true, engage = true, legs = 1, count = 1, s = 1, level = 1, pos = BigDecimal("1.5"), y = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -865,19 +869,19 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" V")) { "M48 missing V in $text" }
             assertTrue(text.contains(" X")) { "M48 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M48 missing Y in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ProbeRepeatabilityTest.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetPrintProgress(minutes = 1, percent = 1, r = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" C")) { "M73 missing C in $text" }
             assertTrue(text.contains(" P")) { "M73 missing P in $text" }
             assertTrue(text.contains(" R")) { "M73 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetPrintProgress.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         PowerOn(s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M80 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, PowerOn.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DisableSteppersM84(seconds = 1, x = true, y = true, z = true, e = true, a = true, b = true, c = true, u = true, v = true, w = true).let {
             val text = GEncoder.encode(it.encode())
@@ -892,12 +896,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "M84 missing U in $text" }
             assertTrue(text.contains(" V")) { "M84 missing V in $text" }
             assertTrue(text.contains(" W")) { "M84 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DisableSteppersM84.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         InactivityShutdown(seconds = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M85 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, InactivityShutdown.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         HotendIdleTimeout(seconds = 1, temp = 1, e = 1, b = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -905,7 +909,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "M86 missing T in $text" }
             assertTrue(text.contains(" E")) { "M86 missing E in $text" }
             assertTrue(text.contains(" B")) { "M86 missing B in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, HotendIdleTimeout.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetAxisStepsPerUnit(steps = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), a = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), u = BigDecimal("1.5"), v = BigDecimal("1.5"), w = BigDecimal("1.5"), e = BigDecimal("1.5"), index = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -920,7 +924,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" W")) { "M92 missing W in $text" }
             assertTrue(text.contains(" E")) { "M92 missing E in $text" }
             assertTrue(text.contains(" T")) { "M92 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetAxisStepsPerUnit.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FreeMemory(d = true, f = true, i = true, n = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -928,12 +932,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" F")) { "M100 missing F in $text" }
             assertTrue(text.contains(" I")) { "M100 missing I in $text" }
             assertTrue(text.contains(" C")) { "M100 missing C in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FreeMemory.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ConfigureBedDistanceSensor(s = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M102 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ConfigureBedDistanceSensor.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetHotendTemperature(index = 1, temp = BigDecimal("1.5"), factor = BigDecimal("1.5"), b = BigDecimal("1.5"), t = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -942,13 +946,13 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" F")) { "M104 missing F in $text" }
             assertTrue(text.contains(" B")) { "M104 missing B in $text" }
             assertTrue(text.contains(" T")) { "M104 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetHotendTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ReportHotendTemperature(r = true, index = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" R")) { "M105 missing R in $text" }
             assertTrue(text.contains(" T")) { "M105 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ReportHotendTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetFanSpeed(index = 1, speed = 1, p = 1, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -956,12 +960,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M106 missing S in $text" }
             assertTrue(text.contains(" P")) { "M106 missing P in $text" }
             assertTrue(text.contains(" T")) { "M106 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetFanSpeed.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FanOff(index = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M107 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FanOff.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         WaitForHotendTemperature(index = 1, temp = BigDecimal("1.5"), r = BigDecimal("1.5"), factor = BigDecimal("1.5"), b = BigDecimal("1.5"), t = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -971,34 +975,34 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" F")) { "M109 missing F in $text" }
             assertTrue(text.contains(" B")) { "M109 missing B in $text" }
             assertTrue(text.contains(" T")) { "M109 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, WaitForHotendTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetGetLineNumber(line = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" N")) { "M110 missing N in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetGetLineNumber.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DebugLevel(flags = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M111 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DebugLevel.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         HostKeepalive(seconds = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M113 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, HostKeepalive.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         GetCurrentPosition(d = true, e = true, r = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" D")) { "M114 missing D in $text" }
             assertTrue(text.contains(" E")) { "M114 missing E in $text" }
             assertTrue(text.contains(" R")) { "M114 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, GetCurrentPosition.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SerialPrint(p = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M118 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SerialPrint.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         TMCDebugging(i = true, x = true, y = true, z = true, e = true, v = true, s = true, ms = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1010,7 +1014,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" V")) { "M122 missing V in $text" }
             assertTrue(text.contains(" S")) { "M122 missing S in $text" }
             assertTrue(text.contains(" P")) { "M122 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, TMCDebugging.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ParkHead(linear = BigDecimal("1.5"), x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), p = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1019,33 +1023,33 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "M125 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M125 missing Z in $text" }
             assertTrue(text.contains(" P")) { "M125 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ParkHead.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         Baricuda1Open(pressure = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M126 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, Baricuda1Open.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         Baricuda2Open(pressure = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M128 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, Baricuda2Open.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetBedTemperature(index = 1, temp = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" I")) { "M140 missing I in $text" }
             assertTrue(text.contains(" S")) { "M140 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetBedTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetChamberTemperature(temp = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M141 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetChamberTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetLaserCoolerTemperature(temp = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M143 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetLaserCoolerTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetMaterialPreset(index = 1, temp = 1, b = 1, speed = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1053,14 +1057,14 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" H")) { "M145 missing H in $text" }
             assertTrue(text.contains(" B")) { "M145 missing B in $text" }
             assertTrue(text.contains(" F")) { "M145 missing F in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetMaterialPreset.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetTemperatureUnits(c = true, f = true, k = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" C")) { "M149 missing C in $text" }
             assertTrue(text.contains(" F")) { "M149 missing F in $text" }
             assertTrue(text.contains(" K")) { "M149 missing K in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetTemperatureUnits.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetRGBWColor(intensity = 1, u = 1, b = 1, w = 1, p = 1, pixel = 1, strip = 1, k = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1072,28 +1076,28 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" I")) { "M150 missing I in $text" }
             assertTrue(text.contains(" S")) { "M150 missing S in $text" }
             assertTrue(text.contains(" K")) { "M150 missing K in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetRGBWColor.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         PositionAutoReport(seconds = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M154 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, PositionAutoReport.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         TemperatureAutoReport(seconds = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M155 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, TemperatureAutoReport.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetMixFactor(index = 1, factor = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M163 missing S in $text" }
             assertTrue(text.contains(" P")) { "M163 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetMixFactor.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SaveMix(index = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M164 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SaveMix.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetMix(factor = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), d = BigDecimal("1.5"), h = BigDecimal("1.5"), i = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1103,7 +1107,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" D")) { "M165 missing D in $text" }
             assertTrue(text.contains(" H")) { "M165 missing H in $text" }
             assertTrue(text.contains(" I")) { "M165 missing I in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetMix.decodeParams(it.encode().params)) { "round trip: $text" }
         }
     }
 
@@ -1117,7 +1121,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" J")) { "M166 missing J in $text" }
             assertTrue(text.contains(" S")) { "M166 missing S in $text" }
             assertTrue(text.contains(" T")) { "M166 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, GradientMix.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         WaitForBedTemperature(index = 1, temp = BigDecimal("1.5"), r = BigDecimal("1.5"), seconds = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1125,24 +1129,24 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M190 missing S in $text" }
             assertTrue(text.contains(" R")) { "M190 missing R in $text" }
             assertTrue(text.contains(" T")) { "M190 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, WaitForBedTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         WaitForChamberTemperature(temp = BigDecimal("1.5"), r = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M191 missing S in $text" }
             assertTrue(text.contains(" R")) { "M191 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, WaitForChamberTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         WaitForProbeTemperature(temp = 1, s = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" R")) { "M192 missing R in $text" }
             assertTrue(text.contains(" S")) { "M192 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, WaitForProbeTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         WaitForLaserCoolerTemperature(temp = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M193 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, WaitForLaserCoolerTemperature.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         VolumetricExtrusionDiameter(diameter = BigDecimal("1.5"), volume = BigDecimal("1.5"), s = 1, index = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1150,7 +1154,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" L")) { "M200 missing L in $text" }
             assertTrue(text.contains(" S")) { "M200 missing S in $text" }
             assertTrue(text.contains(" T")) { "M200 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, VolumetricExtrusionDiameter.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         PrintTravelMoveLimits(accel = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), e = BigDecimal("1.5"), index = 1, f = 1, percent = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1161,7 +1165,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "M201 missing T in $text" }
             assertTrue(text.contains(" F")) { "M201 missing F in $text" }
             assertTrue(text.contains(" S")) { "M201 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, PrintTravelMoveLimits.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetMaxFeedrate(x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), e = BigDecimal("1.5"), index = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1170,7 +1174,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Z")) { "M203 missing Z in $text" }
             assertTrue(text.contains(" E")) { "M203 missing E in $text" }
             assertTrue(text.contains(" T")) { "M203 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetMaxFeedrate.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetStartingAcceleration(accel = BigDecimal("1.5"), r = BigDecimal("1.5"), t = BigDecimal("1.5"), s = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1178,7 +1182,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" R")) { "M204 missing R in $text" }
             assertTrue(text.contains(" T")) { "M204 missing T in $text" }
             assertTrue(text.contains(" S")) { "M204 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetStartingAcceleration.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetAdvancedSettings(jerk = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), e = BigDecimal("1.5"), b = 1, s = BigDecimal("1.5"), t = BigDecimal("1.5"), deviation = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1190,7 +1194,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M205 missing S in $text" }
             assertTrue(text.contains(" T")) { "M205 missing T in $text" }
             assertTrue(text.contains(" J")) { "M205 missing J in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetAdvancedSettings.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetHomeOffsets(offset = BigDecimal("1.5"), t = BigDecimal("1.5"), x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), a = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), u = BigDecimal("1.5"), v = BigDecimal("1.5"), w = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1205,7 +1209,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "M206 missing U in $text" }
             assertTrue(text.contains(" V")) { "M206 missing V in $text" }
             assertTrue(text.contains(" W")) { "M206 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetHomeOffsets.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FirmwareRetractionSettings(length = BigDecimal("1.5"), w = BigDecimal("1.5"), feedrate = BigDecimal("1.5"), z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1213,7 +1217,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" W")) { "M207 missing W in $text" }
             assertTrue(text.contains(" F")) { "M207 missing F in $text" }
             assertTrue(text.contains(" Z")) { "M207 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FirmwareRetractionSettings.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FirmwareRecoverSettings(length = BigDecimal("1.5"), w = BigDecimal("1.5"), feedrate = BigDecimal("1.5"), r = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1221,12 +1225,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" W")) { "M208 missing W in $text" }
             assertTrue(text.contains(" F")) { "M208 missing F in $text" }
             assertTrue(text.contains(" R")) { "M208 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FirmwareRecoverSettings.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetAutoRetract(s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M209 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetAutoRetract.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         HomingFeedrate(feedrate = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), a = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), u = BigDecimal("1.5"), v = BigDecimal("1.5"), w = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1239,12 +1243,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "M210 missing U in $text" }
             assertTrue(text.contains(" V")) { "M210 missing V in $text" }
             assertTrue(text.contains(" W")) { "M210 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, HomingFeedrate.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SoftwareEndstops(s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M211 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SoftwareEndstops.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FilamentSwapParameters(q = true, linear = BigDecimal("1.5"), b = BigDecimal("1.5"), e = BigDecimal("1.5"), feedrate = 1, r = 1, u = 1, f = 1, g = 1, a = 1, l = 1, w = 1, x = BigDecimal("1.5"), y = BigDecimal("1.5"), v = 1, z = 1, i = BigDecimal("1.5"), j = BigDecimal("1.5"), k = BigDecimal("1.5"), c = BigDecimal("1.5"), h = BigDecimal("1.5"), o = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1270,7 +1274,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" C")) { "M217 missing C in $text" }
             assertTrue(text.contains(" H")) { "M217 missing H in $text" }
             assertTrue(text.contains(" O")) { "M217 missing O in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FilamentSwapParameters.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetHotendOffset(index = 1, offset = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1278,26 +1282,26 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "M218 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M218 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M218 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetHotendOffset.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetFeedratePercentage(percent = 1, b = true, r = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M220 missing S in $text" }
             assertTrue(text.contains(" B")) { "M220 missing B in $text" }
             assertTrue(text.contains(" R")) { "M220 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetFeedratePercentage.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetFlowPercentage(percent = 1, index = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M221 missing S in $text" }
             assertTrue(text.contains(" T")) { "M221 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetFlowPercentage.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         WaitForPinState(pin = 1, state = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M226 missing P in $text" }
             assertTrue(text.contains(" S")) { "M226 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, WaitForPinState.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         TriggerCamera(offset = BigDecimal("1.5"), b = BigDecimal("1.5"), ms = 1, feedrate = BigDecimal("1.5"), pos = BigDecimal("1.5"), j = BigDecimal("1.5"), p = 1, length = BigDecimal("1.5"), s = BigDecimal("1.5"), x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1313,22 +1317,22 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "M240 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M240 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M240 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, TriggerCamera.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         LCDContrast(contrast = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" C")) { "M250 missing C in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, LCDContrast.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         LCDSleepBacklightTimeout(minutes = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M255 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, LCDSleepBacklightTimeout.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         LCDBrightness(brightness = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" B")) { "M256 missing B in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, LCDBrightness.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CSend(addr = 1, byte = 1, r = true, s = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1336,32 +1340,32 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" B")) { "M260 missing B in $text" }
             assertTrue(text.contains(" R")) { "M260 missing R in $text" }
             assertTrue(text.contains(" S")) { "M260 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CSend.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CRequest(addr = 1, count = 1, s = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" A")) { "M261 missing A in $text" }
             assertTrue(text.contains(" B")) { "M261 missing B in $text" }
             assertTrue(text.contains(" S")) { "M261 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CRequest.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ServoPosition(index = 1, pos = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M280 missing P in $text" }
             assertTrue(text.contains(" S")) { "M280 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ServoPosition.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         EditServoAngles(index = 1, degrees = 1, u = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M281 missing P in $text" }
             assertTrue(text.contains(" L")) { "M281 missing L in $text" }
             assertTrue(text.contains(" U")) { "M281 missing U in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, EditServoAngles.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DetachServo(index = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M282 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DetachServo.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         Babystep(pos = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), s = BigDecimal("1.5"), p = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1370,13 +1374,13 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Z")) { "M290 missing Z in $text" }
             assertTrue(text.contains(" S")) { "M290 missing S in $text" }
             assertTrue(text.contains(" P")) { "M290 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, Babystep.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         PlayTone(ms = 1, s = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M300 missing P in $text" }
             assertTrue(text.contains(" S")) { "M300 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, PlayTone.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetHotendPID(index = 1, value = BigDecimal("1.5"), i = BigDecimal("1.5"), d = BigDecimal("1.5"), c = BigDecimal("1.5"), l = BigDecimal("1.5"), f = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1387,13 +1391,13 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" C")) { "M301 missing C in $text" }
             assertTrue(text.contains(" L")) { "M301 missing L in $text" }
             assertTrue(text.contains(" F")) { "M301 missing F in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetHotendPID.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ColdExtrude(temp = BigDecimal("1.5"), p = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M302 missing S in $text" }
             assertTrue(text.contains(" P")) { "M302 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ColdExtrude.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         PIDAutotune(index = 1, count = 1, temp = BigDecimal("1.5"), u = true, d = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1402,14 +1406,14 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M303 missing S in $text" }
             assertTrue(text.contains(" U")) { "M303 missing U in $text" }
             assertTrue(text.contains(" D")) { "M303 missing D in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, PIDAutotune.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetBedPID(value = BigDecimal("1.5"), i = BigDecimal("1.5"), d = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M304 missing P in $text" }
             assertTrue(text.contains(" I")) { "M304 missing I in $text" }
             assertTrue(text.contains(" D")) { "M304 missing D in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetBedPID.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         UserThermistorParameters(index = 1, ohm = 1, ohms = 1, beta = 1, coeff = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1418,7 +1422,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "M305 missing T in $text" }
             assertTrue(text.contains(" B")) { "M305 missing B in $text" }
             assertTrue(text.contains(" C")) { "M305 missing C in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, UserThermistorParameters.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ModelPredictiveTempControl(value = BigDecimal("1.5"), c = BigDecimal("1.5"), index = 1, f = BigDecimal("1.5"), h = BigDecimal("1.5"), p = BigDecimal("1.5"), r = BigDecimal("1.5"), s = 1, t = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1431,14 +1435,14 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" R")) { "M306 missing R in $text" }
             assertTrue(text.contains(" S")) { "M306 missing S in $text" }
             assertTrue(text.contains(" T")) { "M306 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ModelPredictiveTempControl.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetChamberPID(value = BigDecimal("1.5"), i = BigDecimal("1.5"), d = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M309 missing P in $text" }
             assertTrue(text.contains(" I")) { "M309 missing I in $text" }
             assertTrue(text.contains(" D")) { "M309 missing D in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetChamberPID.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetMicroStepping(b = 1, s = 1, x = 1, y = 1, z = 1, a = 1, c = 1, u = 1, v = 1, w = 1, e = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1453,7 +1457,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" V")) { "M350 missing V in $text" }
             assertTrue(text.contains(" W")) { "M350 missing W in $text" }
             assertTrue(text.contains(" E")) { "M350 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetMicroStepping.decodeParams(it.encode().params)) { "round trip: $text" }
         }
     }
 
@@ -1467,51 +1471,51 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "M351 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M351 missing Z in $text" }
             assertTrue(text.contains(" E")) { "M351 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetMicrostepPins.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         CaseLightControl(p = 1, s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M355 missing P in $text" }
             assertTrue(text.contains(" S")) { "M355 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, CaseLightControl.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ActivateSolenoid(index = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M380 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ActivateSolenoid.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DeactivateSolenoids(index = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M381 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DeactivateSolenoids.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DeployProbe(h = true, s = true, r = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" H")) { "M401 missing H in $text" }
             assertTrue(text.contains(" S")) { "M401 missing S in $text" }
             assertTrue(text.contains(" R")) { "M401 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DeployProbe.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         StowProbe(r = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" R")) { "M402 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, StowProbe.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         MMU2FilamentType(index = 1, f = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" E")) { "M403 missing E in $text" }
             assertTrue(text.contains(" F")) { "M403 missing F in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, MMU2FilamentType.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FilamentWidthSensorNominalDiameter(linear = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" W")) { "M404 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FilamentWidthSensorNominalDiameter.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FilamentWidthSensorOn(d = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" D")) { "M405 missing D in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FilamentWidthSensorOn.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FilamentRunout(linear = BigDecimal("1.5"), h = true, l = BigDecimal("1.5"), s = true, r = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1520,17 +1524,17 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" L")) { "M412 missing L in $text" }
             assertTrue(text.contains(" S")) { "M412 missing S in $text" }
             assertTrue(text.contains(" R")) { "M412 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FilamentRunout.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         PowerLossRecovery(s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M413 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, PowerLossRecovery.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         LCDLanguage(languageIndex = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M414 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, LCDLanguage.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BedLevelingState(l = 1, s = true, v = true, t = 1, linear = BigDecimal("1.5"), negativeOffset = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1540,7 +1544,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "M420 missing T in $text" }
             assertTrue(text.contains(" Z")) { "M420 missing Z in $text" }
             assertTrue(text.contains(" C")) { "M420 missing C in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BedLevelingState.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetMeshValue(index = 1, j = 1, linear = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), q = BigDecimal("1.5"), c = true, n = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1552,7 +1556,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Q")) { "M421 missing Q in $text" }
             assertTrue(text.contains(" C")) { "M421 missing C in $text" }
             assertTrue(text.contains(" N")) { "M421 missing N in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetMeshValue.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetZMotorXY(r = true, index = 1, w = 1, linear = BigDecimal("1.5"), y = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1561,7 +1565,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" W")) { "M422 missing W in $text" }
             assertTrue(text.contains(" X")) { "M422 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M422 missing Y in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetZMotorXY.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         XTwistCompensation(r = true, linear = BigDecimal("1.5"), e = BigDecimal("1.5"), i = BigDecimal("1.5"), index = 1, z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1571,7 +1575,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" I")) { "M423 missing I in $text" }
             assertTrue(text.contains(" X")) { "M423 missing X in $text" }
             assertTrue(text.contains(" Z")) { "M423 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, XTwistCompensation.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BacklashCompensation(value = BigDecimal("1.5"), linear = BigDecimal("1.5"), x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1580,14 +1584,14 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "M425 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M425 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M425 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BacklashCompensation.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         PowerMonitor(i = true, v = true, w = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" I")) { "M430 missing I in $text" }
             assertTrue(text.contains(" V")) { "M430 missing V in $text" }
             assertTrue(text.contains(" W")) { "M430 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, PowerMonitor.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         CancelObjects(c = true, index = 1, s = 1, count = 1, u = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1596,7 +1600,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M486 missing S in $text" }
             assertTrue(text.contains(" T")) { "M486 missing T in $text" }
             assertTrue(text.contains(" U")) { "M486 missing U in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, CancelObjects.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FixedTimeMotion(s = 1, h = 1, c = 1, d = 1, a = BigDecimal("1.5"), scale = BigDecimal("1.5"), zeta = BigDecimal("1.5"), vtol = BigDecimal("1.5"), x = true, y = true, z = true, e = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1612,7 +1616,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "M493 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M493 missing Z in $text" }
             assertTrue(text.contains(" E")) { "M493 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FixedTimeMotion.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FTMotionTrajectorySmoothing(t = true, o = true, x = true, y = true, z = true, e = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1622,50 +1626,50 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "M494 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M494 missing Z in $text" }
             assertTrue(text.contains(" E")) { "M494 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FTMotionTrajectorySmoothing.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ReportSettings(s = true, c = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M503 missing S in $text" }
             assertTrue(text.contains(" C")) { "M503 missing C in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ReportSettings.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         UnlockMachine(passcode = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M511 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, UnlockMachine.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetPasscode(password = 1, s = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M512 missing P in $text" }
             assertTrue(text.contains(" S")) { "M512 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetPasscode.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         EndstopsAbortSD(flag = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M540 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, EndstopsAbortSD.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         MachineName(name = "x").let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M550 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, MachineName.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         EthernetIPAddressNetworkIF(ipAddress = "x", s = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M552 missing P in $text" }
             assertTrue(text.contains(" S")) { "M552 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, EthernetIPAddressNetworkIF.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         EthernetSubnetMask(subnetMask = "x").let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M553 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, EthernetSubnetMask.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         EthernetGatewayIPAddress(gateway = "x").let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M554 missing P in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, EthernetGatewayIPAddress.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetTMCSteppingMode(x = true, y = true, z = true, e = true, i = 1, t = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1675,13 +1679,13 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" E")) { "M569 missing E in $text" }
             assertTrue(text.contains(" I")) { "M569 missing I in $text" }
             assertTrue(text.contains(" T")) { "M569 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetTMCSteppingMode.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SerialBaudRate(p = true, baud = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M575 missing P in $text" }
             assertTrue(text.contains(" B")) { "M575 missing B in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SerialBaudRate.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         NonlinearExtrusionControl(coeff = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), s = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1689,7 +1693,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" B")) { "M592 missing B in $text" }
             assertTrue(text.contains(" C")) { "M592 missing C in $text" }
             assertTrue(text.contains(" S")) { "M592 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, NonlinearExtrusionControl.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ZVInputShaping(zeta = BigDecimal("1.5"), hertz = BigDecimal("1.5"), x = true, y = true, z = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1698,7 +1702,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "M593 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M593 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M593 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ZVInputShaping.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         FilamentChange(index = 1, pos = BigDecimal("1.5"), u = BigDecimal("1.5"), l = BigDecimal("1.5"), x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), beeps = 1, temp = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1711,14 +1715,14 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Z")) { "M600 missing Z in $text" }
             assertTrue(text.contains(" B")) { "M600 missing B in $text" }
             assertTrue(text.contains(" R")) { "M600 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, FilamentChange.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ConfigureFilamentChange(index = 1, pos = BigDecimal("1.5"), l = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" T")) { "M603 missing T in $text" }
             assertTrue(text.contains(" U")) { "M603 missing U in $text" }
             assertTrue(text.contains(" L")) { "M603 missing L in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ConfigureFilamentChange.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         MultiNozzleMode(s = 1, x = BigDecimal("1.5"), r = 1, p = 1, e = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1727,7 +1731,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" R")) { "M605 missing R in $text" }
             assertTrue(text.contains(" P")) { "M605 missing P in $text" }
             assertTrue(text.contains(" E")) { "M605 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, MultiNozzleMode.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SCARAConfiguration(segmentsPerSecond = BigDecimal("1.5"), thetaPiOffset = BigDecimal("1.5"), thetaOffset = BigDecimal("1.5"), a = BigDecimal("1.5"), x = BigDecimal("1.5"), b = BigDecimal("1.5"), y = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1738,7 +1742,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "M665 missing X in $text" }
             assertTrue(text.contains(" B")) { "M665 missing B in $text" }
             assertTrue(text.contains(" Y")) { "M665 missing Y in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SCARAConfiguration.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DeltaConfiguration(linear = BigDecimal("1.5"), l = BigDecimal("1.5"), r = BigDecimal("1.5"), s = BigDecimal("1.5"), x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), a = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1752,21 +1756,21 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" A")) { "M665 missing A in $text" }
             assertTrue(text.contains(" B")) { "M665 missing B in $text" }
             assertTrue(text.contains(" C")) { "M665 missing C in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DeltaConfiguration.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         DualEndstopOffsets(adj = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" X")) { "M666 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M666 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M666 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, DualEndstopOffsets.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetDeltaEndstopAdjustments(adj = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" X")) { "M666 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M666 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M666 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetDeltaEndstopAdjustments.decodeParams(it.encode().params)) { "round trip: $text" }
         }
     }
 
@@ -1777,14 +1781,14 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "M701 missing T in $text" }
             assertTrue(text.contains(" Z")) { "M701 missing Z in $text" }
             assertTrue(text.contains(" L")) { "M701 missing L in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, LoadFilament.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         UnloadFilament(extruder = 1, distance = BigDecimal("1.5"), u = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" T")) { "M702 missing T in $text" }
             assertTrue(text.contains(" Z")) { "M702 missing Z in $text" }
             assertTrue(text.contains(" U")) { "M702 missing U in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, UnloadFilament.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ControllerFanSettings(speed = 1, i = 1, a = true, r = true, seconds = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1793,19 +1797,19 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" A")) { "M710 missing A in $text" }
             assertTrue(text.contains(" R")) { "M710 missing R in $text" }
             assertTrue(text.contains(" D")) { "M710 missing D in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ControllerFanSettings.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         RepeatMarker(l = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" L")) { "M808 missing L in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, RepeatMarker.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         XYZProbeOffset(x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" X")) { "M851 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M851 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M851 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, XYZProbeOffset.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         BedSkewCompensation(i = true, j = true, k = true, s = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1813,7 +1817,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" J")) { "M852 missing J in $text" }
             assertTrue(text.contains(" K")) { "M852 missing K in $text" }
             assertTrue(text.contains(" S")) { "M852 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, BedSkewCompensation.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM860(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1828,7 +1832,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M860 missing S in $text" }
             assertTrue(text.contains(" R")) { "M860 missing R in $text" }
             assertTrue(text.contains(" T")) { "M860 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM860.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM861(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1843,7 +1847,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M861 missing S in $text" }
             assertTrue(text.contains(" R")) { "M861 missing R in $text" }
             assertTrue(text.contains(" T")) { "M861 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM861.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM862(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1858,7 +1862,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M862 missing S in $text" }
             assertTrue(text.contains(" R")) { "M862 missing R in $text" }
             assertTrue(text.contains(" T")) { "M862 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM862.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM863(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1873,7 +1877,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M863 missing S in $text" }
             assertTrue(text.contains(" R")) { "M863 missing R in $text" }
             assertTrue(text.contains(" T")) { "M863 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM863.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM864(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1888,7 +1892,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M864 missing S in $text" }
             assertTrue(text.contains(" R")) { "M864 missing R in $text" }
             assertTrue(text.contains(" T")) { "M864 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM864.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM865(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1903,7 +1907,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M865 missing S in $text" }
             assertTrue(text.contains(" R")) { "M865 missing R in $text" }
             assertTrue(text.contains(" T")) { "M865 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM865.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM866(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1918,7 +1922,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M866 missing S in $text" }
             assertTrue(text.contains(" R")) { "M866 missing R in $text" }
             assertTrue(text.contains(" T")) { "M866 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM866.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM867(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1933,7 +1937,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M867 missing S in $text" }
             assertTrue(text.contains(" R")) { "M867 missing R in $text" }
             assertTrue(text.contains(" T")) { "M867 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM867.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM868(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1948,7 +1952,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M868 missing S in $text" }
             assertTrue(text.contains(" R")) { "M868 missing R in $text" }
             assertTrue(text.contains(" T")) { "M868 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM868.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         I2CPositionEncodersM869(index = 1, o = true, axis = true, y = true, z = true, e = true, u = true, p = 1, addr = 1, r = true, t = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -1963,7 +1967,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" S")) { "M869 missing S in $text" }
             assertTrue(text.contains(" R")) { "M869 missing R in $text" }
             assertTrue(text.contains(" T")) { "M869 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, I2CPositionEncodersM869.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ProbeTemperatureConfig(value = 1, index = 1, b = true, p = true, e = true, r = true).let {
             val text = GEncoder.encode(it.encode())
@@ -1973,12 +1977,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" P")) { "M871 missing P in $text" }
             assertTrue(text.contains(" E")) { "M871 missing E in $text" }
             assertTrue(text.contains(" R")) { "M871 missing R in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ProbeTemperatureConfig.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         HandlePromptResponse(response = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M876 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, HandlePromptResponse.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         LinearAdvanceFactor(kfactor = BigDecimal("1.5"), l = BigDecimal("1.5"), slot = 1, index = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1986,7 +1990,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" L")) { "M900 missing L in $text" }
             assertTrue(text.contains(" S")) { "M900 missing S in $text" }
             assertTrue(text.contains(" T")) { "M900 missing T in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, LinearAdvanceFactor.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         StepperMotorCurrent(e = 1, i = 1, t = 1, x = 1, y = 1, z = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -1996,7 +2000,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" X")) { "M906 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M906 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M906 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, StepperMotorCurrent.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         TrimpotStepperMotorCurrent(current = BigDecimal("1.5"), c = BigDecimal("1.5"), d = BigDecimal("1.5"), e = BigDecimal("1.5"), s = BigDecimal("1.5"), x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), i = BigDecimal("1.5"), j = BigDecimal("1.5"), k = BigDecimal("1.5"), u = BigDecimal("1.5"), v = BigDecimal("1.5"), w = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -2014,13 +2018,13 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "M907 missing U in $text" }
             assertTrue(text.contains(" V")) { "M907 missing V in $text" }
             assertTrue(text.contains(" W")) { "M907 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, TrimpotStepperMotorCurrent.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetTrimpotPins(address = 1, current = 1).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M908 missing P in $text" }
             assertTrue(text.contains(" S")) { "M908 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetTrimpotPins.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         ClearTMCOTPreWarn(i = 1, x = true, y = true, z = true, e = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -2029,7 +2033,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" Y")) { "M912 missing Y in $text" }
             assertTrue(text.contains(" Z")) { "M912 missing Z in $text" }
             assertTrue(text.contains(" E")) { "M912 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, ClearTMCOTPreWarn.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SetHybridThresholdSpeed(i = 1, t = 1, x = true, y = true, z = true, a = 1, b = 1, c = 1, u = 1, v = 1, w = 1, e = true).let {
             val text = GEncoder.encode(it.encode())
@@ -2045,7 +2049,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" V")) { "M913 missing V in $text" }
             assertTrue(text.contains(" W")) { "M913 missing W in $text" }
             assertTrue(text.contains(" E")) { "M913 missing E in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SetHybridThresholdSpeed.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         TMCBumpSensitivity(i = 1, x = 1, y = 1, z = 1, a = 1, b = 1, c = 1, u = 1, v = 1, w = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -2059,13 +2063,13 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "M914 missing U in $text" }
             assertTrue(text.contains(" V")) { "M914 missing V in $text" }
             assertTrue(text.contains(" W")) { "M914 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, TMCBumpSensitivity.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         TMCZAxisCalibration(s = 1, z = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M915 missing S in $text" }
             assertTrue(text.contains(" Z")) { "M915 missing Z in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, TMCZAxisCalibration.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         L6474ThermalWarningTest(j = 1, x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), e = BigDecimal("1.5"), feedrate = 1, current = 1, k = 1, second = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -2078,7 +2082,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "M916 missing T in $text" }
             assertTrue(text.contains(" K")) { "M916 missing K in $text" }
             assertTrue(text.contains(" D")) { "M916 missing D in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, L6474ThermalWarningTest.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         L6474OvercurrentWarningTest(j = 1, x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), a = BigDecimal("1.5"), b = BigDecimal("1.5"), c = BigDecimal("1.5"), u = BigDecimal("1.5"), v = BigDecimal("1.5"), w = BigDecimal("1.5"), e = BigDecimal("1.5"), feedrate = 1, current = 1, t = 1, k = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -2097,7 +2101,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" I")) { "M917 missing I in $text" }
             assertTrue(text.contains(" T")) { "M917 missing T in $text" }
             assertTrue(text.contains(" K")) { "M917 missing K in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, L6474OvercurrentWarningTest.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         L6474SpeedWarningTest(j = 1, x = BigDecimal("1.5"), y = BigDecimal("1.5"), z = BigDecimal("1.5"), e = BigDecimal("1.5"), current = 1, t = 1, k = 1, microsteps = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -2110,7 +2114,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" T")) { "M918 missing T in $text" }
             assertTrue(text.contains(" K")) { "M918 missing K in $text" }
             assertTrue(text.contains(" M")) { "M918 missing M in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, L6474SpeedWarningTest.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         TMCChopperTiming(o = 1, p = 1, s = 1, i = 1, t = 1, x = true, y = true, z = true, a = true, b = true, c = true, u = true, v = true, w = true).let {
             val text = GEncoder.encode(it.encode())
@@ -2128,7 +2132,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "M919 missing U in $text" }
             assertTrue(text.contains(" V")) { "M919 missing V in $text" }
             assertTrue(text.contains(" W")) { "M919 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, TMCChopperTiming.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         TMCHomingCurrent(i = 1, x = 1, y = 1, z = 1, a = 1, b = 1, c = 1, u = 1, v = 1, w = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -2142,7 +2146,7 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" U")) { "M920 missing U in $text" }
             assertTrue(text.contains(" V")) { "M920 missing V in $text" }
             assertTrue(text.contains(" W")) { "M920 missing W in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, TMCHomingCurrent.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         MagneticParkingExtruder(l = BigDecimal("1.5"), r = BigDecimal("1.5"), i = BigDecimal("1.5"), j = BigDecimal("1.5"), h = BigDecimal("1.5"), d = BigDecimal("1.5"), c = BigDecimal("1.5")).let {
             val text = GEncoder.encode(it.encode())
@@ -2153,12 +2157,12 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" H")) { "M951 missing H in $text" }
             assertTrue(text.contains(" D")) { "M951 missing D in $text" }
             assertTrue(text.contains(" C")) { "M951 missing C in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, MagneticParkingExtruder.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         STOPRestart(s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" S")) { "M999 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, STOPRestart.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         MAX7219Control(column = 1, row = 1, r = 1, i = true, f = true, p = true, index = 1, bits = 1L, x = 1, y = 1).let {
             val text = GEncoder.encode(it.encode())
@@ -2172,43 +2176,43 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" V")) { "M7219 missing V in $text" }
             assertTrue(text.contains(" X")) { "M7219 missing X in $text" }
             assertTrue(text.contains(" Y")) { "M7219 missing Y in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, MAX7219Control.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SelectOrReportToolT0(feedrate = BigDecimal("1.5"), s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" F")) { "T0 missing F in $text" }
             assertTrue(text.contains(" S")) { "T0 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SelectOrReportToolT0.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SelectOrReportToolT1(feedrate = BigDecimal("1.5"), s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" F")) { "T1 missing F in $text" }
             assertTrue(text.contains(" S")) { "T1 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SelectOrReportToolT1.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SelectOrReportToolT2(feedrate = BigDecimal("1.5"), s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" F")) { "T2 missing F in $text" }
             assertTrue(text.contains(" S")) { "T2 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SelectOrReportToolT2.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SelectOrReportToolT3(feedrate = BigDecimal("1.5"), s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" F")) { "T3 missing F in $text" }
             assertTrue(text.contains(" S")) { "T3 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SelectOrReportToolT3.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SelectOrReportToolT4(feedrate = BigDecimal("1.5"), s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" F")) { "T4 missing F in $text" }
             assertTrue(text.contains(" S")) { "T4 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SelectOrReportToolT4.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SelectOrReportToolT5(feedrate = BigDecimal("1.5"), s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" F")) { "T5 missing F in $text" }
             assertTrue(text.contains(" S")) { "T5 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SelectOrReportToolT5.decodeParams(it.encode().params)) { "round trip: $text" }
         }
     }
 
@@ -2218,13 +2222,13 @@ class MarlinCommandsTest {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" F")) { "T6 missing F in $text" }
             assertTrue(text.contains(" S")) { "T6 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SelectOrReportToolT6.decodeParams(it.encode().params)) { "round trip: $text" }
         }
         SelectOrReportToolT7(feedrate = BigDecimal("1.5"), s = true).let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" F")) { "T7 missing F in $text" }
             assertTrue(text.contains(" S")) { "T7 missing S in $text" }
-            assertEquals(it, it.decodeParams(it.encode().params)) { "round trip: $text" }
+            assertEquals(it, SelectOrReportToolT7.decodeParams(it.encode().params)) { "round trip: $text" }
         }
     }
 

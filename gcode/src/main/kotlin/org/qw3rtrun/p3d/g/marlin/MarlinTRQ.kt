@@ -6,10 +6,11 @@
 // How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md
 //
 // Marlin's `T` commands, one class each, all implementing GRQ and all written the same
-// way: `encode()` builds the command with the code/dsl builders, `head()` names it, and
-// `decodeParams` reads one back. Every parameter is optional and absent by default, so a
-// bare instance encodes to the bare command - `M105` and `M105 T0` are different commands
-// and both have to be sayable.
+// way: `encode()` builds the command with the code/dsl builders, and the companion object
+// implements GRQDecoder, so `head()` names the command and `decodeParams` reads one back
+// without an instance - `SomeCommand.decode(cmd)`. Every parameter is optional and absent
+// by default, so a bare instance encodes to the bare command - `M105` and `M105 T0` are
+// different commands and both have to be sayable.
 //
 // 8 classes over 8 distinct codes and 16 parameter slots. `G`, `M` and `T` are in three
 // files only because there are 295 classes in all; MarlinRQ.kt registers every one of them
@@ -24,6 +25,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.GRQ
+import org.qw3rtrun.p3d.g.code.dsl.GRQDecoder
 import org.qw3rtrun.p3d.g.code.dsl.T
 import org.qw3rtrun.p3d.g.code.dsl.word
 import java.math.BigDecimal
@@ -49,19 +51,22 @@ data class SelectOrReportToolT0(
         return T(0, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return T(0).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectOrReportToolT0 {
-        return SelectOrReportToolT0(
-            feedrate = params.decimalOf('F'),
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectOrReportToolT0> {
+
+        override fun head(): GParameterWord<*> {
+            return T(0).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectOrReportToolT0 {
+            return SelectOrReportToolT0(
+                feedrate = params.decimalOf('F'),
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -86,19 +91,22 @@ data class SelectOrReportToolT1(
         return T(1, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return T(1).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectOrReportToolT1 {
-        return SelectOrReportToolT1(
-            feedrate = params.decimalOf('F'),
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectOrReportToolT1> {
+
+        override fun head(): GParameterWord<*> {
+            return T(1).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectOrReportToolT1 {
+            return SelectOrReportToolT1(
+                feedrate = params.decimalOf('F'),
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -123,19 +131,22 @@ data class SelectOrReportToolT2(
         return T(2, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return T(2).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectOrReportToolT2 {
-        return SelectOrReportToolT2(
-            feedrate = params.decimalOf('F'),
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectOrReportToolT2> {
+
+        override fun head(): GParameterWord<*> {
+            return T(2).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectOrReportToolT2 {
+            return SelectOrReportToolT2(
+                feedrate = params.decimalOf('F'),
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -160,19 +171,22 @@ data class SelectOrReportToolT3(
         return T(3, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return T(3).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectOrReportToolT3 {
-        return SelectOrReportToolT3(
-            feedrate = params.decimalOf('F'),
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectOrReportToolT3> {
+
+        override fun head(): GParameterWord<*> {
+            return T(3).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectOrReportToolT3 {
+            return SelectOrReportToolT3(
+                feedrate = params.decimalOf('F'),
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -197,19 +211,22 @@ data class SelectOrReportToolT4(
         return T(4, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return T(4).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectOrReportToolT4 {
-        return SelectOrReportToolT4(
-            feedrate = params.decimalOf('F'),
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectOrReportToolT4> {
+
+        override fun head(): GParameterWord<*> {
+            return T(4).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectOrReportToolT4 {
+            return SelectOrReportToolT4(
+                feedrate = params.decimalOf('F'),
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -234,19 +251,22 @@ data class SelectOrReportToolT5(
         return T(5, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return T(5).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectOrReportToolT5 {
-        return SelectOrReportToolT5(
-            feedrate = params.decimalOf('F'),
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectOrReportToolT5> {
+
+        override fun head(): GParameterWord<*> {
+            return T(5).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectOrReportToolT5 {
+            return SelectOrReportToolT5(
+                feedrate = params.decimalOf('F'),
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -271,19 +291,22 @@ data class SelectOrReportToolT6(
         return T(6, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return T(6).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectOrReportToolT6 {
-        return SelectOrReportToolT6(
-            feedrate = params.decimalOf('F'),
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectOrReportToolT6> {
+
+        override fun head(): GParameterWord<*> {
+            return T(6).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectOrReportToolT6 {
+            return SelectOrReportToolT6(
+                feedrate = params.decimalOf('F'),
+                s = params.boolOf('S'),
+            )
+        }
     }
 }
 
@@ -308,18 +331,21 @@ data class SelectOrReportToolT7(
         return T(7, *words.toTypedArray())
     }
 
-    override fun head(): GParameterWord<*> {
-        return T(7).head
-    }
-
-    override fun decodeParams(params: List<GWord>): SelectOrReportToolT7 {
-        return SelectOrReportToolT7(
-            feedrate = params.decimalOf('F'),
-            s = params.boolOf('S'),
-        )
-    }
-
     override fun toString(): String {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
+    }
+
+    companion object : GRQDecoder<SelectOrReportToolT7> {
+
+        override fun head(): GParameterWord<*> {
+            return T(7).head
+        }
+
+        override fun decodeParams(params: List<GWord>): SelectOrReportToolT7 {
+            return SelectOrReportToolT7(
+                feedrate = params.decimalOf('F'),
+                s = params.boolOf('S'),
+            )
+        }
     }
 }

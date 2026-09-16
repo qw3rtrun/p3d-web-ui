@@ -12,7 +12,7 @@ import java.math.BigDecimal
 /**
  * Hand-written cover for the shape every generated command class has - `MarlinGRQ.kt`,
  * `MarlinMRQ.kt` and `MarlinTRQ.kt` - using `M105` as the case in point, plus the `MarlinG`
- * shortcuts from `MCommands.kt`.
+ * shortcuts from `MarlinRQ.kt`.
  *
  * `MarlinCommandsTest` is generated and sweeps all 295 commands; this one is written out so that
  * the contract is stated in prose somewhere a reader will find it, and so the two bugs the
@@ -49,7 +49,7 @@ class MCommandsTest {
         // param - so find() returned null and the non-null cast threw for every input.
         assertEquals(
             ReportHotendTemperature(index = 2),
-            ReportHotendTemperature().decode(M(105, word('T', 2))),
+            ReportHotendTemperature.decode(M(105, word('T', 2))),
         )
     }
 
@@ -57,13 +57,13 @@ class MCommandsTest {
     fun `decoding reads the R flag`() {
         assertEquals(
             ReportHotendTemperature(r = true, index = 1),
-            ReportHotendTemperature().decode(M(105, flag('R'), word('T', 1))),
+            ReportHotendTemperature.decode(M(105, flag('R'), word('T', 1))),
         )
     }
 
     @Test
     fun `a bare M105 decodes to nothing set`() {
-        assertEquals(ReportHotendTemperature(), ReportHotendTemperature().decode(M(105)))
+        assertEquals(ReportHotendTemperature(), ReportHotendTemperature.decode(M(105)))
     }
 
     @Test
@@ -76,7 +76,9 @@ class MCommandsTest {
             ReportHotendTemperature(r = true, index = 2),
         )
         for (original in cases) {
-            assertEquals(original, original.decode(original.encode())) {
+            // Decoding goes through the companion, so the instance under test is only the input -
+            // which is the point: one decoder per command type, not one per command built.
+            assertEquals(original, ReportHotendTemperature.decode(original.encode())) {
                 "round trip failed for " + enc(original)
             }
         }
@@ -84,8 +86,8 @@ class MCommandsTest {
 
     @Test
     fun `a different command does not decode`() {
-        assertNull(ReportHotendTemperature().decode(M(115)))
-        assertNull(ReportHotendTemperature().decode(M(155, word('S', 1))))
+        assertNull(ReportHotendTemperature.decode(M(115)))
+        assertNull(ReportHotendTemperature.decode(M(155, word('S', 1))))
     }
 
     @Test

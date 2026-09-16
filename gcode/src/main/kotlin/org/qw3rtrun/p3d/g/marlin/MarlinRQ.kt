@@ -14,17 +14,27 @@ package org.qw3rtrun.p3d.g.marlin
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
 import org.qw3rtrun.p3d.g.code.dsl.GRQ
+import org.qw3rtrun.p3d.g.code.dsl.GRQDecoder
 import java.math.BigDecimal
 
 /**
  * Every Marlin command this module knows how to write, and the lookup that reads one back.
  *
- * The list holds one prototype per command - all parameters absent - which is what makes
- * [decode] possible: `GRQ.decode` is an instance method, so it needs an instance to ask.
+ * Three views of the same 295 commands - [all], [info] and [decoders] - all built in `G`
+ * then `M` then `T` order and all **index-aligned**, so `all[i]`, `info[i]` and
+ * `decoders[i]` are the same command. Callers that need to pair a class with its metadata
+ * or its decoder may rely on that.
  */
 object MarlinCommands {
 
-    /** One prototype per command, in `G` then `M` then `T` order. */
+    /**
+     * One bare instance per command - every parameter absent.
+     *
+     * This is the enumeration of what the module can *write*: a bare instance encodes to
+     * exactly its code, which is the claim the generated cover checks class by class.
+     * Reading is [decoders]' job; nothing here needs an instance to decode against any
+     * more, because `head()` and `decodeParams()` moved to each class's companion.
+     */
     val all: List<GRQ<*>> = listOf(
         LinearMoveG0(),
         LinearMoveG1(),
@@ -323,6 +333,309 @@ object MarlinCommands {
         SelectOrReportToolT7(),
     )
 
+    /**
+     * The reading half: every command's companion object, which is its [GRQDecoder].
+     *
+     * A bare class name here *is* the companion - `LinearMoveG0`, not `LinearMoveG0()`.
+     */
+    val decoders: List<GRQDecoder<*>> = listOf(
+        LinearMoveG0,
+        LinearMoveG1,
+        ArcOrCircleMoveG2,
+        ArcOrCircleMoveG3,
+        Dwell,
+        BezierCubicSplineMove,
+        DirectStepperMove,
+        Retract,
+        Recover,
+        CleanTheNozzle,
+        CNCWorkspacePlanesG17,
+        CNCWorkspacePlanesG18,
+        CNCWorkspacePlanesG19,
+        InchUnits,
+        MillimeterUnits,
+        MeshValidationPattern,
+        ParkToolhead,
+        AutoHome,
+        BedLeveling3Point,
+        BedLevelingBilinear,
+        BedLevelingLinear,
+        BedLevelingManual,
+        BedLevelingUnified,
+        BedLeveling,
+        SingleZProbe,
+        DockSled,
+        UndockSled,
+        DeltaAutoCalibration,
+        MechanicalGantryCalibration,
+        ZSteppersAutoAlignment,
+        TrammingAssistant,
+        ProbeTargetG38_2,
+        ProbeTargetG38_3,
+        ProbeTargetG38_4,
+        ProbeTargetG38_5,
+        MoveToMeshCoordinate,
+        MoveInMachineCoordinates,
+        SelectWorkspaceG54,
+        SelectWorkspaceG55,
+        SelectWorkspaceG56,
+        SelectWorkspaceG57,
+        SelectWorkspaceG58,
+        SelectWorkspaceG59,
+        SelectWorkspaceG59_1,
+        SelectWorkspaceG59_2,
+        SelectWorkspaceG59_3,
+        StoredPositions,
+        ReturnToSavedPosition,
+        ProbeTemperatureCalibration,
+        CancelCurrentMotionMode,
+        AbsolutePositioning,
+        RelativePositioning,
+        SetPosition,
+        BacklashAndToolheadOffsetCalibration,
+        UnconditionalStopM0,
+        UnconditionalStopM1,
+        SpindleCWLaserOn,
+        SpindleCCWLaserOn,
+        SpindleLaserOff,
+        CoolantControlsM7,
+        CoolantControlsM8,
+        CoolantControlsM9,
+        VacuumBlowerControlM10,
+        VacuumBlowerControlM11,
+        ExpectedPrinterCheck,
+        EnableSteppers,
+        DisableSteppersM18,
+        ListSDCard,
+        InitSDCard,
+        ReleaseSDCard,
+        SelectSDFile,
+        StartOrResumeSDPrint,
+        PauseSDPrint,
+        SetSDPosition,
+        ReportSDPrintStatus,
+        StartSDWrite,
+        StopSDWrite,
+        DeleteSDFile,
+        ReportPrintTime,
+        SelectAndStart,
+        GetLongPath,
+        SDCardSorting,
+        SetPinState,
+        PinsDebugging,
+        ProbeRepeatabilityTest,
+        SetPrintProgress,
+        StartPrintJobTimer,
+        PausePrintJobTimer,
+        StopPrintJobTimer,
+        PrintJobStats,
+        PowerOn,
+        PowerOff,
+        EAbsolute,
+        ERelative,
+        DisableSteppersM84,
+        InactivityShutdown,
+        HotendIdleTimeout,
+        DisableHotendIdleTimeout,
+        SetAxisStepsPerUnit,
+        FreeMemory,
+        ConfigureBedDistanceSensor,
+        SetHotendTemperature,
+        ReportHotendTemperature,
+        SetFanSpeed,
+        FanOff,
+        BreakAndContinue,
+        WaitForHotendTemperature,
+        SetGetLineNumber,
+        DebugLevel,
+        FullShutdown,
+        HostKeepalive,
+        GetCurrentPosition,
+        FirmwareInfo,
+        SetLCDMessage,
+        SerialPrint,
+        EndstopStates,
+        EnableEndstops,
+        DisableEndstops,
+        TMCDebugging,
+        FanTachometers,
+        ParkHead,
+        Baricuda1Open,
+        Baricuda1Close,
+        Baricuda2Open,
+        Baricuda2Close,
+        SetBedTemperature,
+        SetChamberTemperature,
+        SetLaserCoolerTemperature,
+        SetMaterialPreset,
+        SetTemperatureUnits,
+        SetRGBWColor,
+        PositionAutoReport,
+        TemperatureAutoReport,
+        SetMixFactor,
+        SaveMix,
+        SetMix,
+        GradientMix,
+        WaitForBedTemperature,
+        WaitForChamberTemperature,
+        WaitForProbeTemperature,
+        WaitForLaserCoolerTemperature,
+        VolumetricExtrusionDiameter,
+        PrintTravelMoveLimits,
+        SetMaxFeedrate,
+        SetStartingAcceleration,
+        SetAdvancedSettings,
+        SetHomeOffsets,
+        FirmwareRetractionSettings,
+        FirmwareRecoverSettings,
+        SetAutoRetract,
+        HomingFeedrate,
+        SoftwareEndstops,
+        FilamentSwapParameters,
+        SetHotendOffset,
+        SetFeedratePercentage,
+        SetFlowPercentage,
+        WaitForPinState,
+        TriggerCamera,
+        LCDContrast,
+        LCDSleepBacklightTimeout,
+        LCDBrightness,
+        I2CSend,
+        I2CRequest,
+        ScanI2CBus,
+        ServoPosition,
+        EditServoAngles,
+        DetachServo,
+        Babystep,
+        PlayTone,
+        SetHotendPID,
+        ColdExtrude,
+        PIDAutotune,
+        SetBedPID,
+        UserThermistorParameters,
+        ModelPredictiveTempControl,
+        SetChamberPID,
+        SetMicroStepping,
+        SetMicrostepPins,
+        CaseLightControl,
+        SCARAThetaA,
+        SCARAThetaB,
+        SCARAPsiA,
+        SCARAPsiB,
+        SCARAPsiC,
+        ActivateSolenoid,
+        DeactivateSolenoids,
+        FinishMoves,
+        DeployProbe,
+        StowProbe,
+        MMU2FilamentType,
+        FilamentWidthSensorNominalDiameter,
+        FilamentWidthSensorOn,
+        FilamentWidthSensorOff,
+        ReadFilamentWidth,
+        Quickstop,
+        FilamentRunout,
+        PowerLossRecovery,
+        LCDLanguage,
+        BedLevelingState,
+        SetMeshValue,
+        SetZMotorXY,
+        XTwistCompensation,
+        BacklashCompensation,
+        HomeOffsetsHere,
+        PowerMonitor,
+        CancelObjects,
+        FixedTimeMotion,
+        FTMotionTrajectorySmoothing,
+        SaveSettings,
+        RestoreSettings,
+        FactoryReset,
+        ReportSettings,
+        ValidateEEPROMContents,
+        LockMachine,
+        UnlockMachine,
+        SetPasscode,
+        AbortSDPrint,
+        EndstopsAbortSD,
+        MachineName,
+        EthernetIPAddressNetworkIF,
+        EthernetSubnetMask,
+        EthernetGatewayIPAddress,
+        SetTMCSteppingMode,
+        SerialBaudRate,
+        NonlinearExtrusionControl,
+        ZVInputShaping,
+        FilamentChange,
+        ConfigureFilamentChange,
+        MultiNozzleMode,
+        SCARAConfiguration,
+        DeltaConfiguration,
+        DualEndstopOffsets,
+        SetDeltaEndstopAdjustments,
+        DuetSmartEffectorSensitivity,
+        LoadFilament,
+        UnloadFilament,
+        ControllerFanSettings,
+        RepeatMarker,
+        GCodeMacrosM810,
+        GCodeMacrosM811,
+        GCodeMacrosM812,
+        GCodeMacrosM813,
+        GCodeMacrosM814,
+        GCodeMacrosM815,
+        GCodeMacrosM816,
+        GCodeMacrosM817,
+        GCodeMacrosM818,
+        GCodeMacrosM819,
+        ReportGCodeMacros,
+        XYZProbeOffset,
+        BedSkewCompensation,
+        I2CPositionEncodersM860,
+        I2CPositionEncodersM861,
+        I2CPositionEncodersM862,
+        I2CPositionEncodersM863,
+        I2CPositionEncodersM864,
+        I2CPositionEncodersM865,
+        I2CPositionEncodersM866,
+        I2CPositionEncodersM867,
+        I2CPositionEncodersM868,
+        I2CPositionEncodersM869,
+        ProbeTemperatureConfig,
+        HandlePromptResponse,
+        LinearAdvanceFactor,
+        StepperMotorCurrent,
+        TrimpotStepperMotorCurrent,
+        SetTrimpotPins,
+        ReportDACStepperCurrent,
+        CommitDACToEEPROM,
+        TMCOTPreWarnCondition,
+        ClearTMCOTPreWarn,
+        SetHybridThresholdSpeed,
+        TMCBumpSensitivity,
+        TMCZAxisCalibration,
+        L6474ThermalWarningTest,
+        L6474OvercurrentWarningTest,
+        L6474SpeedWarningTest,
+        TMCChopperTiming,
+        TMCHomingCurrent,
+        StartSDLogging,
+        MagneticParkingExtruder,
+        BackUpFlashSettingsToSD,
+        RestoreFlashFromSD,
+        TouchScreenCalibration,
+        FirmwareUpdate,
+        STOPRestart,
+        MAX7219Control,
+        SelectOrReportToolT0,
+        SelectOrReportToolT1,
+        SelectOrReportToolT2,
+        SelectOrReportToolT3,
+        SelectOrReportToolT4,
+        SelectOrReportToolT5,
+        SelectOrReportToolT6,
+        SelectOrReportToolT7,
+    )
+
     /** What one command class models: its code, its name, and the letters it accepts. */
     data class Info(
         val code: String,
@@ -339,18 +652,8 @@ object MarlinCommands {
     val info: List<Info> = listOf(
         Info("G0", "LinearMoveG0", setOf('A', 'B', 'C', 'E', 'F', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("G1", "LinearMoveG1", setOf('A', 'B', 'C', 'E', 'F', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
-        Info(
-            "G2",
-            "ArcOrCircleMoveG2",
-            setOf('A', 'B', 'C', 'E', 'F', 'I', 'J', 'P', 'R', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z'),
-            false
-        ),
-        Info(
-            "G3",
-            "ArcOrCircleMoveG3",
-            setOf('A', 'B', 'C', 'E', 'F', 'I', 'J', 'P', 'R', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z'),
-            false
-        ),
+        Info("G2", "ArcOrCircleMoveG2", setOf('A', 'B', 'C', 'E', 'F', 'I', 'J', 'P', 'R', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
+        Info("G3", "ArcOrCircleMoveG3", setOf('A', 'B', 'C', 'E', 'F', 'I', 'J', 'P', 'R', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("G4", "Dwell", setOf('P', 'S'), false),
         Info("G5", "BezierCubicSplineMove", setOf('E', 'F', 'I', 'J', 'P', 'Q', 'S', 'X', 'Y'), false),
         Info("G6", "DirectStepperMove", setOf('E', 'I', 'R', 'S', 'X', 'Y', 'Z'), false),
@@ -362,56 +665,14 @@ object MarlinCommands {
         Info("G19", "CNCWorkspacePlanesG19", emptySet(), false),
         Info("G20", "InchUnits", emptySet(), false),
         Info("G21", "MillimeterUnits", emptySet(), false),
-        Info(
-            "G26",
-            "MeshValidationPattern",
-            setOf('B', 'C', 'D', 'F', 'H', 'I', 'K', 'L', 'O', 'P', 'Q', 'R', 'S', 'U', 'X', 'Y'),
-            false
-        ),
+        Info("G26", "MeshValidationPattern", setOf('B', 'C', 'D', 'F', 'H', 'I', 'K', 'L', 'O', 'P', 'Q', 'R', 'S', 'U', 'X', 'Y'), false),
         Info("G27", "ParkToolhead", setOf('P'), false),
         Info("G28", "AutoHome", setOf('A', 'B', 'C', 'H', 'L', 'O', 'R', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("G29", "BedLeveling3Point", setOf('A', 'C', 'D', 'E', 'J', 'O', 'Q', 'V'), false),
-        Info(
-            "G29",
-            "BedLevelingBilinear",
-            setOf('A', 'B', 'C', 'D', 'E', 'F', 'H', 'J', 'L', 'O', 'Q', 'R', 'S', 'V', 'W', 'X', 'Y', 'Z'),
-            false
-        ),
-        Info(
-            "G29",
-            "BedLevelingLinear",
-            setOf('A', 'B', 'C', 'D', 'E', 'F', 'H', 'J', 'L', 'O', 'P', 'Q', 'R', 'S', 'T', 'V', 'X', 'Y'),
-            false
-        ),
+        Info("G29", "BedLevelingBilinear", setOf('A', 'B', 'C', 'D', 'E', 'F', 'H', 'J', 'L', 'O', 'Q', 'R', 'S', 'V', 'W', 'X', 'Y', 'Z'), false),
+        Info("G29", "BedLevelingLinear", setOf('A', 'B', 'C', 'D', 'E', 'F', 'H', 'J', 'L', 'O', 'P', 'Q', 'R', 'S', 'T', 'V', 'X', 'Y'), false),
         Info("G29", "BedLevelingManual", setOf('I', 'J', 'S', 'X', 'Y', 'Z'), false),
-        Info(
-            "G29",
-            "BedLevelingUnified",
-            setOf(
-                'A',
-                'B',
-                'C',
-                'D',
-                'E',
-                'F',
-                'H',
-                'I',
-                'J',
-                'K',
-                'L',
-                'P',
-                'Q',
-                'R',
-                'S',
-                'T',
-                'U',
-                'V',
-                'W',
-                'X',
-                'Y'
-            ),
-            false
-        ),
+        Info("G29", "BedLevelingUnified", setOf('A', 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y'), false),
         Info("G29", "BedLeveling", emptySet(), false),
         Info("G30", "SingleZProbe", setOf('C', 'E', 'X', 'Y'), false),
         Info("G31", "DockSled", emptySet(), false),
@@ -541,35 +802,7 @@ object MarlinCommands {
         Info("M209", "SetAutoRetract", setOf('S'), false),
         Info("M210", "HomingFeedrate", setOf('A', 'B', 'C', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("M211", "SoftwareEndstops", setOf('S'), false),
-        Info(
-            "M217",
-            "FilamentSwapParameters",
-            setOf(
-                'A',
-                'B',
-                'C',
-                'E',
-                'F',
-                'G',
-                'H',
-                'I',
-                'J',
-                'K',
-                'L',
-                'O',
-                'P',
-                'Q',
-                'R',
-                'S',
-                'U',
-                'V',
-                'W',
-                'X',
-                'Y',
-                'Z'
-            ),
-            false
-        ),
+        Info("M217", "FilamentSwapParameters", setOf('A', 'B', 'C', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'O', 'P', 'Q', 'R', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("M218", "SetHotendOffset", setOf('T', 'X', 'Y', 'Z'), false),
         Info("M220", "SetFeedratePercentage", setOf('B', 'R', 'S'), false),
         Info("M221", "SetFlowPercentage", setOf('S', 'T'), false),
@@ -682,39 +915,19 @@ object MarlinCommands {
         Info("M876", "HandlePromptResponse", setOf('S'), false),
         Info("M900", "LinearAdvanceFactor", setOf('K', 'L', 'S', 'T'), false),
         Info("M906", "StepperMotorCurrent", setOf('E', 'I', 'T', 'X', 'Y', 'Z'), false),
-        Info(
-            "M907",
-            "TrimpotStepperMotorCurrent",
-            setOf('B', 'C', 'D', 'E', 'I', 'J', 'K', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z'),
-            false
-        ),
+        Info("M907", "TrimpotStepperMotorCurrent", setOf('B', 'C', 'D', 'E', 'I', 'J', 'K', 'S', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("M908", "SetTrimpotPins", setOf('P', 'S'), false),
         Info("M909", "ReportDACStepperCurrent", emptySet(), false),
         Info("M910", "CommitDACToEEPROM", emptySet(), false),
         Info("M911", "TMCOTPreWarnCondition", emptySet(), false),
         Info("M912", "ClearTMCOTPreWarn", setOf('E', 'I', 'X', 'Y', 'Z'), false),
-        Info(
-            "M913",
-            "SetHybridThresholdSpeed",
-            setOf('A', 'B', 'C', 'E', 'I', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'),
-            false
-        ),
+        Info("M913", "SetHybridThresholdSpeed", setOf('A', 'B', 'C', 'E', 'I', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("M914", "TMCBumpSensitivity", setOf('A', 'B', 'C', 'I', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("M915", "TMCZAxisCalibration", setOf('S', 'Z'), false),
         Info("M916", "L6474ThermalWarningTest", setOf('D', 'E', 'F', 'J', 'K', 'T', 'X', 'Y', 'Z'), false),
-        Info(
-            "M917",
-            "L6474OvercurrentWarningTest",
-            setOf('A', 'B', 'C', 'E', 'F', 'I', 'J', 'K', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'),
-            false
-        ),
+        Info("M917", "L6474OvercurrentWarningTest", setOf('A', 'B', 'C', 'E', 'F', 'I', 'J', 'K', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("M918", "L6474SpeedWarningTest", setOf('E', 'I', 'J', 'K', 'M', 'T', 'X', 'Y', 'Z'), false),
-        Info(
-            "M919",
-            "TMCChopperTiming",
-            setOf('A', 'B', 'C', 'I', 'O', 'P', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'),
-            false
-        ),
+        Info("M919", "TMCChopperTiming", setOf('A', 'B', 'C', 'I', 'O', 'P', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("M920", "TMCHomingCurrent", setOf('A', 'B', 'C', 'I', 'U', 'V', 'W', 'X', 'Y', 'Z'), false),
         Info("M928", "StartSDLogging", emptySet(), true),
         Info("M951", "MagneticParkingExtruder", setOf('C', 'D', 'H', 'I', 'J', 'L', 'R'), false),
@@ -735,7 +948,7 @@ object MarlinCommands {
     )
 
     /**
-     * Prototypes by command head, so [decode] is a map lookup and not 295 comparisons.
+     * Decoders by command head, so [decode] is a map lookup and not 295 comparisons.
      *
      * **A head can be claimed by more than one class** and this keeps the first. Marlin
      * documents `G29`, `G34`, `M665`, `M666` once per variant - six G29 pages, one per bed-leveling
@@ -743,8 +956,8 @@ object MarlinCommands {
      * its firmware was compiled, which no amount of reading the line can tell you. Build
      * with the variant class you mean; [decode] is a best effort for the rest.
      */
-    private val byHead: Map<GParameterWord<*>, GRQ<*>> =
-        all.groupBy { it.head() }.mapValues { (_, protos) -> protos.first() }
+    private val byHead: Map<GParameterWord<*>, GRQDecoder<*>> =
+        decoders.groupBy { it.head() }.mapValues { (_, claimants) -> claimants.first() }
 
     /** The codes above, whose [decode] is therefore approximate. */
     val ambiguousCodes: List<String> = listOf("G29", "G34", "M665", "M666")
@@ -756,8 +969,8 @@ object MarlinCommands {
      * the lexeme is part of a number's identity in this model.
      */
     fun decode(cmd: GCommand): GRQ<*>? {
-        val proto = byHead[cmd.head] ?: return null
-        return proto.decodeParams(cmd.params)
+        val decoder = byHead[cmd.head] ?: return null
+        return decoder.decodeParams(cmd.params)
     }
 }
 
@@ -767,7 +980,6 @@ object MarlinCommands {
  * Each is one line over the classes above and has no privileges they do not - the point is
  * a call site that reads as an intention rather than a code number.
  */
-
 object MarlinG {
 
     fun m105(index: Int? = null): ReportHotendTemperature {

@@ -4,9 +4,12 @@
     python3 tools/marlin/gen_mcommands.py
 
 Writes, all under gcode/src/.../org/qw3rtrun/p3d/g/marlin/:
-    MarlinGRQ.kt, MarlinMRQ.kt, MarlinTRQ.kt  - the command classes, split by command letter
+    command/<ClassName>.kt                    - one file per command class, 295 of them
     MarlinRQ.kt                               - the MarlinCommands registry and the MarlinG facade
     MarlinCommandsTest.kt (test source root)  - the generated cover for all of it
+
+The command directory is emptied before it is written, so a class that loses its name upstream
+does not leave a stale file behind to be compiled alongside its replacement.
 
 Both are checked in, so the Gradle build never runs this. Re-run it only after re-running
 `extract_marlin_docs.py` against a newer Marlin documentation checkout.
@@ -66,12 +69,15 @@ SAMPLES = {
     "string": '"x"',
 }
 
-# Where the generated Kotlin goes, and the one file per command letter the classes are split
-# across. The split is by size alone: 295 classes in one file is 14k lines, and the letter is the
-# only boundary the source data guarantees is stable - a command never changes its letter.
+# Where the generated Kotlin goes. One file per command class, named after the class it holds,
+# in a package of their own: 295 classes is 14k lines, which is more than any editor, reviewer or
+# diff wants to open at once, and the class is the only boundary that needs no judgement. Naming
+# by class and not by G-code because 8 classes share a code with another - Marlin documents six
+# G29 variants and two each of G34, M665 and M666 - so `G29.kt` could not hold one command.
 MARLIN_MAIN = os.path.join("gcode", "src", "main", "kotlin", "org", "qw3rtrun", "p3d", "g",
                            "marlin")
-LETTER_FILES = [("G", "MarlinGRQ.kt"), ("M", "MarlinMRQ.kt"), ("T", "MarlinTRQ.kt")]
+COMMAND_DIR = os.path.join(MARLIN_MAIN, "command")
+COMMAND_PACKAGE = "org.qw3rtrun.p3d.g.marlin.command"
 REGISTRY_FILE = "MarlinRQ.kt"
 
 # Class names that do not come from the doc title. `M105`'s page is titled "Report Temperatures",
@@ -172,6 +178,15 @@ def imports_for(letter, text):
         (None, "org.qw3rtrun.p3d.g.code.dsl.%s" % letter),
         (None, "org.qw3rtrun.p3d.g.protocol.GRq"),
         (None, "org.qw3rtrun.p3d.g.protocol.GRqDecoder"),
+        # The `params.<kind>Of(letter)` readers are `internal` extensions in the marlin package.
+        # They resolved implicitly while the classes lived there; from `marlin.command` they have
+        # to be imported, and only the ones a given class actually calls.
+        (r"\bboolOf\(", "org.qw3rtrun.p3d.g.marlin.boolOf"),
+        (r"\bdecimalOf\(", "org.qw3rtrun.p3d.g.marlin.decimalOf"),
+        (r"\bhasWord\(", "org.qw3rtrun.p3d.g.marlin.hasWord"),
+        (r"\bintOf\(", "org.qw3rtrun.p3d.g.marlin.intOf"),
+        (r"\blongOf\(", "org.qw3rtrun.p3d.g.marlin.longOf"),
+        (r"\bstringOf\(", "org.qw3rtrun.p3d.g.marlin.stringOf"),
         (r"\bflag\(", "org.qw3rtrun.p3d.g.code.dsl.flag"),
         (r"\btext\(", "org.qw3rtrun.p3d.g.code.dsl.text"),
         (r"\bword\(", "org.qw3rtrun.p3d.g.code.dsl.word"),
@@ -341,11 +356,17 @@ def main():
                      % (hashes[h], names[i], h))
         hashes[h] = names[i]
 
-    for letter, filename in LETTER_FILES:
-        group = [i for i, c in enumerate(commands) if c["letter"] == letter]
-        text = "\n\n".join(bodies[i] for i in group)
-        codes = len({commands[i]["code"] for i in group})
-        slots = sum(len(all_fields[i]) for i in group)
+    # One file per class. The directory is emptied first: a class renamed upstream would
+    # otherwise leave its old file behind, and two classes with the same code would both compile.
+    if os.path.isdir(COMMAND_DIR):
+        for stale in os.listdir(COMMAND_DIR):
+            if stale.endswith(".kt"):
+                os.remove(os.path.join(COMMAND_DIR, stale))
+    else:
+        os.makedirs(COMMAND_DIR)
+
+    for i, c in enumerate(commands):
+        body = bodies[i]
         header = [
             "// GENERATED FILE - do not edit.",
             "//",
@@ -353,33 +374,25 @@ def main():
             "// Source of truth:  doc/marlin-gcode/commands.json",
             "// Extracted from:   %s @ %s" % (src["repo"], src["commit"]),
             "// How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md",
-            "//",
-            "// Marlin's `%s` commands, one class each, all implementing GRq and all written the same"
-            % letter,
-            "// way: `encode()` builds the command with the code/dsl builders, and the companion object",
-            "// implements GRqDecoder, so `head()` names the command and `decodeParams` reads one back",
-            "// without an instance - `SomeCommand.decode(cmd)`. Every parameter is optional and absent",
-            "// by default, so a bare instance encodes to the bare command - `M105` and `M105 T0` are",
-            "// different commands and both have to be sayable.",
-            "//",
-            "// %d classes over %d distinct codes and %d parameter slots. `G`, `M` and `T` are in three"
-            % (len(group), codes, slots),
-            "// files only because there are %d classes in all; MarlinRQ.kt registers every one of them"
-            % len(commands),
-            "// and is the single place that sees all three. Generated rather than typed because a",
-            "// transposed parameter letter is invisible in review and shows up when a printer answers",
-            "// `echo:Unknown command`.",
             "",
-            "package org.qw3rtrun.p3d.g.marlin",
+            "package %s" % COMMAND_PACKAGE,
             "",
         ]
-        header += imports_for(letter, text)
+        header += imports_for(c["letter"], body)
         header.append("")
-        path = os.path.join(MARLIN_MAIN, filename)
+        path = os.path.join(COMMAND_DIR, "%s.kt" % names[i])
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write("\n".join(header) + "\n" + text + "\n")
-        print("wrote %s  (%d classes, %d lines)"
-              % (path, len(group), len(header) + text.count("\n") + 1))
+            fh.write("\n".join(header) + "\n" + body + "\n")
+
+    print("wrote %s/*.kt  (%d files, one per command class)" % (COMMAND_DIR, len(commands)))
+
+    # The three by-letter files this replaced. Removed here rather than by hand so that a checkout
+    # that still has them is repaired by a regeneration.
+    for stale in ("MarlinGRQ.kt", "MarlinMRQ.kt", "MarlinTRQ.kt"):
+        path = os.path.join(MARLIN_MAIN, stale)
+        if os.path.exists(path):
+            os.remove(path)
+            print("removed %s  (superseded by command/)" % path)
 
     registry = [
         "/**",
@@ -545,13 +558,14 @@ def main():
         "//",
         "// The registry over every Marlin command and the named facade this project calls. The %d"
         % len(commands),
-        "// command classes themselves are split by letter across MarlinGRQ.kt, MarlinMRQ.kt and",
-        "// MarlinTRQ.kt; they are all in this package, so this file names them without importing.",
+        "// command classes themselves are one file each under `command/`, named after the class",
+        "// they hold, and are star-imported here rather than named 295 times.",
         "",
         "package org.qw3rtrun.p3d.g.marlin",
         "",
         "import org.qw3rtrun.p3d.g.code.core.token.GCommand",
         "import org.qw3rtrun.p3d.g.code.core.token.GParameterWord",
+        "import org.qw3rtrun.p3d.g.marlin.command.*",
         "import org.qw3rtrun.p3d.g.protocol.GRq",
         "import org.qw3rtrun.p3d.g.protocol.GRqDecoder",
         "import java.math.BigDecimal",
@@ -576,6 +590,7 @@ def main():
         "import org.junit.jupiter.api.Test",
         "import org.qw3rtrun.p3d.g.code.core.GEncoder",
         "import org.qw3rtrun.p3d.g.code.dsl.M",
+        "import org.qw3rtrun.p3d.g.marlin.command.*",
         "import java.math.BigDecimal",
         "",
         "/**",

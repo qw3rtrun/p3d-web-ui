@@ -1,12 +1,13 @@
-# 11 — The Marlin command set (`marlin/MarlinGRQ.kt`, `MarlinMRQ.kt`, `MarlinTRQ.kt`)
+# 11 — The Marlin command set (`marlin/command/`)
 
 **Status: the command set is in.** 295 classes covering 287 distinct codes, generated from Marlin's
-own documentation, split by command letter across `marlin/MarlinGRQ.kt`, `MarlinMRQ.kt` and
-`MarlinTRQ.kt` — each implementing `GRq` and each written the way the `ReportHotendTemperature`
+own documentation, **one file per class** under `marlin/command/`, named after the class it holds
+— each implementing `GRq` and each written the way the `ReportHotendTemperature`
 reference is written. `MarlinCommands`, the registry and decode lookup, is an `object` in
-`marlin/MarlinRQ.kt` alongside the `MarlinG` shortcuts; the classes are top-level in one package,
-so which file a class lives in is invisible to callers. Three follow-ups are listed
-under *What is left*.
+`marlin/MarlinRQ.kt` alongside the `MarlinG` shortcuts, and star-imports the command package
+rather than naming 295 classes. Callers import from `org.qw3rtrun.p3d.g.marlin.command`; which
+file a class sits in is invisible to them, since the file name only has to be unique. Three
+follow-ups are listed under *What is left*.
 
 **Goal.** A named, typed Kotlin class per G-code Marlin supports, sitting on top of the
 [`code/dsl`](./10-command-dsl.md) builders: `encode()` produces a `GCommand`, and the class's

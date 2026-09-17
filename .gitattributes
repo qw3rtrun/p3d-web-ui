@@ -39,8 +39,6 @@ gradlew text eol=lf
 
 # Generated, and large. Collapsed in diffs and excluded from GitHub's language
 # stats; still versioned, still reviewable with --text when it matters.
-gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinGRQ.kt linguist-generated
-gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinMRQ.kt linguist-generated
-gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinTRQ.kt linguist-generated
-gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinRQ.kt  linguist-generated
+gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/command/** linguist-generated
+gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinRQ.kt linguist-generated
 gcode/src/test/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinCommandsTest.kt linguist-generated

@@ -6,6 +6,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GCommandParser
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.token.GSemanticParser
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
+import org.qw3rtrun.p3d.g.marlin.command.*
 
 /**
  * The independent check on [MarlinCommands].

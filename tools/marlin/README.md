@@ -1,10 +1,13 @@
 # Marlin command generation
 
-Four files under `gcode/src/main/kotlin/.../marlin/` are **generated** — `MarlinGRQ.kt`,
-`MarlinMRQ.kt` and `MarlinTRQ.kt` hold all 295 command classes, split by command letter, and
-`MarlinRQ.kt` holds the `MarlinCommands` registry and the `MarlinG` shortcuts — and so are its
-tests and the doc-example fixture. Nothing here runs during the
-Gradle build; the output is checked in and the build only compiles it.
+Everything under `gcode/src/main/kotlin/.../marlin/command/` is **generated** — all 295 command
+classes, one file per class, named after the class it holds — and so are `MarlinRQ.kt`, which holds
+the `MarlinCommands` registry and the `MarlinG` shortcuts, the generated test, and the doc-example
+fixture. Nothing here runs during the Gradle build; the output is checked in and the build only
+compiles it.
+
+`command/` is emptied on every run, so a class that loses its name upstream cannot leave a stale
+file behind to be compiled next to its replacement.
 
 ## Why generated
 

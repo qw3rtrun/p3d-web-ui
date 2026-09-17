@@ -6,13 +6,14 @@
 // How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md
 //
 // The registry over every Marlin command and the named facade this project calls. The 295
-// command classes themselves are split by letter across MarlinGRQ.kt, MarlinMRQ.kt and
-// MarlinTRQ.kt; they are all in this package, so this file names them without importing.
+// command classes themselves are one file each under `command/`, named after the class
+// they hold, and are star-imported here rather than named 295 times.
 
 package org.qw3rtrun.p3d.g.marlin
 
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.marlin.command.*
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 import java.math.BigDecimal

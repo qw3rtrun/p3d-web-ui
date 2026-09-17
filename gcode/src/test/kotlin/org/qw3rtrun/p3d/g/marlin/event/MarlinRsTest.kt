@@ -1,14 +1,18 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.marlin.protocol.SimpleOkRs
+import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
+import org.qw3rtrun.p3d.g.protocol.GRs
+import org.qw3rtrun.p3d.g.protocol.OkRs
+import org.qw3rtrun.p3d.g.protocol.SimpleOkRs
 import java.math.BigDecimal
 import java.util.UUID
 
@@ -33,33 +37,67 @@ class MarlinRsTest {
         @Test
         fun `the ordinary single-hotend report decodes`() {
             assertEquals(
-                TemperatureRs(
+                OkTemperatureRs(
                     hotend = HeaterReading(dec("210.00"), dec("210.00"), 127),
                     bed = HeaterReading(dec("60.00"), dec("60.00"), 80),
-                    ok = true,
                 ),
-                TemperatureRs.decode("ok T:210.00 /210.00 B:60.00 /60.00 @:127 B@:80"),
+                TemperatureRsDecoder.decode("ok T:210.00 /210.00 B:60.00 /60.00 @:127 B@:80"),
             )
         }
 
         @Test
-        fun `a report without the ok prefix decodes the same way`() {
-            val report = TemperatureRs.decode("T:210.00 /210.00 B:60.00 /60.00 @:127 B@:80")
+        fun `a report without the ok prefix carries the same payload in the other class`() {
+            val report = TemperatureRsDecoder.decode("T:210.00 /210.00 B:60.00 /60.00 @:127 B@:80")
             assertEquals(false, report?.ok)
             assertEquals(HeaterReading(dec("210.00"), dec("210.00"), 127), report?.hotend)
+            assertEquals(
+                BareTemperatureRs(
+                    hotend = HeaterReading(dec("210.00"), dec("210.00"), 127),
+                    bed = HeaterReading(dec("60.00"), dec("60.00"), 80),
+                ),
+                report,
+            )
+        }
+
+        @Test
+        fun `only the ok-prefixed report is an acknowledgement`() {
+            // The whole reason these are two classes. A host that frees a slot in its send window
+            // per OKReceivedEvent must not free one for an M155 auto-report the printer sent
+            // unbidden - it would run ahead of a queue slot the printer never granted.
+            val acked = TemperatureRsDecoder.decode("ok T:210.00 /210.00 @:127")!!
+            val unbidden = TemperatureRsDecoder.decode("T:210.00 /210.00 @:127")!!
+
+            assertTrue(acked is OkRs<*>)
+            assertTrue(acked is OKReceivedEvent)
+            assertTrue(acked.ok)
+
+            assertFalse(unbidden is OkRs<*>)
+            assertFalse(unbidden is OKReceivedEvent)
+            assertFalse(unbidden.ok)
+
+            // Same payload, different type - that is the only difference between them.
+            assertEquals(unbidden.hotend, acked.hotend)
+        }
+
+        @Test
+        fun `each class decodes only its own flavour`() {
+            assertNull(BareTemperatureRs.decode("ok T:210.00 /210.00"))
+            assertNull(OkTemperatureRs.decode("T:210.00 /210.00"))
+            assertNotNull(BareTemperatureRs.decode("T:210.00 /210.00"))
+            assertNotNull(OkTemperatureRs.decode("ok T:210.00 /210.00"))
         }
 
         @Test
         fun `a machine with no heated bed still reports`() {
             // The decoder this replaces required both T and B, so it read nothing at all here.
-            val report = TemperatureRs.decode("ok T:24.31 /0.00 @:0")
+            val report = TemperatureRsDecoder.decode("ok T:24.31 /0.00 @:0")
             assertEquals(HeaterReading(dec("24.31"), dec("0.00"), 0), report?.hotend)
             assertNull(report?.bed)
         }
 
         @Test
         fun `multiple hotends are reported alongside the active one`() {
-            val report = TemperatureRs.decode(
+            val report = TemperatureRsDecoder.decode(
                 "T:24.31 /0.00 B:23.87 /0.00 T0:24.31 /0.00 T1:25.02 /0.00 @:0 B@:0 @0:0 @1:0"
             )
             assertEquals(2, report?.hotends?.size)
@@ -68,7 +106,7 @@ class MarlinRsTest {
 
         @Test
         fun `every sensor letter Marlin writes is read`() {
-            val report = TemperatureRs.decode(
+            val report = TemperatureRsDecoder.decode(
                 "T:200.00 /200.00 B:60.00 /60.00 C:40.00 /45.00 L:15.00 /10.00 " +
                     "P:23.50 /0.00 M:31.20 /0.00 R:199.80 /200.00 @:120 B@:70 C@:30"
             )
@@ -82,19 +120,19 @@ class MarlinRsTest {
 
         @Test
         fun `a target-less report decodes, as the RepRap spec writes it`() {
-            val report = TemperatureRs.decode("T:93.2 B:22.9")
+            val report = TemperatureRsDecoder.decode("T:93.2 B:22.9")
             assertEquals(HeaterReading(dec("93.2")), report?.hotend)
             assertEquals(HeaterReading(dec("22.9")), report?.bed)
         }
 
         @Test
         fun `a temperature below absolute zero decodes, which is how absence is reported`() {
-            assertEquals(dec("-280.00"), TemperatureRs.decode("T:-280.00 /0.00")?.hotend?.current)
+            assertEquals(dec("-280.00"), TemperatureRsDecoder.decode("T:-280.00 /0.00")?.hotend?.current)
         }
 
         @Test
         fun `the core event view is filled in`() {
-            val report = TemperatureRs.decode("ok T:210.00 /205.00 B:60.00 /55.00 @:127 B@:80")!!
+            val report = TemperatureRsDecoder.decode("ok T:210.00 /205.00 B:60.00 /55.00 @:127 B@:80")!!
             assertEquals(210.0, report.hotend()!!.current())
             assertEquals(205.0, report.hotend()!!.target())
             assertEquals(127, report.hotend()!!.power())
@@ -110,9 +148,9 @@ class MarlinRsTest {
                 "T:93.2 B:22.9",
             )
             for (line in lines) {
-                val report = TemperatureRs.decode(line)!!
+                val report = TemperatureRsDecoder.decode(line)!!
                 assertEquals(line, report.encode()) { "encode differs for: $line" }
-                assertEquals(report, TemperatureRs.decode(report.encode()))
+                assertEquals(report, TemperatureRsDecoder.decode(report.encode()))
             }
         }
 
@@ -126,17 +164,17 @@ class MarlinRsTest {
             ]
         )
         fun `a line that is not a temperature report decodes to absence`(line: String) {
-            assertNull(TemperatureRs.decode(line), "should not decode: $line")
+            assertNull(TemperatureRsDecoder.decode(line), "should not decode: $line")
         }
 
         @Test
         fun `a repeated field is malformed, not a silent overwrite`() {
-            assertNull(TemperatureRs.decode("T:210.00 /210.00 T:220.00 /220.00"))
+            assertNull(TemperatureRsDecoder.decode("T:210.00 /210.00 T:220.00 /220.00"))
         }
 
         @Test
         fun `a power too wide for an Int yields absence and never throws`() {
-            assertNull(TemperatureRs.decode("T:210.00 /210.00 @:99999999999"))
+            assertNull(TemperatureRsDecoder.decode("T:210.00 /210.00 @:99999999999"))
         }
     }
 
@@ -337,10 +375,12 @@ class MarlinRsTest {
     inner class TheWholeSet {
 
         private val examples: Map<String, GRs<*>> = mapOf(
-            "ok T:210.00 /210.00 B:60.00 /60.00 @:127 B@:80" to TemperatureRs(
+            "ok T:210.00 /210.00 B:60.00 /60.00 @:127 B@:80" to OkTemperatureRs(
                 hotend = HeaterReading(BigDecimal("210.00"), BigDecimal("210.00"), 127),
                 bed = HeaterReading(BigDecimal("60.00"), BigDecimal("60.00"), 80),
-                ok = true,
+            ),
+            "T:24.31 /0.00 @:0" to BareTemperatureRs(
+                hotend = HeaterReading(BigDecimal("24.31"), BigDecimal("0.00"), 0),
             ),
             "X:0.00 Y:0.00 Z:0.00 E:0.00 Count X:0 Y:0 Z:0" to PositionRs(
                 mapOf('X' to BigDecimal("0.00"), 'Y' to BigDecimal("0.00"),

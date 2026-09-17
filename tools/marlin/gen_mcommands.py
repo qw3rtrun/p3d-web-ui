@@ -21,7 +21,7 @@ Shape of a generated class, and why:
   bare, which is what makes `all` an enumeration of what this module can write and what the
   generated cover asserts against. The KDoc marks them required; the type system does not.
 - **Decoding lives on the companion, not on the instance.** `head()` and `decodeParams()` describe
-  the command *type*, so they sit in a `companion object : GRQDecoder<T>` and call sites read
+  the command *type*, so they sit in a `companion object : GRqDecoder<T>` and call sites read
   `ReportHotendTemperature.decode(cmd)`. This mirrors `GRS`/`GRSDecoder`.
 - **Decimals go through the lexeme.** `word(letter, v.toPlainString())` rather than
   `word(letter, v)`, so the number is validated as a G-code number on the way in and never
@@ -170,8 +170,8 @@ def imports_for(letter, text):
         (r"\bGParameterWord\b", "org.qw3rtrun.p3d.g.code.core.token.GParameterWord"),
         (r"\bGWord\b", "org.qw3rtrun.p3d.g.code.core.token.GWord"),
         (None, "org.qw3rtrun.p3d.g.code.dsl.%s" % letter),
-        (None, "org.qw3rtrun.p3d.g.code.dsl.GRQ"),
-        (None, "org.qw3rtrun.p3d.g.code.dsl.GRQDecoder"),
+        (None, "org.qw3rtrun.p3d.g.protocol.GRq"),
+        (None, "org.qw3rtrun.p3d.g.protocol.GRqDecoder"),
         (r"\bflag\(", "org.qw3rtrun.p3d.g.code.dsl.flag"),
         (r"\btext\(", "org.qw3rtrun.p3d.g.code.dsl.text"),
         (r"\bword\(", "org.qw3rtrun.p3d.g.code.dsl.word"),
@@ -184,7 +184,7 @@ def imports_for(letter, text):
 
 
 def gen_class(c, name):
-    """One data class implementing GRQ."""
+    """One data class implementing GRq."""
     params = c["params"]
     used = set()
     fields = []
@@ -240,10 +240,10 @@ def gen_class(c, name):
                 label += " (required)"
             out.append("    /** %s */" % label)
             out.append("    val %s: %s = %s," % (f["prop"], f["ktype"], f["default"]))
-        out.append(") : GRQ<%s> {" % name)
+        out.append(") : GRq<%s> {" % name)
     else:
         # No parameters at all: 63 commands are just their code.
-        out.append("class %s : GRQ<%s> {" % (name, name))
+        out.append("class %s : GRq<%s> {" % (name, name))
 
     # The head builder, in the DSL's own spelling: `M(105)`, `T(0)`, `G("38.2")` for a subcode.
     if "." in c["number"]:
@@ -285,7 +285,7 @@ def gen_class(c, name):
     out.append("")
     # The reading half is a property of the command *type*, not of one command, so it lives on the
     # companion - the same split GRS/GRSDecoder already uses. `%s.decode(cmd)` is the call site.
-    out.append("    companion object : GRQDecoder<%s> {" % name)
+    out.append("    companion object : GRqDecoder<%s> {" % name)
     out.append("")
     out.append("        override fun head(): GParameterWord<*> {")
     out.append("            return %s.head" % head_call)
@@ -354,10 +354,10 @@ def main():
             "// Extracted from:   %s @ %s" % (src["repo"], src["commit"]),
             "// How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md",
             "//",
-            "// Marlin's `%s` commands, one class each, all implementing GRQ and all written the same"
+            "// Marlin's `%s` commands, one class each, all implementing GRq and all written the same"
             % letter,
             "// way: `encode()` builds the command with the code/dsl builders, and the companion object",
-            "// implements GRQDecoder, so `head()` names the command and `decodeParams` reads one back",
+            "// implements GRqDecoder, so `head()` names the command and `decodeParams` reads one back",
             "// without an instance - `SomeCommand.decode(cmd)`. Every parameter is optional and absent",
             "// by default, so a bare instance encodes to the bare command - `M105` and `M105 T0` are",
             "// different commands and both have to be sayable.",
@@ -401,7 +401,7 @@ def main():
         "     * Reading is [decoders]' job; nothing here needs an instance to decode against any",
         "     * more, because `head()` and `decodeParams()` moved to each class's companion.",
         "     */",
-        "    val all: List<GRQ<*>> = listOf(",
+        "    val all: List<GRq<*>> = listOf(",
     ]
     for i, c in enumerate(commands):
         registry.append("        %s()," % names[i])
@@ -409,11 +409,11 @@ def main():
         "    )",
         "",
         "    /**",
-        "     * The reading half: every command's companion object, which is its [GRQDecoder].",
+        "     * The reading half: every command's companion object, which is its [GRqDecoder].",
         "     *",
         "     * A bare class name here *is* the companion - `LinearMoveG0`, not `LinearMoveG0()`.",
         "     */",
-        "    val decoders: List<GRQDecoder<*>> = listOf(",
+        "    val decoders: List<GRqDecoder<*>> = listOf(",
     ]
     for i, c in enumerate(commands):
         registry.append("        %s," % names[i])
@@ -456,7 +456,7 @@ def main():
         "     * its firmware was compiled, which no amount of reading the line can tell you. Build",
         "     * with the variant class you mean; [decode] is a best effort for the rest.",
         "     */",
-        "    private val byHead: Map<GParameterWord<*>, GRQDecoder<*>> =",
+        "    private val byHead: Map<GParameterWord<*>, GRqDecoder<*>> =",
         "        decoders.groupBy { it.head() }.mapValues { (_, claimants) -> claimants.first() }",
         "",
         "    /** The codes above, whose [decode] is therefore approximate. */",
@@ -469,7 +469,7 @@ def main():
         "     * Matching is on the head as written, so a non-canonical `M0105` does not resolve -",
         "     * the lexeme is part of a number's identity in this model.",
         "     */",
-        "    fun decode(cmd: GCommand): GRQ<*>? {",
+        "    fun decode(cmd: GCommand): GRq<*>? {",
         "        val decoder = byHead[cmd.head] ?: return null",
         "        return decoder.decodeParams(cmd.params)",
         "    }",
@@ -552,8 +552,8 @@ def main():
         "",
         "import org.qw3rtrun.p3d.g.code.core.token.GCommand",
         "import org.qw3rtrun.p3d.g.code.core.token.GParameterWord",
-        "import org.qw3rtrun.p3d.g.code.dsl.GRQ",
-        "import org.qw3rtrun.p3d.g.code.dsl.GRQDecoder",
+        "import org.qw3rtrun.p3d.g.protocol.GRq",
+        "import org.qw3rtrun.p3d.g.protocol.GRqDecoder",
         "import java.math.BigDecimal",
         "",
     ]

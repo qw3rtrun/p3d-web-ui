@@ -1,8 +1,8 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
-import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.marlin.protocol.BaseRsDecoder
+import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.GRs
+import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
 
 /**
  * Every reply this module can read: the RepRap base protocol, plus Marlin's own.
@@ -11,7 +11,7 @@ import org.qw3rtrun.p3d.g.marlin.protocol.BaseRsDecoder
  * ok                                    SimpleOKRs      (base)
  * Resend: 66556                         ResendRs        (base)
  * busy: processing                      BusyRs          (base)
- * ok T:210.00 /210.00 B:60.00 /60.00    TemperatureRs
+ * ok T:210.00 /210.00 B:60.00 /60.00    OkTemperatureRs
  * X:0.00 Y:0.00 Z:0.00 Count X:0        PositionRs
  * x_min: open                           EndstopStateRs
  * SD printing byte 1234/56789           SdPrinting
@@ -32,7 +32,7 @@ object MarlinRsDecoder : GRsDecoder<GRs<*>> {
 
     /** Tier 1 first, then the base protocol. */
     val decoders: List<GRsDecoder<GRs<*>>> = listOf(
-        TemperatureRs,
+        TemperatureRsDecoder,
         PositionRs,
         SdStatusRsDecoder,
         FirmwareInfoRs,

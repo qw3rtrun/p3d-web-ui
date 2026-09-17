@@ -21,8 +21,8 @@ Measured against the rule, over `marlin.gcode`'s 303 non-blank lines:
 | expressible at all | — | **303 / 303** |
 | byte-exact (canonical spacing) | 156 | **279** |
 
-The single largest gap was not a missing overload. **`G.kt`'s unit was a `GRQ`, and the rule is
-about lines** — a line is commands *plus* comments, `GRQ` has no comment, and 125 of those 303
+The single largest gap was not a missing overload. **`G.kt`'s unit was a `GRq`, and the rule is
+about lines** — a line is commands *plus* comments, `GRq` has no comment, and 125 of those 303
 lines carry one. 41% of a real corpus was unreachable for that reason alone.
 
 ## What changed
@@ -101,7 +101,7 @@ easy half. Two things made it more than a rename:
 
 **`G.code(GEncodable)` had no counterpart, and should not have got one.** The old facade's real work
 was `consumer.accept(code.encode())` — each command record encoded *itself* with a `String.format`.
-`GSender.send` takes a `GBlock`/`GRQ`, and giving it a `GEncodable` overload would have pulled
+`GSender.send` takes a `GBlock`/`GRq`, and giving it a `GEncodable` overload would have pulled
 the Java island into the DSL, backwards. Instead `PrinterState`'s four `handle(…)` methods now name
 the operation they mean (`g.m104(index, temp)`, `g.m140(temp)`, `g.m105(index)`, `g.m155(period)`),
 which is what `GSender`'s named operations are for. `m104` was the one missing — added with tests.

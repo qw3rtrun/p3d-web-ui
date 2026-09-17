@@ -8,6 +8,18 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.qw3rtrun.p3d.g.protocol.ActionRs
+import org.qw3rtrun.p3d.g.protocol.AdvancedOkRs
+import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
+import org.qw3rtrun.p3d.g.protocol.BusyRs
+import org.qw3rtrun.p3d.g.protocol.CommentRsDecoder
+import org.qw3rtrun.p3d.g.protocol.DebugRs
+import org.qw3rtrun.p3d.g.protocol.ErrorPrefix
+import org.qw3rtrun.p3d.g.protocol.ErrorRs
+import org.qw3rtrun.p3d.g.protocol.ResendRs
+import org.qw3rtrun.p3d.g.protocol.SimpleOkRs
+import org.qw3rtrun.p3d.g.protocol.StartRs
+import org.qw3rtrun.p3d.g.protocol.WaitRs
 
 /**
  * Cover for the RepRap base protocol replies other than `ok`, which [OkDecoderTest] already pins.
@@ -179,7 +191,7 @@ class BaseRsTest {
             assertEquals(
                 DebugRs(
                     "This is some debugging or other information on a line on its own. " +
-                        "It may be sent at any time."
+                            "It may be sent at any time."
                 ),
                 DebugRs.decode(line),
             )
@@ -248,7 +260,7 @@ class BaseRsTest {
             "Resend: 66556" to ResendRs(66556),
             "rs:123" to ResendRs(123),
             "Error:checksum mismatch, Last Line: 66555" to
-                ErrorRs(ErrorPrefix.ERROR, "checksum mismatch, Last Line: 66555"),
+                    ErrorRs(ErrorPrefix.ERROR, "checksum mismatch, Last Line: 66555"),
             "!! hardware fault" to ErrorRs(ErrorPrefix.BANGS, "hardware fault"),
             "wait" to WaitRs,
             "busy: processing" to BusyRs("processing"),

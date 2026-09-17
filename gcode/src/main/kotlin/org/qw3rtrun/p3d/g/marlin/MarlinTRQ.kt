@@ -5,9 +5,9 @@
 // Extracted from:   MarlinFirmware/MarlinDocumentation @ 0856d12b0253378bc8d17a246fb09fc8c5437997
 // How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md
 //
-// Marlin's `T` commands, one class each, all implementing GRQ and all written the same
+// Marlin's `T` commands, one class each, all implementing GRq and all written the same
 // way: `encode()` builds the command with the code/dsl builders, and the companion object
-// implements GRQDecoder, so `head()` names the command and `decodeParams` reads one back
+// implements GRqDecoder, so `head()` names the command and `decodeParams` reads one back
 // without an instance - `SomeCommand.decode(cmd)`. Every parameter is optional and absent
 // by default, so a bare instance encodes to the bare command - `M105` and `M105 T0` are
 // different commands and both have to be sayable.
@@ -24,10 +24,10 @@ import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.token.GWord
-import org.qw3rtrun.p3d.g.code.dsl.GRQ
-import org.qw3rtrun.p3d.g.code.dsl.GRQDecoder
 import org.qw3rtrun.p3d.g.code.dsl.T
 import org.qw3rtrun.p3d.g.code.dsl.word
+import org.qw3rtrun.p3d.g.protocol.GRq
+import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 import java.math.BigDecimal
 
 /**
@@ -42,7 +42,7 @@ data class SelectOrReportToolT0(
     val feedrate: BigDecimal? = null,
     /** `S` */
     val s: Boolean? = null,
-) : GRQ<SelectOrReportToolT0> {
+) : GRq<SelectOrReportToolT0> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -55,7 +55,7 @@ data class SelectOrReportToolT0(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectOrReportToolT0> {
+    companion object : GRqDecoder<SelectOrReportToolT0> {
 
         override fun head(): GParameterWord<*> {
             return T(0).head
@@ -82,7 +82,7 @@ data class SelectOrReportToolT1(
     val feedrate: BigDecimal? = null,
     /** `S` */
     val s: Boolean? = null,
-) : GRQ<SelectOrReportToolT1> {
+) : GRq<SelectOrReportToolT1> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -95,7 +95,7 @@ data class SelectOrReportToolT1(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectOrReportToolT1> {
+    companion object : GRqDecoder<SelectOrReportToolT1> {
 
         override fun head(): GParameterWord<*> {
             return T(1).head
@@ -122,7 +122,7 @@ data class SelectOrReportToolT2(
     val feedrate: BigDecimal? = null,
     /** `S` */
     val s: Boolean? = null,
-) : GRQ<SelectOrReportToolT2> {
+) : GRq<SelectOrReportToolT2> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -135,7 +135,7 @@ data class SelectOrReportToolT2(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectOrReportToolT2> {
+    companion object : GRqDecoder<SelectOrReportToolT2> {
 
         override fun head(): GParameterWord<*> {
             return T(2).head
@@ -162,7 +162,7 @@ data class SelectOrReportToolT3(
     val feedrate: BigDecimal? = null,
     /** `S` */
     val s: Boolean? = null,
-) : GRQ<SelectOrReportToolT3> {
+) : GRq<SelectOrReportToolT3> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -175,7 +175,7 @@ data class SelectOrReportToolT3(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectOrReportToolT3> {
+    companion object : GRqDecoder<SelectOrReportToolT3> {
 
         override fun head(): GParameterWord<*> {
             return T(3).head
@@ -202,7 +202,7 @@ data class SelectOrReportToolT4(
     val feedrate: BigDecimal? = null,
     /** `S` */
     val s: Boolean? = null,
-) : GRQ<SelectOrReportToolT4> {
+) : GRq<SelectOrReportToolT4> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -215,7 +215,7 @@ data class SelectOrReportToolT4(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectOrReportToolT4> {
+    companion object : GRqDecoder<SelectOrReportToolT4> {
 
         override fun head(): GParameterWord<*> {
             return T(4).head
@@ -242,7 +242,7 @@ data class SelectOrReportToolT5(
     val feedrate: BigDecimal? = null,
     /** `S` */
     val s: Boolean? = null,
-) : GRQ<SelectOrReportToolT5> {
+) : GRq<SelectOrReportToolT5> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -255,7 +255,7 @@ data class SelectOrReportToolT5(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectOrReportToolT5> {
+    companion object : GRqDecoder<SelectOrReportToolT5> {
 
         override fun head(): GParameterWord<*> {
             return T(5).head
@@ -282,7 +282,7 @@ data class SelectOrReportToolT6(
     val feedrate: BigDecimal? = null,
     /** `S` */
     val s: Boolean? = null,
-) : GRQ<SelectOrReportToolT6> {
+) : GRq<SelectOrReportToolT6> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -295,7 +295,7 @@ data class SelectOrReportToolT6(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectOrReportToolT6> {
+    companion object : GRqDecoder<SelectOrReportToolT6> {
 
         override fun head(): GParameterWord<*> {
             return T(6).head
@@ -322,7 +322,7 @@ data class SelectOrReportToolT7(
     val feedrate: BigDecimal? = null,
     /** `S` */
     val s: Boolean? = null,
-) : GRQ<SelectOrReportToolT7> {
+) : GRq<SelectOrReportToolT7> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -335,7 +335,7 @@ data class SelectOrReportToolT7(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectOrReportToolT7> {
+    companion object : GRqDecoder<SelectOrReportToolT7> {
 
         override fun head(): GParameterWord<*> {
             return T(7).head

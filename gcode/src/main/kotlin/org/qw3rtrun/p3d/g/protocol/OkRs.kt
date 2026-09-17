@@ -1,11 +1,9 @@
-package org.qw3rtrun.p3d.g.marlin.protocol
+package org.qw3rtrun.p3d.g.protocol
 
 import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
-import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
 import java.util.regex.Pattern
 
-interface OkRs<D : OkRs<D>> : GRs<D>, OKReceivedEvent
+interface OkRs<D : OkRs<D>> : GProtoRs<D>, OKReceivedEvent
 
 object SimpleOkRs : OkRs<SimpleOkRs>, GRsDecoder<SimpleOkRs> {
     override fun encode(): String = "ok"

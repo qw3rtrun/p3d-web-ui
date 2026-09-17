@@ -1,7 +1,8 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
-import org.qw3rtrun.p3d.g.code.dsl.GRs
+import org.qw3rtrun.p3d.g.protocol.GEventRs
+import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.GRs
 import java.util.regex.Pattern
 
 /**
@@ -12,7 +13,7 @@ import java.util.regex.Pattern
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-interface SdStatusRs<D : SdStatusRs<D>> : GRs<D>
+interface SdStatusRs<D : SdStatusRs<D>> : GEventRs<D>
 
 /**
  * `SD printing byte <position>/<size>` - how far into the file on the card the machine has read.

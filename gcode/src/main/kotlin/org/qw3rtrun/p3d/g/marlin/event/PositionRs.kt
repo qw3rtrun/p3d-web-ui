@@ -1,7 +1,8 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
-import org.qw3rtrun.p3d.g.code.dsl.GRs
+import org.qw3rtrun.p3d.g.protocol.GEventRs
+import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.GRs
 import java.math.BigDecimal
 import java.util.regex.Pattern
 
@@ -26,7 +27,7 @@ import java.util.regex.Pattern
 data class PositionRs(
     val axes: Map<Char, BigDecimal>,
     val counts: Map<Char, Int> = emptyMap(),
-) : GRs<PositionRs> {
+) : GEventRs<PositionRs> {
 
     override fun encode(): String {
         val out = StringBuilder()

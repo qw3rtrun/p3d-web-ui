@@ -13,8 +13,8 @@ package org.qw3rtrun.p3d.g.marlin
 
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
-import org.qw3rtrun.p3d.g.code.dsl.GRQ
-import org.qw3rtrun.p3d.g.code.dsl.GRQDecoder
+import org.qw3rtrun.p3d.g.protocol.GRq
+import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 import java.math.BigDecimal
 
 /**
@@ -35,7 +35,7 @@ object MarlinCommands {
      * Reading is [decoders]' job; nothing here needs an instance to decode against any
      * more, because `head()` and `decodeParams()` moved to each class's companion.
      */
-    val all: List<GRQ<*>> = listOf(
+    val all: List<GRq<*>> = listOf(
         LinearMoveG0(),
         LinearMoveG1(),
         ArcOrCircleMoveG2(),
@@ -334,11 +334,11 @@ object MarlinCommands {
     )
 
     /**
-     * The reading half: every command's companion object, which is its [GRQDecoder].
+     * The reading half: every command's companion object, which is its [GRqDecoder].
      *
      * A bare class name here *is* the companion - `LinearMoveG0`, not `LinearMoveG0()`.
      */
-    val decoders: List<GRQDecoder<*>> = listOf(
+    val decoders: List<GRqDecoder<*>> = listOf(
         LinearMoveG0,
         LinearMoveG1,
         ArcOrCircleMoveG2,
@@ -956,7 +956,7 @@ object MarlinCommands {
      * its firmware was compiled, which no amount of reading the line can tell you. Build
      * with the variant class you mean; [decode] is a best effort for the rest.
      */
-    private val byHead: Map<GParameterWord<*>, GRQDecoder<*>> =
+    private val byHead: Map<GParameterWord<*>, GRqDecoder<*>> =
         decoders.groupBy { it.head() }.mapValues { (_, claimants) -> claimants.first() }
 
     /** The codes above, whose [decode] is therefore approximate. */
@@ -968,7 +968,7 @@ object MarlinCommands {
      * Matching is on the head as written, so a non-canonical `M0105` does not resolve -
      * the lexeme is part of a number's identity in this model.
      */
-    fun decode(cmd: GCommand): GRQ<*>? {
+    fun decode(cmd: GCommand): GRq<*>? {
         val decoder = byHead[cmd.head] ?: return null
         return decoder.decodeParams(cmd.params)
     }

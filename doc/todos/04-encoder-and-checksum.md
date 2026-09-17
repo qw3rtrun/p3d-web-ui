@@ -103,7 +103,7 @@ as far as either firmware is concerned.
 ## Finding 1.10, honestly
 
 The Verify list asked for `GCommand(GLetter('G'), listOf(GInt(1), GInt(2)))` to stop encoding as
-`G12`. **That reproducer no longer compiles**: [03](./03-word-and-command-layer.md) gave `GRQ` a
+`G12`. **That reproducer no longer compiles**: [03](./03-word-and-command-layer.md) gave `GRq` a
 head/params shape in which every parameter is a `GWord` and so begins with an identifier, which makes
 two adjacent bare numbers unconstructible. So 1.10 was closed by 03's type change, not by this item —
 the encoder's contribution is canonical separation and being byte-oriented at all. `GEncoderTest`

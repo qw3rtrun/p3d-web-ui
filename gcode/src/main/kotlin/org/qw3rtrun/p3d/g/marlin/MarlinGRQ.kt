@@ -5,9 +5,9 @@
 // Extracted from:   MarlinFirmware/MarlinDocumentation @ 0856d12b0253378bc8d17a246fb09fc8c5437997
 // How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md
 //
-// Marlin's `G` commands, one class each, all implementing GRQ and all written the same
+// Marlin's `G` commands, one class each, all implementing GRq and all written the same
 // way: `encode()` builds the command with the code/dsl builders, and the companion object
-// implements GRQDecoder, so `head()` names the command and `decodeParams` reads one back
+// implements GRqDecoder, so `head()` names the command and `decodeParams` reads one back
 // without an instance - `SomeCommand.decode(cmd)`. Every parameter is optional and absent
 // by default, so a bare instance encodes to the bare command - `M105` and `M105 T0` are
 // different commands and both have to be sayable.
@@ -25,10 +25,10 @@ import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.G
-import org.qw3rtrun.p3d.g.code.dsl.GRQ
-import org.qw3rtrun.p3d.g.code.dsl.GRQDecoder
 import org.qw3rtrun.p3d.g.code.dsl.flag
 import org.qw3rtrun.p3d.g.code.dsl.word
+import org.qw3rtrun.p3d.g.protocol.GRq
+import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 import java.math.BigDecimal
 
 /**
@@ -63,7 +63,7 @@ data class LinearMoveG0(
     val rate: BigDecimal? = null,
     /** `S` - power */
     val power: BigDecimal? = null,
-) : GRQ<LinearMoveG0> {
+) : GRq<LinearMoveG0> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(12)
@@ -86,7 +86,7 @@ data class LinearMoveG0(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<LinearMoveG0> {
+    companion object : GRqDecoder<LinearMoveG0> {
 
         override fun head(): GParameterWord<*> {
             return G(0).head
@@ -143,7 +143,7 @@ data class LinearMoveG1(
     val rate: BigDecimal? = null,
     /** `S` - power */
     val power: BigDecimal? = null,
-) : GRQ<LinearMoveG1> {
+) : GRq<LinearMoveG1> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(12)
@@ -166,7 +166,7 @@ data class LinearMoveG1(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<LinearMoveG1> {
+    companion object : GRqDecoder<LinearMoveG1> {
 
         override fun head(): GParameterWord<*> {
             return G(1).head
@@ -234,7 +234,7 @@ data class ArcOrCircleMoveG2(
     val count: Int? = null,
     /** `S` - power */
     val power: BigDecimal? = null,
-) : GRQ<ArcOrCircleMoveG2> {
+) : GRq<ArcOrCircleMoveG2> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(16)
@@ -261,7 +261,7 @@ data class ArcOrCircleMoveG2(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ArcOrCircleMoveG2> {
+    companion object : GRqDecoder<ArcOrCircleMoveG2> {
 
         override fun head(): GParameterWord<*> {
             return G(2).head
@@ -333,7 +333,7 @@ data class ArcOrCircleMoveG3(
     val count: Int? = null,
     /** `S` - power */
     val power: BigDecimal? = null,
-) : GRQ<ArcOrCircleMoveG3> {
+) : GRq<ArcOrCircleMoveG3> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(16)
@@ -360,7 +360,7 @@ data class ArcOrCircleMoveG3(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ArcOrCircleMoveG3> {
+    companion object : GRqDecoder<ArcOrCircleMoveG3> {
 
         override fun head(): GParameterWord<*> {
             return G(3).head
@@ -401,7 +401,7 @@ data class Dwell(
     val time: Int? = null,
     /** `P` - time */
     val p: Int? = null,
-) : GRQ<Dwell> {
+) : GRq<Dwell> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -414,7 +414,7 @@ data class Dwell(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<Dwell> {
+    companion object : GRqDecoder<Dwell> {
 
         override fun head(): GParameterWord<*> {
             return G(4).head
@@ -458,7 +458,7 @@ data class BezierCubicSplineMove(
     val q: BigDecimal? = null,
     /** `S` - power */
     val power: BigDecimal? = null,
-) : GRQ<BezierCubicSplineMove> {
+) : GRq<BezierCubicSplineMove> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(9)
@@ -478,7 +478,7 @@ data class BezierCubicSplineMove(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<BezierCubicSplineMove> {
+    companion object : GRqDecoder<BezierCubicSplineMove> {
 
         override fun head(): GParameterWord<*> {
             return G(5).head
@@ -522,7 +522,7 @@ data class DirectStepperMove(
     val z: Int? = null,
     /** `E` - direction */
     val e: Int? = null,
-) : GRQ<DirectStepperMove> {
+) : GRq<DirectStepperMove> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(7)
@@ -540,7 +540,7 @@ data class DirectStepperMove(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<DirectStepperMove> {
+    companion object : GRqDecoder<DirectStepperMove> {
 
         override fun head(): GParameterWord<*> {
             return G(6).head
@@ -570,7 +570,7 @@ data class DirectStepperMove(
 data class Retract(
     /** `S` */
     val s: Boolean? = null,
-) : GRQ<Retract> {
+) : GRq<Retract> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(1)
@@ -582,7 +582,7 @@ data class Retract(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<Retract> {
+    companion object : GRqDecoder<Retract> {
 
         override fun head(): GParameterWord<*> {
             return G(10).head
@@ -603,7 +603,7 @@ data class Retract(
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G11.html">MarlinFirmare G11 doc</a>
  */
-class Recover : GRQ<Recover> {
+class Recover : GRq<Recover> {
 
     override fun encode(): GCommand {
         return G(11)
@@ -621,7 +621,7 @@ class Recover : GRQ<Recover> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<Recover> {
+    companion object : GRqDecoder<Recover> {
 
         override fun head(): GParameterWord<*> {
             return G(11).head
@@ -655,7 +655,7 @@ data class CleanTheNozzle(
     val y: Boolean = false,
     /** `Z` */
     val z: Boolean = false,
-) : GRQ<CleanTheNozzle> {
+) : GRq<CleanTheNozzle> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(7)
@@ -673,7 +673,7 @@ data class CleanTheNozzle(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<CleanTheNozzle> {
+    companion object : GRqDecoder<CleanTheNozzle> {
 
         override fun head(): GParameterWord<*> {
             return G(12).head
@@ -700,7 +700,7 @@ data class CleanTheNozzle(
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G17.html">MarlinFirmare G17 doc</a>
  */
-class CNCWorkspacePlanesG17 : GRQ<CNCWorkspacePlanesG17> {
+class CNCWorkspacePlanesG17 : GRq<CNCWorkspacePlanesG17> {
 
     override fun encode(): GCommand {
         return G(17)
@@ -718,7 +718,7 @@ class CNCWorkspacePlanesG17 : GRQ<CNCWorkspacePlanesG17> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<CNCWorkspacePlanesG17> {
+    companion object : GRqDecoder<CNCWorkspacePlanesG17> {
 
         override fun head(): GParameterWord<*> {
             return G(17).head
@@ -737,7 +737,7 @@ class CNCWorkspacePlanesG17 : GRQ<CNCWorkspacePlanesG17> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G18.html">MarlinFirmare G18 doc</a>
  */
-class CNCWorkspacePlanesG18 : GRQ<CNCWorkspacePlanesG18> {
+class CNCWorkspacePlanesG18 : GRq<CNCWorkspacePlanesG18> {
 
     override fun encode(): GCommand {
         return G(18)
@@ -755,7 +755,7 @@ class CNCWorkspacePlanesG18 : GRQ<CNCWorkspacePlanesG18> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<CNCWorkspacePlanesG18> {
+    companion object : GRqDecoder<CNCWorkspacePlanesG18> {
 
         override fun head(): GParameterWord<*> {
             return G(18).head
@@ -774,7 +774,7 @@ class CNCWorkspacePlanesG18 : GRQ<CNCWorkspacePlanesG18> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G19.html">MarlinFirmare G19 doc</a>
  */
-class CNCWorkspacePlanesG19 : GRQ<CNCWorkspacePlanesG19> {
+class CNCWorkspacePlanesG19 : GRq<CNCWorkspacePlanesG19> {
 
     override fun encode(): GCommand {
         return G(19)
@@ -792,7 +792,7 @@ class CNCWorkspacePlanesG19 : GRQ<CNCWorkspacePlanesG19> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<CNCWorkspacePlanesG19> {
+    companion object : GRqDecoder<CNCWorkspacePlanesG19> {
 
         override fun head(): GParameterWord<*> {
             return G(19).head
@@ -811,7 +811,7 @@ class CNCWorkspacePlanesG19 : GRQ<CNCWorkspacePlanesG19> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G20.html">MarlinFirmare G20 doc</a>
  */
-class InchUnits : GRQ<InchUnits> {
+class InchUnits : GRq<InchUnits> {
 
     override fun encode(): GCommand {
         return G(20)
@@ -829,7 +829,7 @@ class InchUnits : GRQ<InchUnits> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<InchUnits> {
+    companion object : GRqDecoder<InchUnits> {
 
         override fun head(): GParameterWord<*> {
             return G(20).head
@@ -848,7 +848,7 @@ class InchUnits : GRQ<InchUnits> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G21.html">MarlinFirmare G21 doc</a>
  */
-class MillimeterUnits : GRQ<MillimeterUnits> {
+class MillimeterUnits : GRq<MillimeterUnits> {
 
     override fun encode(): GCommand {
         return G(21)
@@ -866,7 +866,7 @@ class MillimeterUnits : GRQ<MillimeterUnits> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<MillimeterUnits> {
+    companion object : GRqDecoder<MillimeterUnits> {
 
         override fun head(): GParameterWord<*> {
             return G(21).head
@@ -918,7 +918,7 @@ data class MeshValidationPattern(
     val x: BigDecimal? = null,
     /** `Y` - linear */
     val y: BigDecimal? = null,
-) : GRQ<MeshValidationPattern> {
+) : GRq<MeshValidationPattern> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(16)
@@ -945,7 +945,7 @@ data class MeshValidationPattern(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<MeshValidationPattern> {
+    companion object : GRqDecoder<MeshValidationPattern> {
 
         override fun head(): GParameterWord<*> {
             return G(26).head
@@ -984,7 +984,7 @@ data class MeshValidationPattern(
 data class ParkToolhead(
     /** `P` */
     val p: Int? = null,
-) : GRQ<ParkToolhead> {
+) : GRq<ParkToolhead> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(1)
@@ -996,7 +996,7 @@ data class ParkToolhead(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ParkToolhead> {
+    companion object : GRqDecoder<ParkToolhead> {
 
         override fun head(): GParameterWord<*> {
             return G(27).head
@@ -1044,7 +1044,7 @@ data class AutoHome(
     val v: Boolean = false,
     /** `W` */
     val w: Boolean = false,
-) : GRQ<AutoHome> {
+) : GRq<AutoHome> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(13)
@@ -1068,7 +1068,7 @@ data class AutoHome(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<AutoHome> {
+    companion object : GRqDecoder<AutoHome> {
 
         override fun head(): GParameterWord<*> {
             return G(28).head
@@ -1118,7 +1118,7 @@ data class BedLeveling3Point(
     val j: Boolean? = null,
     /** `V` */
     val v: Int? = null,
-) : GRQ<BedLeveling3Point> {
+) : GRq<BedLeveling3Point> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(8)
@@ -1137,7 +1137,7 @@ data class BedLeveling3Point(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<BedLeveling3Point> {
+    companion object : GRqDecoder<BedLeveling3Point> {
 
         override fun head(): GParameterWord<*> {
             return G(29).head
@@ -1202,7 +1202,7 @@ data class BedLevelingBilinear(
     val j: Boolean? = null,
     /** `V` */
     val v: Int? = null,
-) : GRQ<BedLevelingBilinear> {
+) : GRq<BedLevelingBilinear> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(18)
@@ -1231,7 +1231,7 @@ data class BedLevelingBilinear(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<BedLevelingBilinear> {
+    companion object : GRqDecoder<BedLevelingBilinear> {
 
         override fun head(): GParameterWord<*> {
             return G(29).head
@@ -1306,7 +1306,7 @@ data class BedLevelingLinear(
     val j: Boolean? = null,
     /** `V` */
     val v: Int? = null,
-) : GRQ<BedLevelingLinear> {
+) : GRq<BedLevelingLinear> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(18)
@@ -1335,7 +1335,7 @@ data class BedLevelingLinear(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<BedLevelingLinear> {
+    companion object : GRqDecoder<BedLevelingLinear> {
 
         override fun head(): GParameterWord<*> {
             return G(29).head
@@ -1389,7 +1389,7 @@ data class BedLevelingManual(
     val y: Int? = null,
     /** `Z` - linear */
     val linear: BigDecimal? = null,
-) : GRQ<BedLevelingManual> {
+) : GRq<BedLevelingManual> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(6)
@@ -1406,7 +1406,7 @@ data class BedLevelingManual(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<BedLevelingManual> {
+    companion object : GRqDecoder<BedLevelingManual> {
 
         override fun head(): GParameterWord<*> {
             return G(29).head
@@ -1475,7 +1475,7 @@ data class BedLevelingUnified(
     val x: BigDecimal? = null,
     /** `Y` */
     val y: BigDecimal? = null,
-) : GRQ<BedLevelingUnified> {
+) : GRq<BedLevelingUnified> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(21)
@@ -1507,7 +1507,7 @@ data class BedLevelingUnified(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<BedLevelingUnified> {
+    companion object : GRqDecoder<BedLevelingUnified> {
 
         override fun head(): GParameterWord<*> {
             return G(29).head
@@ -1548,7 +1548,7 @@ data class BedLevelingUnified(
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G29.html">MarlinFirmare G29 doc</a>
  */
-class BedLeveling : GRQ<BedLeveling> {
+class BedLeveling : GRq<BedLeveling> {
 
     override fun encode(): GCommand {
         return G(29)
@@ -1566,7 +1566,7 @@ class BedLeveling : GRQ<BedLeveling> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<BedLeveling> {
+    companion object : GRqDecoder<BedLeveling> {
 
         override fun head(): GParameterWord<*> {
             return G(29).head
@@ -1594,7 +1594,7 @@ data class SingleZProbe(
     val y: BigDecimal? = null,
     /** `E` */
     val e: Boolean? = null,
-) : GRQ<SingleZProbe> {
+) : GRq<SingleZProbe> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(4)
@@ -1609,7 +1609,7 @@ data class SingleZProbe(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SingleZProbe> {
+    companion object : GRqDecoder<SingleZProbe> {
 
         override fun head(): GParameterWord<*> {
             return G(30).head
@@ -1633,7 +1633,7 @@ data class SingleZProbe(
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G31.html">MarlinFirmare G31 doc</a>
  */
-class DockSled : GRQ<DockSled> {
+class DockSled : GRq<DockSled> {
 
     override fun encode(): GCommand {
         return G(31)
@@ -1651,7 +1651,7 @@ class DockSled : GRQ<DockSled> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<DockSled> {
+    companion object : GRqDecoder<DockSled> {
 
         override fun head(): GParameterWord<*> {
             return G(31).head
@@ -1670,7 +1670,7 @@ class DockSled : GRQ<DockSled> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G32.html">MarlinFirmare G32 doc</a>
  */
-class UndockSled : GRQ<UndockSled> {
+class UndockSled : GRq<UndockSled> {
 
     override fun encode(): GCommand {
         return G(32)
@@ -1688,7 +1688,7 @@ class UndockSled : GRQ<UndockSled> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<UndockSled> {
+    companion object : GRqDecoder<UndockSled> {
 
         override fun head(): GParameterWord<*> {
             return G(32).head
@@ -1732,7 +1732,7 @@ data class DeltaAutoCalibration(
     val y: Boolean = false,
     /** `Z` */
     val z: Boolean = false,
-) : GRQ<DeltaAutoCalibration> {
+) : GRq<DeltaAutoCalibration> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(12)
@@ -1755,7 +1755,7 @@ data class DeltaAutoCalibration(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<DeltaAutoCalibration> {
+    companion object : GRqDecoder<DeltaAutoCalibration> {
 
         override fun head(): GParameterWord<*> {
             return G(33).head
@@ -1792,7 +1792,7 @@ data class MechanicalGantryCalibration(
     val s: Int? = null,
     /** `Z` */
     val z: BigDecimal? = null,
-) : GRQ<MechanicalGantryCalibration> {
+) : GRq<MechanicalGantryCalibration> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -1805,7 +1805,7 @@ data class MechanicalGantryCalibration(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<MechanicalGantryCalibration> {
+    companion object : GRqDecoder<MechanicalGantryCalibration> {
 
         override fun head(): GParameterWord<*> {
             return G(34).head
@@ -1844,7 +1844,7 @@ data class ZSteppersAutoAlignment(
     val e: Boolean? = null,
     /** `R` */
     val r: Boolean = false,
-) : GRQ<ZSteppersAutoAlignment> {
+) : GRq<ZSteppersAutoAlignment> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(8)
@@ -1863,7 +1863,7 @@ data class ZSteppersAutoAlignment(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ZSteppersAutoAlignment> {
+    companion object : GRqDecoder<ZSteppersAutoAlignment> {
 
         override fun head(): GParameterWord<*> {
             return G(34).head
@@ -1894,7 +1894,7 @@ data class ZSteppersAutoAlignment(
 data class TrammingAssistant(
     /** `S` */
     val s: Int? = null,
-) : GRQ<TrammingAssistant> {
+) : GRq<TrammingAssistant> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(1)
@@ -1906,7 +1906,7 @@ data class TrammingAssistant(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<TrammingAssistant> {
+    companion object : GRqDecoder<TrammingAssistant> {
 
         override fun head(): GParameterWord<*> {
             return G(35).head
@@ -1936,7 +1936,7 @@ data class ProbeTargetG38_2(
     val z: BigDecimal? = null,
     /** `F` - rate */
     val rate: BigDecimal? = null,
-) : GRQ<ProbeTargetG38_2> {
+) : GRq<ProbeTargetG38_2> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(4)
@@ -1951,7 +1951,7 @@ data class ProbeTargetG38_2(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ProbeTargetG38_2> {
+    companion object : GRqDecoder<ProbeTargetG38_2> {
 
         override fun head(): GParameterWord<*> {
             return G("38.2").head
@@ -1984,7 +1984,7 @@ data class ProbeTargetG38_3(
     val z: BigDecimal? = null,
     /** `F` - rate */
     val rate: BigDecimal? = null,
-) : GRQ<ProbeTargetG38_3> {
+) : GRq<ProbeTargetG38_3> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(4)
@@ -1999,7 +1999,7 @@ data class ProbeTargetG38_3(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ProbeTargetG38_3> {
+    companion object : GRqDecoder<ProbeTargetG38_3> {
 
         override fun head(): GParameterWord<*> {
             return G("38.3").head
@@ -2032,7 +2032,7 @@ data class ProbeTargetG38_4(
     val z: BigDecimal? = null,
     /** `F` - rate */
     val rate: BigDecimal? = null,
-) : GRQ<ProbeTargetG38_4> {
+) : GRq<ProbeTargetG38_4> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(4)
@@ -2047,7 +2047,7 @@ data class ProbeTargetG38_4(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ProbeTargetG38_4> {
+    companion object : GRqDecoder<ProbeTargetG38_4> {
 
         override fun head(): GParameterWord<*> {
             return G("38.4").head
@@ -2080,7 +2080,7 @@ data class ProbeTargetG38_5(
     val z: BigDecimal? = null,
     /** `F` - rate */
     val rate: BigDecimal? = null,
-) : GRQ<ProbeTargetG38_5> {
+) : GRq<ProbeTargetG38_5> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(4)
@@ -2095,7 +2095,7 @@ data class ProbeTargetG38_5(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ProbeTargetG38_5> {
+    companion object : GRqDecoder<ProbeTargetG38_5> {
 
         override fun head(): GParameterWord<*> {
             return G("38.5").head
@@ -2128,7 +2128,7 @@ data class MoveToMeshCoordinate(
     val rate: BigDecimal? = null,
     /** `P` */
     val p: Boolean = false,
-) : GRQ<MoveToMeshCoordinate> {
+) : GRq<MoveToMeshCoordinate> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(4)
@@ -2143,7 +2143,7 @@ data class MoveToMeshCoordinate(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<MoveToMeshCoordinate> {
+    companion object : GRqDecoder<MoveToMeshCoordinate> {
 
         override fun head(): GParameterWord<*> {
             return G(42).head
@@ -2167,7 +2167,7 @@ data class MoveToMeshCoordinate(
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G53.html">MarlinFirmare G53 doc</a>
  */
-class MoveInMachineCoordinates : GRQ<MoveInMachineCoordinates> {
+class MoveInMachineCoordinates : GRq<MoveInMachineCoordinates> {
 
     override fun encode(): GCommand {
         return G(53)
@@ -2185,7 +2185,7 @@ class MoveInMachineCoordinates : GRQ<MoveInMachineCoordinates> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<MoveInMachineCoordinates> {
+    companion object : GRqDecoder<MoveInMachineCoordinates> {
 
         override fun head(): GParameterWord<*> {
             return G(53).head
@@ -2204,7 +2204,7 @@ class MoveInMachineCoordinates : GRQ<MoveInMachineCoordinates> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G54.html">MarlinFirmare G54 doc</a>
  */
-class SelectWorkspaceG54 : GRQ<SelectWorkspaceG54> {
+class SelectWorkspaceG54 : GRq<SelectWorkspaceG54> {
 
     override fun encode(): GCommand {
         return G(54)
@@ -2222,7 +2222,7 @@ class SelectWorkspaceG54 : GRQ<SelectWorkspaceG54> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectWorkspaceG54> {
+    companion object : GRqDecoder<SelectWorkspaceG54> {
 
         override fun head(): GParameterWord<*> {
             return G(54).head
@@ -2241,7 +2241,7 @@ class SelectWorkspaceG54 : GRQ<SelectWorkspaceG54> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G55.html">MarlinFirmare G55 doc</a>
  */
-class SelectWorkspaceG55 : GRQ<SelectWorkspaceG55> {
+class SelectWorkspaceG55 : GRq<SelectWorkspaceG55> {
 
     override fun encode(): GCommand {
         return G(55)
@@ -2259,7 +2259,7 @@ class SelectWorkspaceG55 : GRQ<SelectWorkspaceG55> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectWorkspaceG55> {
+    companion object : GRqDecoder<SelectWorkspaceG55> {
 
         override fun head(): GParameterWord<*> {
             return G(55).head
@@ -2278,7 +2278,7 @@ class SelectWorkspaceG55 : GRQ<SelectWorkspaceG55> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G56.html">MarlinFirmare G56 doc</a>
  */
-class SelectWorkspaceG56 : GRQ<SelectWorkspaceG56> {
+class SelectWorkspaceG56 : GRq<SelectWorkspaceG56> {
 
     override fun encode(): GCommand {
         return G(56)
@@ -2296,7 +2296,7 @@ class SelectWorkspaceG56 : GRQ<SelectWorkspaceG56> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectWorkspaceG56> {
+    companion object : GRqDecoder<SelectWorkspaceG56> {
 
         override fun head(): GParameterWord<*> {
             return G(56).head
@@ -2315,7 +2315,7 @@ class SelectWorkspaceG56 : GRQ<SelectWorkspaceG56> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G57.html">MarlinFirmare G57 doc</a>
  */
-class SelectWorkspaceG57 : GRQ<SelectWorkspaceG57> {
+class SelectWorkspaceG57 : GRq<SelectWorkspaceG57> {
 
     override fun encode(): GCommand {
         return G(57)
@@ -2333,7 +2333,7 @@ class SelectWorkspaceG57 : GRQ<SelectWorkspaceG57> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectWorkspaceG57> {
+    companion object : GRqDecoder<SelectWorkspaceG57> {
 
         override fun head(): GParameterWord<*> {
             return G(57).head
@@ -2352,7 +2352,7 @@ class SelectWorkspaceG57 : GRQ<SelectWorkspaceG57> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G58.html">MarlinFirmare G58 doc</a>
  */
-class SelectWorkspaceG58 : GRQ<SelectWorkspaceG58> {
+class SelectWorkspaceG58 : GRq<SelectWorkspaceG58> {
 
     override fun encode(): GCommand {
         return G(58)
@@ -2370,7 +2370,7 @@ class SelectWorkspaceG58 : GRQ<SelectWorkspaceG58> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectWorkspaceG58> {
+    companion object : GRqDecoder<SelectWorkspaceG58> {
 
         override fun head(): GParameterWord<*> {
             return G(58).head
@@ -2389,7 +2389,7 @@ class SelectWorkspaceG58 : GRQ<SelectWorkspaceG58> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G59.html">MarlinFirmare G59 doc</a>
  */
-class SelectWorkspaceG59 : GRQ<SelectWorkspaceG59> {
+class SelectWorkspaceG59 : GRq<SelectWorkspaceG59> {
 
     override fun encode(): GCommand {
         return G(59)
@@ -2407,7 +2407,7 @@ class SelectWorkspaceG59 : GRQ<SelectWorkspaceG59> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectWorkspaceG59> {
+    companion object : GRqDecoder<SelectWorkspaceG59> {
 
         override fun head(): GParameterWord<*> {
             return G(59).head
@@ -2426,7 +2426,7 @@ class SelectWorkspaceG59 : GRQ<SelectWorkspaceG59> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G59-1.html">MarlinFirmare G59.1 doc</a>
  */
-class SelectWorkspaceG59_1 : GRQ<SelectWorkspaceG59_1> {
+class SelectWorkspaceG59_1 : GRq<SelectWorkspaceG59_1> {
 
     override fun encode(): GCommand {
         return G("59.1")
@@ -2444,7 +2444,7 @@ class SelectWorkspaceG59_1 : GRQ<SelectWorkspaceG59_1> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectWorkspaceG59_1> {
+    companion object : GRqDecoder<SelectWorkspaceG59_1> {
 
         override fun head(): GParameterWord<*> {
             return G("59.1").head
@@ -2463,7 +2463,7 @@ class SelectWorkspaceG59_1 : GRQ<SelectWorkspaceG59_1> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G59-2.html">MarlinFirmare G59.2 doc</a>
  */
-class SelectWorkspaceG59_2 : GRQ<SelectWorkspaceG59_2> {
+class SelectWorkspaceG59_2 : GRq<SelectWorkspaceG59_2> {
 
     override fun encode(): GCommand {
         return G("59.2")
@@ -2481,7 +2481,7 @@ class SelectWorkspaceG59_2 : GRQ<SelectWorkspaceG59_2> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectWorkspaceG59_2> {
+    companion object : GRqDecoder<SelectWorkspaceG59_2> {
 
         override fun head(): GParameterWord<*> {
             return G("59.2").head
@@ -2500,7 +2500,7 @@ class SelectWorkspaceG59_2 : GRQ<SelectWorkspaceG59_2> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G59-3.html">MarlinFirmare G59.3 doc</a>
  */
-class SelectWorkspaceG59_3 : GRQ<SelectWorkspaceG59_3> {
+class SelectWorkspaceG59_3 : GRq<SelectWorkspaceG59_3> {
 
     override fun encode(): GCommand {
         return G("59.3")
@@ -2518,7 +2518,7 @@ class SelectWorkspaceG59_3 : GRQ<SelectWorkspaceG59_3> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SelectWorkspaceG59_3> {
+    companion object : GRqDecoder<SelectWorkspaceG59_3> {
 
         override fun head(): GParameterWord<*> {
             return G("59.3").head
@@ -2554,7 +2554,7 @@ data class StoredPositions(
     val z: BigDecimal? = null,
     /** `E` */
     val e: BigDecimal? = null,
-) : GRQ<StoredPositions> {
+) : GRq<StoredPositions> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(8)
@@ -2573,7 +2573,7 @@ data class StoredPositions(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<StoredPositions> {
+    companion object : GRqDecoder<StoredPositions> {
 
         override fun head(): GParameterWord<*> {
             return G(60).head
@@ -2614,7 +2614,7 @@ data class ReturnToSavedPosition(
     val z: BigDecimal? = null,
     /** `E` */
     val e: BigDecimal? = null,
-) : GRQ<ReturnToSavedPosition> {
+) : GRq<ReturnToSavedPosition> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(6)
@@ -2631,7 +2631,7 @@ data class ReturnToSavedPosition(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ReturnToSavedPosition> {
+    companion object : GRqDecoder<ReturnToSavedPosition> {
 
         override fun head(): GParameterWord<*> {
             return G(61).head
@@ -2662,7 +2662,7 @@ data class ProbeTemperatureCalibration(
     val b: Boolean = false,
     /** `P` */
     val p: Boolean = false,
-) : GRQ<ProbeTemperatureCalibration> {
+) : GRq<ProbeTemperatureCalibration> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(2)
@@ -2675,7 +2675,7 @@ data class ProbeTemperatureCalibration(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<ProbeTemperatureCalibration> {
+    companion object : GRqDecoder<ProbeTemperatureCalibration> {
 
         override fun head(): GParameterWord<*> {
             return G(76).head
@@ -2697,7 +2697,7 @@ data class ProbeTemperatureCalibration(
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G80.html">MarlinFirmare G80 doc</a>
  */
-class CancelCurrentMotionMode : GRQ<CancelCurrentMotionMode> {
+class CancelCurrentMotionMode : GRq<CancelCurrentMotionMode> {
 
     override fun encode(): GCommand {
         return G(80)
@@ -2715,7 +2715,7 @@ class CancelCurrentMotionMode : GRQ<CancelCurrentMotionMode> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<CancelCurrentMotionMode> {
+    companion object : GRqDecoder<CancelCurrentMotionMode> {
 
         override fun head(): GParameterWord<*> {
             return G(80).head
@@ -2734,7 +2734,7 @@ class CancelCurrentMotionMode : GRQ<CancelCurrentMotionMode> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G90.html">MarlinFirmare G90 doc</a>
  */
-class AbsolutePositioning : GRQ<AbsolutePositioning> {
+class AbsolutePositioning : GRq<AbsolutePositioning> {
 
     override fun encode(): GCommand {
         return G(90)
@@ -2752,7 +2752,7 @@ class AbsolutePositioning : GRQ<AbsolutePositioning> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<AbsolutePositioning> {
+    companion object : GRqDecoder<AbsolutePositioning> {
 
         override fun head(): GParameterWord<*> {
             return G(90).head
@@ -2771,7 +2771,7 @@ class AbsolutePositioning : GRQ<AbsolutePositioning> {
  *
  * @see <a href="https://marlinfw.org/docs/gcode/G91.html">MarlinFirmare G91 doc</a>
  */
-class RelativePositioning : GRQ<RelativePositioning> {
+class RelativePositioning : GRq<RelativePositioning> {
 
     override fun encode(): GCommand {
         return G(91)
@@ -2789,7 +2789,7 @@ class RelativePositioning : GRQ<RelativePositioning> {
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<RelativePositioning> {
+    companion object : GRqDecoder<RelativePositioning> {
 
         override fun head(): GParameterWord<*> {
             return G(91).head
@@ -2829,7 +2829,7 @@ data class SetPosition(
     val w: BigDecimal? = null,
     /** `E` - pos */
     val e: BigDecimal? = null,
-) : GRQ<SetPosition> {
+) : GRq<SetPosition> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(10)
@@ -2850,7 +2850,7 @@ data class SetPosition(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<SetPosition> {
+    companion object : GRqDecoder<SetPosition> {
 
         override fun head(): GParameterWord<*> {
             return G(92).head
@@ -2889,7 +2889,7 @@ data class BacklashAndToolheadOffsetCalibration(
     val v: Boolean = false,
     /** `U` - linear */
     val linear: BigDecimal? = null,
-) : GRQ<BacklashAndToolheadOffsetCalibration> {
+) : GRq<BacklashAndToolheadOffsetCalibration> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(4)
@@ -2904,7 +2904,7 @@ data class BacklashAndToolheadOffsetCalibration(
         return javaClass.simpleName + "(" + GEncoder.encode(encode()) + ')'
     }
 
-    companion object : GRQDecoder<BacklashAndToolheadOffsetCalibration> {
+    companion object : GRqDecoder<BacklashAndToolheadOffsetCalibration> {
 
         override fun head(): GParameterWord<*> {
             return G(425).head

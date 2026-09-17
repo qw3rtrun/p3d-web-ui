@@ -114,7 +114,7 @@ The decision below was waiting on exactly this, and the answers are now observed
 queue, which is why two checklist items here cited it down to line numbers (`GCODEK.md:26`, `:249`,
 `:361-362`). Both of those items are satisfied by deletion and have been removed. The surviving
 orientation doc is `.junie/AGENTS.md` (144 lines), which was checked and carries **no** stale
-blocker claims — no `compileKotlin` failure, no unresolved `GRQ` / `GCommandLine`, no phase
+blocker claims — no `compileKotlin` failure, no unresolved `GRq` / `GCommandLine`, no phase
 list, and nothing about `:gcode` beyond one accurate line describing the module (`AGENTS.md:27`).
 
 - [ ] Nothing to fix. Confirm `AGENTS.md` still matches `./gradlew build` when this file is picked

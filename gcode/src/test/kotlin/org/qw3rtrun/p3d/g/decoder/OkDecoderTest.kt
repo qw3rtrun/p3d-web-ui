@@ -4,8 +4,8 @@ import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.qw3rtrun.p3d.g.marlin.protocol.AdvancedOkRs
-import org.qw3rtrun.p3d.g.marlin.protocol.OkRsDecoder
+import org.qw3rtrun.p3d.g.protocol.AdvancedOkRs
+import org.qw3rtrun.p3d.g.protocol.OkRsDecoder
 
 class OkDecoderTest {
     private val decoder = OkRsDecoder

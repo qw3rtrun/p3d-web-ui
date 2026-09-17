@@ -1,7 +1,4 @@
-package org.qw3rtrun.p3d.g.marlin.protocol
-
-import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
+package org.qw3rtrun.p3d.g.protocol
 
 /**
  * Every reply the RepRap base protocol defines, and the lookup that reads one back.

@@ -165,7 +165,7 @@ Follow the `tdd` skill for the loop. On top of it, for this layer:
 - **`GDslCorpusTest` is the acceptance test.** New expressive power should move a number in it, or
   you have not demonstrated the power. A refactor must leave all four numbers untouched.
 - **Assert the rendered string, not the object graph.** `assertEquals("G1 X10.5 F1800", encode(...))`
-  is the claim; asserting a `GRQ`'s shape tests the model, which `core` already tests.
+  is the claim; asserting a `GRq`'s shape tests the model, which `core` already tests.
 - **Every builder ships a round-trip-through-the-parser case.** `GTest.kt`'s
   `everything the DSL frames parses back as a verified packet` frames DSL output and asserts it
   comes back as a `GPacketLine` — i.e. the checksum verifies. A builder that emits bytes the parser

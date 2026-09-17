@@ -4,7 +4,7 @@ import org.qw3rtrun.p3d.g.code.core.GEncoder;
 import org.qw3rtrun.p3d.g.code.core.token.GBlock;
 import org.qw3rtrun.p3d.g.code.core.token.GCommand;
 import org.qw3rtrun.p3d.g.code.dsl.GKt;
-import org.qw3rtrun.p3d.g.code.dsl.GRQ;
+import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
 
 import java.math.BigDecimal;
@@ -38,7 +38,7 @@ public class GSender {
         send(GKt.line(command));
     }
 
-    public void send(GRQ<?> rq) {
+    public void send(GRq<?> rq) {
         send(rq.encode());
     }
 

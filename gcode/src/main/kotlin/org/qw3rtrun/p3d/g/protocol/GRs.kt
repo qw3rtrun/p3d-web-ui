@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.code.dsl
+package org.qw3rtrun.p3d.g.protocol
 
 import org.qw3rtrun.p3d.core.msg.GEvent
 
@@ -14,3 +14,6 @@ interface GRsDecoder<out T : GRs<out T>> {
         return if (match(line)) decodeParams(line) else null
     }
 }
+
+interface GProtoRs<T : GProtoRs<T>> : GRs<T>
+interface GEventRs<T : GEventRs<T>> : GRs<T>

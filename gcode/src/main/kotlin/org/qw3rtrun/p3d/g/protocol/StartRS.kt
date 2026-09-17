@@ -1,7 +1,4 @@
-package org.qw3rtrun.p3d.g.marlin.protocol
-
-import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
+package org.qw3rtrun.p3d.g.protocol
 
 /**
  * `start` - sent once when the machine boots, before anything else.
@@ -14,7 +11,7 @@ import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-object StartRs : GRs<StartRs>, GRsDecoder<StartRs> {
+object StartRs : GProtoRs<StartRs>, GRsDecoder<StartRs> {
 
     override fun encode(): String = "start"
 

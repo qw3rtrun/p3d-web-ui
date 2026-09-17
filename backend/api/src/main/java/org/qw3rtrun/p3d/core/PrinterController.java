@@ -6,10 +6,10 @@ import org.qw3rtrun.p3d.core.msg.ConnectCmd;
 import org.qw3rtrun.p3d.core.msg.EventMessage;
 import org.qw3rtrun.p3d.core.msg.TemperatureReport;
 import org.qw3rtrun.p3d.core.service.MachineManagementService;
-import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
-import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
-import org.qw3rtrun.p3d.g.code.SetBedTemperature;
-import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -53,12 +53,12 @@ public class PrinterController {
     }
 
     @PostMapping("/auto-report-temp")
-    public Mono<Void> autoReportTemp(@PathVariable UUID id, @RequestBody Mono<AutoReportHotendTemperature> auto) {
+    public Mono<Void> autoReportTemp(@PathVariable UUID id, @RequestBody Mono<TemperatureAutoReport> auto) {
         return manager.getReactor(id).handle(auto);
     }
 
     @PostMapping("/report-temp")
     public Mono<Void> autoReportTemp(@PathVariable UUID id) {
-        return manager.getReactor(id).handle(Mono.just(ReportHotendTemperature.m105()));
+        return manager.getReactor(id).handle(Mono.just(new ReportHotendTemperature()));
     }
 }

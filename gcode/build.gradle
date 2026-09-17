@@ -6,8 +6,8 @@ plugins {
     id "org.jetbrains.kotlin.jvm" version "$kotlin_plugin_version"
     id 'org.springframework.boot' version "$spring_boot_version" apply false
     id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
-    id "io.freefair.lombok" version "$lombok_plugin_version"
-
+    // No Lombok: this module has no Java left, and Kotlin does not use it. The plugin was here
+    // for the five Java records in `g.code` that the generated `marlin.command` classes replaced.
 }
 
 dependencies {

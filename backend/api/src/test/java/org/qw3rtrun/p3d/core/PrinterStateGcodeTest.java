@@ -4,12 +4,10 @@ import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.core.msg.ConnectCmd;
 import org.qw3rtrun.p3d.core.msg.FirmwareInfoReportEvent;
 import org.qw3rtrun.p3d.core.msg.GEvent;
-import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
-import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
-import org.qw3rtrun.p3d.g.code.SetBedTemperature;
-import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.MarlinG;
 import org.qw3rtrun.p3d.terminal.GSender;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -67,8 +65,8 @@ class PrinterStateGcodeTest {
         PrinterState printer = online();
         sent.clear();
 
-        printer.handle(new SetBedTemperature(60.0));
-        printer.handle(SetBedTemperature.m140(60.456));
+        printer.handle(MarlinG.INSTANCE.m140(new BigDecimal("60.0")));
+        printer.handle(MarlinG.INSTANCE.m140(new BigDecimal("60.456")));
 
         assertEquals(List.of("M140 S60.00", "M140 S60.46"), sent);
     }
@@ -77,8 +75,8 @@ class PrinterStateGcodeTest {
     void aHotendTemperatureIsSentAsM104WithTheToolIndex() {
         PrinterState printer = onlineWithExtruders(2);
 
-        printer.handle(new SetHotendTemperature(0, 60.0));
-        printer.handle(new SetHotendTemperature(1, 210.5));
+        printer.handle(MarlinG.INSTANCE.m104(new BigDecimal("60.0"), 0));
+        printer.handle(MarlinG.INSTANCE.m104(new BigDecimal("210.5"), 1));
 
         assertEquals(List.of("M104 S60.00 T0", "M104 S210.50 T1"), sent);
     }
@@ -87,31 +85,46 @@ class PrinterStateGcodeTest {
     void aHotendIndexTheFirmwareDoesNotHaveSendsNothing() {
         PrinterState printer = onlineWithExtruders(2);
 
-        printer.handle(new SetHotendTemperature(5, 60.0));
+        printer.handle(MarlinG.INSTANCE.m104(new BigDecimal("60.0"), 5));
 
         assertEquals(List.of(), sent);
     }
 
+    /**
+     * <p><b>Changed with the move off the old records.</b> A bare request used to encode as
+     * {@code M105 T0}, because the record defaulted its index to 0 and had no way to say "absent".
+     * The generated command distinguishes the two, and {@code M105} and {@code M105 T0} are
+     * different commands: the first asks about the active tool, the second about tool 0. A bare
+     * request now says so.
+     */
     @Test
     void aTemperatureReportIsSentAsM105WithTheToolIndex() {
         PrinterState printer = online();
         sent.clear();
 
-        printer.handle(ReportHotendTemperature.m105());
-        printer.handle(ReportHotendTemperature.m105(2));
+        printer.handle(MarlinG.INSTANCE.m105(null));
+        printer.handle(MarlinG.INSTANCE.m105(2));
 
-        assertEquals(List.of("M105 T0", "M105 T2"), sent);
+        assertEquals(List.of("M105", "M105 T2"), sent);
     }
 
+    /**
+     * <p><b>Changed with the move off the old records.</b> An absent period used to encode as
+     * {@code M155 S0}, which turns auto-reporting *off*; it now encodes as a bare {@code M155},
+     * which Marlin reads as "change nothing". The old default was an accident of the record having
+     * no absent state, and {@link #disconnectingTurnsAutoReportingOff()} covers the path that
+     * actually means to turn it off - it asks for {@code S0} explicitly.
+     */
     @Test
     void autoReportingIsSentAsM155WithThePeriod() {
         PrinterState printer = online();
         sent.clear();
 
-        printer.handle(AutoReportHotendTemperature.m155(1));
-        printer.handle(AutoReportHotendTemperature.m155());
+        printer.handle(MarlinG.INSTANCE.m155(1));
+        printer.handle(MarlinG.INSTANCE.m155(0));
+        printer.handle(MarlinG.INSTANCE.m155(null));
 
-        assertEquals(List.of("M155 S1", "M155 S0"), sent);
+        assertEquals(List.of("M155 S1", "M155 S0", "M155"), sent);
     }
 
     @Test
@@ -138,7 +151,7 @@ class PrinterStateGcodeTest {
 
             PrinterState printer = online();
             sent.clear();
-            printer.handle(new SetBedTemperature(60.0));
+            printer.handle(MarlinG.INSTANCE.m140(new BigDecimal("60.0")));
 
             assertEquals(List.of("M140 S60.00"), sent);
         } finally {

@@ -7,10 +7,10 @@ import org.qw3rtrun.p3d.core.model.PrinterAggregate;
 import org.qw3rtrun.p3d.core.msg.*;
 import org.qw3rtrun.p3d.firmware.CapabilitiesInfo;
 import org.qw3rtrun.p3d.firmware.FirmwareInfo;
-import org.qw3rtrun.p3d.g.code.AutoReportHotendTemperature;
-import org.qw3rtrun.p3d.g.code.ReportHotendTemperature;
-import org.qw3rtrun.p3d.g.code.SetBedTemperature;
-import org.qw3rtrun.p3d.g.code.SetHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
@@ -41,42 +41,59 @@ public class PrinterState implements PrinterAggregate {
         return temperatureControl.getHotend();
     }
 
-    /**
-     * Two decimals, locale-independently.
+/**
+     * Two decimals.
      *
      * <p>The {@code String.format("%.2f", …)} in the encoder this replaces used the default locale,
      * so under a comma-decimal locale it put {@code M140 S60,00} on the wire — not a number at all
-     * by the spec's §3.1, and a command the firmware would reject. The scale is kept at two so the
-     * bytes are otherwise unchanged; it is chosen here rather than in the DSL because the wire
-     * format of a temperature is this layer's business.
+     * by the spec's §3.1, and a command the firmware would reject. The value now arrives as a
+     * {@code BigDecimal} and never passes through a locale, so only the scale is left to set; it is
+     * set here rather than in the DSL because the wire format of a temperature is this layer's
+     * business.
      */
-    private static BigDecimal wireTemp(double celsius) {
-        return BigDecimal.valueOf(celsius).setScale(2, RoundingMode.HALF_UP);
+    private static BigDecimal wireTemp(BigDecimal celsius) {
+        return celsius.setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * {@code M104} — set a hotend's target.
+     *
+     * <p>The tool is read from {@code T} and not from {@code I}: Marlin's M104 documents both, with
+     * {@code I} a material-preset index, and {@code T} is the one {@code GSender.m104} sends. An
+     * absent tool means the active one, which is tool 0 here as it was before.
+     */
     public void handle(SetHotendTemperature temperature) {
         log.info("{}", temperature);
-        if (temperature.index() < firmware.getRaw().extruderCount()) {
-            g.m104(temperature.index(), wireTemp(temperature.temp()));
+        if (temperature.getTemp() == null) {
+            log.warn("M104 with no S parameter carries no target temperature: {}", temperature);
+            return;
+        }
+        int index = temperature.getT() == null ? 0 : temperature.getT();
+        if (index < firmware.getRaw().extruderCount()) {
+            g.m104(index, wireTemp(temperature.getTemp()));
         } else {
             log.warn("According to FirmwareInfoReport, this machine has only {} extruders. But command's hotend index is {}",
-                    firmware.getRaw().extruderCount(), temperature.index());
+                    firmware.getRaw().extruderCount(), index);
         }
     }
 
     public void handle(SetBedTemperature temperature) {
         log.info("{}", temperature);
-        g.m140(wireTemp(temperature.temp()));
+        if (temperature.getTemp() == null) {
+            log.warn("M140 with no S parameter carries no target temperature: {}", temperature);
+            return;
+        }
+        g.m140(wireTemp(temperature.getTemp()));
     }
 
     public void handle(ReportHotendTemperature report) {
         log.info("{}", report);
-        g.m105(report.index());
+        g.m105(report.getIndex());
     }
 
-    public void handle(AutoReportHotendTemperature report) {
+    public void handle(TemperatureAutoReport report) {
         log.info("{}", report);
-        g.m155(report.period());
+        g.m155(report.getSeconds());
     }
 
     public void onOnline(GSender g) {

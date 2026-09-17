@@ -51,10 +51,13 @@ data class AdvancedOKRs(
                 "B", "b" -> blockQueue = second
                 "P", "p" -> planner = second
             }
+            // null and not -1: the property is nullable and encode() writes out any non-null
+            // line number, so a -1 here re-encoded to `ok P15 B3 N-1` - a line nothing sends and
+            // this decoder rejects. Absent on the wire has to stay absent in the value.
             val lineNumber = if (matcher.group(5) != null) {
                 matcher.group(6).toInt()
             } else {
-                -1
+                null
             }
 
             return AdvancedOKRs(planner, blockQueue, lineNumber)

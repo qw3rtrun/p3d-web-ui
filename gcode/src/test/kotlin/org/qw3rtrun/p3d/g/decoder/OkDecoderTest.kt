@@ -38,7 +38,7 @@ class OkDecoderTest {
     fun matchAdvancedOk(line: String) {
         val report = decoder.decode(line)
         Assertions.assertTrue(report != null)
-        Assertions.assertEquals(AdvancedOKRs(15, 3, -1), report)
+        Assertions.assertEquals(AdvancedOKRs(15, 3), report)
     }
 
     @ParameterizedTest
@@ -69,6 +69,18 @@ class OkDecoderTest {
     )
     fun `malformed field yields absence and never throws`(line: String) {
         Assertions.assertFalse(decoder.decode(line) != null, "should not decode: $line")
+    }
+
+    @Test
+    fun `what it encodes, it decodes`() {
+        // Regression: an absent `N` decoded to -1 while encode() writes out any non-null line
+        // number, so a bare advanced ok re-encoded to `ok P15 B3 N-1` and then decoded to null.
+        val cases = listOf(AdvancedOKRs(15, 3), AdvancedOKRs(15, 3, 100), AdvancedOKRs(0, 0, 0))
+        for (original in cases) {
+            Assertions.assertEquals(original, decoder.decode(original.encode())) {
+                "round trip failed for " + original.encode()
+            }
+        }
     }
 
     @Test

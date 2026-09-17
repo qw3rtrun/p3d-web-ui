@@ -1,20 +1,20 @@
 package org.qw3rtrun.p3d.g.marlin.protocol
 
-import org.qw3rtrun.p3d.g.code.dsl.GRS
+import org.qw3rtrun.p3d.g.code.dsl.GRs
 import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
 import java.util.regex.Pattern
 
 /**
  * The `//` family - a line the machine may send at any time, not in answer to anything.
  *
- * Two kinds share the prefix, which is why they share an interface the way [OKRs] covers its own
+ * Two kinds share the prefix, which is why they share an interface the way [OkRs] covers its own
  * two: [ActionRs] is `//action:<command>`, addressed to the host, and [DebugRs] is everything
  * else, addressed to a human. Decode the family with [CommentRsDecoder] when you do not care
  * which.
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-interface CommentRs<D : CommentRs<D>> : GRS<D>
+interface CommentRs<D : CommentRs<D>> : GRs<D>
 
 /**
  * `// <text>` - debugging or other information on a line of its own.

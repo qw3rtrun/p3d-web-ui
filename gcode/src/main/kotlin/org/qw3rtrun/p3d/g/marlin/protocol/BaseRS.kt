@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.marlin.protocol
 
-import org.qw3rtrun.p3d.g.code.dsl.GRS
+import org.qw3rtrun.p3d.g.code.dsl.GRs
 import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
 
 /**
@@ -29,10 +29,10 @@ import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-object BaseRsDecoder : GRSDecoder<GRS<*>> {
+object BaseRsDecoder : GRSDecoder<GRs<*>> {
 
     /** One decoder per reply kind. `ok` comes first because it is far and away the most common. */
-    val decoders: List<GRSDecoder<GRS<*>>> = listOf(
+    val decoders: List<GRSDecoder<GRs<*>>> = listOf(
         OKRsDecoder,
         WaitRs,
         ResendRs,
@@ -44,11 +44,11 @@ object BaseRsDecoder : GRSDecoder<GRS<*>> {
 
     override fun match(line: String): Boolean = decoders.any { it.match(line) }
 
-    override fun decodeParams(line: String): GRS<*> {
+    override fun decodeParams(line: String): GRs<*> {
         val decoded = decoders.firstNotNullOfOrNull { it.decode(line) }
         require(decoded != null) { "not a base protocol reply: $line" }
         return decoded
     }
 
-    override fun decode(line: String): GRS<*>? = decoders.firstNotNullOfOrNull { it.decode(line) }
+    override fun decode(line: String): GRs<*>? = decoders.firstNotNullOfOrNull { it.decode(line) }
 }

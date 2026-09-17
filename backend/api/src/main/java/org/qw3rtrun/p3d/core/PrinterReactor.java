@@ -4,7 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.core.msg.*;
 import org.qw3rtrun.p3d.g.code.descr.GEncodable;
 import org.qw3rtrun.p3d.g.marlin.decoder.*;
-import org.qw3rtrun.p3d.g.marlin.protocol.OKRs;
+import org.qw3rtrun.p3d.g.marlin.protocol.OkRs;
 import org.qw3rtrun.p3d.g.marlin.protocol.OKRsDecoder;
 import org.qw3rtrun.p3d.terminal.GSender;
 import org.qw3rtrun.p3d.terminal.HostTerminal;
@@ -33,7 +33,7 @@ public class PrinterReactor {
 
     //TODO
     private final CompositeDecoder decoder = new CompositeDecoder(asList(
-            (GEventDecoder<OKRs>) line -> Optional.ofNullable(OKRsDecoder.INSTANCE.decode(line)),
+            (GEventDecoder<OkRs>) line -> Optional.ofNullable(OKRsDecoder.INSTANCE.decode(line)),
             new TemperatureReportedDecoder(),
             new CapabilityReportDecoder(),
             new FirmwareReportDecoder(),

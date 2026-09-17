@@ -2,11 +2,11 @@ package org.qw3rtrun.p3d.g.code.dsl
 
 import org.qw3rtrun.p3d.core.msg.GEvent
 
-interface GRS<T : GRS<T>> : GEvent {
+interface GRs<T : GRs<T>> : GEvent {
     fun encode(): String
 }
 
-interface GRSDecoder<out T : GRS<out T>> {
+interface GRSDecoder<out T : GRs<out T>> {
     fun match(line: String): Boolean
     fun decodeParams(line: String): T
 

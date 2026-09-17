@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.marlin.protocol
 
-import org.qw3rtrun.p3d.g.code.dsl.GRS
+import org.qw3rtrun.p3d.g.code.dsl.GRs
 import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
 import java.util.regex.Pattern
 
@@ -34,7 +34,7 @@ enum class ErrorPrefix(val lexeme: String) {
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-data class ErrorRs(val prefix: ErrorPrefix, val message: String) : GRS<ErrorRs> {
+data class ErrorRs(val prefix: ErrorPrefix, val message: String) : GRs<ErrorRs> {
 
     /**
      * The line number in a `Last Line: <n>` message, or null when the message does not name one.

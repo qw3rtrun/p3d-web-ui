@@ -243,8 +243,8 @@ class BaseRsTest {
 
         // Exactly the lines the spec writes out, one per reply kind.
         private val examples = mapOf(
-            "ok" to SimpleOKRs,
-            "ok P15 B3" to AdvancedOKRs(15, 3),
+            "ok" to SimpleOkRs,
+            "ok P15 B3" to AdvancedOkRs(15, 3),
             "Resend: 66556" to ResendRs(66556),
             "rs:123" to ResendRs(123),
             "Error:checksum mismatch, Last Line: 66555" to
@@ -285,11 +285,11 @@ class BaseRsTest {
         // The spec's worked resend transcript, machine-to-host lines only, in order.
         @Test
         fun `the spec's communication-error transcript decodes line by line`() {
-            assertEquals(SimpleOKRs, BaseRsDecoder.decode("ok"))
+            assertEquals(SimpleOkRs, BaseRsDecoder.decode("ok"))
             val error = BaseRsDecoder.decode("Error:checksum mismatch, Last Line: 66555")
             assertEquals(66555, (error as ErrorRs).lastLine)
             assertEquals(ResendRs(66556), BaseRsDecoder.decode("Resend: 66556"))
-            assertEquals(SimpleOKRs, BaseRsDecoder.decode("ok"))
+            assertEquals(SimpleOkRs, BaseRsDecoder.decode("ok"))
         }
 
         // The spec calls the "every line carries a two-character prefix" rule obsolete, so an

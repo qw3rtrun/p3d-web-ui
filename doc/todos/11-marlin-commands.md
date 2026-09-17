@@ -51,7 +51,7 @@ cited by URL and not copied. The example command lines are taken, as a test fixt
 - **Decoding is on the companion, not on the instance.** `head()` and `decodeParams()` describe the
   command *type*, so they live in a `companion object : GRQDecoder<T>` and call sites read
   `ReportHotendTemperature.decode(cmd)`. `GRQ<T>` itself is now only `encode()`. This mirrors the
-  `GRS`/`GRSDecoder` split the response side already had, and it is why `MarlinCommands` gained a
+  `GRs`/`GRSDecoder` split the response side already had, and it is why `MarlinCommands` gained a
   `decoders` list — `byHead` is built from decoders, and the 295 instances in `all` are no longer
   needed to answer a decode.
 - **Decimals go out through their lexeme.** `word(letter, v.toPlainString())`, so the number is

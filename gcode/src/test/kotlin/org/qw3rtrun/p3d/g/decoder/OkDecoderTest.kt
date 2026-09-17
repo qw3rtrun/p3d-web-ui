@@ -5,10 +5,10 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.qw3rtrun.p3d.g.marlin.protocol.AdvancedOkRs
-import org.qw3rtrun.p3d.g.marlin.protocol.OKRsDecoder
+import org.qw3rtrun.p3d.g.marlin.protocol.OkRsDecoder
 
 class OkDecoderTest {
-    private val decoder = OKRsDecoder
+    private val decoder = OkRsDecoder
 
     @ParameterizedTest
     @ValueSource(

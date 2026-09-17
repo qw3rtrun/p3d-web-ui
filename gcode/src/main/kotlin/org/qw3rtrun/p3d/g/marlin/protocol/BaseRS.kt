@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.marlin.protocol
 
 import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
+import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
 
 /**
  * Every reply the RepRap base protocol defines, and the lookup that reads one back.
@@ -29,11 +29,11 @@ import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-object BaseRsDecoder : GRSDecoder<GRs<*>> {
+object BaseRsDecoder : GRsDecoder<GRs<*>> {
 
     /** One decoder per reply kind. `ok` comes first because it is far and away the most common. */
-    val decoders: List<GRSDecoder<GRs<*>>> = listOf(
-        OKRsDecoder,
+    val decoders: List<GRsDecoder<GRs<*>>> = listOf(
+        OkRsDecoder,
         WaitRs,
         ResendRs,
         ErrorRs,

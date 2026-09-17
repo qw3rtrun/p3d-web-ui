@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.marlin.protocol
 
 import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
+import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
 import java.util.regex.Pattern
 
 /**
@@ -24,7 +24,7 @@ data class BusyRs(val reason: String) : GRs<BusyRs> {
 
     override fun encode(): String = "busy: $reason"
 
-    companion object : GRSDecoder<BusyRs> {
+    companion object : GRsDecoder<BusyRs> {
 
         /** Busy with a lengthy command - homing, heat-up, auto levelling. */
         const val PROCESSING = "processing"

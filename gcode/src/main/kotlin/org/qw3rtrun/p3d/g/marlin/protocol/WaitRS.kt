@@ -2,7 +2,7 @@ package org.qw3rtrun.p3d.g.marlin.protocol
 
 import org.qw3rtrun.p3d.core.msg.WaitReceivedEvent
 import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
+import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
 
 /**
  * `wait` - the machine's command buffers are empty and it is waiting for the next line.
@@ -13,7 +13,7 @@ import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-object WaitRs : GRs<WaitRs>, GRSDecoder<WaitRs>, WaitReceivedEvent {
+object WaitRs : GRs<WaitRs>, GRsDecoder<WaitRs>, WaitReceivedEvent {
 
     override fun encode(): String = "wait"
 

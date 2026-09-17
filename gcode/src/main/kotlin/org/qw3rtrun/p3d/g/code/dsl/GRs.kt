@@ -6,7 +6,7 @@ interface GRs<T : GRs<T>> : GEvent {
     fun encode(): String
 }
 
-interface GRSDecoder<out T : GRs<out T>> {
+interface GRsDecoder<out T : GRs<out T>> {
     fun match(line: String): Boolean
     fun decodeParams(line: String): T
 

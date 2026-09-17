@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.marlin.protocol
 
 import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
+import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
 import java.util.regex.Pattern
 
 /**
@@ -26,7 +26,7 @@ data class ResendRs(val lineNumber: Int) : GRs<ResendRs> {
 
     override fun encode(): String = "Resend: $lineNumber"
 
-    companion object : GRSDecoder<ResendRs> {
+    companion object : GRsDecoder<ResendRs> {
 
         // `rs` or `Resend`, then an optional `:`, then an optional `N` marker which may itself be
         // followed by a `:`, then the number. The separators are optional throughout because all

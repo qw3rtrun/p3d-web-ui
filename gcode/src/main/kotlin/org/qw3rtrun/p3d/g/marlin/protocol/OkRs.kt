@@ -2,12 +2,12 @@ package org.qw3rtrun.p3d.g.marlin.protocol
 
 import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
 import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
+import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
 import java.util.regex.Pattern
 
 interface OkRs<D : OkRs<D>> : GRs<D>, OKReceivedEvent
 
-object SimpleOkRs : OkRs<SimpleOkRs>, GRSDecoder<SimpleOkRs> {
+object SimpleOkRs : OkRs<SimpleOkRs>, GRsDecoder<SimpleOkRs> {
     override fun encode(): String = "ok"
     override fun match(line: String): Boolean = line.trim().equals("ok", ignoreCase = true)
     override fun decodeParams(line: String): SimpleOkRs = this
@@ -21,7 +21,7 @@ data class AdvancedOkRs(
 
     override fun encode(): String = "ok P$planner B$blockQueue${if (lineNumber != null) " N$lineNumber" else ""}"
 
-    companion object : GRSDecoder<AdvancedOkRs> {
+    companion object : GRsDecoder<AdvancedOkRs> {
         private val ADVANCED_OK_PATTERN = Pattern.compile(
             "^[oO][kK] +([PpBb])([0-9]+) +([PpBb])([0-9]+)(?> +([Nn])([0-9]+))?"
         )
@@ -65,7 +65,7 @@ data class AdvancedOkRs(
     }
 }
 
-object OKRsDecoder : GRSDecoder<OkRs<*>> {
+object OkRsDecoder : GRsDecoder<OkRs<*>> {
     override fun match(line: String) = SimpleOkRs.match(line) || AdvancedOkRs.match(line)
 
     override fun decodeParams(line: String) =

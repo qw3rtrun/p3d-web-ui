@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.marlin.protocol
 
 import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
+import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
 import java.util.regex.Pattern
 
 /** The three prefixes an error reply is written with, and the lexeme each one writes. */
@@ -57,7 +57,7 @@ data class ErrorRs(val prefix: ErrorPrefix, val message: String) : GRs<ErrorRs> 
         else -> prefix.lexeme + message
     }
 
-    companion object : GRSDecoder<ErrorRs> {
+    companion object : GRsDecoder<ErrorRs> {
 
         private val LAST_LINE_PATTERN = Pattern.compile(
             "last line[ \t]*:[ \t]*([0-9]+)",

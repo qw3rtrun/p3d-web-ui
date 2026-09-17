@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.marlin.protocol
 
 import org.qw3rtrun.p3d.g.code.dsl.GRs
-import org.qw3rtrun.p3d.g.code.dsl.GRSDecoder
+import org.qw3rtrun.p3d.g.code.dsl.GRsDecoder
 import java.util.regex.Pattern
 
 /**
@@ -32,7 +32,7 @@ data class DebugRs(val text: String) : CommentRs<DebugRs> {
 
     override fun encode(): String = if (text.isEmpty()) "//" else "// $text"
 
-    companion object : GRSDecoder<DebugRs> {
+    companion object : GRsDecoder<DebugRs> {
 
         override fun match(line: String): Boolean =
             line.trim().startsWith("//") && !ActionRs.match(line)
@@ -64,7 +64,7 @@ data class ActionRs(val action: String, val argument: String? = null) : CommentR
     override fun encode(): String =
         if (argument == null) "//action:$action" else "//action:$action $argument"
 
-    companion object : GRSDecoder<ActionRs> {
+    companion object : GRsDecoder<ActionRs> {
 
         private val ACTION_PATTERN = Pattern.compile(
             "^//[ \t]*action[ \t]*:[ \t]*(\\S+)(?>[ \t]+(.*))?$",
@@ -82,7 +82,7 @@ data class ActionRs(val action: String, val argument: String? = null) : CommentR
 }
 
 /** Either kind of `//` line, tried most specific first. */
-object CommentRsDecoder : GRSDecoder<CommentRs<*>> {
+object CommentRsDecoder : GRsDecoder<CommentRs<*>> {
 
     override fun match(line: String): Boolean = ActionRs.match(line) || DebugRs.match(line)
 

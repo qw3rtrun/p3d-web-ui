@@ -53,6 +53,7 @@ critical path.
 | 09 | [deferred-spec-gaps](./09-deferred-spec-gaps.md) | Bare rest-of-line strings, RS274 parameters, block delete, line length. ~~CRC16~~ — done in 04 | — |
 | ~~10~~ | [command-dsl](./10-command-dsl.md) | ~~The `code/dsl` writing facade — `G.kt` and `GWords.kt`, host-side beside the portable core.~~ **done** — `GBlock`, per-letter parameter words, line builders, 303/303 corpus lines expressible; `G.java` deleted and all three `:backend` callers on `GSender`, which fixed a locale-dependent `%.2f` that put `M140 S60,00` on the wire. Narrowed what [08](./08-test-and-doc-debt.md) has to decide | — |
 | 11 | [marlin-commands](./11-marlin-commands.md) | The Marlin command set: 295 classes over 287 codes and 1044 parameters, generated from Marlin's own docs into `marlin/MarlinGRQ.kt`, `MarlinMRQ.kt` and `MarlinTRQ.kt`, with the registry in `marlin/MarlinRQ.kt`. **Command set in** — three follow-ups left, all upstream doc gaps or the bare-string block from [09](./09-deferred-spec-gaps.md) | — |
+| 12 | [marlin-events](./12-marlin-events.md) | The replies Marlin sends while it works, decoded into `marlin/event/` on the same `GRs` + companion-decoder shape as the base protocol replies in `marlin/protocol/`. **Tier 1 in** — printer state; tiers 2-4 (safety, job lifecycle, calibration) listed, and the multi-line replies need a decision first | 11 |
 
 ## Why this order
 

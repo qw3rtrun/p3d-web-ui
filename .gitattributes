@@ -1,0 +1,46 @@
+# Line endings.
+#
+# This repository stores LF and, until this file existed, nothing said so: there
+# was no .gitattributes and no core.autocrlf, so a Windows checkout wrote CRLF
+# into the working tree while git kept LF in the objects. Every file then read as
+# modified, and a one-line edit staged as a whole-file rewrite - a 4-line rename
+# in PrinterReactor.java came out as 185 insertions and 185 deletions.
+#
+# `text=auto` lets git decide what is text and normalise it to LF on the way in;
+# `eol=lf` writes LF back out, on every platform, so the working tree and the
+# objects agree and the churn cannot come back.
+* text=auto eol=lf
+
+# The two exceptions, and they are genuine: cmd.exe requires CRLF in a batch
+# file and mis-parses one without it, so these must NOT follow the rule above.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# The POSIX wrapper is the mirror image: it is run by /bin/sh, and a CR at the
+# end of its shebang makes the interpreter unfindable ("required file not
+# found"). It is already covered by the default, but it is spelled out because
+# getting it wrong breaks the build on Linux and in CI.
+gradlew text eol=lf
+
+# Binary. `text=auto` would almost certainly detect these anyway; declaring them
+# means "almost" never has to be right, and it keeps them out of text diffs.
+*.jar   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+*.otf   binary
+*.jpg   binary
+*.jpeg  binary
+*.png   binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+
+# Generated, and large. Collapsed in diffs and excluded from GitHub's language
+# stats; still versioned, still reviewable with --text when it matters.
+gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinGRQ.kt linguist-generated
+gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinMRQ.kt linguist-generated
+gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinTRQ.kt linguist-generated
+gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinRQ.kt  linguist-generated
+gcode/src/test/kotlin/org/qw3rtrun/p3d/g/marlin/MarlinCommandsTest.kt linguist-generated

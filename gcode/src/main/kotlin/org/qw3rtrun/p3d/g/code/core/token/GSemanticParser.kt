@@ -137,7 +137,12 @@ class GSemanticParser(private val source: Iterator<GToken>) : Iterator<GLine> {
             // From after the line-number field to the `*`, not from 1: with leading whitespace or a
             // comment the head field is not at index 0. `raw` below still holds the whole line.
             semantic.subList(headIndex + 1, starIndex),
-            star as GParameterWord<GInt>,
+            // Rebuilt from the parts already checked, not cast: `star` is only ever known as a
+            // `GParameterWord<*>` here, so narrowing it to `GParameterWord<GInt>` is an unchecked
+            // cast the compiler cannot stand behind. The components are the same ones - `checksum`
+            // is the very `value` the `is GInt` test above accepted, and `raw` is carried over, so
+            // the field is equal to the one in `whole` and still prints its own bytes back.
+            GParameterWord(star.id, checksum, star.raw),
             semantic
         )
     }

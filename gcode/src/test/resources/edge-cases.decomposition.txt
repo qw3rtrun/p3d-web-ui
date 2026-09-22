@@ -1,0 +1,31 @@
+GPacketLine	1	18	G28
+GPacketLine	1	18	G28
+GPacketLine	1	18	G28
+GPacketLine	1	18	g28
+GPacketLine	1	123	M110 N7
+GPacketLine	2	115	G1 X10
+GCheckSumFailedLine	1	-	G28
+GMissingChecksum	-	-	G28
+GMissingLineNumber	-	-	G28
+GMissingLineNumber	-	-	
+GMissingLineNumber	-	-	
+GMissingLineNumber	-	-	
+GMissingLineNumber	-	-	
+GMalformedLineNumber	-	-	
+GMalformedLineNumber	-	-	
+GMalformedChecksum	-	-	G28
+GMalformedChecksum	-	-	
+GMalformedChecksum	-	-	G28 X
+GMalformedChecksum	-	-	G28
+GMalformedChecksum	-	-	G28
+GPacketLine	1	59	G28
+GPacketLine	1	18	G28
+GSimpleLine	-	-	G28
+GSimpleLine	-	-	G28 | G1 X5
+GSimpleLine	-	-	M117 H e l l o W o r l d
+GSimpleLine	-	-	G29.1 T
+GSimpleLine	-	-	T0 X1
+GSimpleLine	-	-	G53 | G0 X0
+GMeaninglessLine	-	-	
+GMeaninglessLine	-	-	
+GMeaninglessLine	-	-	

@@ -29,3 +29,21 @@ dependencyManagement {
         mavenBom SpringBootPlugin.BOM_COORDINATES
     }
 }
+
+/**
+ * Ask a running printer for a temperature report over the real terminal stack.
+ *
+ * Hand-run only - it needs a listener on the far end, so it is deliberately not wired into `check`.
+ * Point it elsewhere with -PprobeHost=... -PprobePort=...
+ */
+tasks.register('probeTemperature', JavaExec) {
+    group = 'verification'
+    description = 'Ask a Marlin emulator (default localhost:8099) for a temperature report through TerminalManager.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.EmulatorTemperatureProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+            (findProperty('probeTimeout') ?: '10').toString(),
+    ]
+}

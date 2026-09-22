@@ -47,3 +47,5 @@ data/
 # .claude/skills and .claude/agents are junctions into .agents/ (the tracked source).
 # Recreate after a fresh clone:  scripts/link-claude-config.cmd
 .claude/
+
+.run/

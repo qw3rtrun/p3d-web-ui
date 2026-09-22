@@ -13,7 +13,7 @@ before/after, the conformance and coverage tables — is in
 
 ## Status
 
-`:gcode:test` — **681 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
+`:gcode:test` — **797 tests, 0 failures, 0 skipped**. `./gradlew build` green across every module.
 
 Lexing ([spec §2](../specs/GCODE_spec.md#2-lexical-structure-tokens), §3) and line framing
 ([§5](../specs/GCODE_spec.md#5-line-block-structure), [§7.3](../specs/GCODE_spec.md#73-pairing-rule))
@@ -35,8 +35,18 @@ and both ends of the resend protocol, in a new `code/core/session/` package that
 only mutable state. Everything the spec describes is now implemented except the gaps
 [09](./09-deferred-spec-gaps.md) lists.
 
-What is left is **cleanup, not capability**: 06–09. None of them blocks anything, and none is on a
+What is left in 06–09 is **cleanup, not capability**. None of them blocks anything, and none is on a
 critical path.
+
+13–15 come out of a design pass over the finished module and are a different kind of item. 13 carries
+a **real bug** — `GParameterWord`'s `equals` compares `raw`, so a command head parsed from `G 1`
+never matches the registry key built from `G1`, and no test carries a line from text through to
+`MarlinCommands.decode` to catch it. 14 is throughput on a live path. 15 is the one that matters
+most and is the least like the others: the line and session layers this queue built —
+`GSemanticParser`, `GCodeReader`, `GSendWindow`, `GPacketLine` — **have no production consumers**,
+while `:backend:terminal` frames lines a boxed character at a time and parses replies with its own
+untested copy of the protocol. Until that is adopted, every correctness argument in 01–12 is
+unreachable from an actual printer.
 
 ## The queue
 
@@ -47,13 +57,16 @@ critical path.
 | ~~03~~ | [word-and-command-layer](./03-word-and-command-layer.md) | ~~`GCommandParser`~~ **done** — commands, flag params, subcodes, structural-field skip. Two items were deferred to 04/05 | — |
 | ~~04~~ | [encoder-and-checksum](./04-encoder-and-checksum.md) | ~~A real encoder, `N`/`*` framing, checksum verification~~ **done** — `GEncoder`, `Crc16CheckSum` (XMODEM, pinned from RRF source), verification inside `parseLine`, `GCheckSumFailedLine`, a packet-bearing corpus. Corrected §8.3 and §8.4 | — |
 | ~~05~~ | [line-numbering-and-session](./05-line-numbering-and-session.md) | ~~Line-number continuity, `M110`, the resend window~~ **done** — `GCodeReader`, `GSendWindow`, a three-branch receipt type (a repeat is *not* an error). Corrected §5, §7.2 and §8.5 | — |
-| 06 | [decoder-edge-portability](./06-decoder-edge-portability.md) | Replace regex / `Optional` / `commons-lang3` / `ignoreCase` in `marlin/decoder/**` | — |
+| 06 | [decoder-edge-portability](./06-decoder-edge-portability.md) | Replace regex / `Optional` / `commons-lang3` / `ignoreCase` — **stale**: it targets `marlin/decoder/**`, deleted in `d34d0a3`. The sites are now `protocol/**` and `marlin/event/**`; [14](./14-reply-decoder-single-pass.md) rewrites it | 14 |
 | 07 | [hygiene-and-naming](./07-hygiene-and-naming.md) | File and property renames, `GTokenizer` as an object, leftover semicolons | — |
 | 08 | [test-and-doc-debt](./08-test-and-doc-debt.md) | Retire one island of dead Java classes. ~~Port three `XorCheckSum` vectors~~ — done in 04 | — |
 | 09 | [deferred-spec-gaps](./09-deferred-spec-gaps.md) | Bare rest-of-line strings, RS274 parameters, block delete, line length. ~~CRC16~~ — done in 04 | — |
 | ~~10~~ | [command-dsl](./10-command-dsl.md) | ~~The `code/dsl` writing facade — `G.kt` and `GWords.kt`, host-side beside the portable core.~~ **done** — `GBlock`, per-letter parameter words, line builders, 303/303 corpus lines expressible; `G.java` deleted and all three `:backend` callers on `GSender`, which fixed a locale-dependent `%.2f` that put `M140 S60,00` on the wire. Narrowed what [08](./08-test-and-doc-debt.md) has to decide | — |
 | 11 | [marlin-commands](./11-marlin-commands.md) | The Marlin command set: 295 classes over 287 codes and 1044 parameters, generated from Marlin's own docs into one file per class under `marlin/command/`, with the registry in `marlin/MarlinRQ.kt`. **Command set in** — three follow-ups left, all upstream doc gaps or the bare-string block from [09](./09-deferred-spec-gaps.md) | — |
 | 12 | [marlin-events](./12-marlin-events.md) | The replies Marlin sends while it works, decoded into `marlin/event/` on the same `GRs` + companion-decoder shape as the base protocol replies in `marlin/protocol/`. **Tier 1 in** — printer state; tiers 2-4 (safety, job lifecycle, calibration) listed, and the multi-line replies need a decision first | 11 |
+| 13 | [word-identity-and-provenance](./13-word-identity-and-provenance.md) | `raw` out of `GParameterWord`'s identity — it silently breaks `MarlinCommands.decode` for `G 1`, and nothing tests it. Plus the `isLetter` String churn, three dead types, and the reframe-vs-resend partition stated on `GError` | 15 |
+| 14 | [reply-decoder-single-pass](./14-reply-decoder-single-pass.md) | Invert `GRsDecoder` so `decode` is the primitive — today every received line is parsed twice, across up to 15 decoders, on a path `PrinterReactor` runs in production. Supersedes 06 | 15 |
+| 15 | [terminal-adopts-gcode](./15-terminal-adopts-gcode.md) | `:backend:terminal` uses this module's framer, decoders and send window instead of its own. The parser and session layers have **zero production consumers** today | — |
 
 ## Why this order
 
@@ -80,7 +93,20 @@ resend protocol addresses lines by number and needs a verified packet to react t
 and the order paid off — 05 drives its resends from 04's `GCheckSumFailedLine` and frames its lines
 with 04's encoder, neither of which existed when the chain was written down.
 
-**Pick up 06–09 in any order** — they are independent of each other and nothing blocks them. 07 and
+**13 → 14 → 15, and ahead of 06–09.** 13 first because it is the only outright bug left and because
+it changes a public equality — everything written against these types afterwards should be written
+against the fixed one. 14 second because it is a mechanical interface inversion across 15 files and
+would conflict with anything else touching `protocol/**`; it also settles what
+[06](./06-decoder-edge-portability.md) should have said, since 06 still targets `marlin/decoder/**`,
+a directory deleted in `d34d0a3`. 15 last because it should adopt the interfaces 13 and 14 produce
+rather than today's, and because its third commit needs a concurrency contract decided first — that
+one is not `protocol-dev`'s to take.
+
+The ordering is *not* by value. 15 is worth more than 13 and 14 together: it is the file that makes
+this module reach a printer. It is third because doing it first means doing the adoption twice.
+
+**Pick up 06–09 in any order** afterwards — they are independent of each other and nothing blocks
+them. 07 and
 08 are small; 06 and 09 are the large ones. Note that 07 deliberately holds a pure rename
 (`GLiner.kt` → something honest) that would otherwise muddy a behavioural diff — do it between other
 files, not inside one. 06's one-line coupling to 02 (`TemperatureReportedDecoder` parses `Double`)

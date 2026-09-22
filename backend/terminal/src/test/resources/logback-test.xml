@@ -1,0 +1,20 @@
+<configuration>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{0} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!--
+      The wire, verbatim. HostTerminal logs every line it sends and receives to this logger at
+      DEBUG, which is off under Logback's default configuration - and the raw traffic is the whole
+      point of EmulatorTemperatureProbe.
+    -->
+    <logger name="org.qw3rtrun.p3d.terminal.HostTerminal#traffic" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>

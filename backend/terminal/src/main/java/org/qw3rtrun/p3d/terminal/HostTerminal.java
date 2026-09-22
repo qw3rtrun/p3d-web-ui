@@ -56,6 +56,33 @@ public class HostTerminal {
 
     public void onOk(Replay.Ok ok) {
         outSide.handleBackpressure(ok);
+        publishPayload(ok);
+    }
+
+    /**
+     * An {@code ok} is an acknowledgement, and it is sometimes also a reply.
+     *
+     * <p>{@code M105}, {@code M109} and {@code M190} all answer on the {@code ok} itself -
+     * {@code ok T:45.26 /45.00 B:25.00 /0.00} - so an {@code ok} that is taken only as a window
+     * credit and then dropped takes the answer with it. That is what happened before: every
+     * temperature the host ever saw came from an {@code M155} auto-report, which arrives on a line
+     * of its own, and an {@code M105} asked on demand was answered into the void.
+     *
+     * <p>The whole line goes out, {@code ok} included, because that prefix is what tells
+     * {@code OkTemperatureRs} from {@code BareTemperatureRs} downstream - whether the report is an
+     * acknowledgement or an unsolicited auto-report is exactly the distinction those two classes
+     * exist to keep, and stripping the prefix here would erase it.
+     *
+     * <p>Two kinds of {@code ok} are held back. A bare {@code ok} carries nothing to decode, and an
+     * advanced {@code ok} - {@code ok P15 B3 N100}, the ones {@code meta} was parsed out of - carries
+     * only the window credit this method was already given. Publishing either would put a reply on
+     * the bus that says nothing a subscriber did not already know.
+     */
+    private void publishPayload(Replay.Ok ok) {
+        if (ok.payload().isEmpty() || ok.meta() != null) {
+            return;
+        }
+        replays.tryEmitNext(new Replay.Message(ok.raw()));
     }
 
     void onBusy(String reason) {

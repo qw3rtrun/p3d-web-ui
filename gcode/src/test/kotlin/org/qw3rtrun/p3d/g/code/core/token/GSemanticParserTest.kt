@@ -43,7 +43,7 @@ class GSemanticParserTest {
                 GLetter('Y'),
                 GInt(20)
             ),
-            line.raw()
+            line.raw
         )
         assertFalse(iter.hasNext())
     }
@@ -65,7 +65,7 @@ class GSemanticParserTest {
                 GInt(10),
                 GLineBreak("\n")
             ),
-            line.raw()
+            line.raw
         )
         assertFalse(iter.hasNext())
     }
@@ -78,9 +78,9 @@ class GSemanticParserTest {
         assertEquals(3, lines.size)
         assertTrue(lines.all { it is GSimpleLine })
 
-        assertEquals(listOf(GLetter('G'), GInt(28), GLineBreak("\n")), lines[0].raw())
-        assertEquals(listOf(GLetter('M'), GInt(104), GSpace, GLetter('S'), GInt(200), GLineBreak("\n")), lines[1].raw())
-        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('Z'), GInt(5), GLineBreak("\n")), lines[2].raw())
+        assertEquals(listOf(GLetter('G'), GInt(28), GLineBreak("\n")), lines[0].raw)
+        assertEquals(listOf(GLetter('M'), GInt(104), GSpace, GLetter('S'), GInt(200), GLineBreak("\n")), lines[1].raw)
+        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('Z'), GInt(5), GLineBreak("\n")), lines[2].raw)
     }
 
     @Test
@@ -90,8 +90,8 @@ class GSemanticParserTest {
 
         assertEquals(2, lines.size)
         assertTrue(lines.all { it is GMeaninglessLine }) { "expected two empty lines, got $lines" }
-        assertEquals(listOf(GLineBreak("\n")), lines[0].raw())
-        assertEquals(listOf(GLineBreak("\n")), lines[1].raw())
+        assertEquals(listOf(GLineBreak("\n")), lines[0].raw)
+        assertEquals(listOf(GLineBreak("\n")), lines[1].raw)
     }
 
     @Test
@@ -105,29 +105,29 @@ class GSemanticParserTest {
         val packet = line as GPacketLine
 
         assertEquals(GInt(100), packet.number)
-        assertEquals(GParameterWord(GChecksum, GInt(112)), packet.checksum)
+        assertEquals(GInt(112), packet.checksum)
         assertEquals(
             listOf(
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('G'), GInt(1)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('X'), GInt(10)),
-                GMeaningless(GSpace)
+                GSpace,
+                GLetter('G'), GInt(1),
+                GSpace,
+                GLetter('X'), GInt(10),
+                GSpace
             ),
-            packet.payload
+            packet.body
         )
         assertEquals(
             listOf(
-                GParameterWord(GLetter('N'), GInt(100)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('G'), GInt(1)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('X'), GInt(10)),
-                GMeaningless(GSpace),
-                GParameterWord(GChecksum, GInt(112)),
-                GMeaningless(GLineBreak("\n"))
+                GLetter('N'), GInt(100),
+                GSpace,
+                GLetter('G'), GInt(1),
+                GSpace,
+                GLetter('X'), GInt(10),
+                GSpace,
+                GChecksum, GInt(112),
+                GLineBreak("\n")
             ),
-            packet.whole
+            packet.raw
         )
         assertFalse(iter.hasNext())
     }
@@ -143,28 +143,28 @@ class GSemanticParserTest {
         val packet = line as GPacketLine
 
         assertEquals(GInt(100), packet.number)
-        assertEquals(GParameterWord(GChecksum, GInt(112)), packet.checksum)
+        assertEquals(GInt(112), packet.checksum)
         assertEquals(
             listOf(
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('G'), GInt(1)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('X'), GInt(10)),
-                GMeaningless(GSpace)
+                GSpace,
+                GLetter('G'), GInt(1),
+                GSpace,
+                GLetter('X'), GInt(10),
+                GSpace
             ),
-            packet.payload
+            packet.body
         )
         assertEquals(
             listOf(
-                GParameterWord(GLetter('N'), GInt(100)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('G'), GInt(1)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('X'), GInt(10)),
-                GMeaningless(GSpace),
-                GParameterWord(GChecksum, GInt(112))
+                GLetter('N'), GInt(100),
+                GSpace,
+                GLetter('G'), GInt(1),
+                GSpace,
+                GLetter('X'), GInt(10),
+                GSpace,
+                GChecksum, GInt(112)
             ),
-            packet.whole
+            packet.raw
         )
         assertFalse(iter.hasNext())
     }
@@ -215,20 +215,20 @@ class GSemanticParserTest {
         val packet = line as GPacketLine
 
         assertEquals(GInt(1), packet.number)
-        assertEquals(GParameterWord(GChecksum, GInt(50)), packet.checksum)
-        assertEquals(listOf(GMeaningless(GSpace), GParameterWord(GLetter('G'), GInt(28)), GMeaningless(GSpace)), packet.payload)
+        assertEquals(GInt(50), packet.checksum)
+        assertEquals(listOf(GSpace, GLetter('G'), GInt(28), GSpace), packet.body)
         assertEquals(
             listOf(
-                GParameterWord(GLetter('N'), GInt(1)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('G'), GInt(28)),
-                GMeaningless(GSpace),
-                GParameterWord(GChecksum, GInt(50)),
-                GMeaningless(GSpace),
-                GMeaningless(GTailComment("homing")),
-                GMeaningless(GLineBreak("\n"))
+                GLetter('N'), GInt(1),
+                GSpace,
+                GLetter('G'), GInt(28),
+                GSpace,
+                GChecksum, GInt(50),
+                GSpace,
+                GTailComment("homing"),
+                GLineBreak("\n")
             ),
-            packet.whole
+            packet.raw
         )
     }
 
@@ -239,7 +239,7 @@ class GSemanticParserTest {
 
         assertEquals(2, lines.size)
         assertInstanceOf(GMeaninglessLine::class.java, lines[0])
-        assertEquals(listOf(GTailComment(" full line comment"), GLineBreak("\n")), lines[0].raw())
+        assertEquals(listOf(GTailComment(" full line comment"), GLineBreak("\n")), lines[0].raw)
 
         assertInstanceOf(GSimpleLine::class.java, lines[1])
         assertEquals(
@@ -253,7 +253,7 @@ class GSemanticParserTest {
                 GInt(1500),
                 GLineBreak("\n")
             ),
-            lines[1].raw()
+            lines[1].raw
         )
     }
 
@@ -270,11 +270,11 @@ class GSemanticParserTest {
 
         val firstPacket = lines[0] as GPacketLine
         assertEquals(GInt(1), firstPacket.number)
-        assertEquals(GParameterWord(GChecksum, GInt(125)), firstPacket.checksum)
+        assertEquals(GInt(125), firstPacket.checksum)
 
         val secondPacket = lines[3] as GPacketLine
         assertEquals(GInt(2), secondPacket.number)
-        assertEquals(GParameterWord(GChecksum, GInt(115)), secondPacket.checksum)
+        assertEquals(GInt(115), secondPacket.checksum)
     }
 
     @Test
@@ -288,14 +288,14 @@ class GSemanticParserTest {
 
         val line1 = iter.next()
         assertInstanceOf(GSimpleLine::class.java, line1)
-        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('X'), GInt(1), GLineBreak("\n")), line1.raw())
+        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('X'), GInt(1), GLineBreak("\n")), line1.raw)
 
         assertTrue(iter.hasNext())
         assertTrue(iter.hasNext())
 
         val line2 = iter.next()
         assertInstanceOf(GSimpleLine::class.java, line2)
-        assertEquals(listOf(GLetter('G'), GInt(2), GSpace, GLetter('X'), GInt(2), GLineBreak("\n")), line2.raw())
+        assertEquals(listOf(GLetter('G'), GInt(2), GSpace, GLetter('X'), GInt(2), GLineBreak("\n")), line2.raw)
 
         assertFalse(iter.hasNext())
         assertFalse(iter.hasNext())
@@ -317,7 +317,7 @@ class GSemanticParserTest {
 
         assertEquals(1, lines.size)
         assertInstanceOf(GMeaninglessLine::class.java, lines[0])
-        assertEquals(listOf(GSpace, GSpace, GSpace, GLineBreak("\n")), lines[0].raw())
+        assertEquals(listOf(GSpace, GSpace, GSpace, GLineBreak("\n")), lines[0].raw)
     }
 
     @Test
@@ -326,7 +326,7 @@ class GSemanticParserTest {
         val lines = GSemanticParser(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(5, lines.size)
-        assertEquals(input, lines.joinToString("") { line -> line.raw().joinToString("") { it.rawText() } })
+        assertEquals(input, lines.joinToString("") { line -> line.raw.joinToString("") { it.rawText() } })
     }
 
     @Test
@@ -371,17 +371,17 @@ class GSemanticParserTest {
         val packet = GSemanticParser(tokenizer.parse("N0 G1 X5 F3000*0\n").iterator()).next() as GPacketLine
 
         assertEquals(GInt(0), packet.number)
-        assertEquals(GParameterWord(GChecksum, GInt(0)), packet.checksum)
+        assertEquals(GInt(0), packet.checksum)
         assertEquals(
             listOf(
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('G'), GInt(1)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('X'), GInt(5)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('F'), GInt(3000))
+                GSpace,
+                GLetter('G'), GInt(1),
+                GSpace,
+                GLetter('X'), GInt(5),
+                GSpace,
+                GLetter('F'), GInt(3000)
             ),
-            packet.payload
+            packet.body
         )
     }
 
@@ -394,7 +394,7 @@ class GSemanticParserTest {
         val packet = GSemanticParser(tokenizer.parse("N999999 G1 E13*127\n").iterator()).next() as GPacketLine
 
         assertEquals(GInt(999999), packet.number)
-        assertEquals(GParameterWord(GChecksum, GInt(127)), packet.checksum)
+        assertEquals(GInt(127), packet.checksum)
     }
 
     @Test
@@ -410,7 +410,7 @@ class GSemanticParserTest {
         )
         assertEquals(
             listOf(GInt(18), GInt(17), GInt(57)),
-            lines.map { (it as GPacketLine).checksum.value }
+            lines.map { (it as GPacketLine).checksum }
         )
     }
 
@@ -483,14 +483,14 @@ class GSemanticParserTest {
 
             assertEquals(
                 listOf(
-                    GParameterWord(GLetter('N'), GInt(1)),
-                    GMeaningless(GSpace),
-                    GParameterWord(GLetter('G'), GInt(28)),
-                    GParameterWord(GChecksum, GInt(18)),
-                    GMeaningless(GSpace),
-                    GMeaningless(GTailComment("c"))
+                    GLetter('N'), GInt(1),
+                    GSpace,
+                    GLetter('G'), GInt(28),
+                    GChecksum, GInt(18),
+                    GSpace,
+                    GTailComment("c")
                 ),
-                packet.whole
+                packet.raw
             )
         }
 
@@ -500,15 +500,15 @@ class GSemanticParserTest {
 
             assertEquals(
                 listOf(
-                    GParameterWord(GLetter('N'), GInt(1)),
-                    GMeaningless(GSpace),
-                    GParameterWord(GLetter('G'), GInt(28)),
-                    GParameterWord(GChecksum, GInt(18)),
-                    GMeaningless(GSpace),
-                    GMeaningless(GTailComment("c")),
-                    GMeaningless(GLineBreak("\n"))
+                    GLetter('N'), GInt(1),
+                    GSpace,
+                    GLetter('G'), GInt(28),
+                    GChecksum, GInt(18),
+                    GSpace,
+                    GTailComment("c"),
+                    GLineBreak("\n")
                 ),
-                packet.whole
+                packet.raw
             )
         }
 
@@ -518,13 +518,13 @@ class GSemanticParserTest {
 
             assertEquals(
                 listOf(
-                    GParameterWord(GLetter('N'), GInt(1)),
-                    GMeaningless(GSpace),
-                    GParameterWord(GLetter('G'), GInt(28)),
-                    GParameterWord(GChecksum, GInt(18)),
-                    GMeaningless(GLineBreak("\r\n"))
+                    GLetter('N'), GInt(1),
+                    GSpace,
+                    GLetter('G'), GInt(28),
+                    GChecksum, GInt(18),
+                    GLineBreak("\r\n")
                 ),
-                packet.whole
+                packet.raw
             )
         }
 
@@ -568,7 +568,7 @@ class GSemanticParserTest {
 
         @Test
         fun `an empty line keeps its tokens so the input is not lost`() {
-            assertEquals(listOf(GTailComment(" c"), GLineBreak("\n")), line("; c\n").raw())
+            assertEquals(listOf(GTailComment(" c"), GLineBreak("\n")), line("; c\n").raw)
         }
 
         @Test
@@ -601,7 +601,7 @@ class GSemanticParserTest {
             val packet = line(gcode) as GPacketLine
 
             assertEquals(GInt(1), packet.number)
-            assertEquals(GInt(checksum), packet.checksum.value)
+            assertEquals(GInt(checksum), packet.checksum)
         }
 
         @ParameterizedTest
@@ -623,7 +623,7 @@ class GSemanticParserTest {
             val packet = line(gcode) as GPacketLine
 
             assertEquals(GInt(1), packet.number)
-            assertEquals(GInt(checksum), packet.checksum.value)
+            assertEquals(GInt(checksum), packet.checksum)
         }
 
         @ParameterizedTest
@@ -633,7 +633,7 @@ class GSemanticParserTest {
             val packet = line(gcode) as GPacketLine
 
             assertEquals(GInt(1), packet.number)
-            assertEquals(GInt(18), packet.checksum.value)
+            assertEquals(GInt(18), packet.checksum)
         }
 
         @Test
@@ -649,12 +649,12 @@ class GSemanticParserTest {
             assertEquals(GInt(1), packet.number)
             assertEquals(
                 listOf(
-                    GMeaningless(GSpace),
-                    GParameterWord(GLetter('M'), GInt(110)),
-                    GMeaningless(GSpace),
-                    GParameterWord(GLetter('N'), GInt(7))
+                    GSpace,
+                    GLetter('M'), GInt(110),
+                    GSpace,
+                    GLetter('N'), GInt(7)
                 ),
-                packet.payload
+                packet.body
             )
         }
 
@@ -669,7 +669,7 @@ class GSemanticParserTest {
             val packet = line("N 1 G28*50\n") as GPacketLine
 
             assertEquals(GInt(1), packet.number)
-            assertEquals(GInt(50), packet.checksum.value)
+            assertEquals(GInt(50), packet.checksum)
         }
     }
 
@@ -688,7 +688,7 @@ class GSemanticParserTest {
 
             // 50, not `N1 G28`'s 18: the space before the marker falls inside the covered range
             // and the space after it does not, exactly as spec 8.3 describes.
-            assertEquals(GInt(50), packet.checksum.value)
+            assertEquals(GInt(50), packet.checksum)
         }
 
         @Test
@@ -707,14 +707,14 @@ class GSemanticParserTest {
             assertEquals(GInt(1), packet.number)
             // 59 is the XOR of `N1 G28*12` - the earlier marker and its digits are ordinary covered
             // bytes, since the range ends at the *last* `*`.
-            assertEquals(GInt(59), packet.checksum.value)
+            assertEquals(GInt(59), packet.checksum)
             assertEquals(
                 listOf(
-                    GMeaningless(GSpace),
-                    GParameterWord(GLetter('G'), GInt(28)),
-                    GParameterWord(GChecksum, GInt(12))
+                    GSpace,
+                    GLetter('G'), GInt(28),
+                    GChecksum, GInt(12)
                 ),
-                packet.payload
+                packet.body
             )
         }
     }
@@ -764,7 +764,7 @@ class GSemanticParserTest {
             val failed = lines(gcode).single()
 
             assertInstanceOf(GCheckSumFailedLine::class.java, failed)
-            assertEquals(gcode, failed.raw().joinToString("") { it.rawText() })
+            assertEquals(gcode, failed.raw.joinToString("") { it.rawText() })
         }
 
         @Test
@@ -795,7 +795,7 @@ class GSemanticParserTest {
             val packet = line("N3 T0*06939") as GPacketLine
 
             assertEquals(GInt(3), packet.number)
-            assertEquals(6939, packet.checksum.value.int)
+            assertEquals(6939, packet.checksum.int)
         }
 
         @Test
@@ -806,8 +806,8 @@ class GSemanticParserTest {
             // corner one.
             val packet = line("N3 T0*06939") as GPacketLine
 
-            assertEquals("06939", packet.checksum.value.lexeme)
-            assertEquals(6939, packet.checksum.value.int)
+            assertEquals("06939", packet.checksum.lexeme)
+            assertEquals(6939, packet.checksum.int)
         }
 
         @Test
@@ -873,7 +873,7 @@ class GSemanticParserTest {
 
     /**
      * Every token the tokenizer produced must appear in exactly one line, so the liner is a pure
-     * regrouping of the stream. `GLine.raw()` is the single way to ask a line for its bytes back,
+     * regrouping of the stream. `GLine.raw` is the single way to ask a line for its bytes back,
      * and it must hold for every line type - a `GPacketLine` decomposes its line, so it is the type
      * that can silently lose the `N` field, the `*` field and the terminator (TODO 1.20).
      */
@@ -881,7 +881,7 @@ class GSemanticParserTest {
     inner class NothingIsLost {
 
         private fun reassemble(line: GLine): String =
-            line.raw().joinToString("") { it.rawText() }
+            line.raw.joinToString("") { it.rawText() }
 
         @Test
         fun `a packet line reproduces its own bytes through raw`() {
@@ -889,7 +889,7 @@ class GSemanticParserTest {
 
             val packet = lines(gcode).single() as GPacketLine
 
-            assertEquals(gcode, packet.raw().joinToString("") { it.rawText() })
+            assertEquals(gcode, packet.raw.joinToString("") { it.rawText() })
         }
 
         @ParameterizedTest

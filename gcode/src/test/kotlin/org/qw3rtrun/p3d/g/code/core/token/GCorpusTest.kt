@@ -64,7 +64,7 @@ class GCorpusTest {
         val parsed = GSemanticParser(tokenizer.parse(corpus).iterator()).asSequence().toList()
 
         assertEquals(lines.size, parsed.size)
-        assertTrue(parsed.all { it.payload.isNotEmpty() }) { "a parsed line has an empty payload" }
+        assertTrue(parsed.all { it.raw.isNotEmpty() }) { "a parsed line has no tokens" }
     }
 
     @Test
@@ -213,7 +213,7 @@ class GCorpusTest {
 
             assertEquals(emptyList<GLine>(), notPackets) {
                 "these did not verify: " + notPackets.joinToString("; ") { line ->
-                    line.raw().joinToString("") { it.rawText() }.trim()
+                    line.raw.joinToString("") { it.rawText() }.trim()
                 }
             }
             assertEquals(packetLines.size, parsed.size)
@@ -224,7 +224,7 @@ class GCorpusTest {
             // Otherwise a CRC regression could hide behind 28 passing XOR lines.
             val widths = parse(packets)
                 .filterIsInstance<GPacketLine>()
-                .groupingBy { it.checksum.value.lexeme.length }
+                .groupingBy { it.checksum.lexeme.length }
                 .eachCount()
 
             assertTrue(widths.keys.any { it in 1..3 }) { "no XOR-checksummed lines: $widths" }
@@ -243,7 +243,7 @@ class GCorpusTest {
             // A GPacketLine decomposes its line, so it is the type that can silently lose the `N`
             // field, the `*` field or the terminator.
             val reassembled = parse(packets).joinToString("") { line ->
-                line.raw().joinToString("") { it.rawText() }
+                line.raw.joinToString("") { it.rawText() }
             }
 
             assertEquals(packets, reassembled)

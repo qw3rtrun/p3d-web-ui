@@ -24,7 +24,7 @@ class GDslCorpusTest {
         GSemanticParser(tokenizer.parse(corpus).iterator()).asSequence().toList()
 
     private fun raw(line: GLine): String =
-        line.raw().filter { it !is GLineBreak }.joinToString("") { it.rawText() }.trim()
+        line.raw.filter { it !is GLineBreak }.joinToString("") { it.rawText() }.trim()
 
     /** Runs of spaces and tabs squeezed to one space - the encoder's canonical spacing. */
     private fun collapse(text: String): String {
@@ -52,6 +52,9 @@ class GDslCorpusTest {
                 params.add(
                     when (p) {
                         is GFlagWord -> flag(pid.letter)
+                        // An unnamed word carries no letter for the DSL to build from - there is no
+                        // `word()` overload that omits the identifier - so the line cannot be said.
+                        is GUnnamedWord<*> -> return null
                         is GParameterWord<*> -> when (val v = p.value) {
                             is GNumber -> word(pid.letter, v.lexeme)
                             is GQuotedString -> word(pid.letter, text(v.string))
@@ -63,7 +66,7 @@ class GDslCorpusTest {
             }
             parts.add(command(id.letter, cmd.head.value.lexeme, *params.toTypedArray()))
         }
-        for (token in line.raw()) {
+        for (token in line.raw) {
             if (token is GTailComment) parts.add(tailComment(token.string))
             if (token is GInlineComment) parts.add(inlineComment(token.string))
         }

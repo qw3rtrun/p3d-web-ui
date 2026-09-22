@@ -38,7 +38,7 @@ class GCorpusDecompositionTest {
         GSemanticParser(tokenizer.parse(gcode).iterator()).asSequence().map { line ->
             val kind = line.javaClass.simpleName
             val number = if (line is GOrdered) line.number.lexeme else "-"
-            val checksum = if (line is GCheckSumControlled) line.checksum.value.lexeme else "-"
+            val checksum = if (line is GCheckSumControlled) line.checksum.lexeme else "-"
             val parsed = commands.parse(line).joinToString(" | ") { GEncoder.encode(it) }
             "$kind\t$number\t$checksum\t$parsed"
         }.toList()

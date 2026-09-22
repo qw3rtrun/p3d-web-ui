@@ -298,11 +298,11 @@ class GCommandParserTest {
             var withWords = 0
             val multi = ArrayList<String>()
             for (line in lines()) {
-                if (line.meaningful().isEmpty()) continue
+                if (parser.words(line.body).isEmpty()) continue
                 withWords++
                 val cmds = parser.parse(line)
                 if (cmds.size != 1) {
-                    multi.add(line.raw().joinToString("") { it.rawText() }.trim() + " -> " + cmds.size)
+                    multi.add(line.raw.joinToString("") { it.rawText() }.trim() + " -> " + cmds.size)
                 }
             }
 
@@ -337,7 +337,7 @@ class GCommandParserTest {
         @Test
         fun `the commands of a corpus line re-emit its parametric words`() {
             for (line in lines()) {
-                val words = line.meaningful().filterIndexed { i, w ->
+                val words = parser.words(line.body).filterIndexed { i, w ->
                     val id = w.id
                     id != GChecksum && !(i == 0 && id is GLetter && (id.letter == 'N' || id.letter == 'n'))
                 }
@@ -349,7 +349,7 @@ class GCommandParserTest {
                 }
 
                 assertEquals(expected, actual) {
-                    "words lost on: " + line.raw().joinToString("") { it.rawText() }.trim()
+                    "words lost on: " + line.raw.joinToString("") { it.rawText() }.trim()
                 }
             }
         }

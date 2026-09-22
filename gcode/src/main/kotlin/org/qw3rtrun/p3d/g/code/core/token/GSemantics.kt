@@ -1,11 +1,24 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
-sealed interface GSemantic {
-    val raw: List<GToken>
-}
-
-sealed interface GWord : GSemantic {
+/**
+ * A field: an identifier and, usually, the value behind it (GCODE_spec.md section 3).
+ *
+ * Words belong to the **command** layer, not the line layer. A line is classified from its tokens -
+ * where `N` is and where the last `*` is - and nothing above that needs a word until someone asks
+ * what the line *commands*. `GCommandParser` is where tokens become words, and it is the only
+ * producer of the types below.
+ */
+sealed interface GWord {
     val id: GIdentifier
+
+    /**
+     * The tokens this word was read from, spelling included: `X  10` is one word holding two spaces.
+     *
+     * Provenance, not identity, and not what round-trips a line - `GLine.raw` is. A word built by
+     * the DSL carries the canonical `[id, value]`; one read from `G 1` carries the space as well.
+     */
+    val raw: List<GToken>
+
     fun isLetter(l: Char): Boolean = id.isLetter(l)
 }
 
@@ -22,14 +35,40 @@ data class GFlagWord(
     override val raw: List<GToken> = listOf(id),
 ) : GWord
 
-data class GMeaningless(override val raw: List<GToken>) : GSemantic {
-    constructor(token: GToken) : this(listOf(token))
+sealed interface GUnnamedWord<V : GValue> : GWord {
+    override val id: GIdentifier
+        get() = GEmptyId
 }
 
+data class GUnnamedStr(val str: GString,
+                       override val raw: List<GToken>
+) : GUnnamedWord<GString>
+
+/**
+ * A line, as the liner read it off the token stream (GCODE_spec.md section 5).
+ *
+ * **A line knows tokens and nothing else.** Its shape is decided from two positions - the first
+ * identifier and the last `*` - and both are found by walking tokens, so the line layer never builds
+ * a word and never has to say what a word *is*. Words are the command layer's vocabulary
+ * ([GCommandParser]), and a consumer that only routes, resends or re-prints lines never pays for
+ * them.
+ *
+ * [raw] is every token, in wire order. It is the stored, primary value of every line type, which is
+ * what makes "a line reproduces its input" true by construction rather than by an override that a
+ * decomposing type has to remember to write - the mistake that once re-printed `N1 G28*12` as
+ * ` G28`.
+ */
 sealed interface GLine {
-    val payload: List<GSemantic>
-    fun raw(): List<GToken> = payload.flatMap { it.raw }
-    fun meaningful(): List<GWord> = payload.filterIsInstance<GWord>()
+
+    /** Every token of the line, in wire order - leading whitespace and the terminator included. */
+    val raw: List<GToken>
+
+    /**
+     * The tokens a command may be read from: the whole line, except for a framed one, where it is
+     * what sits between the line-number field and the checksum marker.
+     */
+    val body: List<GToken>
+        get() = raw
 }
 
 sealed interface GOrdered : GLine {
@@ -37,51 +76,44 @@ sealed interface GOrdered : GLine {
 }
 
 sealed interface GCheckSumControlled : GLine {
-    val checksum: GParameterWord<GInt>
+    val checksum: GInt
 }
 
 /**
  * A line that carries no command: empty, or nothing but whitespace and/or comments. Spec section 5
  * calls such a line a no-op. It keeps its tokens so the line still reproduces its input.
  */
-data class GMeaninglessLine(override val payload: List<GSemantic>) : GLine
+data class GMeaninglessLine(override val raw: List<GToken>) : GLine
 
-
-data class GSimpleLine(override val payload: List<GSemantic>) : GLine
+data class GSimpleLine(override val raw: List<GToken>) : GLine
 
 /**
- * A framed line: `N<n> <body>*<cs>`. It is the only line type that **decomposes** its input - the
- * `N` field, the `*` field and anything after them are not in [payload] - so it is the only one that
- * has to say how to print itself back. [whole] carries every element, in wire order.
+ * A framed line: `N<n> <body>*<cs>`, spec sections 7 and 8.
+ *
+ * The only line type that **decomposes** its input, and it does so by pointing into it: [body] is a
+ * slice of [raw] running from just past the line number to the marker, so the two cannot disagree
+ * and nothing is copied.
+ *
+ * Where the slice ends is a rule, not a detail. Spec section 5 puts the `*` field last, and Marlin
+ * terminates the command at the marker (`get_serial_commands` writes a `\0` over it), so
+ * `N1 G28*18 G1 X5` is **one** command - the `G1` is outside the frame and outside the checksum.
+ *
+ * **A [GPacketLine] is only ever built for a line whose checksum has been verified** (spec section
+ * 8), so holding one means the line is intact; there is no `verify()` for a caller to forget.
  */
 data class GPacketLine(
     override val number: GInt,
-    override val payload: List<GSemantic>,
-    override val checksum: GParameterWord<GInt>,
-    val whole: List<GSemantic>,
-) : GLine, GOrdered, GCheckSumControlled {
+    override val checksum: GInt,
+    override val body: List<GToken>,
+    override val raw: List<GToken>,
+) : GLine, GOrdered, GCheckSumControlled
 
-    /**
-     * Over [whole], not [payload]: the inherited `payload.flatMap` silently dropped the line number,
-     * the checksum and the terminator, so a parsed packet re-printed as its own body alone -
-     * `N1 G28*12` came back as ` G28` (TODO 1.20). The lost field was also named `raw`, which
-     * shadowed this function and is why the round-trip suite could not see it.
-     */
-    override fun raw(): List<GToken> = whole.flatMap { it.raw }
-}
-
-/**
- * One command and its parameters, per spec section 4. [head] carries a `GNumber`, not a `GInt`,
- * because spec 4.1 lets a command number carry a **subcode** - `G29.1` is one command word whose
- * value is `GFloat("29.1")`, and keeping the lexeme is what re-emits `29.1` rather than `29` + `.1`.
- */
 /**
  * Something that can stand in a [GBlock]: a [GCommand] or a [GComment].
  *
- * This is the *build* direction, and it is deliberately not [GSemantic], which is the *parse*
- * direction. A parsed line is a list of elements carrying the exact bytes it was read from,
+ * This is the *build* direction. A parsed line carries the exact tokens it was read from,
  * whitespace included; a block being built carries only what the author chose, and the encoder
- * decides the bytes. Keeping them apart is what lets [GEncoder] emit one canonical spelling instead
+ * decides the bytes. Keeping them apart is what lets `GEncoder` emit one canonical spelling instead
  * of having to guess which of a parsed line's spaces were meaningful.
  */
 sealed interface GBlockPart
@@ -101,6 +133,11 @@ data class GBlock(val parts: List<GBlockPart>) {
     fun commands(): List<GCommand> = parts.filterIsInstance<GCommand>()
 }
 
+/**
+ * One command and its parameters, per spec section 4. [head] carries a `GNumber`, not a `GInt`,
+ * because spec 4.1 lets a command number carry a **subcode** - `G29.1` is one command word whose
+ * value is `GFloat("29.1")`, and keeping the lexeme is what re-emits `29.1` rather than `29` + `.1`.
+ */
 data class GCommand(val head: GParameterWord<GNumber>, val params: List<GWord> = emptyList()) : GBlockPart {
     constructor(cmdId: GIdentifier, cmdNum: GNumber, params: List<GWord> = emptyList()) : this(
         GParameterWord(cmdId, cmdNum), params
@@ -117,7 +154,7 @@ sealed interface GError : GLine {
     val msg: String
 }
 
-data class GNotIdentifierError(val head: GValue, override val payload: List<GSemantic>) : GError {
+data class GNotIdentifierError(val head: GValue, override val raw: List<GToken>) : GError {
     override val msg: String
         get() = "GCode should start with a letter, but '${head.rawText()}'"
 }
@@ -130,19 +167,19 @@ data class GNotIdentifierError(val head: GValue, override val payload: List<GSem
  * the liner reports the structure and leaves the severity to the caller rather than refusing to
  * parse. The corpus fixture contains two such lines.
  */
-data class GMissingChecksum(val number: GInt?, override val payload: List<GSemantic>) : GError {
+data class GMissingChecksum(val number: GInt?, override val raw: List<GToken>) : GError {
     override val msg: String
         get() = "line number ${number?.rawText() ?: "?"} has no checksum"
 }
 
 /** Spec section 7.3: a checksum without a line number. */
-data class GMissingLineNumber(override val payload: List<GSemantic>) : GError {
+data class GMissingLineNumber(override val raw: List<GToken>) : GError {
     override val msg: String
         get() = "checksum without a line number"
 }
 
 /** Spec section 7.1: `N` is present and paired with a `*`, but is not followed by an integer. */
-data class GMalformedLineNumber(override val payload: List<GSemantic>) : GError {
+data class GMalformedLineNumber(override val raw: List<GToken>) : GError {
     override val msg: String
         get() = "'N' is not followed by a line number"
 }
@@ -156,7 +193,7 @@ data class GMalformedLineNumber(override val payload: List<GSemantic>) : GError 
  *   between them, so 1-3 digits and 5 digits are checksum fields and **4, 6 or more are not**.
  *   `*1234` is not a mismatch: there is nothing to compare it against.
  */
-data class GMalformedChecksum(val number: GInt, override val payload: List<GSemantic>) : GError {
+data class GMalformedChecksum(val number: GInt, override val raw: List<GToken>) : GError {
     override val msg: String
         get() = "'*' is not followed by a checksum value on line ${number.rawText()}"
 }
@@ -170,15 +207,15 @@ data class GMalformedChecksum(val number: GInt, override val payload: List<GSema
  * kept because a host's diagnostic quotes them together, and because the pair is what tells a
  * genuine corruption from a generator that is checksumming the wrong byte range.
  *
- * It takes the full element list as [payload], like every other error type, so the line round-trips
- * for free. [GOrdered] because the resend request is addressed by line number. Deliberately **not**
+ * It keeps the whole token list, like every other line type, so it round-trips for free. [GOrdered]
+ * because the resend request is addressed by line number. Deliberately **not**
  * [GCheckSumControlled]: a consumer matching on that interface is asking for lines it can trust.
  */
 data class GCheckSumFailedLine(
     override val number: GInt,
     val expected: GInt,
     val received: GInt,
-    override val payload: List<GSemantic>,
+    override val raw: List<GToken>,
 ) : GError, GOrdered {
     override val msg: String
         get() = "checksum mismatch on line ${number.rawText()}: " +

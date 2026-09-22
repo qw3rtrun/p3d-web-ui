@@ -1,18 +1,68 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
 /**
- * Groups a line's words into commands, per GCODE_spec.md sections 4 and 5.
+ * Reads a line's commands, per GCODE_spec.md sections 3, 4 and 5.
  *
- * The third and last pass over a line. `GTokenizer` says what the bytes are, `GSemanticParser` says
- * what shape the line has and which of its elements are words, and this says which command each word
- * belongs to. It reads words only, and skips the two structural ones (spec 4): `N` and `*`.
+ * The second and last pass over a line, and **the layer where words exist at all**. `GTokenizer`
+ * says what the bytes are, `GSemanticParser` says what shape the line has - both in tokens - and
+ * this turns the tokens of a line's body into fields ([words]) and then says which command each
+ * field belongs to. It skips the two structural ones (spec 4): `N` and `*`.
+ *
+ * Words are built here rather than by the liner because they are only ever needed here. A host that
+ * routes, resends or re-prints a line never asks what it commands, and now never pays to find out.
  *
  * Stateless: one instance is interchangeable with another.
  */
 class GCommandParser {
 
-    /** The commands of [line], reading its words in wire order. */
-    fun parse(line: GLine): List<GCommand> = parse(line.meaningful())
+    /**
+     * The commands of [line], reading its body in wire order.
+     *
+     * The *body*, not the whole line: for a framed line spec section 5 puts the `*` field last, so
+     * what follows the marker is outside the frame - `N1 G28*18 G1 X5` is one command.
+     */
+    fun parse(line: GLine): List<GCommand> = parse(words(line.body))
+
+    /**
+     * The fields of [tokens], in wire order (spec sections 2.1 and 3).
+     *
+     * An identifier followed by a value is one [GParameterWord] carrying both and any whitespace
+     * between them, since spec 2.1 lets a space separate a field from its value: `X10`, `X 10` and
+     * `X  10` are one word each. An identifier followed by anything else is a [GFlagWord] (spec
+     * 3.2), and what followed it is examined again from scratch - `G28 X Y` is three words, not one
+     * word and a lost `Y`.
+     *
+     * Everything that is not a field - separators, comments, the terminator, an unknown character -
+     * is simply dropped. It is already in `GLine.raw`, which is what reproduces the input.
+     */
+    fun words(tokens: List<GToken>): List<GWord> {
+        val words = ArrayList<GWord>()
+        var i = 0
+        while (i < tokens.size) {
+            val token = tokens[i]
+            if (token !is GIdentifier) {
+                i++
+                continue
+            }
+
+            var j = i + 1
+            while (j < tokens.size && tokens[j] is GWhitespace) j++
+            val following = if (j < tokens.size) tokens[j] else null
+
+            if (following is GValue) {
+                // The word's raw is a slice of the line, so it spells what the line spelled without
+                // copying anything: identifier, the spaces it crossed, and the value.
+                words.add(GParameterWord(token, following, tokens.subList(i, j + 1)))
+                i = j + 1
+            } else {
+                // i + 1, not j: the whitespace this scan crossed and the token that ended the field
+                // have not been consumed by anything, and the latter may start the next word.
+                words.add(GFlagWord(token))
+                i++
+            }
+        }
+        return words
+    }
 
     fun parse(words: List<GWord>): List<GCommand> {
         val commands = ArrayList<GCommand>()
@@ -48,7 +98,7 @@ class GCommandParser {
      * spec 4: `N` (spec 7) and `*` (spec 8) are structural rather than parametric, so neither is a
      * command or a parameter of one.
      *
-     * They are absent from a `GPacketLine`'s payload, which is why this looked unnecessary at first -
+     * They are outside a `GPacketLine`'s body, which is why this looked unnecessary at first -
      * but a line that is *not* a well-formed packet keeps them. `N100 M110` is a `GMissingChecksum`
      * whose words are `[N100, M110]`, and without this the line number became a parameter of `M110`,
      * which also re-emitted the line as `M110N100`.

@@ -105,59 +105,66 @@ class GSemanticsTest {
     @Nested
     inner class Lines {
 
-        private val payload = listOf<GSemantic>(GParameterWord(GLetter('G'), GInt(28)))
+        /** What a line is made of now: tokens. `G28`, with nothing around it. */
+        private val raw = listOf<GToken>(GLetter('G'), GInt(28))
 
         @Test
-        fun `empty meaningless line has no payload by default`() {
-            assertEquals(emptyList<GSemantic>(), GMeaninglessLine(emptyList()).payload)
+        fun `an empty line carries no tokens`() {
+            assertEquals(emptyList<GToken>(), GMeaninglessLine(emptyList()).raw)
             assertEquals(GMeaninglessLine(emptyList()), GMeaninglessLine(emptyList()))
         }
 
         @Test
-        fun `simple line keeps its payload`() {
-            assertEquals(payload, GSimpleLine(payload).payload)
+        fun `a simple line keeps its tokens`() {
+            assertEquals(raw, GSimpleLine(raw).raw)
         }
 
         @Test
-        fun `packet line exposes number checksum payload and whole`() {
-            val checksum = GParameterWord(GChecksum, GInt(57))
-            val whole = listOf<GSemantic>(GMeaningless(GTailComment(" c")))
-            val line = GPacketLine(GInt(3), payload, checksum, whole)
+        fun `the body of an unframed line is the whole line`() {
+            assertEquals(raw, GSimpleLine(raw).body)
+            assertEquals(raw, GMeaninglessLine(raw).body)
+            assertEquals(raw, GMissingLineNumber(raw).body)
+        }
+
+        @Test
+        fun `a packet exposes its number, its checksum, its body and its whole line`() {
+            val whole = listOf<GToken>(
+                GLetter('N'), GInt(3), GSpace, GLetter('T'), GInt(0), GChecksum, GInt(57),
+            )
+            val line = GPacketLine(GInt(3), GInt(57), whole.subList(2, 5), whole)
 
             assertEquals(GInt(3), line.number)
-            assertEquals(checksum, line.checksum)
-            assertEquals(payload, line.payload)
-            assertEquals(whole, line.whole)
+            assertEquals(GInt(57), line.checksum)
+            assertEquals(listOf<GToken>(GSpace, GLetter('T'), GInt(0)), line.body)
+            assertEquals(whole, line.raw)
         }
 
         @Test
-        fun `packet line prints whole, not payload`() {
-            val whole = listOf<GSemantic>(
-                GParameterWord(GLetter('N'), GInt(3)),
-                GMeaningless(GSpace),
-                GParameterWord(GLetter('T'), GInt(0)),
-                GParameterWord(GChecksum, GInt(57)),
+        fun `a packet prints its whole line, not its body`() {
+            // The framing fields are tokens of the line like any other, so a packet reproduces its
+            // input the same way every other line does. This is the shape of TODO 1.20, which could
+            // only exist while a packet printed a decomposed part of itself.
+            val whole = listOf<GToken>(
+                GLetter('N'), GInt(3), GSpace, GLetter('T'), GInt(0), GChecksum, GInt(57),
             )
-            val line = GPacketLine(GInt(3), payload, GParameterWord(GChecksum, GInt(57)), whole)
+            val line = GPacketLine(GInt(3), GInt(57), whole.subList(2, 5), whole)
 
-            assertEquals("N3 T0*57", line.raw().joinToString("") { it.rawText() })
+            assertEquals("N3 T0*57", line.raw.joinToString("") { it.rawText() })
         }
 
         @Test
-        fun `packet line is reachable through the ordered and checksum interfaces`() {
-            val line: GLine = GPacketLine(
-                GInt(3), payload, GParameterWord(GChecksum, GInt(57)), emptyList()
-            )
+        fun `a packet is reachable through the ordered and checksum interfaces`() {
+            val line: GLine = GPacketLine(GInt(3), GInt(57), emptyList(), raw)
 
             assertTrue(line is GOrdered)
             assertTrue(line is GCheckSumControlled)
             assertEquals(GInt(3), (line as GOrdered).number)
-            assertEquals(GInt(57), (line as GCheckSumControlled).checksum.value)
+            assertEquals(GInt(57), (line as GCheckSumControlled).checksum)
         }
 
         @Test
         fun `a simple line is neither ordered nor checksum controlled`() {
-            val line: GLine = GSimpleLine(payload)
+            val line: GLine = GSimpleLine(raw)
 
             assertFalse(line is GOrdered)
             assertFalse(line is GCheckSumControlled)
@@ -165,15 +172,15 @@ class GSemanticsTest {
         }
 
         @Test
-        fun `every line kind has payload`() {
+        fun `every line kind keeps the tokens it was built from`() {
             val lines: List<GLine> = listOf(
-                GMeaninglessLine(emptyList()),
-                GSimpleLine(payload),
-                GPacketLine(GInt(1), payload, GParameterWord(GChecksum, GInt(1)), emptyList()),
-                GNotIdentifierError(GInt(1), payload)
+                GMeaninglessLine(raw),
+                GSimpleLine(raw),
+                GPacketLine(GInt(1), GInt(1), emptyList(), raw),
+                GNotIdentifierError(GInt(1), raw),
             )
 
-            assertTrue(lines.all { it.payload == payload || it.payload.isEmpty() })
+            assertTrue(lines.all { it.raw == raw })
         }
 
         @Test
@@ -187,46 +194,43 @@ class GSemanticsTest {
             }
 
             assertEquals("empty", kind(GMeaninglessLine(emptyList())))
-            assertEquals("simple", kind(GSimpleLine(payload)))
-            assertEquals(
-                "packet",
-                kind(GPacketLine(GInt(1), payload, GParameterWord(GChecksum, GInt(1)), emptyList()))
-            )
-            assertEquals("error", kind(GNotIdentifierError(GInt(1), payload)))
+            assertEquals("simple", kind(GSimpleLine(raw)))
+            assertEquals("packet", kind(GPacketLine(GInt(1), GInt(1), emptyList(), raw)))
+            assertEquals("error", kind(GNotIdentifierError(GInt(1), raw)))
         }
 
         @Test
         fun `the structural errors carry the line and a message`() {
             // GCODE_spec.md section 7.3 and section 9 - structural errors. Each one keeps the whole
             // line so a caller can log it, resend it, or decide the severity for itself.
-            assertEquals("line number 42 has no checksum", GMissingChecksum(GInt(42), payload).msg)
-            assertEquals("line number ? has no checksum", GMissingChecksum(null, payload).msg)
-            assertEquals("checksum without a line number", GMissingLineNumber(payload).msg)
-            assertEquals("'N' is not followed by a line number", GMalformedLineNumber(payload).msg)
+            assertEquals("line number 42 has no checksum", GMissingChecksum(GInt(42), raw).msg)
+            assertEquals("line number ? has no checksum", GMissingChecksum(null, raw).msg)
+            assertEquals("checksum without a line number", GMissingLineNumber(raw).msg)
+            assertEquals("'N' is not followed by a line number", GMalformedLineNumber(raw).msg)
             assertEquals(
                 "'*' is not followed by a checksum value on line 7",
-                GMalformedChecksum(GInt(7), payload).msg
+                GMalformedChecksum(GInt(7), raw).msg
             )
         }
 
         @Test
-        fun `every structural error is a GError and keeps its payload`() {
+        fun `every structural error is a GError and keeps its tokens`() {
             val errors: List<GError> = listOf(
-                GMissingChecksum(GInt(1), payload),
-                GMissingLineNumber(payload),
-                GMalformedLineNumber(payload),
-                GMalformedChecksum(GInt(1), payload)
+                GMissingChecksum(GInt(1), raw),
+                GMissingLineNumber(raw),
+                GMalformedLineNumber(raw),
+                GMalformedChecksum(GInt(1), raw)
             )
 
             assertTrue(errors.all { it is GLine }) { "expected all of $errors to be GLine" }
-            assertTrue(errors.all { it.payload == payload })
+            assertTrue(errors.all { it.raw == raw })
             assertTrue(errors.none { it is GOrdered || it is GCheckSumControlled })
         }
 
         @Test
         fun `a missing checksum keeps the line number it did find`() {
-            assertEquals(GInt(42), GMissingChecksum(GInt(42), payload).number)
-            assertEquals(null, GMissingChecksum(null, payload).number)
+            assertEquals(GInt(42), GMissingChecksum(GInt(42), raw).number)
+            assertEquals(null, GMissingChecksum(null, raw).number)
         }
     }
 
@@ -234,49 +238,54 @@ class GSemanticsTest {
     inner class Checksums {
 
         @Test
-        fun `checksum parameter word pairs the marker with its number`() {
-            val checksum = GParameterWord(GChecksum, GInt(57))
+        fun `a checksum is the value behind the marker, not a word`() {
+            // The marker itself is a token of the line (GLine.raw), so the field the line has to
+            // carry is the number - which is also all a host compares, resends or reports on.
+            val line = GPacketLine(GInt(1), GInt(57), emptyList(), emptyList())
 
-            assertEquals(GChecksum, checksum.id)
-            assertEquals(GInt(57), checksum.value)
+            assertEquals(GInt(57), line.checksum)
         }
 
         @Test
-        fun `checksum parameter words with the same number are equal`() {
-            assertEquals(GParameterWord(GChecksum, GInt(57)), GParameterWord(GChecksum, GInt(57)))
-            assertFalse(GParameterWord(GChecksum, GInt(57)) == GParameterWord(GChecksum, GInt(58)))
+        fun `a checksum keeps the lexeme that chose its algorithm`() {
+            // spec 8.1: the digit count selects xor from crc16, and a crc is zero-padded (8.4), so
+            // the width has to survive - GInt(6939) and GInt(6939, "06939") are different fields.
+            val crc = GPacketLine(GInt(1), GInt(6939, "06939"), emptyList(), emptyList())
+
+            assertEquals("06939", crc.checksum.lexeme)
+            assertEquals(6939, crc.checksum.int)
         }
     }
 
     @Nested
     inner class Errors {
 
-        private val payload = listOf<GSemantic>(GMeaningless(GUnknown("?")), GParameterWord(GLetter('G'), GInt(28)))
+        private val raw = listOf<GToken>(GUnknown("?"), GLetter('G'), GInt(28))
 
         @Test
-        fun `a line that does not start with an identifier reports the offending element`() {
-            val error = GNotIdentifierError(GInt(5), payload)
+        fun `a line that does not start with an identifier reports the offending token`() {
+            val error = GNotIdentifierError(GInt(5), raw)
 
             assertEquals("GCode should start with a letter, but '5'", error.msg)
             assertEquals(GInt(5), error.head)
-            assertEquals(payload, error.payload)
+            assertEquals(raw, error.raw)
         }
 
         @Test
-        fun `the message quotes the raw text of the offending element`() {
+        fun `the message quotes the raw text of the offending token`() {
             assertEquals(
                 "GCode should start with a letter, but '5'",
-                GNotIdentifierError(GInt(5), payload).msg
+                GNotIdentifierError(GInt(5), raw).msg
             )
             assertEquals(
                 "GCode should start with a letter, but '{x}'",
-                GNotIdentifierError(GRawExpression("{x}"), payload).msg
+                GNotIdentifierError(GRawExpression("{x}"), raw).msg
             )
         }
 
         @Test
         fun `an error is a line`() {
-            val error: GLine = GNotIdentifierError(GInt(5), payload)
+            val error: GLine = GNotIdentifierError(GInt(5), raw)
 
             assertTrue(error is GError)
         }

@@ -49,6 +49,12 @@ data class GLetter(val letter: Char) : GIdentifier {
         get() = letter.toString()
 }
 
+// Special object to handle unnamed parameters, like tail stings in 'M117 Hello World'
+object GEmptyId : GIdentifier {
+    override val name: String
+        get() = ""
+}
+
 data object GChecksum : GIdentifier {
     override val name: String
         get() = "*"

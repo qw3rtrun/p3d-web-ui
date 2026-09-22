@@ -85,7 +85,7 @@ that the extracted letters match what Marlin's own authors write.
 - **A valued parameter sent bare** — `M104 F`, `G61 S0 XY`, `M919 XYZE` — cannot be read back,
   because `null` on a `BigDecimal?` already means absent. Building the valued form always works.
 - **Rest-of-line strings** — `M117 Hello`, `M23 file.gco`, `M810`'s macro bodies — wait on
-  [todo 09](../../doc/todos/09-deferred-spec-gaps.md). The generated class says so in its KDoc.
+  [todo 09](https://github.com/qw3rtrun/p3d-web-ui/issues/11). The generated class says so in its KDoc.
 - **Dotted quads** — `M552 P192.168.1.55` is not a number and not a quoted string.
 - **Undocumented upstream** — `M569 S`, `M123 S`, `M672 S`, `M919 E` appear in examples but not in
   their pages' parameter lists, and `G92.1` is used in an example but missing from `G092.md`'s

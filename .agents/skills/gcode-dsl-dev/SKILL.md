@@ -53,7 +53,7 @@ only**, never from the parsed objects (that would test the encoder instead), the
 | `notByteExact.size` | **24** | four named causes, pinned in a comment in the test |
 
 **These numbers are a contract.** A change either keeps them or updates them *together with* the
-breakdown comment in the test and [todo 10](../../../doc/todos/10-command-dsl.md). Moving
+breakdown comment in the test and [todo 10](https://github.com/qw3rtrun/p3d-web-ui/issues/12). Moving
 `byteExact` silently is the failure this test exists to prevent — which is why its failure message
 prints every differing line.
 
@@ -184,7 +184,7 @@ Follow the `tdd` skill for the loop. On top of it, for this layer:
 - [`GCODE_spec.md`](../../../doc/specs/GCODE_spec.md) is the syntax authority. Cite section numbers
   where a rule is non-obvious; the DSL cites spec 3.1, 3.2, 3.4, 3.5, 4.1, 4.2, 4.3, 5, 6, 7.1, 7.2
   and 8 today.
-- [todo 10](../../../doc/todos/10-command-dsl.md) is this layer's record: the rule, the corpus
+- [todo 10](https://github.com/qw3rtrun/p3d-web-ui/issues/12) is this layer's record: the rule, the corpus
   numbers, the decisions and the 24-line breakdown. When behaviour or a number changes, it changes
   in the same commit.
 - Todo 10's **What is left** is the standing next step: `G.java` still exists and three `:backend`

@@ -17,7 +17,7 @@ lists, hand-written state machines. Nothing else.
 
 **Byte-exactness.** Regex, locale-aware string helpers and Unicode-wide character predicates all
 decide things a wire protocol has to state explicitly. Look at the bug list in
-[the `:gcode` review record](../../../doc/todos/99-completed.md): almost every confirmed bug is a
+[the `:gcode` review record](../../../doc/gcode-completed.md): almost every confirmed bug is a
 hidden abstraction doing something the spec did not ask for, or a lookahead the author could not see. Explicit code is not
 verbosity here, it is the only way the behaviour is reviewable against a spec.
 
@@ -185,8 +185,8 @@ Follow the `tdd` skill for the loop; these are the protocol-specific rules on to
   §10 dialect matrix. Appendix B maps it to the module and lists **current deviations "verified by
   running"** — when observable behaviour changes, that list changes in the same commit, or it becomes
   a lie.
-- [`doc/todos/`](../../../doc/todos/00-index.md) is the work queue: one numbered file per piece of
-  work, in dependency order, plus [99-completed.md](../../../doc/todos/99-completed.md) as the
+- [GitHub issue #18](https://github.com/qw3rtrun/p3d-web-ui/issues/18) is the work queue: one numbered issue per piece of
+  work, in dependency order, plus [doc/gcode-completed.md](../../../doc/gcode-completed.md) as the
   record. A finding gets: the symptom as observed output, the spec section it violates, the file and
   lines, and a checkbox. A fix flips the checkbox and records what covers it.
 - Cite the spec section in code comments where a rule is non-obvious (`// spec 3.1: at least one
@@ -260,7 +260,7 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
 - `:gcode` depends on `:backend:core` for event types, so the module as a whole is not extractable
   yet; only `code/core/**` is close.
 
-These are tracked in [`doc/todos/`](../../../doc/todos/00-index.md) — mainly
-[01](../../../doc/todos/01-ascii-and-lexer-portability.md),
-[02](../../../doc/todos/02-number-representation.md) and
-[06](../../../doc/todos/06-decoder-edge-portability.md). Do not add to the list.
+These are tracked in [the issue queue](https://github.com/qw3rtrun/p3d-web-ui/issues/18) — mainly
+[01](https://github.com/qw3rtrun/p3d-web-ui/issues/3),
+[02](https://github.com/qw3rtrun/p3d-web-ui/issues/4) and
+[06](https://github.com/qw3rtrun/p3d-web-ui/issues/8). Do not add to the list.

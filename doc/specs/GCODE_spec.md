@@ -685,7 +685,7 @@ rather than by Unicode-category predicates, malformed input yields a token that 
 bytes instead of an exception, and every token exposes `rawText()` so a parse can be diffed against a
 raw capture. The rules are recorded in the `low-level-protocol-dev` skill
 (`.agents/skills/low-level-protocol-dev/SKILL.md`) and the outstanding gaps in
-[`doc/todos/`](../todos/00-index.md).
+[the `:gcode` issue queue](https://github.com/qw3rtrun/p3d-web-ui/issues/18).
 
 ### B.1 Tokens — `token/GTokens.kt`
 
@@ -722,7 +722,7 @@ bounded because **nothing in the module reads the parsed value**: `rawText()` re
 round-tripping never touches `BigDecimal`, and a port that carries only the lexeme still lexes and
 re-emits correctly. The same liability appears once more outside the token layer, as
 `GDDecimalField.default` in `GDescription.kt`. Recorded rather than fixed, per
-[`doc/todos/02-number-representation.md`](../todos/02-number-representation.md).
+[issue #4](https://github.com/qw3rtrun/p3d-web-ui/issues/4).
 
 ### B.2 Tokenizer — `token/GTokenizer.kt`
 

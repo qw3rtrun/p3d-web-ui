@@ -58,7 +58,7 @@ class GCommandParser {
      * line-number counter (spec 7.2), and its argument is an `N` word in second position. Skipping
      * every `N` dropped that argument, so `M110 N7` assembled as a bare `M110` and the one command
      * that exists to carry a line number could not be read - found while building
-     * [05](../../../../../../../doc/todos/05-line-numbering-and-session.md).
+     * [05](https://github.com/qw3rtrun/p3d-web-ui/issues/7).
      *
      * The narrower rule is also the one the firmware uses: Marlin takes a line number only when `N`
      * is the first character of the line (`queue.cpp`: `npos = (*command == 'N') ? command : nullptr`),

@@ -205,7 +205,7 @@ class GCommandParserTest {
          * spec 4.1: with `GCODE_MOTION_MODES` an axis letter may start a line and inherit the last
          * motion command. Resolving that needs the previous line, which this parser does not have -
          * so such a line reports no command rather than guessing one. Characterisation point for
-         * [05](../../../../../../../../doc/todos/05-line-numbering-and-session.md), which owns
+         * [05](https://github.com/qw3rtrun/p3d-web-ui/issues/7), which owns
          * session state; the corpus contains no such line.
          */
         @Test

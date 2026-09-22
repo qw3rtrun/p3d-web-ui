@@ -3,7 +3,7 @@
 // Regenerate with:  python3 tools/marlin/gen_mcommands.py
 // Source of truth:  doc/marlin-gcode/commands.json
 // Extracted from:   MarlinFirmware/MarlinDocumentation @ 0856d12b0253378bc8d17a246fb09fc8c5437997
-// How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md
+// How and why:      tools/marlin/README.md, github.com/qw3rtrun/p3d-web-ui/issues/13
 //
 // The registry over every Marlin command and the named facade this project calls. The 295
 // command classes themselves are one file each under `command/`, named after the class

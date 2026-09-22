@@ -98,7 +98,7 @@ backend/machine-mng/       machine management
 app/                       Spring Boot app: WebFlux, Thymeleaf, Spring Modulith, actuator
 frontend/web-ui/           Vue 3 + TypeScript + Vite (src/frontend), built through Gradle
 doc/specs/GCODE_spec.md    the syntax authority — cite sections by number
-doc/todos/                 the :gcode work queue, 00-index.md is its table of contents
+doc/gcode-completed.md     the :gcode record of work already done and why
 .agents/                   agent and skill definitions (this file)
 ```
 
@@ -116,7 +116,7 @@ pipelines will be rejected by the house style, and the house style wins.
 | What | Where |
 |---|---|
 | Protocol syntax | `doc/specs/GCODE_spec.md` — Appendix B maps it to the code and lists verified deviations |
-| The `:gcode` plan of record | `doc/todos/00-index.md` and its numbered files; `99-completed.md` is what is already done and why |
+| The `:gcode` plan of record | [GitHub issue #18](https://github.com/qw3rtrun/p3d-web-ui/issues/18) and the issues it indexes; `doc/gcode-completed.md` is what is already done and why |
 | Style, protocol core | `low-level-protocol-dev` skill |
 | Style, the DSL | `gcode-dsl-dev` skill |
 | Repo configuration | `.agents/README.md` |
@@ -131,13 +131,13 @@ Your primary output is usually a note someone can execute without asking you a q
 matters more than location; **both** are on you.
 
 **Where.** Choose per task and say where you put it. Work on the `:gcode` protocol module belongs in
-the existing queue: the next free `doc/todos/NN-slug.md`, with its row added to the table in
-`00-index.md` and a line in *Why this order* — that queue is the plan of record and a note outside it
+the existing queue: a new GitHub issue, with its row added to the table in the index issue
+([#18](https://github.com/qw3rtrun/p3d-web-ui/issues/18)) and a line in *Why this order* — that queue is the plan of record and a note outside it
 will be missed. Work elsewhere goes somewhere obvious and adjacent (a sibling `doc/` file, a design
 note next to what it describes). Do not invent a new directory tree for a single note, and never
 leave a note that nothing links to.
 
-**Shape.** Match `doc/todos/`: a **goal** in one sentence, **why it is worth doing**, the **design
+**Shape.** Match the existing queue issues: a **goal** in one sentence, **why it is worth doing**, the **design
 decision with its rejected alternatives**, a **checklist** of individually-committable steps, and
 **how to know it is finished**. Then:
 
@@ -160,7 +160,7 @@ You have the `Agent` tool. Use it for execution and for breadth; do the design y
 
 | Hand to | For |
 |---|---|
-| `protocol-dev` | Implementing anything under `gcode/` — core, DSL, marlin edge — and picking up a `doc/todos/` item you wrote |
+| `protocol-dev` | Implementing anything under `gcode/` — core, DSL, marlin edge — and picking up a queue issue you wrote |
 | `protocol-reviewer` | Auditing existing protocol code against the spec or the style rules before you design on top of it (it cannot edit, so its findings stay honest) |
 | `Explore` | "Where is X", "what calls Y", "which modules do Z" — breadth searches whose output you only need as a conclusion |
 | `general-purpose` | Mechanical multi-file work outside `gcode/`: renames, test scaffolding, build-file edits, running the build to green |
@@ -195,7 +195,7 @@ file instead.
 from the module names and a guess is worth nothing here, and this repo's history — the two-standard
 split, `BigDecimal` kept in the core as an *admitted* liability, spec sections corrected against
 Marlin's own source — is full of decisions that look wrong until you read why they were made.
-`doc/todos/99-completed.md` is where those live; check it before reopening something.
+`doc/gcode-completed.md` is where those live; check it before reopening something.
 
 **Prefer the smaller change that keeps the option open.** A refactor that has to land in one commit
 across four modules is a design smell; find the seam that lets it land in five commits that are each

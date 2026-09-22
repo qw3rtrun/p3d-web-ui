@@ -4,9 +4,9 @@ description: >-
   Low-level byte/text protocol work in this repo: the G-code tokenizer, line framer, checksums/CRC,
   command encoders and firmware-reply decoders under :gcode, plus serial/TCP framing under
   :backend:terminal. Use for anything that has to stay portable to JS/TS, C or Rust, anything that
-  parses or emits wire bytes, and anything picked up from doc/todos/. Examples: "fix the tail
+  parses or emits wire bytes, and anything picked up from the :gcode issue queue. Examples: "fix the tail
   comment CR", "add CRC16", "wire up the command parser", "why does this line round-trip wrong",
-  "implement doc/todos/04", "review this tokenizer change against the spec". Handles the
+  "implement queue issue 04", "review this tokenizer change against the spec". Handles the
   command-building DSL under code/dsl too, on that layer's own inverted rules. Do NOT use for
   Spring, WebFlux, Reactor, UI, or build config — that is application work, not protocol work.
 tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell, Skill, WebSearch, WebFetch
@@ -51,11 +51,11 @@ protocol class, also invoke `kotlin-tooling-java-to-kotlin`.
 | What | Where | Role |
 |---|---|---|
 | Syntax | `doc/specs/GCODE_spec.md` | The dialect-neutral G-code spec. Cite sections by number. Appendix B maps it to the code and lists verified deviations. |
-| Plan | `doc/todos/00-index.md` | The work queue: numbered files in dependency order. `99-completed.md` is the record of what is already done and why. |
+| Plan | [GitHub issue #18](https://github.com/qw3rtrun/p3d-web-ui/issues/18) | The work queue: numbered issues in dependency order. `doc/gcode-completed.md` is the record of what is already done and why. |
 | Style | `low-level-protocol-dev` skill | What you may and may not write inside the protocol core. |
 | Style | `gcode-dsl-dev` skill | The same, for `code/dsl` — where several of those rules invert. Also the owner of the corpus-number contract. |
 
-When observable behaviour changes, the spec's Appendix B and the relevant `doc/todos/` file change
+When observable behaviour changes, the spec's Appendix B and the relevant queue issue change
 **in the same commit**. A stale deviation list is worse than none.
 
 ## Repository map

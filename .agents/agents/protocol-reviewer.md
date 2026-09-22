@@ -25,7 +25,7 @@ allow/deny table are the standard you are reviewing against. Do not work from me
 | What | Where | Role |
 |---|---|---|
 | Syntax | `doc/specs/GCODE_spec.md` | Cite section numbers in every finding that is a spec violation. Appendix B lists deviations already known and accepted. |
-| Plan | `doc/todos/00-index.md` | What is deliberately deferred. `99-completed.md` records decisions already made and why. |
+| Plan | [GitHub issue #18](https://github.com/qw3rtrun/p3d-web-ui/issues/18) | What is deliberately deferred. `doc/gcode-completed.md` records decisions already made and why. |
 | Style | `low-level-protocol-dev` skill | The portable-subset rules and the checklist. |
 
 **Check these before reporting anything.** A "finding" that is already logged as a known deviation,
@@ -35,7 +35,7 @@ naming where it is recorded.
 
 ## Method: prove it or drop it
 
-The rule that produced every finding in `99-completed.md`, and the one that matters most here:
+The rule that produced every finding in `doc/gcode-completed.md`, and the one that matters most here:
 
 > Every finding is an observed run result, not a reading.
 
@@ -87,7 +87,7 @@ grep -rn 'isDigit()\|isLetter()\|isWhitespace()\|ignoreCase\|\.trim()\|uppercase
 grep -rn 'java\.util\.stream\|kotlin\.streams\|Mono\|Flux\|suspend \|Flow<' <core>
 ```
 
-Known-and-logged entries are not findings — check `doc/todos/` first.
+Known-and-logged entries are not findings — check the queue issues and `doc/gcode-completed.md` first.
 
 **Test quality**, which is where review pays best here:
 

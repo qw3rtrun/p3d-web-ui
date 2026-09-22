@@ -17,7 +17,7 @@ Then restart Claude Code so it re-reads the configuration.
 
 | Agent | Writes code? | Use it for |
 |---|---|---|
-| [`protocol-dev`](./agents/protocol-dev.md) | yes | Implementing and fixing low-level protocol code — tokenizer, framer, checksums, encoders, decoders. Picking up an item from `doc/todos/`. |
+| [`protocol-dev`](./agents/protocol-dev.md) | yes | Implementing and fixing low-level protocol code — tokenizer, framer, checksums, encoders, decoders. Picking up an item from the :gcode issue queue. |
 | [`protocol-reviewer`](./agents/protocol-reviewer.md) | **no** | Auditing protocol code against `doc/specs/GCODE_spec.md` and the style rules. Pre-commit passes, "does this match the spec", test-quality review. |
 | [`lead-dev`](./agents/lead-dev.md) | **no** (notes only) | Design, architecture, module boundaries, refactoring strategy, concurrency and reactive-pipeline design. Turning a vague ask into task notes someone can execute. |
 
@@ -28,7 +28,7 @@ someone chose to make. Hand a reviewer report to `protocol-dev` to act on it.
 `lead-dev` sits above both. It has `Write` for notes and designs but **no `Edit`**, so it cannot
 drift into implementing what it just designed; it has the `Agent` tool instead and is told to hand
 execution to `protocol-dev`, `Explore` or `general-purpose`. Its output is a decision plus a task
-note — `:gcode` work goes into the `doc/todos/` queue and its index, everything else somewhere
+note — `:gcode` work goes into the GitHub issue queue and its index issue, everything else somewhere
 adjacent and linked. It runs on the expensive model on the explicit condition that it only does work
 that needs one.
 

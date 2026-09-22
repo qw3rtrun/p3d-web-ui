@@ -373,7 +373,7 @@ def main():
             "// Regenerate with:  python3 tools/marlin/gen_mcommands.py",
             "// Source of truth:  doc/marlin-gcode/commands.json",
             "// Extracted from:   %s @ %s" % (src["repo"], src["commit"]),
-            "// How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md",
+            "// How and why:      tools/marlin/README.md, github.com/qw3rtrun/p3d-web-ui/issues/13",
             "",
             "package %s" % COMMAND_PACKAGE,
             "",
@@ -554,7 +554,7 @@ def main():
         "// Regenerate with:  python3 tools/marlin/gen_mcommands.py",
         "// Source of truth:  doc/marlin-gcode/commands.json",
         "// Extracted from:   %s @ %s" % (src["repo"], src["commit"]),
-        "// How and why:      tools/marlin/README.md, doc/todos/11-marlin-commands.md",
+        "// How and why:      tools/marlin/README.md, github.com/qw3rtrun/p3d-web-ui/issues/13",
         "//",
         "// The registry over every Marlin command and the named facade this project calls. The %d"
         % len(commands),

@@ -95,7 +95,7 @@ class GTest {
             // ...and the asymmetry is real rather than hidden: what the DSL writes as a D *command*,
             // the parser reads back as a parameter with no command at all. That is the spec's own
             // ambiguity, not a bug in either half.
-            val line = GSemanticParser(GTokenizer().parse("D3").iterator()).next()
+            val line = GLiner(GTokenizer().parse("D3").iterator()).next()
             assertEquals(emptyList<GCommand>(), GCommandParser().parse(line))
         }
 
@@ -216,7 +216,7 @@ class GTest {
 
             for (i in blocks.indices) {
                 val framed = GEncoder.frame(i + 1, blocks[i])
-                val line = GSemanticParser(tokenizer.parse(framed).iterator()).next()
+                val line = GLiner(tokenizer.parse(framed).iterator()).next()
 
                 assertInstanceOf(GPacketLine::class.java, line) { "did not verify: $framed" }
             }

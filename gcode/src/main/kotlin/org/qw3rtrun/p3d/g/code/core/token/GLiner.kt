@@ -26,7 +26,7 @@ import org.qw3rtrun.p3d.g.code.core.checkSumCalculatorFor
  * there is no `verify()` for a caller to forget: holding a `GPacketLine` means the line is intact.
  * A well-formed checksum field that does not match its bytes yields [GCheckSumFailedLine] instead.
  */
-class GSemanticParser(private val source: Iterator<GToken>) : Iterator<GLine> {
+class GLiner(private val source: Iterator<GToken>) : Iterator<GLine> {
 
     override fun hasNext(): Boolean = source.hasNext()
 

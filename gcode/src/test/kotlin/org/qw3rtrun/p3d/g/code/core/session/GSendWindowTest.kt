@@ -61,7 +61,7 @@ class GSendWindowTest {
 
             for (i in 0 until 20) {
                 val text = requireNotNull(window.send(if (i % 2 == 0) g28 else t0))
-                val line = GSemanticParser(tokenizer.parse(text).iterator()).next()
+                val line = GLiner(tokenizer.parse(text).iterator()).next()
 
                 assertInstanceOf(GAccepted::class.java, reader.read(line)) { "rejected: $text" }
             }
@@ -197,7 +197,7 @@ class GSendWindowTest {
             val reader = GCodeReader()
             val tokenizer = GTokenizer()
             fun deliver(text: String) =
-                reader.read(GSemanticParser(tokenizer.parse(text).iterator()).next())
+                reader.read(GLiner(tokenizer.parse(text).iterator()).next())
 
             val one = requireNotNull(window.send(g28))
             val two = requireNotNull(window.send(g28))
@@ -253,10 +253,10 @@ class GSendWindowTest {
             val window = GSendWindow(capacity = 4)
             val reader = GCodeReader()
             val tokenizer = GTokenizer()
-            reader.read(GSemanticParser(tokenizer.parse("N1 G28*18").iterator()).next())
+            reader.read(GLiner(tokenizer.parse("N1 G28*18").iterator()).next())
 
             val reset = requireNotNull(window.reset(0))
-            val line = GSemanticParser(tokenizer.parse(reset).iterator()).next()
+            val line = GLiner(tokenizer.parse(reset).iterator()).next()
 
             assertInstanceOf(GAccepted::class.java, reader.read(line))
             assertEquals(0, reader.lastLine)

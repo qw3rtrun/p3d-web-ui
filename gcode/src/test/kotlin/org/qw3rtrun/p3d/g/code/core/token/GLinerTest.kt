@@ -9,13 +9,13 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.ValueSource
 
-class GSemanticParserTest {
+class GLinerTest {
 
     private val tokenizer = GTokenizer()
 
     @Test
     fun `empty tokens iterator has no elements and throws on next`() {
-        val iter = GSemanticParser(emptyList<GToken>().iterator())
+        val iter = GLiner(emptyList<GToken>().iterator())
 
         assertFalse(iter.hasNext())
         assertFalse(iter.hasNext())
@@ -27,7 +27,7 @@ class GSemanticParserTest {
     @Test
     fun `single simple line without trailing line break`() {
         val input = "G1 X10 Y20"
-        val iter = GSemanticParser(tokenizer.parse(input).iterator())
+        val iter = GLiner(tokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
         val line = iter.next()
@@ -51,7 +51,7 @@ class GSemanticParserTest {
     @Test
     fun `single simple line with line break`() {
         val input = "G1 X10\n"
-        val iter = GSemanticParser(tokenizer.parse(input).iterator())
+        val iter = GLiner(tokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
         val line = iter.next()
@@ -73,7 +73,7 @@ class GSemanticParserTest {
     @Test
     fun `multiple simple lines`() {
         val input = "G28\nM104 S200\nG1 Z5\n"
-        val lines = GSemanticParser(tokenizer.parse(input).iterator()).asSequence().toList()
+        val lines = GLiner(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(3, lines.size)
         assertTrue(lines.all { it is GSimpleLine })
@@ -86,7 +86,7 @@ class GSemanticParserTest {
     @Test
     fun `empty lines with line breaks`() {
         val input = "\n\n"
-        val lines = GSemanticParser(tokenizer.parse(input).iterator()).asSequence().toList()
+        val lines = GLiner(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(2, lines.size)
         assertTrue(lines.all { it is GMeaninglessLine }) { "expected two empty lines, got $lines" }
@@ -97,7 +97,7 @@ class GSemanticParserTest {
     @Test
     fun `packet line with valid line number, checksum and trailing line break`() {
         val input = "N100 G1 X10 *112\n"
-        val iter = GSemanticParser(tokenizer.parse(input).iterator())
+        val iter = GLiner(tokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
         val line = iter.next()
@@ -135,7 +135,7 @@ class GSemanticParserTest {
     @Test
     fun `packet line without trailing line break`() {
         val input = "N100 G1 X10 *112"
-        val iter = GSemanticParser(tokenizer.parse(input).iterator())
+        val iter = GLiner(tokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
         val line = iter.next()
@@ -171,7 +171,7 @@ class GSemanticParserTest {
 
     @Test
     fun `an N that is not followed by a number is a malformed line number`() {
-        val line = GSemanticParser(tokenizer.parse("N G1 X10 *45\n").iterator()).next()
+        val line = GLiner(tokenizer.parse("N G1 X10 *45\n").iterator()).next()
 
         assertInstanceOf(GMalformedLineNumber::class.java, line)
         assertEquals("'N' is not followed by a line number", (line as GError).msg)
@@ -179,7 +179,7 @@ class GSemanticParserTest {
 
     @Test
     fun `a star that is followed by a non-integer is a malformed checksum`() {
-        val line = GSemanticParser(tokenizer.parse("N100 G1 X10 *10.5\n").iterator()).next()
+        val line = GLiner(tokenizer.parse("N100 G1 X10 *10.5\n").iterator()).next()
 
         assertInstanceOf(GMalformedChecksum::class.java, line)
         assertEquals(GInt(100), (line as GMalformedChecksum).number)
@@ -190,7 +190,7 @@ class GSemanticParserTest {
     fun `a star followed by letters is a malformed checksum, not a missing one`() {
         // spec 8.1 (garbled value), not spec 7.3 (no value at all): the marker is on the wire, so
         // the host's decision is a resend of this line (spec 8.5), not a framing complaint.
-        val line = GSemanticParser(tokenizer.parse("N100 G1 X10 *ABC\n").iterator()).next()
+        val line = GLiner(tokenizer.parse("N100 G1 X10 *ABC\n").iterator()).next()
 
         assertInstanceOf(GMalformedChecksum::class.java, line)
         assertEquals(GInt(100), (line as GMalformedChecksum).number)
@@ -199,7 +199,7 @@ class GSemanticParserTest {
 
     @Test
     fun `a checksum immediately after N is a malformed line number`() {
-        val line = GSemanticParser(tokenizer.parse("N*45 G1 X10\n").iterator()).next()
+        val line = GLiner(tokenizer.parse("N*45 G1 X10\n").iterator()).next()
 
         assertInstanceOf(GMalformedLineNumber::class.java, line)
     }
@@ -207,7 +207,7 @@ class GSemanticParserTest {
     @Test
     fun `packet line with tail comment`() {
         val input = "N1 G28 *50 ;homing\n"
-        val iter = GSemanticParser(tokenizer.parse(input).iterator())
+        val iter = GLiner(tokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
         val line = iter.next()
@@ -235,7 +235,7 @@ class GSemanticParserTest {
     @Test
     fun `comment lines and inline comments are parsed as simple lines`() {
         val input = "; full line comment\nG1 (feedrate) F1500\n"
-        val lines = GSemanticParser(tokenizer.parse(input).iterator()).asSequence().toList()
+        val lines = GLiner(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(2, lines.size)
         assertInstanceOf(GMeaninglessLine::class.java, lines[0])
@@ -260,7 +260,7 @@ class GSemanticParserTest {
     @Test
     fun `mixed sequence of packet lines and simple lines`() {
         val input = "N1 M110 N1*125\n; comment\nG28\nN2 G1 X10 *115\n"
-        val lines = GSemanticParser(tokenizer.parse(input).iterator()).asSequence().toList()
+        val lines = GLiner(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(4, lines.size)
         assertInstanceOf(GPacketLine::class.java, lines[0])
@@ -280,7 +280,7 @@ class GSemanticParserTest {
     @Test
     fun `hasNext is idempotent and does not advance iterator`() {
         val input = "G1 X1\nG2 X2\n"
-        val iter = GSemanticParser(tokenizer.parse(input).iterator())
+        val iter = GLiner(tokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
         assertTrue(iter.hasNext())
@@ -303,7 +303,7 @@ class GSemanticParserTest {
 
     @Test
     fun `next after the last line throws`() {
-        val iter = GSemanticParser(tokenizer.parse("G1 X1\n").toList().iterator())
+        val iter = GLiner(tokenizer.parse("G1 X1\n").toList().iterator())
 
         iter.next()
 
@@ -313,7 +313,7 @@ class GSemanticParserTest {
 
     @Test
     fun `a line of nothing but whitespace is one empty line`() {
-        val lines = GSemanticParser(tokenizer.parse("   \n").iterator()).asSequence().toList()
+        val lines = GLiner(tokenizer.parse("   \n").iterator()).asSequence().toList()
 
         assertEquals(1, lines.size)
         assertInstanceOf(GMeaninglessLine::class.java, lines[0])
@@ -323,7 +323,7 @@ class GSemanticParserTest {
     @Test
     fun `the payload of simple lines reproduces the input`() {
         val input = "G28\n; comment\nM104 S200\n\nG1 Z5"
-        val lines = GSemanticParser(tokenizer.parse(input).iterator()).asSequence().toList()
+        val lines = GLiner(tokenizer.parse(input).iterator()).asSequence().toList()
 
         assertEquals(5, lines.size)
         assertEquals(input, lines.joinToString("") { line -> line.raw.joinToString("") { it.rawText() } })
@@ -332,7 +332,7 @@ class GSemanticParserTest {
     @Test
     fun `a line number without a checksum is a pairing error`() {
         // GCODE_spec.md section 7.3 requires both or neither.
-        val line = GSemanticParser(tokenizer.parse("N100 G1 X10\n").iterator()).next()
+        val line = GLiner(tokenizer.parse("N100 G1 X10\n").iterator()).next()
 
         assertInstanceOf(GMissingChecksum::class.java, line)
         assertEquals(GInt(100), (line as GMissingChecksum).number)
@@ -341,7 +341,7 @@ class GSemanticParserTest {
 
     @Test
     fun `a checksum without a line number is a pairing error`() {
-        val line = GSemanticParser(tokenizer.parse("G1 X10*45\n").iterator()).next()
+        val line = GLiner(tokenizer.parse("G1 X10*45\n").iterator()).next()
 
         assertInstanceOf(GMissingLineNumber::class.java, line)
         assertEquals("checksum without a line number", (line as GError).msg)
@@ -349,7 +349,7 @@ class GSemanticParserTest {
 
     @Test
     fun `a star inside a tail comment does not make a packet`() {
-        val line = GSemanticParser(tokenizer.parse("N1 G28 ; 3*4\n").iterator()).next()
+        val line = GLiner(tokenizer.parse("N1 G28 ; 3*4\n").iterator()).next()
 
         assertFalse(line is GPacketLine)
         assertInstanceOf(GMissingChecksum::class.java, line)
@@ -357,7 +357,7 @@ class GSemanticParserTest {
 
     @Test
     fun `a star inside a quoted string does not make a packet`() {
-        val line = GSemanticParser(tokenizer.parse("N1 M117 \"a*b\"\n").iterator()).next()
+        val line = GLiner(tokenizer.parse("N1 M117 \"a*b\"\n").iterator()).next()
 
         assertFalse(line is GPacketLine)
         assertInstanceOf(GMissingChecksum::class.java, line)
@@ -368,7 +368,7 @@ class GSemanticParserTest {
         // Both zeros are real rather than chosen for looks: `N0 G1 X5 F3000` genuinely XORs to 0
         // (spec 8.2), so this is the case where a falsy checksum has to survive verification rather
         // than be read as "absent". The body is whatever makes that true.
-        val packet = GSemanticParser(tokenizer.parse("N0 G1 X5 F3000*0\n").iterator()).next() as GPacketLine
+        val packet = GLiner(tokenizer.parse("N0 G1 X5 F3000*0\n").iterator()).next() as GPacketLine
 
         assertEquals(GInt(0), packet.number)
         assertEquals(GInt(0), packet.checksum)
@@ -391,7 +391,7 @@ class GSemanticParserTest {
         // in 7-bit ASCII, so every covered byte is below 0x80 and so is their XOR. 255 is
         // unreachable for any line this protocol can legally carry, and the fixture that used to
         // claim it was asserting on a value no generator could produce.
-        val packet = GSemanticParser(tokenizer.parse("N999999 G1 E13*127\n").iterator()).next() as GPacketLine
+        val packet = GLiner(tokenizer.parse("N999999 G1 E13*127\n").iterator()).next() as GPacketLine
 
         assertEquals(GInt(999999), packet.number)
         assertEquals(GInt(127), packet.checksum)
@@ -399,7 +399,7 @@ class GSemanticParserTest {
 
     @Test
     fun `consecutive packet lines`() {
-        val lines = GSemanticParser(tokenizer.parse("N1 G28*18\nN2 G28*17\nN3 T0*57\n").iterator())
+        val lines = GLiner(tokenizer.parse("N1 G28*18\nN2 G28*17\nN3 T0*57\n").iterator())
             .asSequence().toList()
 
         assertEquals(3, lines.size)
@@ -419,8 +419,8 @@ class GSemanticParserTest {
         // Was a characterisation point: both used to report GInt(-1). The sentinel is gone, so a
         // real N-1 is a packet carrying -1 and a missing number is a different type entirely.
         // Spec 7.1 - Marlin tolerates a sign after N, so N-1 is not itself an error.
-        val parsed = GSemanticParser(tokenizer.parse("N-1 G28*63\n").iterator()).next()
-        val mailformed = GSemanticParser(tokenizer.parse("N G28*12\n").iterator()).next()
+        val parsed = GLiner(tokenizer.parse("N-1 G28*63\n").iterator()).next()
+        val mailformed = GLiner(tokenizer.parse("N G28*12\n").iterator()).next()
 
         assertInstanceOf(GPacketLine::class.java, parsed)
         assertEquals(GInt(-1, "-1"), (parsed as GPacketLine).number)
@@ -438,10 +438,10 @@ class GSemanticParserTest {
     }
 
     private fun lineCount(gcode: String) =
-        GSemanticParser(tokenizer.parse(gcode).iterator()).asSequence().count()
+        GLiner(tokenizer.parse(gcode).iterator()).asSequence().count()
 
     private fun lines(gcode: String): List<GLine> =
-        GSemanticParser(tokenizer.parse(gcode).iterator()).asSequence().toList()
+        GLiner(tokenizer.parse(gcode).iterator()).asSequence().toList()
 
     private fun line(gcode: String): GLine = lines(gcode).single()
 

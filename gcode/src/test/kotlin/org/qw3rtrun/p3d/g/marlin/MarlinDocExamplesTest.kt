@@ -4,9 +4,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.token.GCommandParser
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
-import org.qw3rtrun.p3d.g.code.core.token.GSemanticParser
+import org.qw3rtrun.p3d.g.code.core.token.GLiner
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
-import org.qw3rtrun.p3d.g.marlin.command.*
 
 /**
  * The independent check on [MarlinCommands].
@@ -33,7 +32,7 @@ class MarlinDocExamplesTest {
             .filter { it.isNotEmpty() && !it.startsWith("#") }
 
     private fun parse(line: String) =
-        GSemanticParser(tokenizer.parse(line).iterator()).asSequence()
+        GLiner(tokenizer.parse(line).iterator()).asSequence()
             .flatMap { commands.parse(it).asSequence() }
             .toList()
 

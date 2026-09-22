@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.token.GLine
-import org.qw3rtrun.p3d.g.code.core.token.GSemanticParser
+import org.qw3rtrun.p3d.g.code.core.token.GLiner
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 /**
@@ -19,7 +19,7 @@ class GCodeReaderTest {
     private val tokenizer = GTokenizer()
 
     private fun lines(gcode: String): List<GLine> =
-        GSemanticParser(tokenizer.parse(gcode).iterator()).asSequence().toList()
+        GLiner(tokenizer.parse(gcode).iterator()).asSequence().toList()
 
     private fun line(gcode: String): GLine = lines(gcode).single()
 
@@ -382,7 +382,7 @@ class GCodeReaderTest {
             // That is the whole point of putting the session in the portable core - the transport
             // layer drives it, it does not drive the transport.
             val reader = GCodeReader()
-            val iterator = GSemanticParser(tokenizer.parse("N1 G28*18\nN2 G28*17\n").iterator())
+            val iterator = GLiner(tokenizer.parse("N1 G28*18\nN2 G28*17\n").iterator())
 
             var count = 0
             while (iterator.hasNext()) {

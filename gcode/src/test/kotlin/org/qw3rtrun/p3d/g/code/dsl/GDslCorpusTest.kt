@@ -21,7 +21,7 @@ class GDslCorpusTest {
         requireNotNull(javaClass.getResourceAsStream("/marlin.gcode")).readBytes().decodeToString()
 
     private fun lines(): List<GLine> =
-        GSemanticParser(tokenizer.parse(corpus).iterator()).asSequence().toList()
+        GLiner(tokenizer.parse(corpus).iterator()).asSequence().toList()
 
     private fun raw(line: GLine): String =
         line.raw.filter { it !is GLineBreak }.joinToString("") { it.rawText() }.trim()

@@ -4,9 +4,9 @@ package org.qw3rtrun.p3d.g.code.core.token
  * Reads a line's commands, per GCODE_spec.md sections 3, 4 and 5.
  *
  * The second and last pass over a line, and **the layer where words exist at all**. `GTokenizer`
- * says what the bytes are, `GSemanticParser` says what shape the line has - both in tokens - and
- * this turns the tokens of a line's body into fields ([words]) and then says which command each
- * field belongs to. It skips the two structural ones (spec 4): `N` and `*`.
+ * says what the bytes are, `GLiner` says what shape the line has - both in tokens - and this turns
+ * the tokens of a line's body into fields ([words]) and then says which command each field belongs
+ * to. It skips the two structural ones (spec 4): `N` and `*`.
  *
  * Words are built here rather than by the liner because they are only ever needed here. A host that
  * routes, resends or re-prints a line never asks what it commands, and now never pays to find out.

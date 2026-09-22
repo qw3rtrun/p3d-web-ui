@@ -9,7 +9,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 
 /**
- * The word->command layer, spec sections 4 and 5. `GSemanticParser` answers what *shape* a line has;
+ * The word->command layer, spec sections 4 and 5. `GLiner` answers what *shape* a line has;
  * this answers what *commands* it carries.
  */
 class GCommandParserTest {
@@ -19,7 +19,7 @@ class GCommandParserTest {
 
     /** The commands of the single line in [gcode]. */
     private fun commands(gcode: String): List<GCommand> =
-        parser.parse(GSemanticParser(tokenizer.parse(gcode).iterator()).next())
+        parser.parse(GLiner(tokenizer.parse(gcode).iterator()).next())
 
     @Nested
     inner class OneCommand {
@@ -281,7 +281,7 @@ class GCommandParserTest {
         }.readBytes().decodeToString()
 
         private fun lines(): List<GLine> =
-            GSemanticParser(tokenizer.parse(corpus).iterator()).asSequence().toList()
+            GLiner(tokenizer.parse(corpus).iterator()).asSequence().toList()
 
         @Test
         fun `word assembly over the whole corpus does not throw`() {

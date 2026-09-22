@@ -35,7 +35,7 @@ class GCorpusDecompositionTest {
      * framing fields as `-` when the line carries none, and the commands `' | '`-separated.
      */
     private fun decompose(gcode: String): List<String> =
-        GSemanticParser(tokenizer.parse(gcode).iterator()).asSequence().map { line ->
+        GLiner(tokenizer.parse(gcode).iterator()).asSequence().map { line ->
             val kind = line.javaClass.simpleName
             val number = if (line is GOrdered) line.number.lexeme else "-"
             val checksum = if (line is GCheckSumControlled) line.checksum.lexeme else "-"

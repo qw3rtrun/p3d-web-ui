@@ -894,7 +894,7 @@ class GTokenizerTest {
         @Test
         fun `the line count survives the round trip`() {
             val program = listOf("; header", "G28", "G1 X1 F100", "", "G90")
-            val lines = GSemanticParser(tokenizer.parseLines(program.asSequence()).iterator())
+            val lines = GLiner(tokenizer.parseLines(program.asSequence()).iterator())
 
             assertEquals(program.size, lines.asSequence().count())
         }

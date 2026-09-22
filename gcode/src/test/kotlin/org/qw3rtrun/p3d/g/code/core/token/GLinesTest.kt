@@ -4,108 +4,19 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
-import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.junit.jupiter.api.Test
 
 /**
- * Tests for the line/command model of GCODE_spec.md section 5 - construction, rendering and the
- * sealed hierarchy that consumers dispatch on.
+ * The line model of GCODE_spec.md section 5: what each line kind carries, and the sealed hierarchy
+ * consumers dispatch on. Every line is a list of tokens; the framing fields a packet read off itself
+ * are values beside them, never a second representation of the line.
  */
-class GSemanticsTest {
+class GLinesTest {
 
     @Nested
-    inner class Commands {
+    inner class Kinds {
 
-        @Test
-        fun `a bare command renders letter and number`() {
-            assertEquals("G28", GEncoder.encode(GCommand(GLetter('G'), GInt(28))))
-        }
-
-        @Test
-        fun `a command without params renders just its head`() {
-            assertEquals("G28", GEncoder.encode(GCommand(GLetter('G'), GInt(28))))
-        }
-
-        @Test
-        fun `params default to an empty list`() {
-            assertEquals(emptyList<GWord>(), GCommand(GLetter('G'), GInt(28)).params)
-        }
-
-        @Test
-        fun `a command renders its parameter words`() {
-            val command = GCommand(
-                GLetter('G'),
-                GInt(1),
-                listOf(
-                    GParameterWord(GLetter('X'), GFloat("10.5")),
-                    GParameterWord(GLetter('F'), GInt(1800))
-                )
-            )
-
-            assertEquals("G1 X10.5 F1800", GEncoder.encode(command))
-        }
-
-        @Test
-        fun `a command renders a quoted string parameter`() {
-            val command = GCommand(
-                GLetter('M'),
-                GInt(117),
-                listOf(GParameterWord(GLetter('S'), GQuotedString("Hello!")))
-            )
-
-            assertEquals("M117 S\"Hello!\"", GEncoder.encode(command))
-        }
-
-        @Test
-        fun `a command renders an expression parameter`() {
-            val command = GCommand(
-                GLetter('M'),
-                GInt(140),
-                listOf(GParameterWord(GLetter('S'), GRawExpression("{bed[0]}")))
-            )
-
-            assertEquals("M140 S{bed[0]}", GEncoder.encode(command))
-        }
-
-        @Test
-        fun `the identifier and number constructor creates expected head`() {
-            val fromIdAndNum = GCommand(GLetter('M'), GInt(104), listOf(GParameterWord(GLetter('S'), GInt(200))))
-            val explicit = GCommand(GParameterWord(GLetter('M'), GInt(104)), listOf(GParameterWord(GLetter('S'), GInt(200))))
-
-            assertEquals(explicit, fromIdAndNum)
-            assertEquals("M104 S200", GEncoder.encode(fromIdAndNum))
-        }
-
-        @Test
-        fun `the identifier and number constructor works without extra params`() {
-            val command = GCommand(GLetter('T'), GInt(0))
-
-            assertEquals(GParameterWord(GLetter('T'), GInt(0)), command.head)
-            assertEquals(emptyList<GWord>(), command.params)
-            assertEquals("T0", GEncoder.encode(command))
-        }
-
-        @Test
-        fun `commands with equal head and params are equal`() {
-            assertEquals(
-                GCommand(GLetter('G'), GInt(1)),
-                GCommand(GLetter('G'), GInt(1))
-            )
-            assertFalse(GCommand(GLetter('G'), GInt(1)) == GCommand(GLetter('G'), GInt(2)))
-        }
-
-        @Test
-        fun `a command is not a line`() {
-            val command = GCommand(GLetter('G'), GInt(1))
-
-            assertFalse(command as Any is GLine)
-        }
-    }
-
-    @Nested
-    inner class Lines {
-
-        /** What a line is made of now: tokens. `G28`, with nothing around it. */
+        /** What a line is made of: tokens. `G28`, with nothing around it. */
         private val raw = listOf<GToken>(GLetter('G'), GInt(28))
 
         @Test

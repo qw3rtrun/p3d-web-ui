@@ -61,7 +61,7 @@ class GCorpusTest {
 
     @Test
     fun `the liner splits the corpus into one line per line break`() {
-        val parsed = GSemanticParser(tokenizer.parse(corpus).iterator()).asSequence().toList()
+        val parsed = GLiner(tokenizer.parse(corpus).iterator()).asSequence().toList()
 
         assertEquals(lines.size, parsed.size)
         assertTrue(parsed.all { it.raw.isNotEmpty() }) { "a parsed line has no tokens" }
@@ -159,7 +159,7 @@ class GCorpusTest {
     }
     @Test
     fun `the liner classifies every corpus line and loses nothing`() {
-        val parsed = GSemanticParser(tokenizer.parse(corpus).iterator()).asSequence().toList()
+        val parsed = GLiner(tokenizer.parse(corpus).iterator()).asSequence().toList()
         val kinds = parsed.groupingBy { it::class.simpleName!! }.eachCount()
 
         // The corpus is a file, not a serial capture: it has commands, blank/comment-only lines,
@@ -174,7 +174,7 @@ class GCorpusTest {
 
     @Test
     fun `the two unchecksummed line numbers are the ones the fixture actually contains`() {
-        val parsed = GSemanticParser(tokenizer.parse(corpus).iterator()).asSequence().toList()
+        val parsed = GLiner(tokenizer.parse(corpus).iterator()).asSequence().toList()
 
         assertEquals(
             listOf("line number 100 has no checksum", "line number 101 has no checksum"),
@@ -204,7 +204,7 @@ class GCorpusTest {
         }
 
         private fun parse(text: String): List<GLine> =
-            GSemanticParser(tokenizer.parse(text).iterator()).asSequence().toList()
+            GLiner(tokenizer.parse(text).iterator()).asSequence().toList()
 
         @Test
         fun `every line verifies`() {

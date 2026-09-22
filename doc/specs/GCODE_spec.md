@@ -769,77 +769,91 @@ quoted strings are unaffected — `marlin.gcode` keeps the `’` and `µ` in its
 digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` from lexing as
 `GFloat(1.2)`.
 
-### B.3 Line model — `token/GSemantics.kt`, `token/GSemanticParser.kt`, `token/GCommandParser.kt`
+### B.3 Line model — `token/GLines.kt`, `token/GLiner.kt`, `token/GCommands.kt`, `token/GCommandParser.kt`
+
+The module reads a line in two passes over two vocabularies. **A line is tokens**: its shape is
+decided from token positions alone, and nothing above the lexer is built to answer it. **A command is
+words**: fields are assembled only when a caller asks what the line commands.
 
 | Spec concept | Type |
 |---|---|
-| Any line/block ([§5](#5-line-block-structure)) | `GLine { val payload: List<GSemantic> }`, plus `raw()` and `meaningful()` |
-| A semantic element | `GSemantic`: a `GWord` (`GParameterWord`, `GFlagWord`) or a `GMeaningless` |
+| Any line/block ([§5](#5-line-block-structure)) | `GLine { val raw: List<GToken>; val body: List<GToken> }` |
 | Line of only whitespace and/or comments ([§5](#5-line-block-structure)) | `GMeaninglessLine` |
 | Unnumbered line | `GSimpleLine` |
-| `N…*…` framed line ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GPacketLine(number, payload, checksum, whole)` — also `GOrdered`, `GCheckSumControlled` |
-| Checksum field | `GParameterWord<GInt>` whose `id` is `GChecksum` |
+| `N…*…` framed line ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GPacketLine(number, checksum, body, raw)` — also `GOrdered`, `GCheckSumControlled` |
+| Line number ([§7.1](#71-syntax)), checksum field ([§8.1](#81-syntax)) | `GInt` — the integer behind the `N`, and behind the last `*` |
+| A field ([§3](#3-value-types)) | `GWord`: a `GParameterWord` (identifier + value) or a `GFlagWord` (identifier alone) |
 | One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GNumber>, params: List<GWord>)` |
-| Structural error ([§9](#9-error-handling)) | `GError`: `GNotIdentifierError`, `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum` |
+| Structural error ([§9](#9-error-handling)) | `GError`: `GNotIdentifierError`, `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum`, `GCheckSumFailedLine` |
 
-`payload` is the whole line for every type except `GPacketLine`, which decomposes its input — so
-`GPacketLine` keeps every element in `whole` and overrides `raw()` over it. `raw()`, not `payload`,
-is what round-trips a line.
+`raw` is every token of the line in wire order, terminator included, and it is the stored value of
+every line type — so "a line reproduces its input" holds by construction rather than by an override.
+`body` is the range a command may be read from: `raw` for every type except `GPacketLine`, where it
+is a **slice of `raw`** running from past the line number to the marker. The two therefore cannot
+disagree.
 
-`GCommandParser` is the third pass, from a line's words to its commands. It splits at each `G`/`M`
-word ([§4.3](#43-rules) — Marlin executes only the first, but the parser reports what is there), and
-at a `T` word **only while no command has started**, since [§4.2](#42-parameter-letters) also makes
-`T` a conventional parameter letter: `G29 T` and `G12 P1 S1 T3` are one command each. The two
-structural letters, `N` ([§7](#7-line-numbering)) and `*` ([§8](#8-checksum-and-crc)), are skipped —
-they belong to the line, not to a command, and they are present in the words of any line that is not
-a well-formed packet. A command number is accepted only as `<unsigned-int>[.<unsigned-int>]`
-([§4.1](#41-command-letters)), so `G29.1` is one command word carrying `GFloat("29.1")` — the subcode
-stays on the number, which is what re-emits `29.1` rather than `29` and `.1`.
+`GLiner` is a single `Iterator<GLine>`: it splits a token stream at `GLineBreak` and classifies each
+line from two positions found in one pass — the **first identifier**, which is the line's first field
+([§5](#5-line-block-structure): whitespace ([§2.1](#21-whitespace)) and comments
+([§6](#6-comments)) are not fields, so it is not necessarily token 0), and the **last `GChecksum`**,
+since [§5](#5-line-block-structure) puts the checksum field last. A `*` the lexer put inside a
+comment or a string is part of that token and is never an identifier, so it cannot be mistaken for
+the marker. Both fields assemble across whitespace ([§2.1](#21-whitespace)) by skipping to the next
+non-separator token, and [§8.3](#83-what-the-checksum-covers)'s covered range is then literally the
+tokens from the `N` up to the `*`: indentation before the `N` is outside it, a space before the
+marker is inside it, and the marker, its value and the terminator are outside it.
+
+The [§7.3](#73-pairing-rule) pairing rule is decided on the *presence* of the two markers and is
+decided **before** the [§7.1](#71-syntax) / [§8.1](#81-syntax) field-syntax rules, so it is reported
+as typed [§9](#9-error-handling) variants rather than by falling back to `GSimpleLine`:
+
+| Input | Result |
+|---|---|
+| `N1 G28*18`, `n1 g28*18`, ` N1 G28*18`, `\tN1 G28*18`, `(c)N1 G28*18` | `GPacketLine` — the match is case-insensitive ([§2.2](#22-case)) and position-tolerant |
+| `N 1 G28 * 18` | both fields assemble across whitespace ([§2.1](#21-whitespace)) — though the extra bytes are covered, so the value differs |
+| `N1 G28*12*59` | `GPacketLine(number = GInt(1), checksum = GInt(59))` — the **last** `*` is the field ([§5](#5-line-block-structure)) and `*12` is inside the bytes the checksum covers ([§8.3](#83-what-the-checksum-covers)). Marlin agrees: `get_serial_commands` uses `strrchr(command, '*')` |
+| `N1 G28*18 G1 X5` | `GPacketLine` whose body is `G28` alone — what follows the marker is outside the frame, as in Marlin, which writes a `\0` over the `*` |
+| `N1 G28*19` | `GCheckSumFailedLine(number, expected, received)` ([§8.5](#85-failure-handling-and-the-resend-protocol)) — well-framed, well-formed, wrong value |
+| `N1 G28` | `GMissingChecksum(number = GInt(1))` |
+| `G28*18`, `*12`, `* 12`, `*`, `*ABC` | `GMissingLineNumber` — the marker is unpaired wherever it sits and whether or not it carries a value |
+| `N*`, `NX*12` | `GMalformedLineNumber` |
+| `N1 G28*`, `N1*`, `N1 G28*X`, `N1 G28*10.5`, `N1 G28*1234` | `GMalformedChecksum(number = GInt(1))` — the marker is present but its value is not an integer of a width an algorithm claims ([§8.1](#81-syntax)); a host tells this from `GMissingChecksum` to decide a resend ([§8.5](#85-failure-handling-and-the-resend-protocol)) |
+
+A `GPacketLine` is **only ever built for a line whose checksum verified**, so holding one means the
+line is intact and there is no `verify()` to forget. Nothing is dropped by index arithmetic: the
+trailing line break is a token like any other, so an unterminated line keeps its last token and a
+short line does not throw — `N*` yields `GMalformedLineNumber`, not `IllegalArgumentException`
+(TODO 1.3).
+
+`GCommandParser` is the second pass and **the layer where words exist at all**. `words()` groups a
+token range into fields — an identifier plus the value behind it, whitespace between them absorbed
+([§2.1](#21-whitespace)), or a `GFlagWord` where there is no value ([§3.2](#32-flag-value-less-parameters)) —
+and everything that is not a field (separators, comments, the terminator, an unknown character) is
+dropped, because `GLine.raw` is what reproduces the input. `parse()` then splits those words at each
+`G`/`M` word ([§4.3](#43-rules) — Marlin executes only the first, but the parser reports what is
+there), and at a `T` word **only while no command has started**, since
+[§4.2](#42-parameter-letters) also makes `T` a conventional parameter letter: `G29 T` and
+`G12 P1 S1 T3` are one command each. The two structural letters, `N` ([§7](#7-line-numbering)) and
+`*` ([§8](#8-checksum-and-crc)), are skipped — they belong to the line, not to a command, and they
+are present in the words of any line that is not a well-formed packet. A command number is accepted
+only as `<unsigned-int>[.<unsigned-int>]` ([§4.1](#41-command-letters)), so `G29.1` is one command
+word carrying `GFloat("29.1")` — the subcode stays on the number, which is what re-emits `29.1`
+rather than `29` and `.1`.
 
 Verified by running: the whole corpus is one command per line except `G53 G0 X0 Y0 Z0` and
 `G53 G1 X20` (two each — `G53` is a modal prefix) and `M815 G0 X0 Y0|G0 Z10|M300 S440 P50` (four,
 because [§3.4](#34-string-values)'s bare rest-of-line strings are not implemented, so the words
-inside `M815`'s argument still split the line).
+inside `M815`'s argument still split the line). `GCorpusDecompositionTest` freezes that reading:
+every line of both corpora, plus a hand-built edge-case set covering the table above, as its line
+kind, its framing fields and its canonically encoded commands.
 
-`GSemanticParser` is a single `Iterator<GLine>`: it splits a token stream at `GLineBreak` and, for
-each line, first groups the tokens into **elements** — a *word* (`GParameterWord`, an identifier plus its
-value, or `GFlagWord`, an identifier alone) or a `GMeaningless` (separator, comment, anything else)
-— and then classifies the line off those elements. One pass finds the two the shape needs: the
-**first word**, which is the line's first field ([§5](#5-line-block-structure) — whitespace
-([§2.1](#21-whitespace)) and comments ([§6](#6-comments)) are not fields, so the first field is not
-necessarily element 0), and the **last word whose identifier is `GChecksum`**, since
-[§5](#5-line-block-structure) puts the checksum last. A `*` the lexer put inside a comment or a
-string never becomes a word, so it cannot be mistaken for the marker.
+`GCommandParser.isCommandLetter()` treats `G`, `M` and (line-initially) `T` as command letters, which
+is the [§4.1](#41-command-letters) set minus Marlin's development-only `D`. `GNotIdentifierError` is
+declared but never produced: a line whose first token is a value has no field at that position, and
+the first *identifier* is what the shape is read from.
 
-The [§7.3](#73-pairing-rule) pairing rule is decided on the *presence* of the two markers and is
-decided **before** the [§7.1](#71-syntax) / [§8.1](#81-syntax) field-syntax rules, so it is reported
-as four typed [§9](#9-error-handling) variants rather than by falling back to `GSimpleLine`:
-
-| Input | Result |
-|---|---|
-| `N1 G28*12`, `n1 G28*12`, ` N1 G28*12`, `\tN1 G28*12`, `(c)N1 G28*12` | `GPacketLine` — the match is case-insensitive ([§2.2](#22-case)) and position-tolerant |
-| `N 1 G28 * 12` | `GPacketLine` — both fields assemble across whitespace ([§2.1](#21-whitespace)) |
-| `N1 G28*12*13` | `GPacketLine(number = GInt(1), checksum = GInt(13))` — the **last** `*` is the field ([§5](#5-line-block-structure)) and `*12` stays in the payload, where it is also part of the bytes the checksum covers ([§8.3](#83-what-the-checksum-covers)). Marlin agrees: `get_serial_commands` uses `strrchr(command, '*')` |
-| `N1 G28` | `GMissingChecksum(number = GInt(1))` |
-| `G28*12`, `*12`, `* 12`, `*`, `*ABC` | `GMissingLineNumber` — the marker is unpaired wherever it sits and whether or not it carries a value |
-| `N*`, `NX*12` | `GMalformedLineNumber` |
-| `N1 G28*`, `N1*`, `N1 G28*X`, `N1 G28*10.5` | `GMalformedChecksum(number = GInt(1))` — the marker is present but its value is not an integer ([§8.1](#81-syntax)); a host tells this from `GMissingChecksum` to decide a resend ([§8.5](#85-failure-handling-and-the-resend-protocol)) |
-
-`GPacketLine.payload` is the elements between the line-number field and the `*` (separators
-included); anything *before* the line number — leading whitespace, a leading comment — appears only
-in `raw`, which is the whole line. Nothing is dropped by index arithmetic: the trailing line break is
-kept as a `GMeaningless` element, so an unterminated line keeps its last token and a short line does
-not throw — `N*` yields `GMalformedLineNumber`, not `IllegalArgumentException` (TODO 1.3).
-
-`GCommandParser.isCommand()` treats `G`, `M` and (line-initially) `T` as command letters, which is
-the [§4.1](#41-command-letters) set minus Marlin's development-only `D`; the class is not reachable
-from anywhere yet, so `GCommandLine` and `GNotIdentifierError` are never produced. The `GError`
-variants in the table above **are** produced: `marlin.gcode` contains exactly two `N` lines with no
-checksum, and both come back as `GMissingChecksum`.
-
-Not yet covered by the implementation: line-number continuity checking, checksum
-*verification*/generation at the line level (`XorCheckSum` is correct — it yields `57` for `N3 T0` —
-but has no callers), line-length limits and subcodes.
+Not yet covered by the implementation: line-length limits, and [§3.4](#34-string-values)'s bare
+rest-of-line strings.
 
 ---
 

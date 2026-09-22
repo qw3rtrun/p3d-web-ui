@@ -64,8 +64,10 @@ When observable behaviour changes, the spec's Appendix B and the relevant queue 
 gcode/src/main/kotlin/.../code/core/**      portable core — kotlin.* imports ONLY
   token/GTokens.kt      token model, rawText() round-trip contract
   token/GTokenizer.kt   the lexer: GTokenizerIterator + its scanners
-  token/GLiner.kt       GLineIterator (framing) + GCommandParser
-  token/GSemantics.kt   GLine hierarchy, GCommand, the structural errors
+  token/GLiner.kt       tokens -> classified lines (framing, checksum verification)
+  token/GLines.kt       GLine hierarchy and the structural errors - tokens only
+  token/GCommands.kt    GWord, GBlock, GCommand - the command layer's vocabulary
+  token/GCommandParser.kt  a line's body -> words -> commands
   XorCheckSum.kt        streaming XOR checksum
   GDescription.kt       command descriptors
   session/**            GCodeReader (line numbering), GSendWindow (resend window)

@@ -51,10 +51,9 @@ data class ExpectedPrinterCheck(
             return M(16).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ExpectedPrinterCheck {
-            val all = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ExpectedPrinterCheck {
             return ExpectedPrinterCheck(
-                message = all.stringArg(),
+                message = tokens.stringArg(),
             )
         }
     }

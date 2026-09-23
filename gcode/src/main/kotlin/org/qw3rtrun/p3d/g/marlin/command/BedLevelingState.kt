@@ -64,15 +64,14 @@ data class BedLevelingState(
             return M(420).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BedLevelingState {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): BedLevelingState {
             return BedLevelingState(
-                l = params.intOf('L'),
-                s = params.boolOf('S'),
-                v = params.boolOf('V'),
-                t = params.intOf('T'),
-                linear = params.decimalOf('Z'),
-                negativeOffset = params.decimalOf('C'),
+                l = tokens.intOf('L'),
+                s = tokens.boolOf('S'),
+                v = tokens.boolOf('V'),
+                t = tokens.intOf('T'),
+                linear = tokens.decimalOf('Z'),
+                negativeOffset = tokens.decimalOf('C'),
             )
         }
     }

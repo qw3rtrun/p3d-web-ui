@@ -72,18 +72,17 @@ data class FilamentChange(
             return M(600).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FilamentChange {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FilamentChange {
             return FilamentChange(
-                index = params.intOf('T'),
-                pos = params.decimalOf('E'),
-                u = params.decimalOf('U'),
-                l = params.decimalOf('L'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                beeps = params.intOf('B'),
-                temp = params.intOf('R'),
+                index = tokens.intOf('T'),
+                pos = tokens.decimalOf('E'),
+                u = tokens.decimalOf('U'),
+                l = tokens.decimalOf('L'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                beeps = tokens.intOf('B'),
+                temp = tokens.intOf('R'),
             )
         }
     }

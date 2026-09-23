@@ -55,13 +55,12 @@ data class BedSkewCompensation(
             return M(852).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BedSkewCompensation {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): BedSkewCompensation {
             return BedSkewCompensation(
-                i = params.hasWord('I'),
-                j = params.hasWord('J'),
-                k = params.hasWord('K'),
-                s = params.hasWord('S'),
+                i = tokens.hasWord('I'),
+                j = tokens.hasWord('J'),
+                k = tokens.hasWord('K'),
+                s = tokens.hasWord('S'),
             )
         }
     }

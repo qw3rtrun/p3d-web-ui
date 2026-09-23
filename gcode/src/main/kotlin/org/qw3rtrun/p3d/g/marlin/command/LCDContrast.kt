@@ -46,10 +46,9 @@ data class LCDContrast(
             return M(250).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): LCDContrast {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): LCDContrast {
             return LCDContrast(
-                contrast = params.intOf('C'),
+                contrast = tokens.intOf('C'),
             )
         }
     }

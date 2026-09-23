@@ -16,7 +16,7 @@ import org.qw3rtrun.p3d.g.code.core.checkSumCalculatorFor
  * `*`, and spec 8.3's covered range is the tokens between the two. That is also what makes the range
  * exact without a word to reason about - a space before the marker is a token inside the range, and
  * a space after it is a token outside it, with nothing to absorb either. Words are the command
- * layer's, and [GCommandParser] builds them on demand.
+ * layer's, and the DSL and `GRq.encode()` are what build them.
  *
  * One instance consumes one token stream. [parseLine] is independent of that state and can be called
  * directly on a line's tokens.
@@ -121,19 +121,5 @@ class GLiner(private val source: Iterator<GToken>) : Iterator<GLine> {
             tokens.subList(numberIndex + 1, starIndex),
             tokens,
         )
-    }
-
-    /**
-     * The index of the value behind the identifier at [from], or -1 when there is none.
-     *
-     * spec 2.1: whitespace may separate an identifier from its value, so `N 1` and `* 12` assemble
-     * across it. Only whitespace is skipped - a comment between the two ends the field, and so does
-     * another identifier, which is what makes `N*` a bare `N` rather than an `N` carrying a `*`.
-     */
-    private fun valueIndex(tokens: List<GToken>, from: Int): Int {
-        var i = from + 1
-        while (i < tokens.size && tokens[i] is GWhitespace) i++
-        if (i < tokens.size && tokens[i] is GValue) return i
-        return -1
     }
 }

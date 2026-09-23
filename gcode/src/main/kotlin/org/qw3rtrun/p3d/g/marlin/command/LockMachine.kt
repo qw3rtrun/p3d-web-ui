@@ -46,7 +46,7 @@ class LockMachine : GRq<LockMachine> {
             return M(510).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): LockMachine {
+        override fun decodeParams(tokens: List<GToken>): LockMachine {
             return LockMachine()
         }
     }

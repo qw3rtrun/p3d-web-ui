@@ -54,12 +54,11 @@ data class DeployProbe(
             return M(401).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DeployProbe {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): DeployProbe {
             return DeployProbe(
-                h = params.hasWord('H'),
-                s = params.boolOf('S'),
-                r = params.boolOf('R'),
+                h = tokens.hasWord('H'),
+                s = tokens.boolOf('S'),
+                r = tokens.boolOf('R'),
             )
         }
     }

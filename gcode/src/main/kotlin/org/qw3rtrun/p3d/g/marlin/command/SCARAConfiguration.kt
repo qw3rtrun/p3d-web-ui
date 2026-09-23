@@ -65,16 +65,15 @@ data class SCARAConfiguration(
             return M(665).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SCARAConfiguration {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SCARAConfiguration {
             return SCARAConfiguration(
-                segmentsPerSecond = params.decimalOf('S'),
-                thetaPiOffset = params.decimalOf('P'),
-                thetaOffset = params.decimalOf('T'),
-                a = params.decimalOf('A'),
-                x = params.decimalOf('X'),
-                b = params.decimalOf('B'),
-                y = params.decimalOf('Y'),
+                segmentsPerSecond = tokens.decimalOf('S'),
+                thetaPiOffset = tokens.decimalOf('P'),
+                thetaOffset = tokens.decimalOf('T'),
+                a = tokens.decimalOf('A'),
+                x = tokens.decimalOf('X'),
+                b = tokens.decimalOf('B'),
+                y = tokens.decimalOf('Y'),
             )
         }
     }

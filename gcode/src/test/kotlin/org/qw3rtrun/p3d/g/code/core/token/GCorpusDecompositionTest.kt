@@ -26,20 +26,18 @@ import java.io.File
  */
 class GCorpusDecompositionTest {
 
-    private val tokenizer = GTokenizer()
 
-    private val commands = GCommandParser()
 
     /**
      * One entry per parsed line: `<kind>\t<line number>\t<checksum lexeme>\t<commands>`, the two
      * framing fields as `-` when the line carries none, and the commands `' | '`-separated.
      */
     private fun decompose(gcode: String): List<String> =
-        GLiner(tokenizer.parse(gcode).iterator()).asSequence().map { line ->
+        GTokenizer.lines(gcode).map { line ->
             val kind = line.javaClass.simpleName
             val number = if (line is GOrdered) line.number.lexeme else "-"
             val checksum = if (line is GCheckSumControlled) line.checksum.lexeme else "-"
-            val parsed = commands.parse(line).joinToString(" | ") { GEncoder.encode(it) }
+            val parsed = GWordReader.parse(line).joinToString(" | ") { GEncoder.encode(it) }
             "$kind\t$number\t$checksum\t$parsed"
         }.toList()
 
@@ -172,7 +170,8 @@ class GCorpusDecompositionTest {
         fun `the edge cases exercise every line kind the liner can produce`() {
             val kinds = decompose(gcode).map { it.substringBefore('\t') }.toSet()
 
-            // GNotIdentifierError is deliberately absent: nothing produces it (spec Appendix B.3).
+            // This is every kind there is: a line with no identifier is a GMeaninglessLine, not
+            // an error, and the error type that used to claim otherwise was never produced.
             val expected = setOf(
                 "GPacketLine", "GSimpleLine", "GMeaninglessLine", "GCheckSumFailedLine",
                 "GMissingChecksum", "GMissingLineNumber", "GMalformedLineNumber", "GMalformedChecksum",

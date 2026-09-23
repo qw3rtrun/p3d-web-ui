@@ -46,7 +46,7 @@ class BedLeveling : GRq<BedLeveling> {
             return G(29).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BedLeveling {
+        override fun decodeParams(tokens: List<GToken>): BedLeveling {
             return BedLeveling()
         }
     }

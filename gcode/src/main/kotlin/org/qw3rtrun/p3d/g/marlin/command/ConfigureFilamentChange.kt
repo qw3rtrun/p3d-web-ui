@@ -54,12 +54,11 @@ data class ConfigureFilamentChange(
             return M(603).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ConfigureFilamentChange {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ConfigureFilamentChange {
             return ConfigureFilamentChange(
-                index = params.intOf('T'),
-                pos = params.decimalOf('U'),
-                l = params.decimalOf('L'),
+                index = tokens.intOf('T'),
+                pos = tokens.decimalOf('U'),
+                l = tokens.decimalOf('L'),
             )
         }
     }

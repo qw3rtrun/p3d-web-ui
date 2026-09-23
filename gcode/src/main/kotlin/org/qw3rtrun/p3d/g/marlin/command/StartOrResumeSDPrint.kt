@@ -50,11 +50,10 @@ data class StartOrResumeSDPrint(
             return M(24).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): StartOrResumeSDPrint {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): StartOrResumeSDPrint {
             return StartOrResumeSDPrint(
-                pos = params.longOf('S'),
-                time = params.longOf('T'),
+                pos = tokens.longOf('S'),
+                time = tokens.longOf('T'),
             )
         }
     }

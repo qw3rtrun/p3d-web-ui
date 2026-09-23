@@ -52,12 +52,11 @@ data class SetTemperatureUnits(
             return M(149).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetTemperatureUnits {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetTemperatureUnits {
             return SetTemperatureUnits(
-                c = params.hasWord('C'),
-                f = params.hasWord('F'),
-                k = params.hasWord('K'),
+                c = tokens.hasWord('C'),
+                f = tokens.hasWord('F'),
+                k = tokens.hasWord('K'),
             )
         }
     }

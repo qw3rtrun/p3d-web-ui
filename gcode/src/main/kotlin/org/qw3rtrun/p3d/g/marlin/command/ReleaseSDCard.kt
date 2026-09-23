@@ -46,7 +46,7 @@ class ReleaseSDCard : GRq<ReleaseSDCard> {
             return M(22).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ReleaseSDCard {
+        override fun decodeParams(tokens: List<GToken>): ReleaseSDCard {
             return ReleaseSDCard()
         }
     }

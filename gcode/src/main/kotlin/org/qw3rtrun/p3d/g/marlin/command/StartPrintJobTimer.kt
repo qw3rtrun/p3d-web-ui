@@ -51,10 +51,9 @@ data class StartPrintJobTimer(
             return M(75).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): StartPrintJobTimer {
-            val all = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): StartPrintJobTimer {
             return StartPrintJobTimer(
-                message = all.stringArg(),
+                message = tokens.stringArg(),
             )
         }
     }

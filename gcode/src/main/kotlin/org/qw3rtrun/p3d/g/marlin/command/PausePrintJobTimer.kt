@@ -46,7 +46,7 @@ class PausePrintJobTimer : GRq<PausePrintJobTimer> {
             return M(76).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PausePrintJobTimer {
+        override fun decodeParams(tokens: List<GToken>): PausePrintJobTimer {
             return PausePrintJobTimer()
         }
     }

@@ -51,11 +51,10 @@ data class TMCZAxisCalibration(
             return M(915).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TMCZAxisCalibration {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): TMCZAxisCalibration {
             return TMCZAxisCalibration(
-                s = params.intOf('S'),
-                z = params.decimalOf('Z'),
+                s = tokens.intOf('S'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

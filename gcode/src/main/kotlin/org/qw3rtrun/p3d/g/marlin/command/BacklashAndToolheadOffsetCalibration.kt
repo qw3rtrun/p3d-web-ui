@@ -59,13 +59,12 @@ data class BacklashAndToolheadOffsetCalibration(
             return G(425).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BacklashAndToolheadOffsetCalibration {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): BacklashAndToolheadOffsetCalibration {
             return BacklashAndToolheadOffsetCalibration(
-                b = params.hasWord('B'),
-                index = params.intOf('T'),
-                v = params.hasWord('V'),
-                linear = params.decimalOf('U'),
+                b = tokens.hasWord('B'),
+                index = tokens.intOf('T'),
+                v = tokens.hasWord('V'),
+                linear = tokens.decimalOf('U'),
             )
         }
     }

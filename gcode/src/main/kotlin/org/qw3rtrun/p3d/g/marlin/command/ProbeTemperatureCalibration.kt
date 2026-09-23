@@ -49,11 +49,10 @@ data class ProbeTemperatureCalibration(
             return G(76).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ProbeTemperatureCalibration {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ProbeTemperatureCalibration {
             return ProbeTemperatureCalibration(
-                b = params.hasWord('B'),
-                p = params.hasWord('P'),
+                b = tokens.hasWord('B'),
+                p = tokens.hasWord('P'),
             )
         }
     }

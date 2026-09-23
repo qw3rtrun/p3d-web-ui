@@ -46,7 +46,7 @@ class Baricuda1Close : GRq<Baricuda1Close> {
             return M(127).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): Baricuda1Close {
+        override fun decodeParams(tokens: List<GToken>): Baricuda1Close {
             return Baricuda1Close()
         }
     }

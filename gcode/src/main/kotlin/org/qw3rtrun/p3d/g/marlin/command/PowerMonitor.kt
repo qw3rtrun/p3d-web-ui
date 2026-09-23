@@ -52,12 +52,11 @@ data class PowerMonitor(
             return M(430).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PowerMonitor {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): PowerMonitor {
             return PowerMonitor(
-                i = params.boolOf('I'),
-                v = params.boolOf('V'),
-                w = params.boolOf('W'),
+                i = tokens.boolOf('I'),
+                v = tokens.boolOf('V'),
+                w = tokens.boolOf('W'),
             )
         }
     }

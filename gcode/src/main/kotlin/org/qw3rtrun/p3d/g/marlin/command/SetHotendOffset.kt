@@ -57,13 +57,12 @@ data class SetHotendOffset(
             return M(218).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetHotendOffset {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetHotendOffset {
             return SetHotendOffset(
-                index = params.intOf('T'),
-                offset = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
+                index = tokens.intOf('T'),
+                offset = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

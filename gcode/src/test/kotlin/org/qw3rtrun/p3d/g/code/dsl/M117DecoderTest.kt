@@ -15,7 +15,7 @@ import org.qw3rtrun.p3d.g.marlin.command.SetLCDMessage
 class M117DecoderTest {
 
 
-    fun line(str: String) = GLiner(GTokenizer().parse(str.iterator())).next().body.asSequence()
+    fun line(str: String) = GTokenizer.lines(str).first().body
     fun decode(gcode: String) = MarlinCommands.decode(line(gcode))
     fun crc(gcode: String) = XorCheckSum().let { it.add(gcode); it.get() }
     fun pack(gcode: String) = "${gcode}*${crc(gcode).rawText()}"

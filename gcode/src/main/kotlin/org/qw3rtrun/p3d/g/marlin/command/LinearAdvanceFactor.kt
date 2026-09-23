@@ -57,13 +57,12 @@ data class LinearAdvanceFactor(
             return M(900).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): LinearAdvanceFactor {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): LinearAdvanceFactor {
             return LinearAdvanceFactor(
-                kfactor = params.decimalOf('K'),
-                l = params.decimalOf('L'),
-                slot = params.intOf('S'),
-                index = params.intOf('T'),
+                kfactor = tokens.decimalOf('K'),
+                l = tokens.decimalOf('L'),
+                slot = tokens.intOf('S'),
+                index = tokens.intOf('T'),
             )
         }
     }

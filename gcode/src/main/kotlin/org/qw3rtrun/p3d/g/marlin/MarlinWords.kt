@@ -10,6 +10,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GTailComment
 import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GValue
 import org.qw3rtrun.p3d.g.code.core.token.GWhitespace
+import org.qw3rtrun.p3d.g.code.core.token.valueIndex
 import java.math.BigDecimal
 
 /**
@@ -41,13 +42,11 @@ internal fun List<GToken>.valueOf(letter: Char): GValue? {
     while (i < size) {
         val token = this[i]
         if (token is GIdentifier && token.isLetter(letter)) {
-            // spec 2.1: a space may separate a field from its value, so `X 10` is one word.
-            var j = i + 1
-            while (j < size && this[j] is GWhitespace) j++
-            val value = if (j < size) this[j] else null
+            // spec 2.1's pairing, which is `valueIndex`'s and not a fourth copy of it here.
             // The first spelling of the letter wins, value or not: a line carrying `X` and then
             // `X10` is malformed, and quietly preferring the second would hide it.
-            return value as? GValue
+            val j = valueIndex(this, i)
+            return if (j < 0) null else this[j] as GValue
         }
         i++
     }
@@ -190,10 +189,8 @@ private fun List<GToken>.stringArgStart(letters: CharArray): Int {
         }
         if (token !is GIdentifier) break
         if (!token.isOneOf(letters)) break
-        var j = i + 1
-        while (j < size && this[j] is GWhitespace) j++
-        val value = if (j < size) this[j] else null
-        if (value !is GValue) break
+        val j = valueIndex(this, i)
+        if (j < 0) break
         i = j + 1
     }
     return i

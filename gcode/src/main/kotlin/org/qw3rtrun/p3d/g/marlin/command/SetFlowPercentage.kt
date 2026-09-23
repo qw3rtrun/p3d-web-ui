@@ -52,11 +52,10 @@ data class SetFlowPercentage(
             return M(221).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetFlowPercentage {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetFlowPercentage {
             return SetFlowPercentage(
-                percent = params.intOf('S'),
-                index = params.intOf('T'),
+                percent = tokens.intOf('S'),
+                index = tokens.intOf('T'),
             )
         }
     }

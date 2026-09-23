@@ -46,7 +46,7 @@ class EnableEndstops : GRq<EnableEndstops> {
             return M(120).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): EnableEndstops {
+        override fun decodeParams(tokens: List<GToken>): EnableEndstops {
             return EnableEndstops()
         }
     }

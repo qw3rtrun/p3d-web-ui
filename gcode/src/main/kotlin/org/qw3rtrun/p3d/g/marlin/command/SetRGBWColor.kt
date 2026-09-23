@@ -69,17 +69,16 @@ data class SetRGBWColor(
             return M(150).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetRGBWColor {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetRGBWColor {
             return SetRGBWColor(
-                intensity = params.intOf('R'),
-                u = params.intOf('U'),
-                b = params.intOf('B'),
-                w = params.intOf('W'),
-                p = params.intOf('P'),
-                pixel = params.intOf('I'),
-                strip = params.intOf('S'),
-                k = params.hasWord('K'),
+                intensity = tokens.intOf('R'),
+                u = tokens.intOf('U'),
+                b = tokens.intOf('B'),
+                w = tokens.intOf('W'),
+                p = tokens.intOf('P'),
+                pixel = tokens.intOf('I'),
+                strip = tokens.intOf('S'),
+                k = tokens.hasWord('K'),
             )
         }
     }

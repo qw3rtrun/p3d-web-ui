@@ -96,25 +96,24 @@ data class ArcOrCircleMoveG3(
             return G(3).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ArcOrCircleMoveG3 {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ArcOrCircleMoveG3 {
             return ArcOrCircleMoveG3(
-                pos = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                a = params.decimalOf('A'),
-                b = params.decimalOf('B'),
-                c = params.decimalOf('C'),
-                u = params.decimalOf('U'),
-                v = params.decimalOf('V'),
-                w = params.decimalOf('W'),
-                offset = params.decimalOf('I'),
-                j = params.decimalOf('J'),
-                radius = params.decimalOf('R'),
-                e = params.decimalOf('E'),
-                rate = params.decimalOf('F'),
-                count = params.intOf('P'),
-                power = params.decimalOf('S'),
+                pos = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                a = tokens.decimalOf('A'),
+                b = tokens.decimalOf('B'),
+                c = tokens.decimalOf('C'),
+                u = tokens.decimalOf('U'),
+                v = tokens.decimalOf('V'),
+                w = tokens.decimalOf('W'),
+                offset = tokens.decimalOf('I'),
+                j = tokens.decimalOf('J'),
+                radius = tokens.decimalOf('R'),
+                e = tokens.decimalOf('E'),
+                rate = tokens.decimalOf('F'),
+                count = tokens.intOf('P'),
+                power = tokens.decimalOf('S'),
             )
         }
     }

@@ -49,11 +49,10 @@ data class SetPasscode(
             return M(512).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetPasscode {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetPasscode {
             return SetPasscode(
-                password = params.intOf('P'),
-                s = params.intOf('S'),
+                password = tokens.intOf('P'),
+                s = tokens.intOf('S'),
             )
         }
     }

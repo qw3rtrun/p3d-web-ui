@@ -50,11 +50,10 @@ data class WaitForChamberTemperature(
             return M(191).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): WaitForChamberTemperature {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): WaitForChamberTemperature {
             return WaitForChamberTemperature(
-                temp = params.decimalOf('S'),
-                r = params.decimalOf('R'),
+                temp = tokens.decimalOf('S'),
+                r = tokens.decimalOf('R'),
             )
         }
     }

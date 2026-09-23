@@ -46,7 +46,7 @@ class ReadFilamentWidth : GRq<ReadFilamentWidth> {
             return M(407).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ReadFilamentWidth {
+        override fun decodeParams(tokens: List<GToken>): ReadFilamentWidth {
             return ReadFilamentWidth()
         }
     }

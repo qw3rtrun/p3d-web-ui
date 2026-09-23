@@ -46,10 +46,9 @@ data class Baricuda1Open(
             return M(126).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): Baricuda1Open {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): Baricuda1Open {
             return Baricuda1Open(
-                pressure = params.intOf('S'),
+                pressure = tokens.intOf('S'),
             )
         }
     }

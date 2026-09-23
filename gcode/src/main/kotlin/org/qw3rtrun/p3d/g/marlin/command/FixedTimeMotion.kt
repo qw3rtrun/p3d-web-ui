@@ -83,21 +83,20 @@ data class FixedTimeMotion(
             return M(493).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FixedTimeMotion {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FixedTimeMotion {
             return FixedTimeMotion(
-                s = params.intOf('S'),
-                h = params.intOf('H'),
-                c = params.intOf('C'),
-                d = params.intOf('D'),
-                a = params.decimalOf('A'),
-                scale = params.decimalOf('F'),
-                zeta = params.decimalOf('I'),
-                vtol = params.decimalOf('Q'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                e = params.hasWord('E'),
+                s = tokens.intOf('S'),
+                h = tokens.intOf('H'),
+                c = tokens.intOf('C'),
+                d = tokens.intOf('D'),
+                a = tokens.decimalOf('A'),
+                scale = tokens.decimalOf('F'),
+                zeta = tokens.decimalOf('I'),
+                vtol = tokens.decimalOf('Q'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                e = tokens.hasWord('E'),
             )
         }
     }

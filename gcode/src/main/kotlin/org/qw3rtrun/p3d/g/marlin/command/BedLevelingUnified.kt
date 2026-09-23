@@ -110,30 +110,29 @@ data class BedLevelingUnified(
             return G(29).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BedLevelingUnified {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): BedLevelingUnified {
             return BedLevelingUnified(
-                a = params.hasWord('A'),
-                b = params.decimalOf('B'),
-                c = params.decimalOf('C'),
-                d = params.hasWord('D'),
-                e = params.hasWord('E'),
-                f = params.decimalOf('F'),
-                h = params.decimalOf('H'),
-                i = params.intOf('I'),
-                j = params.intOf('J'),
-                k = params.intOf('K'),
-                l = params.intOf('L'),
-                p = params.intOf('P'),
-                q = params.intOf('Q'),
-                r = params.intOf('R'),
-                slot = params.intOf('S'),
-                t = params.intOf('T'),
-                u = params.hasWord('U'),
-                v = params.intOf('V'),
-                w = params.hasWord('W'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
+                a = tokens.hasWord('A'),
+                b = tokens.decimalOf('B'),
+                c = tokens.decimalOf('C'),
+                d = tokens.hasWord('D'),
+                e = tokens.hasWord('E'),
+                f = tokens.decimalOf('F'),
+                h = tokens.decimalOf('H'),
+                i = tokens.intOf('I'),
+                j = tokens.intOf('J'),
+                k = tokens.intOf('K'),
+                l = tokens.intOf('L'),
+                p = tokens.intOf('P'),
+                q = tokens.intOf('Q'),
+                r = tokens.intOf('R'),
+                slot = tokens.intOf('S'),
+                t = tokens.intOf('T'),
+                u = tokens.hasWord('U'),
+                v = tokens.intOf('V'),
+                w = tokens.hasWord('W'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
             )
         }
     }

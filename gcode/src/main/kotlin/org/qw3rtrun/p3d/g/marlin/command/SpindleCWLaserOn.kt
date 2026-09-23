@@ -53,12 +53,11 @@ data class SpindleCWLaserOn(
             return M(3).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SpindleCWLaserOn {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SpindleCWLaserOn {
             return SpindleCWLaserOn(
-                power = params.intOf('S'),
-                o = params.intOf('O'),
-                mode = params.boolOf('I'),
+                power = tokens.intOf('S'),
+                o = tokens.intOf('O'),
+                mode = tokens.boolOf('I'),
             )
         }
     }

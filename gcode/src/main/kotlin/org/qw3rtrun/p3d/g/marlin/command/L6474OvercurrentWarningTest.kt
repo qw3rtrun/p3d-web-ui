@@ -90,24 +90,23 @@ data class L6474OvercurrentWarningTest(
             return M(917).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): L6474OvercurrentWarningTest {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): L6474OvercurrentWarningTest {
             return L6474OvercurrentWarningTest(
-                j = params.intOf('J'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                a = params.decimalOf('A'),
-                b = params.decimalOf('B'),
-                c = params.decimalOf('C'),
-                u = params.decimalOf('U'),
-                v = params.decimalOf('V'),
-                w = params.decimalOf('W'),
-                e = params.decimalOf('E'),
-                feedrate = params.intOf('F'),
-                current = params.intOf('I'),
-                t = params.intOf('T'),
-                k = params.intOf('K'),
+                j = tokens.intOf('J'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                a = tokens.decimalOf('A'),
+                b = tokens.decimalOf('B'),
+                c = tokens.decimalOf('C'),
+                u = tokens.decimalOf('U'),
+                v = tokens.decimalOf('V'),
+                w = tokens.decimalOf('W'),
+                e = tokens.decimalOf('E'),
+                feedrate = tokens.intOf('F'),
+                current = tokens.intOf('I'),
+                t = tokens.intOf('T'),
+                k = tokens.intOf('K'),
             )
         }
     }

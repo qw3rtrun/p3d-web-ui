@@ -53,12 +53,11 @@ data class SetChamberPID(
             return M(309).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetChamberPID {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetChamberPID {
             return SetChamberPID(
-                value = params.decimalOf('P'),
-                i = params.decimalOf('I'),
-                d = params.decimalOf('D'),
+                value = tokens.decimalOf('P'),
+                i = tokens.decimalOf('I'),
+                d = tokens.decimalOf('D'),
             )
         }
     }

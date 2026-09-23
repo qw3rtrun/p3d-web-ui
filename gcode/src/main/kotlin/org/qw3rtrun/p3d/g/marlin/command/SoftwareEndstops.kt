@@ -46,10 +46,9 @@ data class SoftwareEndstops(
             return M(211).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SoftwareEndstops {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SoftwareEndstops {
             return SoftwareEndstops(
-                s = params.boolOf('S'),
+                s = tokens.boolOf('S'),
             )
         }
     }

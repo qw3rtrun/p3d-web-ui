@@ -64,15 +64,14 @@ data class PinsDebugging(
             return M(43).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PinsDebugging {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): PinsDebugging {
             return PinsDebugging(
-                pin = params.intOf('P'),
-                w = params.hasWord('W'),
-                e = params.boolOf('E'),
-                t = params.hasWord('T'),
-                s = params.hasWord('S'),
-                i = params.hasWord('I'),
+                pin = tokens.intOf('P'),
+                w = tokens.hasWord('W'),
+                e = tokens.boolOf('E'),
+                t = tokens.hasWord('T'),
+                s = tokens.hasWord('S'),
+                i = tokens.hasWord('I'),
             )
         }
     }

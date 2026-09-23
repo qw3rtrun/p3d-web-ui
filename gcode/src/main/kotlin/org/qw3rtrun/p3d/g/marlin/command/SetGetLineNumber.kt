@@ -49,10 +49,9 @@ data class SetGetLineNumber(
             return M(110).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetGetLineNumber {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetGetLineNumber {
             return SetGetLineNumber(
-                line = params.intOf('N'),
+                line = tokens.intOf('N'),
             )
         }
     }

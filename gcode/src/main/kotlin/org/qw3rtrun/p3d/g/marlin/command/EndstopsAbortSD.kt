@@ -49,10 +49,9 @@ data class EndstopsAbortSD(
             return M(540).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): EndstopsAbortSD {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): EndstopsAbortSD {
             return EndstopsAbortSD(
-                flag = params.boolOf('S'),
+                flag = tokens.boolOf('S'),
             )
         }
     }

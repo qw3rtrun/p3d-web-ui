@@ -46,10 +46,9 @@ data class TrammingAssistant(
             return G(35).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TrammingAssistant {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): TrammingAssistant {
             return TrammingAssistant(
-                s = params.intOf('S'),
+                s = tokens.intOf('S'),
             )
         }
     }

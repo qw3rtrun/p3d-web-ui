@@ -52,11 +52,10 @@ data class WaitForPinState(
             return M(226).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): WaitForPinState {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): WaitForPinState {
             return WaitForPinState(
-                pin = params.intOf('P'),
-                state = params.intOf('S'),
+                pin = tokens.intOf('P'),
+                state = tokens.intOf('S'),
             )
         }
     }

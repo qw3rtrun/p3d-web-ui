@@ -3,7 +3,7 @@ package org.qw3rtrun.p3d.g.marlin
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
-import org.qw3rtrun.p3d.g.code.core.token.GCommandParser
+import org.qw3rtrun.p3d.g.code.core.token.GWordReader
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.token.GLiner
 import org.qw3rtrun.p3d.g.code.core.token.GSpace
@@ -23,8 +23,6 @@ import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
  */
 class MarlinDocExamplesTest {
 
-    private val tokenizer = GTokenizer()
-    private val commands = GCommandParser()
 
     private val examples: List<String> =
         requireNotNull(javaClass.getResourceAsStream("/marlin-doc-examples.txt")) {
@@ -35,8 +33,8 @@ class MarlinDocExamplesTest {
             .filter { it.isNotEmpty() && !it.startsWith("#") }
 
     private fun parse(line: String) =
-        GLiner(tokenizer.parse(line).iterator()).asSequence()
-            .flatMap { commands.parse(it).asSequence() }
+        GTokenizer.lines(line)
+            .flatMap { GWordReader.parse(it).asSequence() }
             .toList()
 
     private fun codeOf(line: String) = line.trim().split(Regex("\\s+")).first().uppercase()
@@ -60,8 +58,8 @@ class MarlinDocExamplesTest {
      * reaches the decoder unchanged; the separator the parser dropped between two words is put
      * back, because a command whose argument runs to the end of the line can see it.
      */
-    private fun paramTokens(cmd: GCommand): Sequence<GToken> =
-        cmd.params.asSequence().flatMap { sequenceOf(GSpace) + it.raw.asSequence() }
+    private fun paramTokens(cmd: GCommand): List<GToken> =
+        cmd.params.flatMap { listOf(GSpace) + it.raw }
 
     /**
      * Examples whose argument is a rest-of-line string, not lettered parameters.

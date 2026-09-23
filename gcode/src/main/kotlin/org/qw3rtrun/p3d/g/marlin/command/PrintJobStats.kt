@@ -46,7 +46,7 @@ class PrintJobStats : GRq<PrintJobStats> {
             return M(78).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PrintJobStats {
+        override fun decodeParams(tokens: List<GToken>): PrintJobStats {
             return PrintJobStats()
         }
     }

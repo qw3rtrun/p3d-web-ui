@@ -49,11 +49,10 @@ data class PlayTone(
             return M(300).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PlayTone {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): PlayTone {
             return PlayTone(
-                ms = params.intOf('P'),
-                s = params.intOf('S'),
+                ms = tokens.intOf('P'),
+                s = tokens.intOf('S'),
             )
         }
     }

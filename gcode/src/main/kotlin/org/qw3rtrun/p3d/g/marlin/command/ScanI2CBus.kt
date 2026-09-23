@@ -46,7 +46,7 @@ class ScanI2CBus : GRq<ScanI2CBus> {
             return M(265).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ScanI2CBus {
+        override fun decodeParams(tokens: List<GToken>): ScanI2CBus {
             return ScanI2CBus()
         }
     }

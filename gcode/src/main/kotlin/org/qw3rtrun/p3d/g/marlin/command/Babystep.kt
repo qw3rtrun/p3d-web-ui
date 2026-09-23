@@ -60,14 +60,13 @@ data class Babystep(
             return M(290).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): Babystep {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): Babystep {
             return Babystep(
-                pos = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                s = params.decimalOf('S'),
-                p = params.boolOf('P'),
+                pos = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                s = tokens.decimalOf('S'),
+                p = tokens.boolOf('P'),
             )
         }
     }

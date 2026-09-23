@@ -52,12 +52,11 @@ data class GetCurrentPosition(
             return M(114).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): GetCurrentPosition {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): GetCurrentPosition {
             return GetCurrentPosition(
-                d = params.hasWord('D'),
-                e = params.hasWord('E'),
-                r = params.hasWord('R'),
+                d = tokens.hasWord('D'),
+                e = tokens.hasWord('E'),
+                r = tokens.hasWord('R'),
             )
         }
     }

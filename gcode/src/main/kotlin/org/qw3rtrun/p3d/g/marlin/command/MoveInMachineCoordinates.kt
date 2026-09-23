@@ -46,7 +46,7 @@ class MoveInMachineCoordinates : GRq<MoveInMachineCoordinates> {
             return G(53).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MoveInMachineCoordinates {
+        override fun decodeParams(tokens: List<GToken>): MoveInMachineCoordinates {
             return MoveInMachineCoordinates()
         }
     }

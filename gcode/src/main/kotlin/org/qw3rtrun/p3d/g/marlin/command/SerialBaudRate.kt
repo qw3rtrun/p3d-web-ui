@@ -55,11 +55,10 @@ data class SerialBaudRate(
             return M(575).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SerialBaudRate {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SerialBaudRate {
             return SerialBaudRate(
-                p = params.hasWord('P'),
-                baud = params.decimalOf('B'),
+                p = tokens.hasWord('P'),
+                baud = tokens.decimalOf('B'),
             )
         }
     }

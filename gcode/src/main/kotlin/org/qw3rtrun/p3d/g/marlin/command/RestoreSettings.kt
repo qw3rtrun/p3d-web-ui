@@ -46,7 +46,7 @@ class RestoreSettings : GRq<RestoreSettings> {
             return M(501).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): RestoreSettings {
+        override fun decodeParams(tokens: List<GToken>): RestoreSettings {
             return RestoreSettings()
         }
     }

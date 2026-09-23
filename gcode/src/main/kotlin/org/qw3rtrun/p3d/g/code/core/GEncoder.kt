@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.g.code.core
 
 import org.qw3rtrun.p3d.g.code.core.token.GBlock
+import org.qw3rtrun.p3d.g.code.core.token.GBlockPart
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GComment
 import org.qw3rtrun.p3d.g.code.core.token.GFlagWord
@@ -19,11 +20,11 @@ import org.qw3rtrun.p3d.g.code.core.token.GWord
  * to be self-delimiting (finding 1.10). A byte-oriented encoder cannot have that bug, and it is also
  * the only shape a checksum can be computed over.
  *
- * **Not driven by `GDescription`.** The descriptor knows a command's fields and their defaults, and
- * that makes it the right source of truth for *which* fields a command should carry - a validation
- * and defaulting question, one layer above this. Emitting bytes is a separate job, and keeping it
- * separate is what lets the encoder handle a command the module has no descriptor for, which today
- * is nearly all of them. A defaulting layer can be built on top later and will call into this.
+ * **Not driven by a descriptor.** *Which* fields a command should carry, and what they default to,
+ * is a validation question and belongs one layer above this. Emitting bytes is a separate job, and
+ * keeping it separate is what lets the encoder write a command nothing has described. A `GDescriptor`
+ * type was carried here for a while against a defaulting layer that was never built and a Java
+ * consumer that no longer exists; it is deleted, and git history has it if that layer arrives.
  *
  * Stateless and allocation-light: one `StringBuilder` per line.
  */
@@ -43,11 +44,7 @@ object GEncoder {
      */
     fun encode(command: GCommand): String {
         val out = StringBuilder()
-        appendWord(out, command.head)
-        for (i in command.params.indices) {
-            out.append(' ')
-            appendWord(out, command.params[i])
-        }
+        appendCommand(out, command)
         return out.toString()
     }
 
@@ -94,7 +91,7 @@ object GEncoder {
         }
 
         val covered = out.toString()
-        for (i in 0 until covered.length) checksum.add(covered[i])
+        checksum.add(covered)
         out.append('*').append(checksum.get().lexeme)
 
         for (i in lastPayload + 1 until block.parts.size) {
@@ -104,41 +101,36 @@ object GEncoder {
         return out.toString()
     }
 
-    private fun appendPart(out: StringBuilder, part: org.qw3rtrun.p3d.g.code.core.token.GBlockPart) {
+    private fun appendPart(out: StringBuilder, part: GBlockPart) {
         when (part) {
-            is GCommand -> {
-                appendWord(out, part.head)
-                for (i in part.params.indices) {
-                    out.append(' ')
-                    appendWord(out, part.params[i])
-                }
-            }
+            is GCommand -> appendCommand(out, part)
             is GComment -> out.append(part.rawText())
         }
     }
 
+    /** The command word, then each parameter behind a single space. */
+    private fun appendCommand(out: StringBuilder, command: GCommand) {
+        appendWord(out, command.head)
+        for (i in command.params.indices) {
+            out.append(' ')
+            appendWord(out, command.params[i])
+        }
+    }
+
     /**
-     * A framed line: `N<number> <command>*<checksum>`, per sections 7 and 8.
+     * A framed line around one command: `N<number> <command>*<checksum>`, sections 7 and 8.
      *
-     * The order of operations is the whole of section 8.3 and is not interchangeable: the prefix is
-     * prepended **first**, the finished byte string is checksummed **second**, and the `*` field is
-     * appended **last**. The `N` and its digits are covered; the marker and everything after it are
-     * not. Nothing touches the whitespace once the checksum is taken, and no space is emitted before
-     * the marker - a space there would be covered and would change the value.
+     * The common case, and **the same function** as [frame] over a block - a one-command line is a
+     * one-part block, and section 8.3's order of operations is stated and implemented there, once.
+     * It was implemented twice until this became a delegation, which is two copies of the four
+     * most order-sensitive lines in the encoder and a silent divergence waiting to happen.
      *
      * The algorithm is the caller's to choose by passing the calculator: [XorCheckSum] (section 8.2,
      * the default and what Marlin expects) or [Crc16CheckSum] (section 8.4, five digits, stronger).
      * A calculator carries the state of one line, so a fresh one is needed per call.
      */
-    fun frame(number: Int, command: GCommand, checksum: CheckSumCalculator = XorCheckSum()): String {
-        val out = StringBuilder()
-        out.append('N').append(number).append(' ').append(encode(command))
-
-        val covered = out.toString()
-        for (i in 0 until covered.length) checksum.add(covered[i])
-
-        return out.append('*').append(checksum.get().lexeme).toString()
-    }
+    fun frame(number: Int, command: GCommand, checksum: CheckSumCalculator = XorCheckSum()): String =
+        frame(number, GBlock(listOf(command)), checksum)
 
     /**
      * One field: the identifier, then its value with no separator between them.

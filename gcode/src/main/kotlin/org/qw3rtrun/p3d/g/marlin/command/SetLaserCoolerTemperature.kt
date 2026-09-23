@@ -47,10 +47,9 @@ data class SetLaserCoolerTemperature(
             return M(143).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetLaserCoolerTemperature {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetLaserCoolerTemperature {
             return SetLaserCoolerTemperature(
-                temp = params.decimalOf('S'),
+                temp = tokens.decimalOf('S'),
             )
         }
     }

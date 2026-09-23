@@ -63,15 +63,14 @@ data class ProbeTemperatureConfig(
             return M(871).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ProbeTemperatureConfig {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ProbeTemperatureConfig {
             return ProbeTemperatureConfig(
-                value = params.intOf('V'),
-                index = params.intOf('I'),
-                b = params.hasWord('B'),
-                p = params.hasWord('P'),
-                e = params.hasWord('E'),
-                r = params.hasWord('R'),
+                value = tokens.intOf('V'),
+                index = tokens.intOf('I'),
+                b = tokens.hasWord('B'),
+                p = tokens.hasWord('P'),
+                e = tokens.hasWord('E'),
+                r = tokens.hasWord('R'),
             )
         }
     }

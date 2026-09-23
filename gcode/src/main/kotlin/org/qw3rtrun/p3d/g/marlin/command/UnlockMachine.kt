@@ -49,10 +49,9 @@ data class UnlockMachine(
             return M(511).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): UnlockMachine {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): UnlockMachine {
             return UnlockMachine(
-                passcode = params.intOf('P'),
+                passcode = tokens.intOf('P'),
             )
         }
     }

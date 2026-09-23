@@ -46,7 +46,7 @@ class ERelative : GRq<ERelative> {
             return M(83).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ERelative {
+        override fun decodeParams(tokens: List<GToken>): ERelative {
             return ERelative()
         }
     }

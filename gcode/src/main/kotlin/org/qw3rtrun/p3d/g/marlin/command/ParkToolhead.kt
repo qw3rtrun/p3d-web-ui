@@ -46,10 +46,9 @@ data class ParkToolhead(
             return G(27).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ParkToolhead {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ParkToolhead {
             return ParkToolhead(
-                p = params.intOf('P'),
+                p = tokens.intOf('P'),
             )
         }
     }

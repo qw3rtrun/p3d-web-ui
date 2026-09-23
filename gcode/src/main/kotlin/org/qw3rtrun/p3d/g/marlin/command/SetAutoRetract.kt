@@ -49,10 +49,9 @@ data class SetAutoRetract(
             return M(209).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetAutoRetract {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetAutoRetract {
             return SetAutoRetract(
-                s = params.boolOf('S'),
+                s = tokens.boolOf('S'),
             )
         }
     }

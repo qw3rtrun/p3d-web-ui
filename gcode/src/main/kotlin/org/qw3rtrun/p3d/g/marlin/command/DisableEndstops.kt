@@ -46,7 +46,7 @@ class DisableEndstops : GRq<DisableEndstops> {
             return M(121).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DisableEndstops {
+        override fun decodeParams(tokens: List<GToken>): DisableEndstops {
             return DisableEndstops()
         }
     }

@@ -46,7 +46,7 @@ class VacuumBlowerControlM10 : GRq<VacuumBlowerControlM10> {
             return M(10).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): VacuumBlowerControlM10 {
+        override fun decodeParams(tokens: List<GToken>): VacuumBlowerControlM10 {
             return VacuumBlowerControlM10()
         }
     }

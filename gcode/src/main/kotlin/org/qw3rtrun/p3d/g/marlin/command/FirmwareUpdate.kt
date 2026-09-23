@@ -46,7 +46,7 @@ class FirmwareUpdate : GRq<FirmwareUpdate> {
             return M(997).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FirmwareUpdate {
+        override fun decodeParams(tokens: List<GToken>): FirmwareUpdate {
             return FirmwareUpdate()
         }
     }

@@ -56,13 +56,12 @@ data class FirmwareRetractionSettings(
             return M(207).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FirmwareRetractionSettings {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FirmwareRetractionSettings {
             return FirmwareRetractionSettings(
-                length = params.decimalOf('S'),
-                w = params.decimalOf('W'),
-                feedrate = params.decimalOf('F'),
-                z = params.decimalOf('Z'),
+                length = tokens.decimalOf('S'),
+                w = tokens.decimalOf('W'),
+                feedrate = tokens.decimalOf('F'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

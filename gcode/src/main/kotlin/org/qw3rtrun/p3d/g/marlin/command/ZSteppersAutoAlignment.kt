@@ -72,17 +72,16 @@ data class ZSteppersAutoAlignment(
             return G(34).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ZSteppersAutoAlignment {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ZSteppersAutoAlignment {
             return ZSteppersAutoAlignment(
-                l = params.hasWord('L'),
-                z = params.intOf('Z'),
-                s = params.boolOf('S'),
-                i = params.intOf('I'),
-                t = params.decimalOf('T'),
-                a = params.decimalOf('A'),
-                e = params.boolOf('E'),
-                r = params.hasWord('R'),
+                l = tokens.hasWord('L'),
+                z = tokens.intOf('Z'),
+                s = tokens.boolOf('S'),
+                i = tokens.intOf('I'),
+                t = tokens.decimalOf('T'),
+                a = tokens.decimalOf('A'),
+                e = tokens.boolOf('E'),
+                r = tokens.hasWord('R'),
             )
         }
     }

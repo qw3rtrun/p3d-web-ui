@@ -53,12 +53,11 @@ data class SpindleCCWLaserOn(
             return M(4).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SpindleCCWLaserOn {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SpindleCCWLaserOn {
             return SpindleCCWLaserOn(
-                power = params.intOf('S'),
-                o = params.intOf('O'),
-                mode = params.boolOf('I'),
+                power = tokens.intOf('S'),
+                o = tokens.intOf('O'),
+                mode = tokens.boolOf('I'),
             )
         }
     }

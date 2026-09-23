@@ -49,11 +49,10 @@ data class ReportSettings(
             return M(503).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ReportSettings {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ReportSettings {
             return ReportSettings(
-                s = params.hasWord('S'),
-                c = params.hasWord('C'),
+                s = tokens.hasWord('S'),
+                c = tokens.hasWord('C'),
             )
         }
     }

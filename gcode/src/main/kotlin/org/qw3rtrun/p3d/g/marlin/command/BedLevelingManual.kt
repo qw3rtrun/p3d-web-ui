@@ -66,15 +66,14 @@ data class BedLevelingManual(
             return G(29).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BedLevelingManual {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): BedLevelingManual {
             return BedLevelingManual(
-                s = params.intOf('S'),
-                index = params.intOf('I'),
-                j = params.intOf('J'),
-                count = params.intOf('X'),
-                y = params.intOf('Y'),
-                linear = params.decimalOf('Z'),
+                s = tokens.intOf('S'),
+                index = tokens.intOf('I'),
+                j = tokens.intOf('J'),
+                count = tokens.intOf('X'),
+                y = tokens.intOf('Y'),
+                linear = tokens.decimalOf('Z'),
             )
         }
     }

@@ -81,20 +81,19 @@ data class I2CPositionEncodersM866(
             return M(866).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): I2CPositionEncodersM866 {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): I2CPositionEncodersM866 {
             return I2CPositionEncodersM866(
-                index = params.intOf('I'),
-                o = params.boolOf('O'),
-                axis = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                e = params.hasWord('E'),
-                u = params.boolOf('U'),
-                p = params.intOf('P'),
-                addr = params.intOf('S'),
-                r = params.boolOf('R'),
-                t = params.decimalOf('T'),
+                index = tokens.intOf('I'),
+                o = tokens.boolOf('O'),
+                axis = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                e = tokens.hasWord('E'),
+                u = tokens.boolOf('U'),
+                p = tokens.intOf('P'),
+                addr = tokens.intOf('S'),
+                r = tokens.boolOf('R'),
+                t = tokens.decimalOf('T'),
             )
         }
     }

@@ -51,11 +51,10 @@ data class SetMixFactor(
             return M(163).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetMixFactor {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetMixFactor {
             return SetMixFactor(
-                index = params.intOf('S'),
-                factor = params.decimalOf('P'),
+                index = tokens.intOf('S'),
+                factor = tokens.decimalOf('P'),
             )
         }
     }

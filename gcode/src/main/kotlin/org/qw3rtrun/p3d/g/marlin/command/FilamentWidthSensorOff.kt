@@ -46,7 +46,7 @@ class FilamentWidthSensorOff : GRq<FilamentWidthSensorOff> {
             return M(406).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FilamentWidthSensorOff {
+        override fun decodeParams(tokens: List<GToken>): FilamentWidthSensorOff {
             return FilamentWidthSensorOff()
         }
     }

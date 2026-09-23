@@ -57,12 +57,11 @@ data class SerialPrint(
             return M(118).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SerialPrint {
-            val all = tokens.toList()
-            val params = all.beforeStringArg('P')
+        override fun decodeParams(tokens: List<GToken>): SerialPrint {
+            val params = tokens.beforeStringArg('P')
             return SerialPrint(
                 p = params.intOf('P'),
-                message = all.stringArg('P'),
+                message = tokens.stringArg('P'),
             )
         }
     }

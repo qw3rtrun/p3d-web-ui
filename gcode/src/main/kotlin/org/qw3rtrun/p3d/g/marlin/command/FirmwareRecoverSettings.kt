@@ -56,13 +56,12 @@ data class FirmwareRecoverSettings(
             return M(208).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FirmwareRecoverSettings {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FirmwareRecoverSettings {
             return FirmwareRecoverSettings(
-                length = params.decimalOf('S'),
-                w = params.decimalOf('W'),
-                feedrate = params.decimalOf('F'),
-                r = params.decimalOf('R'),
+                length = tokens.decimalOf('S'),
+                w = tokens.decimalOf('W'),
+                feedrate = tokens.decimalOf('F'),
+                r = tokens.decimalOf('R'),
             )
         }
     }

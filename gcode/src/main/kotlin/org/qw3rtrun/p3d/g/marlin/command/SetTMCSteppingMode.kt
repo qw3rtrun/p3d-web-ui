@@ -63,15 +63,14 @@ data class SetTMCSteppingMode(
             return M(569).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetTMCSteppingMode {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetTMCSteppingMode {
             return SetTMCSteppingMode(
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                e = params.hasWord('E'),
-                i = params.intOf('I'),
-                t = params.intOf('T'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                e = tokens.hasWord('E'),
+                i = tokens.intOf('I'),
+                t = tokens.intOf('T'),
             )
         }
     }

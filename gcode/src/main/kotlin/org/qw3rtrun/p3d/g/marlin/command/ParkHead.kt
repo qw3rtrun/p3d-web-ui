@@ -60,14 +60,13 @@ data class ParkHead(
             return M(125).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ParkHead {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ParkHead {
             return ParkHead(
-                linear = params.decimalOf('L'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                p = params.boolOf('P'),
+                linear = tokens.decimalOf('L'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                p = tokens.boolOf('P'),
             )
         }
     }

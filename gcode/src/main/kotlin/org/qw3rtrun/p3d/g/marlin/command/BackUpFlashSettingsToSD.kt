@@ -46,7 +46,7 @@ class BackUpFlashSettingsToSD : GRq<BackUpFlashSettingsToSD> {
             return M(993).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BackUpFlashSettingsToSD {
+        override fun decodeParams(tokens: List<GToken>): BackUpFlashSettingsToSD {
             return BackUpFlashSettingsToSD()
         }
     }

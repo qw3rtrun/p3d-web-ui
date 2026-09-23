@@ -74,18 +74,17 @@ data class ModelPredictiveTempControl(
             return M(306).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ModelPredictiveTempControl {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ModelPredictiveTempControl {
             return ModelPredictiveTempControl(
-                value = params.decimalOf('A'),
-                c = params.decimalOf('C'),
-                index = params.intOf('E'),
-                f = params.decimalOf('F'),
-                h = params.decimalOf('H'),
-                p = params.decimalOf('P'),
-                r = params.decimalOf('R'),
-                s = params.intOf('S'),
-                t = params.hasWord('T'),
+                value = tokens.decimalOf('A'),
+                c = tokens.decimalOf('C'),
+                index = tokens.intOf('E'),
+                f = tokens.decimalOf('F'),
+                h = tokens.decimalOf('H'),
+                p = tokens.decimalOf('P'),
+                r = tokens.decimalOf('R'),
+                s = tokens.intOf('S'),
+                t = tokens.hasWord('T'),
             )
         }
     }

@@ -4,12 +4,9 @@ import java.math.BigDecimal
 
 sealed interface GToken {
     fun rawText(): String
-    fun toSeq() = sequenceOf(this)
 }
 
-sealed interface GValue : GToken {
-    override fun toSeq(): Sequence<GValue> = sequenceOf(this)
-}
+sealed interface GValue : GToken
 
 sealed interface GLiteral : GValue
 
@@ -169,12 +166,21 @@ data class GFloat(val value: BigDecimal, override val lexeme: String = value.toS
         get() = value
 }
 
+/**
+ * An expression value, spec 3.5: RS274/NGC's `[...]` or RepRapFirmware's `{...}`.
+ *
+ * [text] is the expression **as written, delimiters included** - nothing here evaluates one, and a
+ * host that does not understand it still re-emits it byte for byte. The property was called
+ * `exception` until it was read as one: in a module whose rule is that errors are values and the
+ * core never throws, a token property of that name is the first thing a reader chasing a throw
+ * site finds.
+ */
 sealed interface GExpression : GValue {
-    val exception: String
+    val text: String
 }
 
-data class GRawExpression(override val exception: String) : GExpression {
-    override fun rawText(): String = exception
+data class GRawExpression(override val text: String) : GExpression {
+    override fun rawText(): String = text
 }
 
 

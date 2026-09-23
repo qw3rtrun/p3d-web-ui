@@ -57,13 +57,12 @@ data class I2CSend(
             return M(260).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): I2CSend {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): I2CSend {
             return I2CSend(
-                addr = params.intOf('A'),
-                byte = params.intOf('B'),
-                r = params.hasWord('R'),
-                s = params.hasWord('S'),
+                addr = tokens.intOf('A'),
+                byte = tokens.intOf('B'),
+                r = tokens.hasWord('R'),
+                s = tokens.hasWord('S'),
             )
         }
     }

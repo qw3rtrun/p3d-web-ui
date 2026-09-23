@@ -63,14 +63,13 @@ data class MultiNozzleMode(
             return M(605).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MultiNozzleMode {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): MultiNozzleMode {
             return MultiNozzleMode(
-                s = params.intOf('S'),
-                x = params.decimalOf('X'),
-                r = params.intOf('R'),
-                p = params.intOf('P'),
-                e = params.intOf('E'),
+                s = tokens.intOf('S'),
+                x = tokens.decimalOf('X'),
+                r = tokens.intOf('R'),
+                p = tokens.intOf('P'),
+                e = tokens.intOf('E'),
             )
         }
     }

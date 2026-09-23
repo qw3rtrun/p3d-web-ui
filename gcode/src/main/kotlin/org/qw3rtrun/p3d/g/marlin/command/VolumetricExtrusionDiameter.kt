@@ -57,13 +57,12 @@ data class VolumetricExtrusionDiameter(
             return M(200).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): VolumetricExtrusionDiameter {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): VolumetricExtrusionDiameter {
             return VolumetricExtrusionDiameter(
-                diameter = params.decimalOf('D'),
-                volume = params.decimalOf('L'),
-                s = params.intOf('S'),
-                index = params.intOf('T'),
+                diameter = tokens.decimalOf('D'),
+                volume = tokens.decimalOf('L'),
+                s = tokens.intOf('S'),
+                index = tokens.intOf('T'),
             )
         }
     }

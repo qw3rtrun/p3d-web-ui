@@ -46,10 +46,9 @@ data class LCDLanguage(
             return M(414).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): LCDLanguage {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): LCDLanguage {
             return LCDLanguage(
-                languageIndex = params.intOf('S'),
+                languageIndex = tokens.intOf('S'),
             )
         }
     }

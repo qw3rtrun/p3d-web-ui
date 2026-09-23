@@ -46,7 +46,7 @@ class FactoryReset : GRq<FactoryReset> {
             return M(502).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FactoryReset {
+        override fun decodeParams(tokens: List<GToken>): FactoryReset {
             return FactoryReset()
         }
     }

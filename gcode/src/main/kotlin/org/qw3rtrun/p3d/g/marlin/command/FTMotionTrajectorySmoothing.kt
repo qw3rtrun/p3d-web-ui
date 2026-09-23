@@ -61,15 +61,14 @@ data class FTMotionTrajectorySmoothing(
             return M(494).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FTMotionTrajectorySmoothing {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FTMotionTrajectorySmoothing {
             return FTMotionTrajectorySmoothing(
-                t = params.hasWord('T'),
-                o = params.hasWord('O'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                e = params.hasWord('E'),
+                t = tokens.hasWord('T'),
+                o = tokens.hasWord('O'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                e = tokens.hasWord('E'),
             )
         }
     }

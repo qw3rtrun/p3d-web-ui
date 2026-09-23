@@ -16,10 +16,9 @@ import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
  */
 class GCodeReaderTest {
 
-    private val tokenizer = GTokenizer()
 
     private fun lines(gcode: String): List<GLine> =
-        GLiner(tokenizer.parse(gcode).iterator()).asSequence().toList()
+        GTokenizer.lines(gcode).toList()
 
     private fun line(gcode: String): GLine = lines(gcode).single()
 
@@ -181,18 +180,22 @@ class GCodeReaderTest {
         }
 
         @Test
-        fun `M117 followed by M110 does reset, and that is todo 09 showing through`() {
-            // Characterisation, not endorsement. `M117`'s argument is a bare rest-of-line string,
-            // which needs the command number to lex (spec 3.4a, deferred to todo 09). Until that
-            // lands, `M117 M110 N0` genuinely parses as two commands and the second really is an
-            // `M110 N0`, so the counter resets. Marlin agrees here, for its own worse reason. When
-            // 09 lands this test should flip to asserting the counter is untouched.
+        fun `an M110 inside an M117 message does not reset`() {
+            // This used to assert the opposite, as characterisation: `M117`'s argument is a
+            // bare rest-of-line string (spec 3.4a), and while the module could not read one,
+            // `M117 M110 N0` decomposed into two commands of which the second really was an
+            // `M110 N0` - so a status message resynchronised the session. Marlin does the same
+            // for its own worse reason (`strstr(command, "M110")` over the raw buffer).
+            //
+            // The reset value is now read off the line's *head*, and that head is `M117`: the
+            // rest of the line is its message, whatever the message spells. The old test asked
+            // to be flipped once this became readable, and this is that flip.
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\n")
 
             reader.read(line("N2 M117 M110 N0*37"))
 
-            assertEquals(0, reader.lastLine)
+            assertEquals(2, reader.lastLine)
         }
     }
 
@@ -382,7 +385,7 @@ class GCodeReaderTest {
             // That is the whole point of putting the session in the portable core - the transport
             // layer drives it, it does not drive the transport.
             val reader = GCodeReader()
-            val iterator = GLiner(tokenizer.parse("N1 G28*18\nN2 G28*17\n").iterator())
+            val iterator = GLiner(GTokenizer.parse("N1 G28*18\nN2 G28*17\n").iterator())
 
             var count = 0
             while (iterator.hasNext()) {

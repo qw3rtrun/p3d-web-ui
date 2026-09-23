@@ -77,19 +77,18 @@ data class MAX7219Control(
             return M(7219).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MAX7219Control {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): MAX7219Control {
             return MAX7219Control(
-                column = params.intOf('C'),
-                row = params.intOf('D'),
-                r = params.intOf('R'),
-                i = params.hasWord('I'),
-                f = params.hasWord('F'),
-                p = params.hasWord('P'),
-                index = params.intOf('U'),
-                bits = params.longOf('V'),
-                x = params.intOf('X'),
-                y = params.intOf('Y'),
+                column = tokens.intOf('C'),
+                row = tokens.intOf('D'),
+                r = tokens.intOf('R'),
+                i = tokens.hasWord('I'),
+                f = tokens.hasWord('F'),
+                p = tokens.hasWord('P'),
+                index = tokens.intOf('U'),
+                bits = tokens.longOf('V'),
+                x = tokens.intOf('X'),
+                y = tokens.intOf('Y'),
             )
         }
     }

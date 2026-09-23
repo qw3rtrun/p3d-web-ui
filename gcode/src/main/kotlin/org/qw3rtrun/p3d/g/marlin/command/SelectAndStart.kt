@@ -49,11 +49,10 @@ data class SelectAndStart(
             return M(32).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SelectAndStart {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SelectAndStart {
             return SelectAndStart(
-                p = params.intOf('P'),
-                filepos = params.intOf('S'),
+                p = tokens.intOf('P'),
+                filepos = tokens.intOf('S'),
             )
         }
     }

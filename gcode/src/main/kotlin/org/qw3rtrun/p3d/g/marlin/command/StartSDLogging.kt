@@ -51,10 +51,9 @@ data class StartSDLogging(
             return M(928).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): StartSDLogging {
-            val all = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): StartSDLogging {
             return StartSDLogging(
-                filename = all.stringArg(),
+                filename = tokens.stringArg(),
             )
         }
     }

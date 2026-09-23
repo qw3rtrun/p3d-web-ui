@@ -73,19 +73,18 @@ data class TMCBumpSensitivity(
             return M(914).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TMCBumpSensitivity {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): TMCBumpSensitivity {
             return TMCBumpSensitivity(
-                i = params.intOf('I'),
-                x = params.intOf('X'),
-                y = params.intOf('Y'),
-                z = params.intOf('Z'),
-                a = params.intOf('A'),
-                b = params.intOf('B'),
-                c = params.intOf('C'),
-                u = params.intOf('U'),
-                v = params.intOf('V'),
-                w = params.intOf('W'),
+                i = tokens.intOf('I'),
+                x = tokens.intOf('X'),
+                y = tokens.intOf('Y'),
+                z = tokens.intOf('Z'),
+                a = tokens.intOf('A'),
+                b = tokens.intOf('B'),
+                c = tokens.intOf('C'),
+                u = tokens.intOf('U'),
+                v = tokens.intOf('V'),
+                w = tokens.intOf('W'),
             )
         }
     }

@@ -74,7 +74,7 @@ class GTest {
 
         @Test
         fun `T is a command and its parameter form is spelled out`() {
-            // spec 4.1 makes `T` a command letter; GCommandParser's note records 40 corpus lines
+            // spec 4.1 makes `T` a command letter; `isCommandLetter`'s note records 40 corpus lines
             // using it as a *parameter* of a G command instead. A Kotlin name cannot return both,
             // so the command reading wins - matching the parser - and the parameter is spelled out.
             assertEquals("T0", enc(T(0)))
@@ -85,7 +85,7 @@ class GTest {
         @Test
         fun `D has no builder of its own, and that mirrors the parser`() {
             // spec 4.1 lists `D` as a Marlin debug command; spec 4.2 also lists it as a parameter
-            // letter (diameter, PID D). GCommandParser resolves that clash in favour of the
+            // letter (diameter, PID D). `isCommandLetter` resolves that clash in favour of the
             // parameter reading, because it is the common one - so `D(3)` here is the *parameter*
             // word, and a D command has to be spelled out.
             assertEquals("D3", enc(GCommand(GLetter('D'), GInt(3))))
@@ -95,8 +95,8 @@ class GTest {
             // ...and the asymmetry is real rather than hidden: what the DSL writes as a D *command*,
             // the parser reads back as a parameter with no command at all. That is the spec's own
             // ambiguity, not a bug in either half.
-            val line = GLiner(GTokenizer().parse("D3").iterator()).next()
-            assertEquals(emptyList<GCommand>(), GCommandParser().parse(line))
+            val line = GTokenizer.lines("D3").first()
+            assertEquals(emptyList<GCommand>(), GWordReader.parse(line))
         }
 
         @Test
@@ -212,11 +212,11 @@ class GTest {
                 M(117, S(text("Hello"))).line(),
                 G(1, X(10)) comment " move"
             )
-            val tokenizer = GTokenizer()
+            val tokenizer = GTokenizer
 
             for (i in blocks.indices) {
                 val framed = GEncoder.frame(i + 1, blocks[i])
-                val line = GLiner(tokenizer.parse(framed).iterator()).next()
+                val line = GTokenizer.lines(framed).first()
 
                 assertInstanceOf(GPacketLine::class.java, line) { "did not verify: $framed" }
             }

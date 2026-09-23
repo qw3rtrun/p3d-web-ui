@@ -46,7 +46,7 @@ class FirmwareInfo : GRq<FirmwareInfo> {
             return M(115).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FirmwareInfo {
+        override fun decodeParams(tokens: List<GToken>): FirmwareInfo {
             return FirmwareInfo()
         }
     }

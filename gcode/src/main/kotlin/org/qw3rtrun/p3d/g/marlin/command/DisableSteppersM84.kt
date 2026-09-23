@@ -78,20 +78,19 @@ data class DisableSteppersM84(
             return M(84).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DisableSteppersM84 {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): DisableSteppersM84 {
             return DisableSteppersM84(
-                seconds = params.intOf('S'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                e = params.hasWord('E'),
-                a = params.hasWord('A'),
-                b = params.hasWord('B'),
-                c = params.hasWord('C'),
-                u = params.hasWord('U'),
-                v = params.hasWord('V'),
-                w = params.hasWord('W'),
+                seconds = tokens.intOf('S'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                e = tokens.hasWord('E'),
+                a = tokens.hasWord('A'),
+                b = tokens.hasWord('B'),
+                c = tokens.hasWord('C'),
+                u = tokens.hasWord('U'),
+                v = tokens.hasWord('V'),
+                w = tokens.hasWord('W'),
             )
         }
     }

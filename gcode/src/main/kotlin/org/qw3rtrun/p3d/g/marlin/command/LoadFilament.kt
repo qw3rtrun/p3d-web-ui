@@ -57,12 +57,11 @@ data class LoadFilament(
             return M(701).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): LoadFilament {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): LoadFilament {
             return LoadFilament(
-                extruder = params.intOf('T'),
-                distance = params.decimalOf('Z'),
-                l = params.decimalOf('L'),
+                extruder = tokens.intOf('T'),
+                distance = tokens.decimalOf('Z'),
+                l = tokens.decimalOf('L'),
             )
         }
     }

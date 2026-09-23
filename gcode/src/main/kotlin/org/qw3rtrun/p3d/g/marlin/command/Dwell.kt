@@ -49,11 +49,10 @@ data class Dwell(
             return G(4).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): Dwell {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): Dwell {
             return Dwell(
-                time = params.intOf('S'),
-                p = params.intOf('P'),
+                time = tokens.intOf('S'),
+                p = tokens.intOf('P'),
             )
         }
     }

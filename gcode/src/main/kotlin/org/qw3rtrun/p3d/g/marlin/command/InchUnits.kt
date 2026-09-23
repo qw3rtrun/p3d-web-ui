@@ -46,7 +46,7 @@ class InchUnits : GRq<InchUnits> {
             return G(20).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): InchUnits {
+        override fun decodeParams(tokens: List<GToken>): InchUnits {
             return InchUnits()
         }
     }

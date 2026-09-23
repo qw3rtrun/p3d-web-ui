@@ -96,25 +96,24 @@ data class MeshValidationPattern(
             return G(26).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MeshValidationPattern {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): MeshValidationPattern {
             return MeshValidationPattern(
-                temp = params.intOf('B'),
-                c = params.boolOf('C'),
-                d = params.hasWord('D'),
-                linear = params.decimalOf('F'),
-                h = params.decimalOf('H'),
-                index = params.intOf('I'),
-                k = params.boolOf('K'),
-                l = params.decimalOf('L'),
-                o = params.decimalOf('O'),
-                p = params.decimalOf('P'),
-                q = params.decimalOf('Q'),
-                r = params.intOf('R'),
-                s = params.decimalOf('S'),
-                u = params.decimalOf('U'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
+                temp = tokens.intOf('B'),
+                c = tokens.boolOf('C'),
+                d = tokens.hasWord('D'),
+                linear = tokens.decimalOf('F'),
+                h = tokens.decimalOf('H'),
+                index = tokens.intOf('I'),
+                k = tokens.boolOf('K'),
+                l = tokens.decimalOf('L'),
+                o = tokens.decimalOf('O'),
+                p = tokens.decimalOf('P'),
+                q = tokens.decimalOf('Q'),
+                r = tokens.intOf('R'),
+                s = tokens.decimalOf('S'),
+                u = tokens.decimalOf('U'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
             )
         }
     }

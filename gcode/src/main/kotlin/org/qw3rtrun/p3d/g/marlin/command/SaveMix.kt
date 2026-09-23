@@ -49,10 +49,9 @@ data class SaveMix(
             return M(164).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SaveMix {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SaveMix {
             return SaveMix(
-                index = params.intOf('S'),
+                index = tokens.intOf('S'),
             )
         }
     }

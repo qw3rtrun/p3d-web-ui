@@ -62,14 +62,13 @@ data class SetZMotorXY(
             return M(422).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetZMotorXY {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetZMotorXY {
             return SetZMotorXY(
-                r = params.hasWord('R'),
-                index = params.intOf('S'),
-                w = params.intOf('W'),
-                linear = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
+                r = tokens.hasWord('R'),
+                index = tokens.intOf('S'),
+                w = tokens.intOf('W'),
+                linear = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
             )
         }
     }

@@ -58,12 +58,11 @@ data class MachineName(
             return M(550).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MachineName {
-            val all = tokens.toList()
-            val params = all.beforeStringArg('P')
+        override fun decodeParams(tokens: List<GToken>): MachineName {
+            val params = tokens.beforeStringArg('P')
             return MachineName(
                 name = params.stringOf('P'),
-                message = all.stringArg('P'),
+                message = tokens.stringArg('P'),
             )
         }
     }

@@ -46,10 +46,9 @@ data class PowerLossRecovery(
             return M(413).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PowerLossRecovery {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): PowerLossRecovery {
             return PowerLossRecovery(
-                s = params.boolOf('S'),
+                s = tokens.boolOf('S'),
             )
         }
     }

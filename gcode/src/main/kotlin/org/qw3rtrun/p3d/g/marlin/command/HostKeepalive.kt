@@ -46,10 +46,9 @@ data class HostKeepalive(
             return M(113).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): HostKeepalive {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): HostKeepalive {
             return HostKeepalive(
-                seconds = params.intOf('S'),
+                seconds = tokens.intOf('S'),
             )
         }
     }

@@ -46,7 +46,7 @@ class FullShutdown : GRq<FullShutdown> {
             return M(112).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FullShutdown {
+        override fun decodeParams(tokens: List<GToken>): FullShutdown {
             return FullShutdown()
         }
     }

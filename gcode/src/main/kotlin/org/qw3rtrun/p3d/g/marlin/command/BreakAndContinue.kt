@@ -46,7 +46,7 @@ class BreakAndContinue : GRq<BreakAndContinue> {
             return M(108).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BreakAndContinue {
+        override fun decodeParams(tokens: List<GToken>): BreakAndContinue {
             return BreakAndContinue()
         }
     }

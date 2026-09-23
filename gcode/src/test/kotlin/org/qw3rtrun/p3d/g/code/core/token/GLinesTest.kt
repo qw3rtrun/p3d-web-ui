@@ -88,7 +88,7 @@ class GLinesTest {
                 GMeaninglessLine(raw),
                 GSimpleLine(raw),
                 GPacketLine(GInt(1), GInt(1), emptyList(), raw),
-                GNotIdentifierError(GInt(1), raw),
+                GMissingLineNumber(raw),
             )
 
             assertTrue(lines.all { it.raw == raw })
@@ -107,7 +107,7 @@ class GLinesTest {
             assertEquals("empty", kind(GMeaninglessLine(emptyList())))
             assertEquals("simple", kind(GSimpleLine(raw)))
             assertEquals("packet", kind(GPacketLine(GInt(1), GInt(1), emptyList(), raw)))
-            assertEquals("error", kind(GNotIdentifierError(GInt(1), raw)))
+            assertEquals("error", kind(GMissingLineNumber(raw)))
         }
 
         @Test
@@ -133,8 +133,12 @@ class GLinesTest {
                 GMalformedChecksum(GInt(1), raw)
             )
 
-            assertTrue(errors.all { it is GLine }) { "expected all of $errors to be GLine" }
-            assertTrue(errors.all { it.raw == raw })
+            // "every structural error is a line" is a compile-time claim, so this is where it is
+            // made - the list widens with no cast. Asserting `it is GLine` at runtime said nothing
+            // the compiler had not already proved, and warned that it was always true.
+            val asLines: List<GLine> = errors
+
+            assertTrue(asLines.all { it.raw == raw })
             assertTrue(errors.none { it is GOrdered || it is GCheckSumControlled })
         }
 
@@ -168,37 +172,4 @@ class GLinesTest {
         }
     }
 
-    @Nested
-    inner class Errors {
-
-        private val raw = listOf<GToken>(GUnknown("?"), GLetter('G'), GInt(28))
-
-        @Test
-        fun `a line that does not start with an identifier reports the offending token`() {
-            val error = GNotIdentifierError(GInt(5), raw)
-
-            assertEquals("GCode should start with a letter, but '5'", error.msg)
-            assertEquals(GInt(5), error.head)
-            assertEquals(raw, error.raw)
-        }
-
-        @Test
-        fun `the message quotes the raw text of the offending token`() {
-            assertEquals(
-                "GCode should start with a letter, but '5'",
-                GNotIdentifierError(GInt(5), raw).msg
-            )
-            assertEquals(
-                "GCode should start with a letter, but '{x}'",
-                GNotIdentifierError(GRawExpression("{x}"), raw).msg
-            )
-        }
-
-        @Test
-        fun `an error is a line`() {
-            val error: GLine = GNotIdentifierError(GInt(5), raw)
-
-            assertTrue(error is GError)
-        }
-    }
 }

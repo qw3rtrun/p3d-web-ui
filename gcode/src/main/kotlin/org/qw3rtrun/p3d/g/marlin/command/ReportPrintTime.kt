@@ -46,7 +46,7 @@ class ReportPrintTime : GRq<ReportPrintTime> {
             return M(31).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ReportPrintTime {
+        override fun decodeParams(tokens: List<GToken>): ReportPrintTime {
             return ReportPrintTime()
         }
     }

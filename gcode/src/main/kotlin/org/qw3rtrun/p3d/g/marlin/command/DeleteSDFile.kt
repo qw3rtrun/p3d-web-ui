@@ -51,10 +51,9 @@ data class DeleteSDFile(
             return M(30).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DeleteSDFile {
-            val all = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): DeleteSDFile {
             return DeleteSDFile(
-                filename = all.stringArg(),
+                filename = tokens.stringArg(),
             )
         }
     }

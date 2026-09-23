@@ -56,13 +56,12 @@ data class ProbeTargetG38_2(
             return G("38.2").head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ProbeTargetG38_2 {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ProbeTargetG38_2 {
             return ProbeTargetG38_2(
-                pos = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                rate = params.decimalOf('F'),
+                pos = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                rate = tokens.decimalOf('F'),
             )
         }
     }

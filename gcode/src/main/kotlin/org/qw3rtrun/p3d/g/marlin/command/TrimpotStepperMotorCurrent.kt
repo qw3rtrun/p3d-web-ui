@@ -86,23 +86,22 @@ data class TrimpotStepperMotorCurrent(
             return M(907).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TrimpotStepperMotorCurrent {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): TrimpotStepperMotorCurrent {
             return TrimpotStepperMotorCurrent(
-                current = params.decimalOf('B'),
-                c = params.decimalOf('C'),
-                d = params.decimalOf('D'),
-                e = params.decimalOf('E'),
-                s = params.decimalOf('S'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                i = params.decimalOf('I'),
-                j = params.decimalOf('J'),
-                k = params.decimalOf('K'),
-                u = params.decimalOf('U'),
-                v = params.decimalOf('V'),
-                w = params.decimalOf('W'),
+                current = tokens.decimalOf('B'),
+                c = tokens.decimalOf('C'),
+                d = tokens.decimalOf('D'),
+                e = tokens.decimalOf('E'),
+                s = tokens.decimalOf('S'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                i = tokens.decimalOf('I'),
+                j = tokens.decimalOf('J'),
+                k = tokens.decimalOf('K'),
+                u = tokens.decimalOf('U'),
+                v = tokens.decimalOf('V'),
+                w = tokens.decimalOf('W'),
             )
         }
     }

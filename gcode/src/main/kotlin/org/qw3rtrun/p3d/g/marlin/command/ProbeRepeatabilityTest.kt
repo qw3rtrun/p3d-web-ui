@@ -70,17 +70,16 @@ data class ProbeRepeatabilityTest(
             return M(48).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ProbeRepeatabilityTest {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ProbeRepeatabilityTest {
             return ProbeRepeatabilityTest(
-                c = params.boolOf('C'),
-                engage = params.boolOf('E'),
-                legs = params.intOf('L'),
-                count = params.intOf('P'),
-                s = params.intOf('S'),
-                level = params.intOf('V'),
-                pos = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
+                c = tokens.boolOf('C'),
+                engage = tokens.boolOf('E'),
+                legs = tokens.intOf('L'),
+                count = tokens.intOf('P'),
+                s = tokens.intOf('S'),
+                level = tokens.intOf('V'),
+                pos = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
             )
         }
     }

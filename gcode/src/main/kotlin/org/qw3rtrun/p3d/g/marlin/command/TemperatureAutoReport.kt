@@ -46,10 +46,9 @@ data class TemperatureAutoReport(
             return M(155).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TemperatureAutoReport {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): TemperatureAutoReport {
             return TemperatureAutoReport(
-                seconds = params.intOf('S'),
+                seconds = tokens.intOf('S'),
             )
         }
     }

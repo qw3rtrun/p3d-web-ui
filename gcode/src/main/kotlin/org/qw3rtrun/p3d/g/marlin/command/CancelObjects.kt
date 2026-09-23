@@ -60,14 +60,13 @@ data class CancelObjects(
             return M(486).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): CancelObjects {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): CancelObjects {
             return CancelObjects(
-                c = params.hasWord('C'),
-                index = params.intOf('P'),
-                s = params.intOf('S'),
-                count = params.intOf('T'),
-                u = params.intOf('U'),
+                c = tokens.hasWord('C'),
+                index = tokens.intOf('P'),
+                s = tokens.intOf('S'),
+                count = tokens.intOf('T'),
+                u = tokens.intOf('U'),
             )
         }
     }

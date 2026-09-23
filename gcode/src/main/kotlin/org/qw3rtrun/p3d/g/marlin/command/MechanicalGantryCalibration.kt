@@ -51,11 +51,10 @@ data class MechanicalGantryCalibration(
             return G(34).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MechanicalGantryCalibration {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): MechanicalGantryCalibration {
             return MechanicalGantryCalibration(
-                s = params.intOf('S'),
-                z = params.decimalOf('Z'),
+                s = tokens.intOf('S'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

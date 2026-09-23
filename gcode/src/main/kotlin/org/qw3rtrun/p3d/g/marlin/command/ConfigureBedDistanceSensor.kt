@@ -47,10 +47,9 @@ data class ConfigureBedDistanceSensor(
             return M(102).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ConfigureBedDistanceSensor {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ConfigureBedDistanceSensor {
             return ConfigureBedDistanceSensor(
-                s = params.decimalOf('S'),
+                s = tokens.decimalOf('S'),
             )
         }
     }

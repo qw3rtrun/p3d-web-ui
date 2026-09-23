@@ -65,15 +65,14 @@ data class XTwistCompensation(
             return M(423).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): XTwistCompensation {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): XTwistCompensation {
             return XTwistCompensation(
-                r = params.hasWord('R'),
-                linear = params.decimalOf('A'),
-                e = params.decimalOf('E'),
-                i = params.decimalOf('I'),
-                index = params.intOf('X'),
-                z = params.decimalOf('Z'),
+                r = tokens.hasWord('R'),
+                linear = tokens.decimalOf('A'),
+                e = tokens.decimalOf('E'),
+                i = tokens.decimalOf('I'),
+                index = tokens.intOf('X'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

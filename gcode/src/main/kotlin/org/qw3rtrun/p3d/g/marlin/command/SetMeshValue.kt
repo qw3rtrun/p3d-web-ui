@@ -70,17 +70,16 @@ data class SetMeshValue(
             return M(421).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetMeshValue {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetMeshValue {
             return SetMeshValue(
-                index = params.intOf('I'),
-                j = params.intOf('J'),
-                linear = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                q = params.decimalOf('Q'),
-                c = params.boolOf('C'),
-                n = params.boolOf('N'),
+                index = tokens.intOf('I'),
+                j = tokens.intOf('J'),
+                linear = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                q = tokens.decimalOf('Q'),
+                c = tokens.boolOf('C'),
+                n = tokens.boolOf('N'),
             )
         }
     }

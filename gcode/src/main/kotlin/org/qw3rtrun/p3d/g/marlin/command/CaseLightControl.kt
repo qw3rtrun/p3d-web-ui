@@ -50,11 +50,10 @@ data class CaseLightControl(
             return M(355).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): CaseLightControl {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): CaseLightControl {
             return CaseLightControl(
-                p = params.intOf('P'),
-                s = params.boolOf('S'),
+                p = tokens.intOf('P'),
+                s = tokens.boolOf('S'),
             )
         }
     }

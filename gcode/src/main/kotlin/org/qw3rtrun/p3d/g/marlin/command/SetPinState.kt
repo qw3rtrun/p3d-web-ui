@@ -59,13 +59,12 @@ data class SetPinState(
             return M(42).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetPinState {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetPinState {
             return SetPinState(
-                i = params.boolOf('I'),
-                t = params.intOf('T'),
-                pin = params.intOf('P'),
-                state = params.intOf('S'),
+                i = tokens.boolOf('I'),
+                t = tokens.intOf('T'),
+                pin = tokens.intOf('P'),
+                state = tokens.intOf('S'),
             )
         }
     }

@@ -113,31 +113,30 @@ data class FilamentSwapParameters(
             return M(217).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FilamentSwapParameters {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FilamentSwapParameters {
             return FilamentSwapParameters(
-                q = params.hasWord('Q'),
-                linear = params.decimalOf('S'),
-                b = params.decimalOf('B'),
-                e = params.decimalOf('E'),
-                feedrate = params.intOf('P'),
-                r = params.intOf('R'),
-                u = params.intOf('U'),
-                f = params.intOf('F'),
-                g = params.intOf('G'),
-                a = params.intOf('A'),
-                l = params.intOf('L'),
-                w = params.intOf('W'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                v = params.intOf('V'),
-                z = params.intOf('Z'),
-                i = params.decimalOf('I'),
-                j = params.decimalOf('J'),
-                k = params.decimalOf('K'),
-                c = params.decimalOf('C'),
-                h = params.decimalOf('H'),
-                o = params.decimalOf('O'),
+                q = tokens.hasWord('Q'),
+                linear = tokens.decimalOf('S'),
+                b = tokens.decimalOf('B'),
+                e = tokens.decimalOf('E'),
+                feedrate = tokens.intOf('P'),
+                r = tokens.intOf('R'),
+                u = tokens.intOf('U'),
+                f = tokens.intOf('F'),
+                g = tokens.intOf('G'),
+                a = tokens.intOf('A'),
+                l = tokens.intOf('L'),
+                w = tokens.intOf('W'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                v = tokens.intOf('V'),
+                z = tokens.intOf('Z'),
+                i = tokens.decimalOf('I'),
+                j = tokens.decimalOf('J'),
+                k = tokens.decimalOf('K'),
+                c = tokens.decimalOf('C'),
+                h = tokens.decimalOf('H'),
+                o = tokens.decimalOf('O'),
             )
         }
     }

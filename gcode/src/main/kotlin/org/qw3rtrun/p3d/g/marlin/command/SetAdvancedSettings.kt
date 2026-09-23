@@ -69,17 +69,16 @@ data class SetAdvancedSettings(
             return M(205).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetAdvancedSettings {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetAdvancedSettings {
             return SetAdvancedSettings(
-                jerk = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                e = params.decimalOf('E'),
-                b = params.intOf('B'),
-                s = params.decimalOf('S'),
-                t = params.decimalOf('T'),
-                deviation = params.decimalOf('J'),
+                jerk = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                e = tokens.decimalOf('E'),
+                b = tokens.intOf('B'),
+                s = tokens.decimalOf('S'),
+                t = tokens.decimalOf('T'),
+                deviation = tokens.decimalOf('J'),
             )
         }
     }

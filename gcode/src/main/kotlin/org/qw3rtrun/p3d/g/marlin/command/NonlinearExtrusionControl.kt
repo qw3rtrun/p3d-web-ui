@@ -58,13 +58,12 @@ data class NonlinearExtrusionControl(
             return M(592).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): NonlinearExtrusionControl {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): NonlinearExtrusionControl {
             return NonlinearExtrusionControl(
-                coeff = params.decimalOf('A'),
-                b = params.decimalOf('B'),
-                c = params.decimalOf('C'),
-                s = params.hasWord('S'),
+                coeff = tokens.decimalOf('A'),
+                b = tokens.decimalOf('B'),
+                c = tokens.decimalOf('C'),
+                s = tokens.hasWord('S'),
             )
         }
     }

@@ -68,7 +68,7 @@ KINDS = {
     # depends on *this command's* letters - `M117 H1 ello` is all message, `M118 P1 ello` is not -
     # so `l` here is the command's letter list and `gen_class` is what fills it in.
     "bare":    ("String?",    "null",  lambda l, n: "bareString(%s)" % n,
-                lambda l: "all.stringArg(%s)" % l),
+                lambda l: "tokens.stringArg(%s)" % l),
 }
 
 # A representative value per kind, for the generated "every parameter round-trips" test.
@@ -363,25 +363,27 @@ def gen_class(c, name):
     out.append("            return %s.head" % head_call)
     out.append("        }")
     out.append("")
-    out.append("        override fun decodeParams(tokens: Sequence<GToken>): %s {" % name)
+    out.append("        override fun decodeParams(tokens: List<GToken>): %s {" % name)
     if fields:
         letter_list = ", ".join("'%s'" % f["letter"] for f in fields if f["letter"])
-        # Materialised once: every parameter below is its own scan of the tokens, and a Sequence
-        # makes no promise that it can be walked twice.
-        if bare_string(fields):
-            out.append("            val all = tokens.toList()")
-            # A letter *inside* the rest-of-line string is text, not a parameter, so the lettered
-            # ones are read from in front of it only: `M118 Hello World P1` has no `P`. A command
-            # that is *nothing but* its string - M117, M23, the macros - has no such region and
-            # would only get an unused `params`.
-            if letter_list:
-                out.append("            val params = all.beforeStringArg(%s)" % letter_list)
-        else:
-            out.append("            val params = tokens.toList()")
+        # Nothing is materialised here any more: the interface takes a List precisely because
+        # every parameter below is its own scan of it.
+        #
+        # A letter *inside* a rest-of-line string is text, not a parameter, so where a command has
+        # both, the lettered ones are read from the region in front of the string: `M118 Hello
+        # World P1` has no `P`. A command that is *nothing but* its string - M117, M23, the macros
+        # - has no such region, and one with no string reads the lettered ones from the whole.
+        lettered = "tokens"
+        if bare_string(fields) and letter_list:
+            out.append("            val params = tokens.beforeStringArg(%s)" % letter_list)
+            lettered = "params"
         out.append("            return %s(" % name)
         for f in fields:
             arg = letter_list if f["kind"] == "bare" else f["letter"]
-            out.append("                %s = %s," % (f["prop"], KINDS[f["kind"]][3](arg)))
+            call = KINDS[f["kind"]][3](arg)
+            if f["kind"] != "bare":
+                call = call.replace("params.", lettered + ".", 1)
+            out.append("                %s = %s," % (f["prop"], call))
         out.append("            )")
     else:
         # Not `this`: the companion is not an instance of the command. A fresh one compares equal
@@ -543,7 +545,7 @@ def main():
         "     * with the variant class you mean; [decode] is a best effort for the rest.",
         "     */",
         "    private val byHead: Map<GParameterWord<*>, GRqDecoder<*>> =",
-        "        decoders.groupBy { GCommandParser.headKey(it.head()) }",
+        "        decoders.groupBy { headKey(it.head()) }",
         "            .mapValues { (_, claimants) -> claimants.first() }",
         "",
         "    /** The codes above, whose [decode] is therefore approximate. */",
@@ -557,11 +559,11 @@ def main():
         "     * resolve - the lexeme is part of a number's identity in this model - but not on its",
         "     * spacing, and not on its case (spec 2.2: `m104` is `M104`).",
         "     */",
-        "    fun decode(tokens: Sequence<GToken>): GRq<*>? {",
-        "        val all = tokens.toList()",
-        "        val head = GCommandParser.headWord(all) ?: return null",
-        "        val decoder = byHead[GCommandParser.headKey(head)] ?: return null",
-        "        return decoder.decodeParams(all.asSequence().drop(GCommandParser.headEnd(all)))",
+        "    fun decode(tokens: List<GToken>): GRq<*>? {",
+        "        val head = headWord(tokens) ?: return null",
+        "        val decoder = byHead[headKey(head)] ?: return null",
+        "        // `subList`, not `drop`: a view onto the tokens in hand, not a second copy of them.",
+        "        return decoder.decodeParams(tokens.subList(headEnd(tokens), tokens.size))",
         "    }",
         "}",
     ]
@@ -640,9 +642,11 @@ def main():
         "",
         "package org.qw3rtrun.p3d.g.marlin",
         "",
-        "import org.qw3rtrun.p3d.g.code.core.token.GCommandParser",
         "import org.qw3rtrun.p3d.g.code.core.token.GParameterWord",
         "import org.qw3rtrun.p3d.g.code.core.token.GToken",
+        "import org.qw3rtrun.p3d.g.code.core.token.headEnd",
+        "import org.qw3rtrun.p3d.g.code.core.token.headKey",
+        "import org.qw3rtrun.p3d.g.code.core.token.headWord",
         "import org.qw3rtrun.p3d.g.marlin.command.*",
         "import org.qw3rtrun.p3d.g.protocol.GRq",
         "import org.qw3rtrun.p3d.g.protocol.GRqDecoder",
@@ -668,9 +672,9 @@ def main():
         "import org.junit.jupiter.api.Test",
         "import org.qw3rtrun.p3d.g.code.core.GEncoder",
         "import org.qw3rtrun.p3d.g.code.core.token.GCommand",
-        "import org.qw3rtrun.p3d.g.code.core.token.GCommandParser",
         "import org.qw3rtrun.p3d.g.code.core.token.GToken",
         "import org.qw3rtrun.p3d.g.code.core.token.GTokenizer",
+        "import org.qw3rtrun.p3d.g.code.core.token.headEnd",
         "import org.qw3rtrun.p3d.g.code.dsl.M",
         "import org.qw3rtrun.p3d.g.marlin.command.*",
         "import java.math.BigDecimal",
@@ -687,13 +691,13 @@ def main():
         "class MarlinCommandsTest {",
         "",
         "    /** A built command as the tokens a printer would receive - through the real encoder. */",
-        "    private fun tokens(cmd: GCommand): Sequence<GToken> =",
-        "        GTokenizer().parse(GEncoder.encode(cmd))",
+        "    private fun tokens(cmd: GCommand): List<GToken> =",
+        "        GTokenizer.parse(GEncoder.encode(cmd)).toList()",
         "",
         "    /** The same, less the head: what `decodeParams` is handed. */",
-        "    private fun paramTokens(cmd: GCommand): Sequence<GToken> {",
-        "        val all = tokens(cmd).toList()",
-        "        return all.asSequence().drop(GCommandParser.headEnd(all))",
+        "    private fun paramTokens(cmd: GCommand): List<GToken> {",
+        "        val all = tokens(cmd)",
+        "        return all.subList(headEnd(all), all.size)",
         "    }",
         "",
         "    @Test",

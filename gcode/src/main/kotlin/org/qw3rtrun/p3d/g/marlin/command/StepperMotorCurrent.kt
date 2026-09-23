@@ -64,15 +64,14 @@ data class StepperMotorCurrent(
             return M(906).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): StepperMotorCurrent {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): StepperMotorCurrent {
             return StepperMotorCurrent(
-                e = params.intOf('E'),
-                i = params.intOf('I'),
-                t = params.intOf('T'),
-                x = params.intOf('X'),
-                y = params.intOf('Y'),
-                z = params.intOf('Z'),
+                e = tokens.intOf('E'),
+                i = tokens.intOf('I'),
+                t = tokens.intOf('T'),
+                x = tokens.intOf('X'),
+                y = tokens.intOf('Y'),
+                z = tokens.intOf('Z'),
             )
         }
     }

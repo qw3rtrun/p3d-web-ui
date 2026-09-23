@@ -57,13 +57,12 @@ data class FreeMemory(
             return M(100).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FreeMemory {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FreeMemory {
             return FreeMemory(
-                d = params.hasWord('D'),
-                f = params.hasWord('F'),
-                i = params.hasWord('I'),
-                n = params.intOf('C'),
+                d = tokens.hasWord('D'),
+                f = tokens.hasWord('F'),
+                i = tokens.hasWord('I'),
+                n = tokens.intOf('C'),
             )
         }
     }

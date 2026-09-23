@@ -46,10 +46,9 @@ data class STOPRestart(
             return M(999).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): STOPRestart {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): STOPRestart {
             return STOPRestart(
-                s = params.boolOf('S'),
+                s = tokens.boolOf('S'),
             )
         }
     }

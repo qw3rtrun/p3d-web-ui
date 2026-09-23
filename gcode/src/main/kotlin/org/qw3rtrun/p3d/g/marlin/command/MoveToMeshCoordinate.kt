@@ -58,13 +58,12 @@ data class MoveToMeshCoordinate(
             return G(42).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MoveToMeshCoordinate {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): MoveToMeshCoordinate {
             return MoveToMeshCoordinate(
-                pos = params.decimalOf('I'),
-                j = params.decimalOf('J'),
-                rate = params.decimalOf('F'),
-                p = params.hasWord('P'),
+                pos = tokens.decimalOf('I'),
+                j = tokens.decimalOf('J'),
+                rate = tokens.decimalOf('F'),
+                p = tokens.hasWord('P'),
             )
         }
     }

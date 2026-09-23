@@ -46,7 +46,7 @@ class StopSDWrite : GRq<StopSDWrite> {
             return M(29).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): StopSDWrite {
+        override fun decodeParams(tokens: List<GToken>): StopSDWrite {
             return StopSDWrite()
         }
     }

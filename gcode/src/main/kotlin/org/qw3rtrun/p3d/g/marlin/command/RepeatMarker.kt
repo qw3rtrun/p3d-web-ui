@@ -46,10 +46,9 @@ data class RepeatMarker(
             return M(808).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): RepeatMarker {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): RepeatMarker {
             return RepeatMarker(
-                l = params.intOf('L'),
+                l = tokens.intOf('L'),
             )
         }
     }

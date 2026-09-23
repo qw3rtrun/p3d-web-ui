@@ -66,16 +66,15 @@ data class DirectStepperMove(
             return G(6).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DirectStepperMove {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): DirectStepperMove {
             return DirectStepperMove(
-                index = params.intOf('I'),
-                rate = params.decimalOf('R'),
-                s = params.decimalOf('S'),
-                direction = params.intOf('X'),
-                y = params.intOf('Y'),
-                z = params.intOf('Z'),
-                e = params.intOf('E'),
+                index = tokens.intOf('I'),
+                rate = tokens.decimalOf('R'),
+                s = tokens.decimalOf('S'),
+                direction = tokens.intOf('X'),
+                y = tokens.intOf('Y'),
+                z = tokens.intOf('Z'),
+                e = tokens.intOf('E'),
             )
         }
     }

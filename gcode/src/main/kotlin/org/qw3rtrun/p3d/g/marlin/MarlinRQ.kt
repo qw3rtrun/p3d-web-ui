@@ -11,9 +11,11 @@
 
 package org.qw3rtrun.p3d.g.marlin
 
-import org.qw3rtrun.p3d.g.code.core.token.GCommandParser
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.token.GToken
+import org.qw3rtrun.p3d.g.code.core.token.headEnd
+import org.qw3rtrun.p3d.g.code.core.token.headKey
+import org.qw3rtrun.p3d.g.code.core.token.headWord
 import org.qw3rtrun.p3d.g.marlin.command.*
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
@@ -959,7 +961,7 @@ object MarlinCommands {
      * with the variant class you mean; [decode] is a best effort for the rest.
      */
     private val byHead: Map<GParameterWord<*>, GRqDecoder<*>> =
-        decoders.groupBy { GCommandParser.headKey(it.head()) }
+        decoders.groupBy { headKey(it.head()) }
             .mapValues { (_, claimants) -> claimants.first() }
 
     /** The codes above, whose [decode] is therefore approximate. */
@@ -972,11 +974,11 @@ object MarlinCommands {
      * resolve - the lexeme is part of a number's identity in this model - but not on its
      * spacing, and not on its case (spec 2.2: `m104` is `M104`).
      */
-    fun decode(tokens: Sequence<GToken>): GRq<*>? {
-        val all = tokens.toList()
-        val head = GCommandParser.headWord(all) ?: return null
-        val decoder = byHead[GCommandParser.headKey(head)] ?: return null
-        return decoder.decodeParams(all.asSequence().drop(GCommandParser.headEnd(all)))
+    fun decode(tokens: List<GToken>): GRq<*>? {
+        val head = headWord(tokens) ?: return null
+        val decoder = byHead[headKey(head)] ?: return null
+        // `subList`, not `drop`: a view onto the tokens in hand, not a second copy of them.
+        return decoder.decodeParams(tokens.subList(headEnd(tokens), tokens.size))
     }
 }
 

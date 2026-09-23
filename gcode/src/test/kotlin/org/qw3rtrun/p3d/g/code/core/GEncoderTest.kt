@@ -84,8 +84,8 @@ class GEncoderTest {
             // A parsed word carries its original bytes in `raw` - `X  10` is one word with two
             // spaces inside it. The encoder renders the field, not the bytes it came from, so that
             // what it emits is always the same shape and can be checksummed predictably.
-            val parsed = GLiner(GTokenizer().parse("G1  X  10").iterator()).next()
-            val command = GCommandParser().parse(parsed).single()
+            val parsed = GTokenizer.lines("G1  X  10").first()
+            val command = GWordReader.parse(parsed).single()
 
             assertEquals("G1 X10", GEncoder.encode(command))
         }
@@ -103,7 +103,7 @@ class GEncoderTest {
             assertEquals("N3 T0*57", encoded)
             assertInstanceOf(
                 GPacketLine::class.java,
-                GLiner(GTokenizer().parse(encoded).iterator()).next()
+                GTokenizer.lines(encoded).first()
             )
         }
 
@@ -149,13 +149,13 @@ class GEncoderTest {
                 for (calculator in listOf(XorCheckSum(), Crc16CheckSum())) {
                     val command = commands[number]
                     val framed = GEncoder.frame(number, command, calculator)
-                    val line = GLiner(GTokenizer().parse(framed).iterator()).next()
+                    val line = GTokenizer.lines(framed).first()
 
                     assertInstanceOf(GPacketLine::class.java, line, "did not verify: $framed")
                     assertEquals(GInt(number), (line as GPacketLine).number)
                     assertEquals(
                         GEncoder.encode(command),
-                        GCommandParser().parse(line).joinToString(" ") { GEncoder.encode(it) },
+                        GWordReader.parse(line).joinToString(" ") { GEncoder.encode(it) },
                         "command did not survive: $framed"
                     )
                 }
@@ -165,11 +165,11 @@ class GEncoderTest {
         @Test
         fun `parsing then encoding is the identity on bytes the encoder could have produced`() {
             for (gcode in listOf("N0 G28*19", "N1 G28*18", "N3 T0*57", "N7 G1 X10 F1800*57")) {
-                val line = GLiner(GTokenizer().parse(gcode).iterator()).next()
+                val line = GTokenizer.lines(gcode).first()
 
                 assertInstanceOf(GPacketLine::class.java, line, "fixture is not a packet: $gcode")
                 val packet = line as GPacketLine
-                val command = GCommandParser().parse(packet).single()
+                val command = GWordReader.parse(packet).single()
 
                 assertEquals(gcode, GEncoder.frame(packet.number.int, command))
             }
@@ -181,7 +181,7 @@ class GEncoderTest {
 
             for (i in 0 until good.indexOf('*')) {
                 val corrupted = good.substring(0, i) + corrupt(good[i]) + good.substring(i + 1)
-                val line = GLiner(GTokenizer().parse(corrupted).iterator()).next()
+                val line = GTokenizer.lines(corrupted).first()
 
                 assert(line !is GPacketLine) { "corruption at $i survived verification: $corrupted" }
             }

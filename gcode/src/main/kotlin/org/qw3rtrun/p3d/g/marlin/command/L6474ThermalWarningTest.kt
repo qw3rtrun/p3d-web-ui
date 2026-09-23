@@ -72,18 +72,17 @@ data class L6474ThermalWarningTest(
             return M(916).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): L6474ThermalWarningTest {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): L6474ThermalWarningTest {
             return L6474ThermalWarningTest(
-                j = params.intOf('J'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                e = params.decimalOf('E'),
-                feedrate = params.intOf('F'),
-                current = params.intOf('T'),
-                k = params.intOf('K'),
-                second = params.intOf('D'),
+                j = tokens.intOf('J'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                e = tokens.decimalOf('E'),
+                feedrate = tokens.intOf('F'),
+                current = tokens.intOf('T'),
+                k = tokens.intOf('K'),
+                second = tokens.intOf('D'),
             )
         }
     }

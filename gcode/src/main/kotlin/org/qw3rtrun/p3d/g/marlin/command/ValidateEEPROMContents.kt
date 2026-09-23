@@ -46,7 +46,7 @@ class ValidateEEPROMContents : GRq<ValidateEEPROMContents> {
             return M(504).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ValidateEEPROMContents {
+        override fun decodeParams(tokens: List<GToken>): ValidateEEPROMContents {
             return ValidateEEPROMContents()
         }
     }

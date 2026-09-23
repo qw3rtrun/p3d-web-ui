@@ -23,9 +23,11 @@ import org.qw3rtrun.p3d.g.code.core.token.*
  * ```
  *
  * **Builders return values.** Nothing here emits, so a command can be built, inspected and asserted
- * on before anything is sent; [org.qw3rtrun.p3d.terminal.GSender] is a thin sink layered on top for callers that want one.
- * The facade this replaces took its sink in the constructor and returned `Unit`, which is why its
- * own test had to keep a mutable list to see what it had produced.
+ * on before anything is sent. A sink for callers who want one - `GSender` - is a thin layer over
+ * this and lives in `:backend:terminal`, not here: emitting is transport's business, and keeping it
+ * out is what lets this file be tested without one. The Java facade this replaces took its sink in
+ * the constructor and returned `Unit`, which is why its own test had to keep a mutable list to see
+ * what it had produced.
  *
  * **Unlike `code/core`, this file is allowed full Kotlin** - extension and infix functions, default
  * arguments, overloads. The layering rule makes only the `code/core` package portable; this is a
@@ -63,8 +65,8 @@ fun T(lexeme: String, vararg params: GWord): GCommand = command('T', lexeme, *pa
  * name cannot return two types. Two letters are affected, and each is resolved the way the parser
  * resolves it, so that builder and parser agree:
  *
- * - **`T`** heads a command (`T(0)` is `T0`, spec 4.1) - the reading `GCommandParser` takes while no
- *   command has started. As a *parameter* - `M105 T1`, `G29 T`, 40 corpus lines - write
+ * - **`T`** heads a command (`T(0)` is `T0`, spec 4.1) - the reading `isCommandLetter` takes while
+ *   no command has started. As a *parameter* - `M105 T1`, `G29 T`, 40 corpus lines - write
  *   `word('T', 1)` or `flag('T')`.
  * - **`D`** is a parameter (`D(3)` is `D3`, spec 4.2's diameter and PID `D`) - the reading the
  *   parser takes, because it is the common one. As the Marlin debug *command* spec 4.1 lists, write
@@ -76,10 +78,10 @@ fun command(letter: Char, number: Int, vararg params: GWord): GCommand =
 
 /** `<letter><lexeme>` for any command letter. */
 fun command(letter: Char, lexeme: String, vararg params: GWord): GCommand {
-    // spec 4.1, using the parser's own rule so the DSL cannot build a command that will not read
+    // spec 4.1, using the reader's own rule so the DSL cannot build a command that will not read
     // back. `G-1` and `G29.` are not commands, and finding that out at the call site beats
     // discovering it when a printer answers `echo:Unknown command`.
-    require(GCommandParser.isCommandNumber(lexeme)) {
+    require(isCommandNumber(lexeme)) {
         "spec 4.1: a command number is an unsigned integer with an optional subcode, got '$lexeme'"
     }
     for (param in params) {
@@ -90,7 +92,7 @@ fun command(letter: Char, lexeme: String, vararg params: GWord): GCommand {
         // the **first field of a line** a line number, so an `N` inside a command is an ordinary
         // parameter - and one command's argument is exactly that: `M110 N7` sets the line-number
         // counter (spec 7.2). Refusing it here would have made `M110` unwritable, which is the same
-        // over-wide rule todo 05 had to narrow in `GCommandParser.isStructural`.
+        // over-wide rule todo 05 had to narrow when a line number is read.
         require(param.id != GChecksum) {
             "spec 8: `*` is the line's checksum field, not a parameter - use GEncoder.frame"
         }
@@ -116,8 +118,4 @@ infix fun GBlock.comment(text: String): GBlock = GBlock(parts + tailComment(text
 
 /** A line that is nothing but a `;` comment - spec 5 calls it a no-op. */
 fun commentLine(text: String): GBlock = GBlock(listOf(tailComment(text)))
-
-// ---------------------------------------------------------------------------
-// The sink
-// ---------------------------------------------------------------------------
 

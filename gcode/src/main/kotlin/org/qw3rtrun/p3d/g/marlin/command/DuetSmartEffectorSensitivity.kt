@@ -46,7 +46,7 @@ class DuetSmartEffectorSensitivity : GRq<DuetSmartEffectorSensitivity> {
             return M(672).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DuetSmartEffectorSensitivity {
+        override fun decodeParams(tokens: List<GToken>): DuetSmartEffectorSensitivity {
             return DuetSmartEffectorSensitivity()
         }
     }

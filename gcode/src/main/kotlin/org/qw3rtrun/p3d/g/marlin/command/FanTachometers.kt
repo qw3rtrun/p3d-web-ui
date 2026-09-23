@@ -46,7 +46,7 @@ class FanTachometers : GRq<FanTachometers> {
             return M(123).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FanTachometers {
+        override fun decodeParams(tokens: List<GToken>): FanTachometers {
             return FanTachometers()
         }
     }

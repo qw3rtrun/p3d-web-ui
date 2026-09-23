@@ -46,7 +46,7 @@ class TouchScreenCalibration : GRq<TouchScreenCalibration> {
             return M(995).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TouchScreenCalibration {
+        override fun decodeParams(tokens: List<GToken>): TouchScreenCalibration {
             return TouchScreenCalibration()
         }
     }

@@ -57,13 +57,12 @@ data class WaitForBedTemperature(
             return M(190).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): WaitForBedTemperature {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): WaitForBedTemperature {
             return WaitForBedTemperature(
-                index = params.intOf('I'),
-                temp = params.decimalOf('S'),
-                r = params.decimalOf('R'),
-                seconds = params.intOf('T'),
+                index = tokens.intOf('I'),
+                temp = tokens.decimalOf('S'),
+                r = tokens.decimalOf('R'),
+                seconds = tokens.intOf('T'),
             )
         }
     }

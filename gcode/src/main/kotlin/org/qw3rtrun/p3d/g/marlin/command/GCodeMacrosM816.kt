@@ -51,10 +51,9 @@ data class GCodeMacrosM816(
             return M(816).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): GCodeMacrosM816 {
-            val all = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): GCodeMacrosM816 {
             return GCodeMacrosM816(
-                gcode = all.stringArg(),
+                gcode = tokens.stringArg(),
             )
         }
     }

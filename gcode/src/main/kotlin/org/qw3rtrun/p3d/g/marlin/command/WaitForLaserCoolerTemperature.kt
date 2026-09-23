@@ -47,10 +47,9 @@ data class WaitForLaserCoolerTemperature(
             return M(193).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): WaitForLaserCoolerTemperature {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): WaitForLaserCoolerTemperature {
             return WaitForLaserCoolerTemperature(
-                temp = params.decimalOf('S'),
+                temp = tokens.decimalOf('S'),
             )
         }
     }

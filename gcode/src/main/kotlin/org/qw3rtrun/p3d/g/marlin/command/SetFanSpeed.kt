@@ -57,13 +57,12 @@ data class SetFanSpeed(
             return M(106).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetFanSpeed {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetFanSpeed {
             return SetFanSpeed(
-                index = params.intOf('I'),
-                speed = params.intOf('S'),
-                p = params.intOf('P'),
-                t = params.decimalOf('T'),
+                index = tokens.intOf('I'),
+                speed = tokens.intOf('S'),
+                p = tokens.intOf('P'),
+                t = tokens.decimalOf('T'),
             )
         }
     }

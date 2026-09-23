@@ -67,15 +67,14 @@ data class GradientMix(
             return M(166).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): GradientMix {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): GradientMix {
             return GradientMix(
-                linear = params.decimalOf('A'),
-                z = params.decimalOf('Z'),
-                index = params.intOf('I'),
-                j = params.intOf('J'),
-                enable = params.boolOf('S'),
-                t = params.intOf('T'),
+                linear = tokens.decimalOf('A'),
+                z = tokens.decimalOf('Z'),
+                index = tokens.intOf('I'),
+                j = tokens.intOf('J'),
+                enable = tokens.boolOf('S'),
+                t = tokens.intOf('T'),
             )
         }
     }

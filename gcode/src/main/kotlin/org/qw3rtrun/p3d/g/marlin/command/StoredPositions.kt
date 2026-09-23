@@ -69,17 +69,16 @@ data class StoredPositions(
             return G(60).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): StoredPositions {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): StoredPositions {
             return StoredPositions(
-                slot = params.intOf('S'),
-                d = params.intOf('D'),
-                q = params.intOf('Q'),
-                rate = params.decimalOf('F'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                e = params.decimalOf('E'),
+                slot = tokens.intOf('S'),
+                d = tokens.intOf('D'),
+                q = tokens.intOf('Q'),
+                rate = tokens.decimalOf('F'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                e = tokens.decimalOf('E'),
             )
         }
     }

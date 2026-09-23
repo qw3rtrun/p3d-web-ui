@@ -55,13 +55,12 @@ data class HotendIdleTimeout(
             return M(86).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): HotendIdleTimeout {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): HotendIdleTimeout {
             return HotendIdleTimeout(
-                seconds = params.intOf('S'),
-                temp = params.intOf('T'),
-                e = params.intOf('E'),
-                b = params.intOf('B'),
+                seconds = tokens.intOf('S'),
+                temp = tokens.intOf('T'),
+                e = tokens.intOf('E'),
+                b = tokens.intOf('B'),
             )
         }
     }

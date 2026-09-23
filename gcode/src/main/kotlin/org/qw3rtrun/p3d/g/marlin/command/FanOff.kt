@@ -46,10 +46,9 @@ data class FanOff(
             return M(107).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FanOff {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FanOff {
             return FanOff(
-                index = params.intOf('P'),
+                index = tokens.intOf('P'),
             )
         }
     }

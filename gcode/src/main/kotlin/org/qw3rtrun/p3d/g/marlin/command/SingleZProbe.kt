@@ -57,13 +57,12 @@ data class SingleZProbe(
             return G(30).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SingleZProbe {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SingleZProbe {
             return SingleZProbe(
-                c = params.boolOf('C'),
-                pos = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                e = params.boolOf('E'),
+                c = tokens.boolOf('C'),
+                pos = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                e = tokens.boolOf('E'),
             )
         }
     }

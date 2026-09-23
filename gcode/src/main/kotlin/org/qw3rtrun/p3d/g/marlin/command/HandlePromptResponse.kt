@@ -49,10 +49,9 @@ data class HandlePromptResponse(
             return M(876).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): HandlePromptResponse {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): HandlePromptResponse {
             return HandlePromptResponse(
-                response = params.intOf('S'),
+                response = tokens.intOf('S'),
             )
         }
     }

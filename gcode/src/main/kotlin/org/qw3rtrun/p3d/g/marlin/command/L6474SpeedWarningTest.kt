@@ -72,18 +72,17 @@ data class L6474SpeedWarningTest(
             return M(918).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): L6474SpeedWarningTest {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): L6474SpeedWarningTest {
             return L6474SpeedWarningTest(
-                j = params.intOf('J'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                e = params.decimalOf('E'),
-                current = params.intOf('I'),
-                t = params.intOf('T'),
-                k = params.intOf('K'),
-                microsteps = params.intOf('M'),
+                j = tokens.intOf('J'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                e = tokens.decimalOf('E'),
+                current = tokens.intOf('I'),
+                t = tokens.intOf('T'),
+                k = tokens.intOf('K'),
+                microsteps = tokens.intOf('M'),
             )
         }
     }

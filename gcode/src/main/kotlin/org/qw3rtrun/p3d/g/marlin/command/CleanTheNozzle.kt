@@ -68,16 +68,15 @@ data class CleanTheNozzle(
             return G(12).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): CleanTheNozzle {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): CleanTheNozzle {
             return CleanTheNozzle(
-                p = params.intOf('P'),
-                radius = params.decimalOf('R'),
-                count = params.intOf('S'),
-                t = params.intOf('T'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
+                p = tokens.intOf('P'),
+                radius = tokens.decimalOf('R'),
+                count = tokens.intOf('S'),
+                t = tokens.intOf('T'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
             )
         }
     }

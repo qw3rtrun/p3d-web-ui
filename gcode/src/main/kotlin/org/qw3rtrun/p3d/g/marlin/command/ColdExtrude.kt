@@ -51,11 +51,10 @@ data class ColdExtrude(
             return M(302).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ColdExtrude {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ColdExtrude {
             return ColdExtrude(
-                temp = params.decimalOf('S'),
-                p = params.boolOf('P'),
+                temp = tokens.decimalOf('S'),
+                p = tokens.boolOf('P'),
             )
         }
     }

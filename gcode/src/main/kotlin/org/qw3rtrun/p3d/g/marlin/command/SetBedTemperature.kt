@@ -51,11 +51,10 @@ data class SetBedTemperature(
             return M(140).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetBedTemperature {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetBedTemperature {
             return SetBedTemperature(
-                index = params.intOf('I'),
-                temp = params.decimalOf('S'),
+                index = tokens.intOf('I'),
+                temp = tokens.decimalOf('S'),
             )
         }
     }

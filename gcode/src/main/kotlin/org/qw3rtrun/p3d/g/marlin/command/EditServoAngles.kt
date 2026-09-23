@@ -55,12 +55,11 @@ data class EditServoAngles(
             return M(281).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): EditServoAngles {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): EditServoAngles {
             return EditServoAngles(
-                index = params.intOf('P'),
-                degrees = params.intOf('L'),
-                u = params.intOf('U'),
+                index = tokens.intOf('P'),
+                degrees = tokens.intOf('L'),
+                u = tokens.intOf('U'),
             )
         }
     }

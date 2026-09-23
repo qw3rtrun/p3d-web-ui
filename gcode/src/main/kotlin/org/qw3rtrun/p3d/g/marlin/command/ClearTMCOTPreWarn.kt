@@ -62,14 +62,13 @@ data class ClearTMCOTPreWarn(
             return M(912).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ClearTMCOTPreWarn {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ClearTMCOTPreWarn {
             return ClearTMCOTPreWarn(
-                i = params.intOf('I'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                e = params.decimalOf('E'),
+                i = tokens.intOf('I'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                e = tokens.decimalOf('E'),
             )
         }
     }

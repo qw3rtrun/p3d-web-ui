@@ -57,12 +57,11 @@ data class UnloadFilament(
             return M(702).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): UnloadFilament {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): UnloadFilament {
             return UnloadFilament(
-                extruder = params.intOf('T'),
-                distance = params.decimalOf('Z'),
-                u = params.decimalOf('U'),
+                extruder = tokens.intOf('T'),
+                distance = tokens.decimalOf('Z'),
+                u = tokens.decimalOf('U'),
             )
         }
     }

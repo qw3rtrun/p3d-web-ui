@@ -46,7 +46,7 @@ class CoolantControlsM7 : GRq<CoolantControlsM7> {
             return M(7).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): CoolantControlsM7 {
+        override fun decodeParams(tokens: List<GToken>): CoolantControlsM7 {
             return CoolantControlsM7()
         }
     }

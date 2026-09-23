@@ -53,12 +53,11 @@ data class XYZProbeOffset(
             return M(851).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): XYZProbeOffset {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): XYZProbeOffset {
             return XYZProbeOffset(
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

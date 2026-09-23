@@ -64,15 +64,14 @@ data class SetMicrostepPins(
             return M(351).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetMicrostepPins {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetMicrostepPins {
             return SetMicrostepPins(
-                s = params.intOf('S'),
-                b = params.intOf('B'),
-                x = params.intOf('X'),
-                y = params.intOf('Y'),
-                z = params.intOf('Z'),
-                e = params.intOf('E'),
+                s = tokens.intOf('S'),
+                b = tokens.intOf('B'),
+                x = tokens.intOf('X'),
+                y = tokens.intOf('Y'),
+                z = tokens.intOf('Z'),
+                e = tokens.intOf('E'),
             )
         }
     }

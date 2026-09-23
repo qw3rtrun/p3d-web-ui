@@ -76,20 +76,19 @@ data class SetMicroStepping(
             return M(350).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetMicroStepping {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetMicroStepping {
             return SetMicroStepping(
-                b = params.intOf('B'),
-                s = params.intOf('S'),
-                x = params.intOf('X'),
-                y = params.intOf('Y'),
-                z = params.intOf('Z'),
-                a = params.intOf('A'),
-                c = params.intOf('C'),
-                u = params.intOf('U'),
-                v = params.intOf('V'),
-                w = params.intOf('W'),
-                e = params.intOf('E'),
+                b = tokens.intOf('B'),
+                s = tokens.intOf('S'),
+                x = tokens.intOf('X'),
+                y = tokens.intOf('Y'),
+                z = tokens.intOf('Z'),
+                a = tokens.intOf('A'),
+                c = tokens.intOf('C'),
+                u = tokens.intOf('U'),
+                v = tokens.intOf('V'),
+                w = tokens.intOf('W'),
+                e = tokens.intOf('E'),
             )
         }
     }

@@ -63,15 +63,14 @@ data class ReturnToSavedPosition(
             return G(61).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ReturnToSavedPosition {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ReturnToSavedPosition {
             return ReturnToSavedPosition(
-                rate = params.decimalOf('F'),
-                slot = params.intOf('S'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                e = params.decimalOf('E'),
+                rate = tokens.decimalOf('F'),
+                slot = tokens.intOf('S'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                e = tokens.decimalOf('E'),
             )
         }
     }

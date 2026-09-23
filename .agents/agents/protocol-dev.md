@@ -63,19 +63,22 @@ When observable behaviour changes, the spec's Appendix B and the relevant queue 
 ```
 gcode/src/main/kotlin/.../code/core/**      portable core — kotlin.* imports ONLY
   token/GTokens.kt      token model, rawText() round-trip contract
-  token/GTokenizer.kt   the lexer: GTokenizerIterator + its scanners
+  token/GTokenizer.kt   the lexer (an object): parse() overloads, lines() = the whole pipeline.
+                        GTokenizerIterator, the state machine, is internal - scanners private
   token/GLiner.kt       tokens -> classified lines (framing, checksum verification)
   token/GLines.kt       GLine hierarchy and the structural errors - tokens only
   token/GCommands.kt    GWord, GBlock, GCommand - the command layer's vocabulary
-  token/GCommandParser.kt  a line's body -> words -> commands
+  token/GFields.kt      reading a field off tokens: the spec 2.1 pairing rule, the command head
   XorCheckSum.kt        streaming XOR checksum
-  GDescription.kt       command descriptors
   session/**            GCodeReader (line numbering), GSendWindow (resend window)
 gcode/src/main/kotlin/.../code/dsl/**       the writing facade — FULL KOTLIN, see gcode-dsl-dev
-  G.kt                  command + line builders, GSender (the sink)
+  G.kt                  command + line builders (the sink, GSender, is in :backend:terminal)
   GWords.kt             21 parameter letters x 5 shapes, plus the generic escape hatches
 gcode/src/main/kotlin/.../marlin/**         domain edge — may use :backend:core types
 gcode/src/main/java/**                      pre-migration Java, being replaced
+gcode/src/test/kotlin/.../token/GWordReader.kt   test apparatus: the command-agnostic
+                                            decomposition the corpus contracts are measured with.
+                                            Production reads with MarlinCommands.decode.
 gcode/src/test/resources/marlin.gcode       414 lines of real captured G-code — the corpus fixture
                                             (303 non-blank; GDslCorpusTest asserts all 303)
 backend/**, app/**                          transport and application. Not your layer.

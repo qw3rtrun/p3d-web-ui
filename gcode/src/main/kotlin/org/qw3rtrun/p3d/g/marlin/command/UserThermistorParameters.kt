@@ -60,14 +60,13 @@ data class UserThermistorParameters(
             return M(305).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): UserThermistorParameters {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): UserThermistorParameters {
             return UserThermistorParameters(
-                index = params.intOf('P'),
-                ohm = params.intOf('R'),
-                ohms = params.intOf('T'),
-                beta = params.intOf('B'),
-                coeff = params.decimalOf('C'),
+                index = tokens.intOf('P'),
+                ohm = tokens.intOf('R'),
+                ohms = tokens.intOf('T'),
+                beta = tokens.intOf('B'),
+                coeff = tokens.decimalOf('C'),
             )
         }
     }

@@ -52,12 +52,11 @@ data class SetPrintProgress(
             return M(73).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetPrintProgress {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetPrintProgress {
             return SetPrintProgress(
-                minutes = params.intOf('C'),
-                percent = params.intOf('P'),
-                r = params.intOf('R'),
+                minutes = tokens.intOf('C'),
+                percent = tokens.intOf('P'),
+                r = tokens.intOf('R'),
             )
         }
     }

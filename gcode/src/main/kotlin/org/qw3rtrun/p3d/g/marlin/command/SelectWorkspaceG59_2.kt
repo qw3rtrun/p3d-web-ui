@@ -46,7 +46,7 @@ class SelectWorkspaceG59_2 : GRq<SelectWorkspaceG59_2> {
             return G("59.2").head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SelectWorkspaceG59_2 {
+        override fun decodeParams(tokens: List<GToken>): SelectWorkspaceG59_2 {
             return SelectWorkspaceG59_2()
         }
     }

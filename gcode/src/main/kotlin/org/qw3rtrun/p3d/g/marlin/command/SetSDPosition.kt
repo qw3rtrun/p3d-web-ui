@@ -47,10 +47,9 @@ data class SetSDPosition(
             return M(26).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetSDPosition {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetSDPosition {
             return SetSDPosition(
-                pos = params.longOf('S'),
+                pos = tokens.longOf('S'),
             )
         }
     }

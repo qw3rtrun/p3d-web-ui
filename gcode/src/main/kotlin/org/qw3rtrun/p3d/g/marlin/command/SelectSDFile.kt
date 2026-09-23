@@ -51,10 +51,9 @@ data class SelectSDFile(
             return M(23).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SelectSDFile {
-            val all = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SelectSDFile {
             return SelectSDFile(
-                filename = all.stringArg(),
+                filename = tokens.stringArg(),
             )
         }
     }

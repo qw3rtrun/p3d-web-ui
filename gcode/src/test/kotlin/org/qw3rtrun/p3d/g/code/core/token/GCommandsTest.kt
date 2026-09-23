@@ -8,7 +8,7 @@ import org.qw3rtrun.p3d.g.code.core.GEncoder
 /**
  * The command model of GCODE_spec.md section 4: a head word, its parameter words, and what
  * [GEncoder] makes of them. The types live one layer above a line - a line is tokens, and only
- * `GCommandParser` turns tokens into the words these are built from.
+ * The DSL and `GRq.encode()` build these; `GWordReader` reads a line back into them.
  */
 class GCommandsTest {
 

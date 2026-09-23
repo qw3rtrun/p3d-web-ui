@@ -70,17 +70,16 @@ data class BedLeveling3Point(
             return G(29).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BedLeveling3Point {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): BedLeveling3Point {
             return BedLeveling3Point(
-                a = params.boolOf('A'),
-                c = params.boolOf('C'),
-                o = params.hasWord('O'),
-                q = params.boolOf('Q'),
-                e = params.boolOf('E'),
-                d = params.boolOf('D'),
-                j = params.boolOf('J'),
-                v = params.intOf('V'),
+                a = tokens.boolOf('A'),
+                c = tokens.boolOf('C'),
+                o = tokens.hasWord('O'),
+                q = tokens.boolOf('Q'),
+                e = tokens.boolOf('E'),
+                d = tokens.boolOf('D'),
+                j = tokens.boolOf('J'),
+                v = tokens.intOf('V'),
             )
         }
     }

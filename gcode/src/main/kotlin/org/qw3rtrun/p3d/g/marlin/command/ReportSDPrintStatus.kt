@@ -51,11 +51,10 @@ data class ReportSDPrintStatus(
             return M(27).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ReportSDPrintStatus {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ReportSDPrintStatus {
             return ReportSDPrintStatus(
-                seconds = params.intOf('S'),
-                c = params.hasWord('C'),
+                seconds = tokens.intOf('S'),
+                c = tokens.hasWord('C'),
             )
         }
     }

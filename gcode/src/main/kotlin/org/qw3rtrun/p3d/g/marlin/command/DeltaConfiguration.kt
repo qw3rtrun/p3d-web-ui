@@ -74,19 +74,18 @@ data class DeltaConfiguration(
             return M(665).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DeltaConfiguration {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): DeltaConfiguration {
             return DeltaConfiguration(
-                linear = params.decimalOf('H'),
-                l = params.decimalOf('L'),
-                r = params.decimalOf('R'),
-                s = params.decimalOf('S'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                a = params.decimalOf('A'),
-                b = params.decimalOf('B'),
-                c = params.decimalOf('C'),
+                linear = tokens.decimalOf('H'),
+                l = tokens.decimalOf('L'),
+                r = tokens.decimalOf('R'),
+                s = tokens.decimalOf('S'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                a = tokens.decimalOf('A'),
+                b = tokens.decimalOf('B'),
+                c = tokens.decimalOf('C'),
             )
         }
     }

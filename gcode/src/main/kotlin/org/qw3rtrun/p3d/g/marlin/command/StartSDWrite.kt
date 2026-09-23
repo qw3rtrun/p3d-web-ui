@@ -51,10 +51,9 @@ data class StartSDWrite(
             return M(28).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): StartSDWrite {
-            val all = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): StartSDWrite {
             return StartSDWrite(
-                filename = all.stringArg(),
+                filename = tokens.stringArg(),
             )
         }
     }

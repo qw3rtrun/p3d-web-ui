@@ -1,6 +1,6 @@
 ---
 name: gcode-dsl-dev
-description: Write or review the G-code building DSL in this repo - the `code/dsl` package (`G.kt`, `GWords.kt`, `GSender`), the host-side facade for *writing* G-code. Use for command and parameter builders, line/block builders, comments, the Java-facing sink, and anything measured by GDslCorpusTest. This layer is deliberately the INVERSE of the portable core: full Kotlin, infix and extension functions, BigDecimal, JVM types and throwing on a bad call site are all correct here. Do NOT use for `code/core` (tokenizer, liner, checksums, encoder) - that is `low-level-protocol-dev`.
+description: Write or review the G-code building DSL in this repo - the `code/dsl` package (`G.kt`, `GWords.kt`), the host-side facade for *writing* G-code. Use for command and parameter builders, line/block builders, comments, bare rest-of-line strings, and anything measured by GDslCorpusTest. This layer is deliberately the INVERSE of the portable core: full Kotlin, infix and extension functions, BigDecimal, JVM types and throwing on a bad call site are all correct here. Do NOT use for `code/core` (tokenizer, liner, checksums, encoder) - that is `low-level-protocol-dev`.
 ---
 
 # The G-code building DSL
@@ -8,8 +8,13 @@ description: Write or review the G-code building DSL in this repo - the `code/ds
 ## Which layer am I in
 
 This skill governs **one package**: `gcode/src/main/kotlin/org/qw3rtrun/p3d/g/code/dsl/**` —
-`G.kt` (commands, lines, `GSender`) and `GWords.kt` (parameter words). Its tests are
-`dsl/GTest.kt`, `dsl/GDslCorpusTest.kt` and `dsl/GSenderJavaInteropTest.java`.
+`G.kt` (commands, lines, comments) and `GWords.kt` (parameter words, `bareString`, `text`, `expr`).
+Its tests are `dsl/GTest.kt`, `dsl/GDslCorpusTest.kt` and `dsl/M117DecoderTest.kt`.
+
+**`GSender` is not in this package.** It is the Java-facing sink, it lives in
+`backend/terminal/src/main/java/org/qw3rtrun/p3d/terminal/GSender.java`, and its test is
+`GSenderTest.java` beside it. Emitting is transport's business; this layer builds values and returns
+them. Edits to the sink are that module's, under its standards, not this skill's.
 
 Everything under `code/core/**` is the **portable core** and is governed by
 [`low-level-protocol-dev`](../low-level-protocol-dev/SKILL.md) instead. If your edit touches both,
@@ -24,9 +29,9 @@ boundary, and the core's rules do not merely relax here, several of them *revers
 | `low-level-protocol-dev` forbids | `code/dsl` requires | Why the reversal is correct |
 |---|---|---|
 | **Errors are values; never throw on bad input** | `require(...)` → `IllegalArgumentException` | A tokenizer's input arrives off a serial link, where malformed is the normal case. A builder's input is *source code someone wrote*. `X("abc")` is a programmer error at the call site, and failing there beats discovering it when a printer answers `echo:Unknown command`. `GWords.kt` states this in its own KDoc: "this module throws only for those." |
-| `BigDecimal` | a `BigDecimal` overload on **every** letter, plus `GSender.m140(temp: BigDecimal)` | The core admits `BigDecimal` as its one portability liability (todo 02). Here it is not a liability at all — callers hold JVM decimals and the facade's job is to accept them. |
+| `BigDecimal` | a `BigDecimal` overload on **every** letter | The core admits `BigDecimal` as its one portability liability (todo 02). Here it is not a liability at all — callers hold JVM decimals and the facade's job is to accept them. |
 | Extension and infix functions, "no extension DSLs" | `infix fun GCommand.comment`, `infix fun GBlock.comment`, `GCommand.line()` | These *are* the facade. `G(1, X(10)) comment " move"` is the ergonomic win the layer exists to provide. |
-| JVM types | `java.util.function.Consumer` in `GSender`'s secondary constructor | `void` is not `Unit`, so `new GSender(this::onG)` will not compile against `(String) -> Unit`. This overload is the entire reason the Java facade can be swapped out without touching its callers. |
+| JVM types | `java.math.BigDecimal`, `StringBuilder`, whatever reads best at the call site | The call site is a JVM host writing Kotlin or Java. Nothing here is ported, so nothing here has to transliterate. (The `java.util.function.Consumer` constructor that used to be cited here belongs to `GSender`, in `:backend:terminal`.) |
 | `map`/`filter`/`toList` and allocation | `params.toList()`, `parts + tailComment(text)` | The ban is about **per-byte hot paths**. A builder runs once per authored line; clarity wins. |
 | "Write C, not idiomatic Kotlin" | idiomatic Kotlin — overloads, default arguments, `vararg` | Optimise for the **call site**, not for transliteration. |
 
@@ -89,10 +94,10 @@ For actual text use `text(…)` (spec 3.4); for an expression `expr(…)` (spec 
 
 ### Never restate a parser rule — share it
 
-`command()` validates through `GCommandParser.isCommandNumber`, which was lifted to a companion for
-exactly this. **A builder and a parser disagreeing about what a command number is would let a
-round-trip test pass on input no firmware accepts.** If you need a rule the parser already knows,
-lift it the same way; do not copy the condition.
+`command()` validates through `isCommandNumber` in `code/core/token/GFields.kt`, which is
+top-level for exactly this. **A builder and a reader disagreeing about what a command number is
+would let a round-trip test pass on input no firmware accepts.** If you need a rule the reading side
+already knows, share it the same way; do not copy the condition.
 
 ### Structural fields: `*` is refused, `N` is not
 
@@ -102,9 +107,9 @@ lift it the same way; do not copy the condition.
   an `N` inside a command is an ordinary parameter — and `M110 N7` sets the line-number counter
   (spec 7.2). Refusing it made `M110` unwritable.
 
-That over-wide-guard mistake has now been made **twice** in this module — once in
-`GCommandParser.isStructural` (todo 05) and once here — and both times it was found by something
-real failing, not by review. When you add a guard, write out the line it would refuse and check that
+That over-wide-guard mistake has now been made **twice** in this module — once in the line-number
+rule (todo 05) and once here — and both times it was found by something real failing, not by
+review. When you add a guard, write out the line it would refuse and check that
 line is genuinely invalid.
 
 ### Letter collisions resolve the way the *parser* resolves them
@@ -143,11 +148,12 @@ Nothing in `G.kt` emits. A command can be built, inspected and asserted on befor
 The Java facade this replaces took its sink in the constructor and returned `Unit`, which is why
 *its own test* had to keep a mutable list to see what it had produced. Do not reintroduce that.
 
-`GSender` is deliberately thin and **holds no line number and no window** — that is
-`GCodeReader`/`GSendWindow`'s job (todo 05), and duplicating it here would give a caller two
-counters that can disagree. Its named operations (`m105`, `m115`, `m155`, `m140`, `tempReport`,
-`autoReportTemp`, `firmwareInfo`, `setBedTemperature`) exist only to carry the Java facade's callers
-across unchanged; each is one line of DSL with no privileges.
+`GSender` — in `:backend:terminal`, not here — is deliberately thin and **holds no line number and
+no window**: that is `GCodeReader`/`GSendWindow`'s job (todo 05), and duplicating it would give a
+caller two counters that can disagree. The named shortcuts this layer's callers reach for
+(`m105`, `m115`, `m155`, `m140`, `tempReport`, `autoReportTemp`, `firmwareInfo`,
+`setBedTemperature`) live in `MarlinG` in `marlin/MarlinRQ.kt`; each is one line over a command
+class, with no privileges it does not have.
 
 ### The dependency runs one way
 
@@ -174,11 +180,11 @@ Follow the `tdd` skill for the loop. On top of it, for this layer:
 - **Refusals are tests too.** `require` is the contract here, so a rule you add needs an
   `assertThrows<IllegalArgumentException>` naming what it refuses. See
   `a command number the parser would refuse is refused here too`.
-- `@Nested inner class` per area (`Commands`, `Lines`, `Framing`, `TheSink`), backtick names stating
-  one behaviour, plain JUnit 5 assertions, no mocks.
-- **The Java interop test is load-bearing.** `GSenderJavaInteropTest.java` is written in Java on
-  purpose: it pins that `new GSender(this::onG)` compiles. Do not port it to Kotlin — that would
-  delete the only thing it tests.
+- `@Nested inner class` per area (`GTest.kt` has `Commands`, `Lines`, `Framing`), backtick names
+  stating one behaviour, plain JUnit 5 assertions, no mocks.
+- **The sink's Java test is load-bearing, and it is not yours.** `GSenderTest.java`, in
+  `:backend:terminal`, is written in Java on purpose: it pins that `new GSender(this::onG)`
+  compiles. Do not port it to Kotlin — that would delete the only thing it tests.
 
 ## Documentation duty
 
@@ -188,11 +194,10 @@ Follow the `tdd` skill for the loop. On top of it, for this layer:
 - [todo 10](https://github.com/qw3rtrun/p3d-web-ui/issues/12) is this layer's record: the rule, the corpus
   numbers, the decisions and the 24-line breakdown. When behaviour or a number changes, it changes
   in the same commit.
-- Todo 10's **What is left** is the standing next step: `G.java` still exists and three `:backend`
-  files still import it. Finishing that means swapping `import org.qw3rtrun.p3d.g.G` for
-  `import org.qw3rtrun.p3d.g.code.dsl.GSender` in `GFlux.java`, `PrinterState.java` and
-  `PrinterReactor.java` — outside `:gcode`, and tangled with the dead-Java-island decision in
-  todo 08.
+- Todo 10's **What is left** no longer includes the `G.java` swap: that file is gone, and
+  `PrinterReactor.java`, `PrinterState.java` and `PrinterStateGcodeTest.java` import
+  `org.qw3rtrun.p3d.terminal.GSender` today. Check the issue before repeating a step it records as
+  outstanding.
 
 ## Review checklist
 

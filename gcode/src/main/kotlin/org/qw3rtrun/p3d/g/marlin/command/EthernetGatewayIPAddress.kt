@@ -47,10 +47,9 @@ data class EthernetGatewayIPAddress(
             return M(554).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): EthernetGatewayIPAddress {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): EthernetGatewayIPAddress {
             return EthernetGatewayIPAddress(
-                gateway = params.stringOf('P'),
+                gateway = tokens.stringOf('P'),
             )
         }
     }

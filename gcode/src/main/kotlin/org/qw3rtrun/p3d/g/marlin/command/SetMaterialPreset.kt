@@ -55,13 +55,12 @@ data class SetMaterialPreset(
             return M(145).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetMaterialPreset {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetMaterialPreset {
             return SetMaterialPreset(
-                index = params.intOf('S'),
-                temp = params.intOf('H'),
-                b = params.intOf('B'),
-                speed = params.intOf('F'),
+                index = tokens.intOf('S'),
+                temp = tokens.intOf('H'),
+                b = tokens.intOf('B'),
+                speed = tokens.intOf('F'),
             )
         }
     }

@@ -51,11 +51,10 @@ data class EthernetIPAddressNetworkIF(
             return M(552).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): EthernetIPAddressNetworkIF {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): EthernetIPAddressNetworkIF {
             return EthernetIPAddressNetworkIF(
-                ipAddress = params.stringOf('P'),
-                s = params.intOf('S'),
+                ipAddress = tokens.stringOf('P'),
+                s = tokens.intOf('S'),
             )
         }
     }

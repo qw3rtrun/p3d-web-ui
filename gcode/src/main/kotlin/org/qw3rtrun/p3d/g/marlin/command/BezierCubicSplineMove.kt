@@ -74,18 +74,17 @@ data class BezierCubicSplineMove(
             return G(5).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BezierCubicSplineMove {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): BezierCubicSplineMove {
             return BezierCubicSplineMove(
-                pos = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                e = params.decimalOf('E'),
-                rate = params.decimalOf('F'),
-                i = params.decimalOf('I'),
-                j = params.decimalOf('J'),
-                p = params.decimalOf('P'),
-                q = params.decimalOf('Q'),
-                power = params.decimalOf('S'),
+                pos = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                e = tokens.decimalOf('E'),
+                rate = tokens.decimalOf('F'),
+                i = tokens.decimalOf('I'),
+                j = tokens.decimalOf('J'),
+                p = tokens.decimalOf('P'),
+                q = tokens.decimalOf('Q'),
+                power = tokens.decimalOf('S'),
             )
         }
     }

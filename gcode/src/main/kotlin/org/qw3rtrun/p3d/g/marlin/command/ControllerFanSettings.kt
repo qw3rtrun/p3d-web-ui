@@ -59,14 +59,13 @@ data class ControllerFanSettings(
             return M(710).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ControllerFanSettings {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ControllerFanSettings {
             return ControllerFanSettings(
-                speed = params.intOf('S'),
-                i = params.intOf('I'),
-                a = params.boolOf('A'),
-                r = params.boolOf('R'),
-                seconds = params.intOf('D'),
+                speed = tokens.intOf('S'),
+                i = tokens.intOf('I'),
+                a = tokens.boolOf('A'),
+                r = tokens.boolOf('R'),
+                seconds = tokens.intOf('D'),
             )
         }
     }

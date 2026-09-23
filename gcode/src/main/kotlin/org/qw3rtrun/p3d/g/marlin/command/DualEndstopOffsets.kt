@@ -53,12 +53,11 @@ data class DualEndstopOffsets(
             return M(666).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DualEndstopOffsets {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): DualEndstopOffsets {
             return DualEndstopOffsets(
-                adj = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
+                adj = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

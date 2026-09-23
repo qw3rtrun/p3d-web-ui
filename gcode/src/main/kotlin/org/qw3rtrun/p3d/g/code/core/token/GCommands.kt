@@ -5,8 +5,11 @@ package org.qw3rtrun.p3d.g.code.core.token
  *
  * Words belong to the **command** layer, not the line layer. A line is classified from its tokens -
  * where `N` is and where the last `*` is - and nothing above that needs a word until someone asks
- * what the line *commands*. `GCommandParser` is where tokens become words, and it is the only
- * producer of the types below.
+ * what the line *commands*. The **writing** direction is where they are produced now: the DSL and
+ * `GRq.encode()` build them, and `GEncoder` consumes them. Reading a line back into words - the
+ * command-agnostic decomposition the old `GCommandParser` did - is measurement apparatus and lives
+ * with the corpus tests; a host that wants to know what a line commands asks a decoder, which knows
+ * the command number and can therefore read what words cannot (spec 3.4a).
  */
 sealed interface GWord {
     val id: GIdentifier
@@ -35,14 +38,30 @@ data class GFlagWord(
     override val raw: List<GToken> = listOf(id),
 ) : GWord
 
-sealed interface GUnnamedWord<V : GValue> : GWord {
+/**
+ * A field with no identifier in front of it: spec 3.4a's bare rest-of-line string, as in
+ * `M117 Hello World`, where the text *is* the argument.
+ *
+ * Only a decoder builds one, because only a decoder knows the command number that says a line has
+ * such an argument at all (see `GRqDecoder`); the token layer lexes `Hello World` letter by letter
+ * and the command parser never assembles one.
+ *
+ * [id] is [GEmptyId] so that a `GWord` always has one and `GEncoder` can write it unconditionally -
+ * it renders as nothing. That is the compromise: the honest shape splits `GWord` into a named half
+ * and an unnamed one and lets `GEmptyId` disappear, which touches the DSL's parameter check, the
+ * parser's structural test, the encoder and every generated `encode()`. Not worth it for one
+ * unnamed word type; revisit when there is a second.
+ *
+ * This replaced a `GUnnamedWord<V : GValue>` interface whose type parameter appeared nowhere in
+ * its body and which had this as its only implementation.
+ */
+data class GUnnamedStr(
+    val str: GString,
+    override val raw: List<GToken> = listOf(str),
+) : GWord {
     override val id: GIdentifier
         get() = GEmptyId
 }
-
-data class GUnnamedStr(val str: GString,
-                       override val raw: List<GToken> = listOf(str)
-) : GUnnamedWord<GString>
 
 /**
  * Something that can stand in a [GBlock]: a [GCommand] or a [GComment].

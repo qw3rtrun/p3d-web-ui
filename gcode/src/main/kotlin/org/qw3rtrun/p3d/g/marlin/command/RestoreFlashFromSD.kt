@@ -46,7 +46,7 @@ class RestoreFlashFromSD : GRq<RestoreFlashFromSD> {
             return M(994).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): RestoreFlashFromSD {
+        override fun decodeParams(tokens: List<GToken>): RestoreFlashFromSD {
             return RestoreFlashFromSD()
         }
     }

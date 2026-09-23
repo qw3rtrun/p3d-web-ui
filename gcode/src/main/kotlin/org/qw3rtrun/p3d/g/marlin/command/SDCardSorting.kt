@@ -51,11 +51,10 @@ data class SDCardSorting(
             return M(34).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SDCardSorting {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SDCardSorting {
             return SDCardSorting(
-                s = params.decimalOf('S'),
-                f = params.intOf('F'),
+                s = tokens.decimalOf('S'),
+                f = tokens.intOf('F'),
             )
         }
     }

@@ -46,7 +46,7 @@ class SpindleLaserOff : GRq<SpindleLaserOff> {
             return M(5).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SpindleLaserOff {
+        override fun decodeParams(tokens: List<GToken>): SpindleLaserOff {
             return SpindleLaserOff()
         }
     }

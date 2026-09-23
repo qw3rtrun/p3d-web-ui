@@ -63,14 +63,13 @@ data class PIDAutotune(
             return M(303).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PIDAutotune {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): PIDAutotune {
             return PIDAutotune(
-                index = params.intOf('E'),
-                count = params.intOf('C'),
-                temp = params.decimalOf('S'),
-                u = params.boolOf('U'),
-                d = params.hasWord('D'),
+                index = tokens.intOf('E'),
+                count = tokens.intOf('C'),
+                temp = tokens.decimalOf('S'),
+                u = tokens.boolOf('U'),
+                d = tokens.hasWord('D'),
             )
         }
     }

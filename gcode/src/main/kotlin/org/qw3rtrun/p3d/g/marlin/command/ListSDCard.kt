@@ -52,12 +52,11 @@ data class ListSDCard(
             return M(20).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ListSDCard {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ListSDCard {
             return ListSDCard(
-                f = params.hasWord('F'),
-                l = params.hasWord('L'),
-                t = params.hasWord('T'),
+                f = tokens.hasWord('F'),
+                l = tokens.hasWord('L'),
+                t = tokens.hasWord('T'),
             )
         }
     }

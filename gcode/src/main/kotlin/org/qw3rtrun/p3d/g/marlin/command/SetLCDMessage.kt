@@ -51,10 +51,9 @@ data class SetLCDMessage(
             return M(117).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetLCDMessage {
-            val all = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetLCDMessage {
             return SetLCDMessage(
-                message = all.stringArg(),
+                message = tokens.stringArg(),
             )
         }
     }

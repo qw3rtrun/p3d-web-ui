@@ -52,11 +52,10 @@ data class SetTrimpotPins(
             return M(908).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetTrimpotPins {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetTrimpotPins {
             return SetTrimpotPins(
-                address = params.intOf('P'),
-                current = params.intOf('S'),
+                address = tokens.intOf('P'),
+                current = tokens.intOf('S'),
             )
         }
     }

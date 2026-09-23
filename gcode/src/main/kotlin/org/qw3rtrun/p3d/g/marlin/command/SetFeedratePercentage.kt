@@ -54,12 +54,11 @@ data class SetFeedratePercentage(
             return M(220).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetFeedratePercentage {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetFeedratePercentage {
             return SetFeedratePercentage(
-                percent = params.intOf('S'),
-                b = params.hasWord('B'),
-                r = params.hasWord('R'),
+                percent = tokens.intOf('S'),
+                b = tokens.hasWord('B'),
+                r = tokens.hasWord('R'),
             )
         }
     }

@@ -46,7 +46,7 @@ class Quickstop : GRq<Quickstop> {
             return M(410).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): Quickstop {
+        override fun decodeParams(tokens: List<GToken>): Quickstop {
             return Quickstop()
         }
     }

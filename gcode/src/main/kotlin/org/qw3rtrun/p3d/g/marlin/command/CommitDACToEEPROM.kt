@@ -46,7 +46,7 @@ class CommitDACToEEPROM : GRq<CommitDACToEEPROM> {
             return M(910).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): CommitDACToEEPROM {
+        override fun decodeParams(tokens: List<GToken>): CommitDACToEEPROM {
             return CommitDACToEEPROM()
         }
     }

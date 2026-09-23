@@ -55,12 +55,11 @@ data class I2CRequest(
             return M(261).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): I2CRequest {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): I2CRequest {
             return I2CRequest(
-                addr = params.intOf('A'),
-                count = params.intOf('B'),
-                s = params.intOf('S'),
+                addr = tokens.intOf('A'),
+                count = tokens.intOf('B'),
+                s = tokens.intOf('S'),
             )
         }
     }

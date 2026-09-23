@@ -53,12 +53,11 @@ data class SetDeltaEndstopAdjustments(
             return M(666).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetDeltaEndstopAdjustments {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetDeltaEndstopAdjustments {
             return SetDeltaEndstopAdjustments(
-                adj = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
+                adj = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

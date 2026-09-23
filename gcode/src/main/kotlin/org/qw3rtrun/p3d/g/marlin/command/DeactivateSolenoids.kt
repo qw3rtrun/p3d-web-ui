@@ -46,10 +46,9 @@ data class DeactivateSolenoids(
             return M(381).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DeactivateSolenoids {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): DeactivateSolenoids {
             return DeactivateSolenoids(
-                index = params.intOf('S'),
+                index = tokens.intOf('S'),
             )
         }
     }

@@ -46,10 +46,9 @@ data class Retract(
             return G(10).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): Retract {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): Retract {
             return Retract(
-                s = params.boolOf('S'),
+                s = tokens.boolOf('S'),
             )
         }
     }

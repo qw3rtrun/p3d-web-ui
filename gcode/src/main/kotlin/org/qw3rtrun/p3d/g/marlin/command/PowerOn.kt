@@ -46,10 +46,9 @@ data class PowerOn(
             return M(80).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PowerOn {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): PowerOn {
             return PowerOn(
-                s = params.hasWord('S'),
+                s = tokens.hasWord('S'),
             )
         }
     }

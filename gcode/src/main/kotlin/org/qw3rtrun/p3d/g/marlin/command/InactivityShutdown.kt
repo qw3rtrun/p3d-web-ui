@@ -49,10 +49,9 @@ data class InactivityShutdown(
             return M(85).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): InactivityShutdown {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): InactivityShutdown {
             return InactivityShutdown(
-                seconds = params.intOf('S'),
+                seconds = tokens.intOf('S'),
             )
         }
     }

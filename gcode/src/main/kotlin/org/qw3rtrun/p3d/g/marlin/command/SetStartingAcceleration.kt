@@ -56,13 +56,12 @@ data class SetStartingAcceleration(
             return M(204).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetStartingAcceleration {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetStartingAcceleration {
             return SetStartingAcceleration(
-                accel = params.decimalOf('P'),
-                r = params.decimalOf('R'),
-                t = params.decimalOf('T'),
-                s = params.decimalOf('S'),
+                accel = tokens.decimalOf('P'),
+                r = tokens.decimalOf('R'),
+                t = tokens.decimalOf('T'),
+                s = tokens.decimalOf('S'),
             )
         }
     }

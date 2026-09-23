@@ -46,7 +46,7 @@ class HomeOffsetsHere : GRq<HomeOffsetsHere> {
             return M(428).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): HomeOffsetsHere {
+        override fun decodeParams(tokens: List<GToken>): HomeOffsetsHere {
             return HomeOffsetsHere()
         }
     }

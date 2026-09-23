@@ -46,7 +46,7 @@ class SCARAThetaB : GRq<SCARAThetaB> {
             return M(361).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SCARAThetaB {
+        override fun decodeParams(tokens: List<GToken>): SCARAThetaB {
             return SCARAThetaB()
         }
     }

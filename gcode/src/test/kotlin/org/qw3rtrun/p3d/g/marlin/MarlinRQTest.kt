@@ -19,7 +19,6 @@ import java.math.BigDecimal
  */
 class MarlinRQTest {
 
-    private val tokenizer = GTokenizer()
 
     private fun enc(rq: ReportHotendTemperature) = GEncoder.encode(rq.encode())
 
@@ -31,7 +30,7 @@ class MarlinRQTest {
      * the command number - and the layer that produces words does not know it. Feeding these
      * tests a `GCommand` would have let them pass over a split the tokenizer cannot make.
      */
-    private fun decode(line: String) = ReportHotendTemperature.decode(tokenizer.parse(line))
+    private fun decode(line: String) = ReportHotendTemperature.decode(GTokenizer.parse(line).toList())
 
     @Test
     fun `an unset parameter is not written`() {
@@ -110,7 +109,7 @@ class MarlinRQTest {
         assertEquals(ReportHotendTemperature(index = 2), decode("M105T2"))
         assertEquals(ReportHotendTemperature(index = 2), decode("M 105 T 2"))
         // spec 2.2: the dialects are case-insensitive, letter by letter - the command's as much
-        // as its parameters'. `GCommandParser.headKey` is what folds the head's.
+        // as its parameters'. `headKey` is what folds the head's.
         assertEquals(ReportHotendTemperature(index = 2), decode("m105 t2"))
         // The lexeme is still part of a number's identity, so a non-canonical code is not M105.
         assertNull(decode("M0105 T2"))

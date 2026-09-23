@@ -46,10 +46,9 @@ data class StowProbe(
             return M(402).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): StowProbe {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): StowProbe {
             return StowProbe(
-                r = params.boolOf('R'),
+                r = tokens.boolOf('R'),
             )
         }
     }

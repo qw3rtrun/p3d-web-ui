@@ -52,11 +52,10 @@ data class ServoPosition(
             return M(280).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ServoPosition {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ServoPosition {
             return ServoPosition(
-                index = params.intOf('P'),
-                pos = params.intOf('S'),
+                index = tokens.intOf('P'),
+                pos = tokens.intOf('S'),
             )
         }
     }

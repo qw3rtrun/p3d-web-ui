@@ -47,10 +47,9 @@ data class FilamentWidthSensorNominalDiameter(
             return M(404).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FilamentWidthSensorNominalDiameter {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FilamentWidthSensorNominalDiameter {
             return FilamentWidthSensorNominalDiameter(
-                linear = params.decimalOf('W'),
+                linear = tokens.decimalOf('W'),
             )
         }
     }

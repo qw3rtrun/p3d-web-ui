@@ -46,7 +46,7 @@ class CNCWorkspacePlanesG19 : GRq<CNCWorkspacePlanesG19> {
             return G(19).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): CNCWorkspacePlanesG19 {
+        override fun decodeParams(tokens: List<GToken>): CNCWorkspacePlanesG19 {
             return CNCWorkspacePlanesG19()
         }
     }

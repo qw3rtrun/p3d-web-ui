@@ -46,7 +46,7 @@ class SCARAPsiA : GRq<SCARAPsiA> {
             return M(362).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SCARAPsiA {
+        override fun decodeParams(tokens: List<GToken>): SCARAPsiA {
             return SCARAPsiA()
         }
     }

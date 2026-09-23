@@ -70,17 +70,16 @@ data class TMCDebugging(
             return M(122).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TMCDebugging {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): TMCDebugging {
             return TMCDebugging(
-                i = params.hasWord('I'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                e = params.hasWord('E'),
-                v = params.hasWord('V'),
-                s = params.boolOf('S'),
-                ms = params.intOf('P'),
+                i = tokens.hasWord('I'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                e = tokens.hasWord('E'),
+                v = tokens.hasWord('V'),
+                s = tokens.boolOf('S'),
+                ms = tokens.intOf('P'),
             )
         }
     }

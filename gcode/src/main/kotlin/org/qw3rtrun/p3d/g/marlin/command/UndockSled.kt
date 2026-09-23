@@ -46,7 +46,7 @@ class UndockSled : GRq<UndockSled> {
             return G(32).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): UndockSled {
+        override fun decodeParams(tokens: List<GToken>): UndockSled {
             return UndockSled()
         }
     }

@@ -81,21 +81,20 @@ data class SetHybridThresholdSpeed(
             return M(913).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetHybridThresholdSpeed {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetHybridThresholdSpeed {
             return SetHybridThresholdSpeed(
-                i = params.intOf('I'),
-                t = params.intOf('T'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                a = params.intOf('A'),
-                b = params.intOf('B'),
-                c = params.intOf('C'),
-                u = params.intOf('U'),
-                v = params.intOf('V'),
-                w = params.intOf('W'),
-                e = params.hasWord('E'),
+                i = tokens.intOf('I'),
+                t = tokens.intOf('T'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                a = tokens.intOf('A'),
+                b = tokens.intOf('B'),
+                c = tokens.intOf('C'),
+                u = tokens.intOf('U'),
+                v = tokens.intOf('V'),
+                w = tokens.intOf('W'),
+                e = tokens.hasWord('E'),
             )
         }
     }

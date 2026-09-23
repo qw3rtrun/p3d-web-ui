@@ -60,14 +60,13 @@ data class SetMaxFeedrate(
             return M(203).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetMaxFeedrate {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetMaxFeedrate {
             return SetMaxFeedrate(
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                e = params.decimalOf('E'),
-                index = params.intOf('T'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                e = tokens.decimalOf('E'),
+                index = tokens.intOf('T'),
             )
         }
     }

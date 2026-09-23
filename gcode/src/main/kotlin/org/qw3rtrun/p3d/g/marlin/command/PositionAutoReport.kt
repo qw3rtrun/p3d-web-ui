@@ -46,10 +46,9 @@ data class PositionAutoReport(
             return M(154).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PositionAutoReport {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): PositionAutoReport {
             return PositionAutoReport(
-                seconds = params.intOf('S'),
+                seconds = tokens.intOf('S'),
             )
         }
     }

@@ -47,10 +47,9 @@ data class EthernetSubnetMask(
             return M(553).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): EthernetSubnetMask {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): EthernetSubnetMask {
             return EthernetSubnetMask(
-                subnetMask = params.stringOf('P'),
+                subnetMask = tokens.stringOf('P'),
             )
         }
     }

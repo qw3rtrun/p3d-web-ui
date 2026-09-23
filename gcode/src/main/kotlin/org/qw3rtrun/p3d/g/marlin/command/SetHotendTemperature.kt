@@ -60,14 +60,13 @@ data class SetHotendTemperature(
             return M(104).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetHotendTemperature {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetHotendTemperature {
             return SetHotendTemperature(
-                index = params.intOf('I'),
-                temp = params.decimalOf('S'),
-                factor = params.decimalOf('F'),
-                b = params.decimalOf('B'),
-                t = params.intOf('T'),
+                index = tokens.intOf('I'),
+                temp = tokens.decimalOf('S'),
+                factor = tokens.decimalOf('F'),
+                b = tokens.decimalOf('B'),
+                t = tokens.intOf('T'),
             )
         }
     }

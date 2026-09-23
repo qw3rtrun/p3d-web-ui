@@ -65,16 +65,15 @@ data class MagneticParkingExtruder(
             return M(951).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MagneticParkingExtruder {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): MagneticParkingExtruder {
             return MagneticParkingExtruder(
-                l = params.decimalOf('L'),
-                r = params.decimalOf('R'),
-                i = params.decimalOf('I'),
-                j = params.decimalOf('J'),
-                h = params.decimalOf('H'),
-                d = params.decimalOf('D'),
-                c = params.decimalOf('C'),
+                l = tokens.decimalOf('L'),
+                r = tokens.decimalOf('R'),
+                i = tokens.decimalOf('I'),
+                j = tokens.decimalOf('J'),
+                h = tokens.decimalOf('H'),
+                d = tokens.decimalOf('D'),
+                c = tokens.decimalOf('C'),
             )
         }
     }

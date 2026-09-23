@@ -46,7 +46,7 @@ class AbortSDPrint : GRq<AbortSDPrint> {
             return M(524).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): AbortSDPrint {
+        override fun decodeParams(tokens: List<GToken>): AbortSDPrint {
             return AbortSDPrint()
         }
     }

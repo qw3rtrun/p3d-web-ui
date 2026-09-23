@@ -46,7 +46,7 @@ class Recover : GRq<Recover> {
             return G(11).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): Recover {
+        override fun decodeParams(tokens: List<GToken>): Recover {
             return Recover()
         }
     }

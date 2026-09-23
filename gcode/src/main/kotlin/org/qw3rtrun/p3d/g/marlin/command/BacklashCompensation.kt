@@ -59,14 +59,13 @@ data class BacklashCompensation(
             return M(425).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BacklashCompensation {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): BacklashCompensation {
             return BacklashCompensation(
-                value = params.decimalOf('F'),
-                linear = params.decimalOf('S'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
+                value = tokens.decimalOf('F'),
+                linear = tokens.decimalOf('S'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

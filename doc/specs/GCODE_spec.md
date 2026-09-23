@@ -696,6 +696,7 @@ raw capture. The rules are recorded in the `low-level-protocol-dev` skill
 | Integer | `GInt(int: Int, lexeme: String = int.toString())` : `GNumber` |
 | Decimal | `GFloat(value: BigDecimal, lexeme: String = value.toString())` : `GNumber` |
 | Quoted string | `GQuotedString(string: String)` : `GString` — `rawText()` re-doubles `"` |
+| Bare rest-of-line string ([§3.4](#34-string-values)a) | `GUnquotedString(string: String)` : `GString` — `rawText()` is the string itself, undelimited. **Never produced by the lexer**: which commands take one depends on the command number, so a decoder builds it |
 | Expression `{ … }` | `GRawExpression` : `GExpression` |
 | Tail comment `;` | `GTailComment(string, key = ";")` : `GComment` |
 | Inline comment `( )` | `GInlineComment(string, "(", ")")` : `GComment` |
@@ -720,8 +721,9 @@ this type and must choose a replacement — a scaled integer pair (`mantissa × 
 equivalent that preserves the scale-sensitive identity above; a binary float is not. The cost is
 bounded because **nothing in the module reads the parsed value**: `rawText()` returns the lexeme, so
 round-tripping never touches `BigDecimal`, and a port that carries only the lexeme still lexes and
-re-emits correctly. The same liability appears once more outside the token layer, as
-`GDDecimalField.default` in `GDescription.kt`. Recorded rather than fixed, per
+re-emits correctly. It is now the module's **only** such liability: the second one,
+`GDDecimalField.default` in `GDescription.kt`, went with the unused descriptor that held it.
+Recorded rather than fixed, per
 [issue #4](https://github.com/qw3rtrun/p3d-web-ui/issues/4).
 
 ### B.2 Tokenizer — `token/GTokenizer.kt`
@@ -733,8 +735,17 @@ space/tab/LF/CR → `GSpace`/`GTab`/`GLineBreak` (with `\r\n` lookahead, lone `\
 expression, `;` → tail comment, `(` → balanced inline comment, `*` → `GChecksum`, otherwise
 `GUnknown`. The character classes are private one-line functions over explicit ASCII ranges;
 there is no `Char.isLetter()`/`isDigit()`/`isWhitespace()` in the module, and no
-`java.util.stream`/`kotlin.streams` either — the `Stream<Char>` overload is gone, since the
-`Iterator`/`Iterable`/`Sequence`/`CharSequence` ones cover every caller.
+`java.util.stream`/`kotlin.streams` either — the `Stream<Char>` and `Iterable<Char>` overloads are
+both gone, nothing having called either, and the `Iterator`/`Sequence`/`CharSequence` ones cover
+every caller.
+
+`GTokenizer` is an **object**: it holds no state, so an instance per call site bought nothing. It
+also carries `lines(text)`, the whole read pipeline under one name — text in, classified `GLine`s
+out, the tokenizer and the liner wired together — because that is the module's primary operation and
+every caller used to assemble it by hand. `GLiner` remains public for a caller that already holds
+tokens, or that wants to drive the lines as an `Iterator`. The state machine itself,
+`GTokenizerIterator`, is `internal` and its six scanners are private: which characters `number()`
+consumes is how this lexer is built, not what it promises.
 
 Deviations from this spec, as currently written (all verified by running the module):
 
@@ -745,7 +756,8 @@ Deviations from this spec, as currently written (all verified by running the mod
   `[GLetter(M), GUnknown("(abc")]`) rather than to a typed lexical error ([§9](#9-error-handling));
 * a subcode ([§4.1](#41-command-letters)) is lexed as a decimal: `G29.1` → `GLetter(G), GFloat(29.1)`;
 * bare rest-of-line strings ([§3.4](#34-string-values)) are not recognised — `M117 Hello World`
-  becomes one `GLetter` per character.
+  becomes one `GLetter` per character. This is a layering fact, not an open gap: the characters are
+  reassembled one layer up, by a decoder that knows the command number (see [B.3](#b3-line-model--tokenglineskt-tokenglinerkt-tokengcommandskt-tokengfieldskt)).
 
 Conforming as of the number-lexeme pass: the optional sign of [§3.1](#31-numeric-values) is part of
 the number token (`G1 E-5` → `… GLetter(E), GInt(-5)`), a tab is `GTab`
@@ -769,7 +781,7 @@ quoted strings are unaffected — `marlin.gcode` keeps the `’` and `µ` in its
 digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` from lexing as
 `GFloat(1.2)`.
 
-### B.3 Line model — `token/GLines.kt`, `token/GLiner.kt`, `token/GCommands.kt`, `token/GCommandParser.kt`
+### B.3 Line model — `token/GLines.kt`, `token/GLiner.kt`, `token/GCommands.kt`, `token/GFields.kt`
 
 The module reads a line in two passes over two vocabularies. **A line is tokens**: its shape is
 decided from token positions alone, and nothing above the lexer is built to answer it. **A command is
@@ -782,9 +794,9 @@ words**: fields are assembled only when a caller asks what the line commands.
 | Unnumbered line | `GSimpleLine` |
 | `N…*…` framed line ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GPacketLine(number, checksum, body, raw)` — also `GOrdered`, `GCheckSumControlled` |
 | Line number ([§7.1](#71-syntax)), checksum field ([§8.1](#81-syntax)) | `GInt` — the integer behind the `N`, and behind the last `*` |
-| A field ([§3](#3-value-types)) | `GWord`: a `GParameterWord` (identifier + value) or a `GFlagWord` (identifier alone) |
+| A field ([§3](#3-value-types)) | `GWord`: a `GParameterWord` (identifier + value), a `GFlagWord` (identifier alone, [§3.2](#32-flag-value-less-parameters)), or a `GUnnamedStr` (value alone — [§3.4](#34-string-values)a's bare string, whose `id` is the empty `GEmptyId` so that every word has one) |
 | One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GNumber>, params: List<GWord>)` |
-| Structural error ([§9](#9-error-handling)) | `GError`: `GNotIdentifierError`, `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum`, `GCheckSumFailedLine` |
+| Structural error ([§9](#9-error-handling)) | `GError`: `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum`, `GCheckSumFailedLine` |
 
 `raw` is every token of the line in wire order, terminator included, and it is the stored value of
 every line type — so "a line reproduces its input" holds by construction rather than by an override.
@@ -825,32 +837,53 @@ trailing line break is a token like any other, so an unterminated line keeps its
 short line does not throw — `N*` yields `GMalformedLineNumber`, not `IllegalArgumentException`
 (TODO 1.3).
 
-`GCommandParser` is the second pass and **the layer where words exist at all**. `words()` groups a
-token range into fields — an identifier plus the value behind it, whitespace between them absorbed
-([§2.1](#21-whitespace)), or a `GFlagWord` where there is no value ([§3.2](#32-flag-value-less-parameters)) —
-and everything that is not a field (separators, comments, the terminator, an unknown character) is
-dropped, because `GLine.raw` is what reproduces the input. `parse()` then splits those words at each
-`G`/`M` word ([§4.3](#43-rules) — Marlin executes only the first, but the parser reports what is
-there), and at a `T` word **only while no command has started**, since
-[§4.2](#42-parameter-letters) also makes `T` a conventional parameter letter: `G29 T` and
-`G12 P1 S1 T3` are one command each. The two structural letters, `N` ([§7](#7-line-numbering)) and
-`*` ([§8](#8-checksum-and-crc)), are skipped — they belong to the line, not to a command, and they
-are present in the words of any line that is not a well-formed packet. A command number is accepted
-only as `<unsigned-int>[.<unsigned-int>]` ([§4.1](#41-command-letters)), so `G29.1` is one command
-word carrying `GFloat("29.1")` — the subcode stays on the number, which is what re-emits `29.1`
-rather than `29` and `.1`.
+**Reading a line into commands is a decoder's job, not a second pass of this layer's.** `GFields.kt`
+carries what the layer still owes a reader, as functions over tokens rather than a parser object:
+`valueIndex()` is [§2.1](#21-whitespace)'s pairing rule — an identifier and the value behind it,
+whitespace absorbed — in the module's only copy of it, and `headWord()` / `headEnd()` / `headKey()`
+read the one field that is a command ([§2.3](#23-grammar-ebnf) makes `command-word` a specialisation
+of `word`, so it is the same rule). A command number is accepted only as
+`<unsigned-int>[.<unsigned-int>]` ([§4.1](#41-command-letters)) by `isCommandNumber()`, which the DSL
+shares, so `G29.1` is one command word carrying `GFloat("29.1")` — the subcode stays on the number,
+which is what re-emits `29.1` rather than `29` and `.1`. `isCommandLetter()` accepts `G`, `M` and a
+line-initial `T`.
+
+A **command-agnostic** decomposition — every field of a line into a `GWord`, the words split at each
+`G`/`M` word ([§4.3](#43-rules)) and at a `T` word only while no command has started, with `N`
+([§7](#7-line-numbering)) and `*` ([§8](#8-checksum-and-crc)) skipped as structural — used to be a
+`GCommandParser` class in this layer. It has no production caller: a host that wants to know what a
+line commands asks `MarlinCommands.decode`, which knows the command number and can therefore read
+what words cannot ([§3.4](#34-string-values)a). It survives as `GWordReader` in the test sources,
+because three corpus contracts measure the module against **arbitrary** lines — including commands
+no class models — and a Marlin-only decoder cannot express that question.
 
 Verified by running: the whole corpus is one command per line except `G53 G0 X0 Y0 Z0` and
-`G53 G1 X20` (two each — `G53` is a modal prefix) and `M815 G0 X0 Y0|G0 Z10|M300 S440 P50` (four,
-because [§3.4](#34-string-values)'s bare rest-of-line strings are not implemented, so the words
-inside `M815`'s argument still split the line). `GCorpusDecompositionTest` freezes that reading:
+`G53 G1 X20` (two each — `G53` is a modal prefix) and `M815 G0 X0 Y0|G0 Z10|M300 S440 P50`, which
+that reader reports as **four** because `M815`'s argument is a bare rest-of-line string and a
+command-agnostic reader cannot know it. That is not fixable there and is not a defect of it: the
+same line through `MarlinCommands.decode` is one `GCodeMacrosM815` whose `gcode` property is the
+whole macro. `GCorpusDecompositionTest` freezes that reading:
 every line of both corpora, plus a hand-built edge-case set covering the table above, as its line
 kind, its framing fields and its canonically encoded commands.
 
-`GCommandParser.isCommandLetter()` treats `G`, `M` and (line-initially) `T` as command letters, which
-is the [§4.1](#41-command-letters) set minus Marlin's development-only `D`. `GNotIdentifierError` is
-declared but never produced: a line whose first token is a value has no field at that position, and
-the first *identifier* is what the shape is read from.
+`isCommandLetter()` treats `G`, `M` and (line-initially) `T` as command letters, which is the
+[§4.1](#41-command-letters) set minus Marlin's development-only `D`. A line whose tokens hold
+no identifier is a `GMeaninglessLine` whatever those tokens are - `?` and `42 99` as much as a blank
+line - because the first *identifier* is what the shape is read from and such a line has no field at
+any position. [§9](#9-error-handling) would call the first two an error; a `GNotIdentifierError` was
+declared for them and never produced, and has been deleted rather than left as a type no producer
+fills and no consumer reads.
+
+**A valued parameter sent bare does not round-trip.** `M104 F` is legal — the letter is present and
+carries nothing — and the word model can say so (`GFlagWord`), but the decoder accessors collapse
+"absent" and "present without a value" to `null`, because a `BigDecimal?` property has no third
+state. So `M104 F` decodes with `factor = null` and re-encodes as `M104`: the only place in the
+module where bytes that lexed correctly are lost. `hasWord()` is the only accessor that sees the
+difference, which is why a parameter modelled as a flag is unaffected. Fixing it means a second
+property per valued parameter across 831 of them, and Marlin's own reading is that a seen-but-
+valueless letter is the default (`value_float()` returns 0), so this is recorded rather than fixed.
+`MarlinDocExamplesTest` pins the affected doc examples line by line, and `stringArgStart()` depends
+on this: a bare own-letter has to *end* the lettered run precisely because it cannot be represented.
 
 Not yet covered by *this* layer: line-length limits, and [§3.4](#34-string-values)'s bare
 rest-of-line strings. The latter is a layering fact rather than a gap: which commands take one
@@ -864,7 +897,7 @@ so that a `P1` inside a message is text rather than a parameter. The DSL writes 
 `bareString(text)`, which the encoder emits undelimited and last.
 
 Head matching on that layer is [§2.2](#22-case)-tolerant in the reading direction: `GRqDecoder` and
-`MarlinCommands.decode` compare through `GCommandParser.headKey()`, which folds the command letter
+`MarlinCommands.decode` compare through `headKey()`, which folds the command letter
 to upper case, so `m104 s200` and `M104 S200` decode to the same command. The **number** keeps its
 lexeme, so `M0105` still does not resolve, and the writing direction is unchanged - the DSL emits
 uppercase, which is what [§2.2](#22-case) asks generators to do.

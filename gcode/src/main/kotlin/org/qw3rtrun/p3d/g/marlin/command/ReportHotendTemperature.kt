@@ -51,11 +51,10 @@ data class ReportHotendTemperature(
             return M(105).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ReportHotendTemperature {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): ReportHotendTemperature {
             return ReportHotendTemperature(
-                r = params.hasWord('R'),
-                index = params.intOf('T'),
+                r = tokens.hasWord('R'),
+                index = tokens.intOf('T'),
             )
         }
     }

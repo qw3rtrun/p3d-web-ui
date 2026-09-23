@@ -9,9 +9,9 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
-import org.qw3rtrun.p3d.g.code.core.token.GCommandParser
 import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
+import org.qw3rtrun.p3d.g.code.core.token.headEnd
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.marlin.command.*
 import java.math.BigDecimal
@@ -28,13 +28,13 @@ import java.math.BigDecimal
 class MarlinCommandsTest {
 
     /** A built command as the tokens a printer would receive - through the real encoder. */
-    private fun tokens(cmd: GCommand): Sequence<GToken> =
-        GTokenizer().parse(GEncoder.encode(cmd))
+    private fun tokens(cmd: GCommand): List<GToken> =
+        GTokenizer.parse(GEncoder.encode(cmd)).toList()
 
     /** The same, less the head: what `decodeParams` is handed. */
-    private fun paramTokens(cmd: GCommand): Sequence<GToken> {
-        val all = tokens(cmd).toList()
-        return all.asSequence().drop(GCommandParser.headEnd(all))
+    private fun paramTokens(cmd: GCommand): List<GToken> {
+        val all = tokens(cmd)
+        return all.subList(headEnd(all), all.size)
     }
 
     @Test

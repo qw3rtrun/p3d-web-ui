@@ -62,15 +62,14 @@ data class SetMix(
             return M(165).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetMix {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetMix {
             return SetMix(
-                factor = params.decimalOf('A'),
-                b = params.decimalOf('B'),
-                c = params.decimalOf('C'),
-                d = params.decimalOf('D'),
-                h = params.decimalOf('H'),
-                i = params.decimalOf('I'),
+                factor = tokens.decimalOf('A'),
+                b = tokens.decimalOf('B'),
+                c = tokens.decimalOf('C'),
+                d = tokens.decimalOf('D'),
+                h = tokens.decimalOf('H'),
+                i = tokens.decimalOf('I'),
             )
         }
     }

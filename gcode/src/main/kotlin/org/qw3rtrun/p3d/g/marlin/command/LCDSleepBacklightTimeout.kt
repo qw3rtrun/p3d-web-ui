@@ -46,10 +46,9 @@ data class LCDSleepBacklightTimeout(
             return M(255).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): LCDSleepBacklightTimeout {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): LCDSleepBacklightTimeout {
             return LCDSleepBacklightTimeout(
-                minutes = params.intOf('S'),
+                minutes = tokens.intOf('S'),
             )
         }
     }

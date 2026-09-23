@@ -46,7 +46,7 @@ class DisableHotendIdleTimeout : GRq<DisableHotendIdleTimeout> {
             return M(87).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DisableHotendIdleTimeout {
+        override fun decodeParams(tokens: List<GToken>): DisableHotendIdleTimeout {
             return DisableHotendIdleTimeout()
         }
     }

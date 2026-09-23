@@ -60,14 +60,13 @@ data class FilamentRunout(
             return M(412).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FilamentRunout {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FilamentRunout {
             return FilamentRunout(
-                linear = params.decimalOf('D'),
-                h = params.boolOf('H'),
-                l = params.decimalOf('L'),
-                s = params.boolOf('S'),
-                r = params.boolOf('R'),
+                linear = tokens.decimalOf('D'),
+                h = tokens.boolOf('H'),
+                l = tokens.decimalOf('L'),
+                s = tokens.boolOf('S'),
+                r = tokens.boolOf('R'),
             )
         }
     }

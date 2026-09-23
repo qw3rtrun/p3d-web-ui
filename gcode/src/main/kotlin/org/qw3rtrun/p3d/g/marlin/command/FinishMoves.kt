@@ -46,7 +46,7 @@ class FinishMoves : GRq<FinishMoves> {
             return M(400).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FinishMoves {
+        override fun decodeParams(tokens: List<GToken>): FinishMoves {
             return FinishMoves()
         }
     }

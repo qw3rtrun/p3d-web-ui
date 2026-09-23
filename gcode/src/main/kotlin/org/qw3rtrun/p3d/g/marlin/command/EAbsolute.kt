@@ -46,7 +46,7 @@ class EAbsolute : GRq<EAbsolute> {
             return M(82).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): EAbsolute {
+        override fun decodeParams(tokens: List<GToken>): EAbsolute {
             return EAbsolute()
         }
     }

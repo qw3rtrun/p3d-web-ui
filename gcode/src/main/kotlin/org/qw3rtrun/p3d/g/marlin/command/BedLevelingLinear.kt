@@ -102,27 +102,26 @@ data class BedLevelingLinear(
             return G(29).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): BedLevelingLinear {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): BedLevelingLinear {
             return BedLevelingLinear(
-                a = params.boolOf('A'),
-                c = params.boolOf('C'),
-                o = params.hasWord('O'),
-                q = params.boolOf('Q'),
-                x = params.intOf('X'),
-                y = params.intOf('Y'),
-                p = params.intOf('P'),
-                rate = params.decimalOf('S'),
-                e = params.boolOf('E'),
-                d = params.boolOf('D'),
-                t = params.boolOf('T'),
-                linear = params.decimalOf('H'),
-                f = params.decimalOf('F'),
-                b = params.decimalOf('B'),
-                l = params.decimalOf('L'),
-                r = params.decimalOf('R'),
-                j = params.boolOf('J'),
-                v = params.intOf('V'),
+                a = tokens.boolOf('A'),
+                c = tokens.boolOf('C'),
+                o = tokens.hasWord('O'),
+                q = tokens.boolOf('Q'),
+                x = tokens.intOf('X'),
+                y = tokens.intOf('Y'),
+                p = tokens.intOf('P'),
+                rate = tokens.decimalOf('S'),
+                e = tokens.boolOf('E'),
+                d = tokens.boolOf('D'),
+                t = tokens.boolOf('T'),
+                linear = tokens.decimalOf('H'),
+                f = tokens.decimalOf('F'),
+                b = tokens.decimalOf('B'),
+                l = tokens.decimalOf('L'),
+                r = tokens.decimalOf('R'),
+                j = tokens.boolOf('J'),
+                v = tokens.intOf('V'),
             )
         }
     }

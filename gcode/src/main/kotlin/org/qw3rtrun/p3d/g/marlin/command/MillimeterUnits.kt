@@ -46,7 +46,7 @@ class MillimeterUnits : GRq<MillimeterUnits> {
             return G(21).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MillimeterUnits {
+        override fun decodeParams(tokens: List<GToken>): MillimeterUnits {
             return MillimeterUnits()
         }
     }

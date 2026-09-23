@@ -86,22 +86,21 @@ data class AutoHome(
             return G(28).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): AutoHome {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): AutoHome {
             return AutoHome(
-                h = params.hasWord('H'),
-                l = params.boolOf('L'),
-                o = params.hasWord('O'),
-                linear = params.decimalOf('R'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                a = params.hasWord('A'),
-                b = params.hasWord('B'),
-                c = params.hasWord('C'),
-                u = params.hasWord('U'),
-                v = params.hasWord('V'),
-                w = params.hasWord('W'),
+                h = tokens.hasWord('H'),
+                l = tokens.boolOf('L'),
+                o = tokens.hasWord('O'),
+                linear = tokens.decimalOf('R'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                a = tokens.hasWord('A'),
+                b = tokens.hasWord('B'),
+                c = tokens.hasWord('C'),
+                u = tokens.hasWord('U'),
+                v = tokens.hasWord('V'),
+                w = tokens.hasWord('W'),
             )
         }
     }

@@ -46,7 +46,7 @@ class CancelCurrentMotionMode : GRq<CancelCurrentMotionMode> {
             return G(80).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): CancelCurrentMotionMode {
+        override fun decodeParams(tokens: List<GToken>): CancelCurrentMotionMode {
             return CancelCurrentMotionMode()
         }
     }

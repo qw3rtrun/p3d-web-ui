@@ -51,11 +51,10 @@ data class SelectOrReportToolT4(
             return T(4).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SelectOrReportToolT4 {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SelectOrReportToolT4 {
             return SelectOrReportToolT4(
-                feedrate = params.decimalOf('F'),
-                s = params.boolOf('S'),
+                feedrate = tokens.decimalOf('F'),
+                s = tokens.boolOf('S'),
             )
         }
     }

@@ -46,7 +46,7 @@ class DockSled : GRq<DockSled> {
             return G(31).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DockSled {
+        override fun decodeParams(tokens: List<GToken>): DockSled {
             return DockSled()
         }
     }

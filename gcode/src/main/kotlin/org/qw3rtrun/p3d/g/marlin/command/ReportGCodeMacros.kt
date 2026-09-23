@@ -46,7 +46,7 @@ class ReportGCodeMacros : GRq<ReportGCodeMacros> {
             return M(820).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): ReportGCodeMacros {
+        override fun decodeParams(tokens: List<GToken>): ReportGCodeMacros {
             return ReportGCodeMacros()
         }
     }

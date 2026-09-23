@@ -84,21 +84,20 @@ data class DeltaAutoCalibration(
             return G(33).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DeltaAutoCalibration {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): DeltaAutoCalibration {
             return DeltaAutoCalibration(
-                c = params.decimalOf('C'),
-                e = params.boolOf('E'),
-                f = params.intOf('F'),
-                p = params.intOf('P'),
-                t = params.boolOf('T'),
-                v = params.intOf('V'),
-                o = params.boolOf('O'),
-                r = params.decimalOf('R'),
-                s = params.hasWord('S'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
+                c = tokens.decimalOf('C'),
+                e = tokens.boolOf('E'),
+                f = tokens.intOf('F'),
+                p = tokens.intOf('P'),
+                t = tokens.boolOf('T'),
+                v = tokens.intOf('V'),
+                o = tokens.boolOf('O'),
+                r = tokens.decimalOf('R'),
+                s = tokens.hasWord('S'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
             )
         }
     }

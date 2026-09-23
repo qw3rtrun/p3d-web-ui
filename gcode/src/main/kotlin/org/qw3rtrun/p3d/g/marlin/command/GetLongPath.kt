@@ -51,10 +51,9 @@ data class GetLongPath(
             return M(33).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): GetLongPath {
-            val all = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): GetLongPath {
             return GetLongPath(
-                path = all.stringArg(),
+                path = tokens.stringArg(),
             )
         }
     }

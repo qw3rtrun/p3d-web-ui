@@ -46,7 +46,7 @@ class AbsolutePositioning : GRq<AbsolutePositioning> {
             return G(90).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): AbsolutePositioning {
+        override fun decodeParams(tokens: List<GToken>): AbsolutePositioning {
             return AbsolutePositioning()
         }
     }

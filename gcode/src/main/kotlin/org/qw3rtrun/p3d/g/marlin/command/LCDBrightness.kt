@@ -46,10 +46,9 @@ data class LCDBrightness(
             return M(256).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): LCDBrightness {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): LCDBrightness {
             return LCDBrightness(
-                brightness = params.intOf('B'),
+                brightness = tokens.intOf('B'),
             )
         }
     }

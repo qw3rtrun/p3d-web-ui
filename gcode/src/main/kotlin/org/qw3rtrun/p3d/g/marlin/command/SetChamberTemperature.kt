@@ -47,10 +47,9 @@ data class SetChamberTemperature(
             return M(141).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetChamberTemperature {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetChamberTemperature {
             return SetChamberTemperature(
-                temp = params.decimalOf('S'),
+                temp = tokens.decimalOf('S'),
             )
         }
     }

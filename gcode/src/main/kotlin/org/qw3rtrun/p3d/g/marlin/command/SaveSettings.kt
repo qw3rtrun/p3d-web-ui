@@ -46,7 +46,7 @@ class SaveSettings : GRq<SaveSettings> {
             return M(500).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SaveSettings {
+        override fun decodeParams(tokens: List<GToken>): SaveSettings {
             return SaveSettings()
         }
     }

@@ -53,12 +53,11 @@ data class SetBedPID(
             return M(304).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetBedPID {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetBedPID {
             return SetBedPID(
-                value = params.decimalOf('P'),
-                i = params.decimalOf('I'),
-                d = params.decimalOf('D'),
+                value = tokens.decimalOf('P'),
+                i = tokens.decimalOf('I'),
+                d = tokens.decimalOf('D'),
             )
         }
     }

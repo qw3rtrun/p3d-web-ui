@@ -66,16 +66,15 @@ data class PrintTravelMoveLimits(
             return M(201).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PrintTravelMoveLimits {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): PrintTravelMoveLimits {
             return PrintTravelMoveLimits(
-                accel = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                e = params.decimalOf('E'),
-                index = params.intOf('T'),
-                f = params.intOf('F'),
-                percent = params.decimalOf('S'),
+                accel = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                e = tokens.decimalOf('E'),
+                index = tokens.intOf('T'),
+                f = tokens.intOf('F'),
+                percent = tokens.decimalOf('S'),
             )
         }
     }

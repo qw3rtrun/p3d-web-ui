@@ -46,7 +46,7 @@ class TMCOTPreWarnCondition : GRq<TMCOTPreWarnCondition> {
             return M(911).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TMCOTPreWarnCondition {
+        override fun decodeParams(tokens: List<GToken>): TMCOTPreWarnCondition {
             return TMCOTPreWarnCondition()
         }
     }

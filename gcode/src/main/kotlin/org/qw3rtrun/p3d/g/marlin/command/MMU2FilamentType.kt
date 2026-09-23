@@ -52,11 +52,10 @@ data class MMU2FilamentType(
             return M(403).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): MMU2FilamentType {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): MMU2FilamentType {
             return MMU2FilamentType(
-                index = params.intOf('E'),
-                f = params.intOf('F'),
+                index = tokens.intOf('E'),
+                f = tokens.intOf('F'),
             )
         }
     }

@@ -279,7 +279,7 @@ class GTokensTest {
             val expression = GRawExpression("{move.axes[0].max}")
 
             assertEquals("{move.axes[0].max}", expression.rawText())
-            assertEquals("{move.axes[0].max}", expression.exception)
+            assertEquals("{move.axes[0].max}", expression.text)
         }
     }
 
@@ -298,7 +298,13 @@ class GTokensTest {
                 GUnknown("?")
             )
 
-            assertTrue(elements.all { it is GToken }) { "expected all of $elements to be GToken" }
+            // The list's own type is the claim - a value or an identifier that was not a GToken
+            // could not stand in it. What is worth asserting at runtime is the one thing every
+            // token owes: it renders the bytes it was read from.
+            assertEquals(
+                listOf("X", "*", "1", "1.5", "\"s\"", "{e}", "?"),
+                elements.map { it.rawText() },
+            )
         }
 
         @Test
@@ -315,7 +321,7 @@ class GTokensTest {
 
         @Test
         fun `comments and separators are not elements`() {
-            // GCommandParser filters the line down to GElement, so comments and whitespace must stay
+            // A reader filters a line down to its values, so comments and whitespace must stay
             // outside that hierarchy.
             val nonElements: List<GToken> = listOf(
                 GTailComment("c"),
@@ -366,23 +372,6 @@ class GTokensTest {
             assertTrue(space is GSeparator)
             assertTrue(lineBreak is GSeparator)
             assertFalse(lineBreak is GWhitespace)
-        }
-    }
-
-    @Nested
-    inner class Sequences {
-
-        @Test
-        fun `toSeq wraps a token in a single element sequence`() {
-            assertEquals(listOf<GToken>(GSpace), GSpace.toSeq().toList())
-            assertEquals(listOf<GToken>(GTailComment("c")), GTailComment("c").toSeq().toList())
-        }
-
-        @Test
-        fun `toSeq of a value is a sequence of values`() {
-            val elements: Sequence<GValue> = GInt(1).toSeq()
-
-            assertEquals(listOf(GInt(1)), elements.toList())
         }
     }
 

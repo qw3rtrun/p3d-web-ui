@@ -77,20 +77,19 @@ data class SetHomeOffsets(
             return M(206).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetHomeOffsets {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetHomeOffsets {
             return SetHomeOffsets(
-                offset = params.decimalOf('P'),
-                t = params.decimalOf('T'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                a = params.decimalOf('A'),
-                b = params.decimalOf('B'),
-                c = params.decimalOf('C'),
-                u = params.decimalOf('U'),
-                v = params.decimalOf('V'),
-                w = params.decimalOf('W'),
+                offset = tokens.decimalOf('P'),
+                t = tokens.decimalOf('T'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                a = tokens.decimalOf('A'),
+                b = tokens.decimalOf('B'),
+                c = tokens.decimalOf('C'),
+                u = tokens.decimalOf('U'),
+                v = tokens.decimalOf('V'),
+                w = tokens.decimalOf('W'),
             )
         }
     }

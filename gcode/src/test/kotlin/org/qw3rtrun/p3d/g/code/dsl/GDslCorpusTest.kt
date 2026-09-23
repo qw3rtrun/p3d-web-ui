@@ -14,14 +14,12 @@ import org.qw3rtrun.p3d.g.code.core.token.*
  */
 class GDslCorpusTest {
 
-    private val tokenizer = GTokenizer()
-    private val commands = GCommandParser()
 
     private val corpus: String =
         requireNotNull(javaClass.getResourceAsStream("/marlin.gcode")).readBytes().decodeToString()
 
     private fun lines(): List<GLine> =
-        GLiner(tokenizer.parse(corpus).iterator()).asSequence().toList()
+        GTokenizer.lines(corpus).toList()
 
     private fun raw(line: GLine): String =
         line.raw.filter { it !is GLineBreak }.joinToString("") { it.rawText() }.trim()
@@ -42,7 +40,7 @@ class GDslCorpusTest {
     /** Rebuilds [line] using only the DSL's public builders, or null if it cannot be said. */
     private fun rewrite(line: GLine): GBlock? {
         val parts = ArrayList<GBlockPart>()
-        for (cmd in commands.parse(line)) {
+        for (cmd in GWordReader.parse(line)) {
             val id = cmd.head.id
             if (id !is GLetter) return null
             val params = ArrayList<GWord>()
@@ -52,9 +50,10 @@ class GDslCorpusTest {
                 params.add(
                     when (p) {
                         is GFlagWord -> flag(pid.letter)
-                        // An unnamed word carries no letter for the DSL to build from - there is no
-                        // `word()` overload that omits the identifier - so the line cannot be said.
-                        is GUnnamedWord<*> -> return null
+                        // A bare rest-of-line string is not something this rewrite can reach: the
+                        // parser never builds one (it would need the command number), and the
+                        // `pid !is GLetter` guard above has already returned for its empty id.
+                        is GUnnamedStr -> return null
                         is GParameterWord<*> -> when (val v = p.value) {
                             is GNumber -> word(pid.letter, v.lexeme)
                             is GQuotedString -> word(pid.letter, text(v.string))

@@ -46,7 +46,7 @@ class RelativePositioning : GRq<RelativePositioning> {
             return G(91).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): RelativePositioning {
+        override fun decodeParams(tokens: List<GToken>): RelativePositioning {
             return RelativePositioning()
         }
     }

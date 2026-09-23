@@ -47,8 +47,6 @@ class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 
     var lastLine: Int = first
         private set
 
-    private val commands = GCommandParser()
-
     /** What to do with [line], per sections 7.2 and 8.5. */
     fun read(line: GLine): GReceipt {
         // spec 5: "a line number is only consumed by a line that is actually transmitted". A blank
@@ -110,23 +108,36 @@ class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 
      * Spec 7.2: the value is `M110`'s **`N` parameter**, not the line's own number, so `N1 M110 N7`
      * leaves the counter at 7. With no parameter it falls back to the line number, as Marlin does.
      *
-     * **Read off the parsed commands, not the raw text.** Marlin decides a line is an `M110` with
+     * **Read off the line's head, not the raw text.** Marlin decides a line is an `M110` with
      * `strstr(command, "M110")`, which means `M117 M110` resets its counter - a consequence of
      * scanning text rather than an intended rule. Copying it would let a status message silently
      * resynchronise the session, so this diverges knowingly.
+     *
+     * It reads tokens directly rather than going through a decoder, and that is a layering
+     * decision: `SetGetLineNumber` is the typed `M110` and `MarlinCommands.decode` would return it,
+     * but the session belongs to `code/core` and must not depend on the Marlin command registry -
+     * the dependency runs the other way, and the KDoc above claims this layer ports with the rest of
+     * the core. The head rule is `headWord`'s, so this cannot disagree with a decoder about what a
+     * command word is, and the `N` scan is the same `valueIndex` pairing every other reader uses.
      */
     private fun resetValue(line: GOrdered): Int? {
-        for (command in commands.parse(line)) {
-            if (!command.head.isLetter('M')) continue
-            if (command.head.value.lexeme != "110") continue
-            for (param in command.params) {
-                if (!param.isLetter('N')) continue
-                if (param !is GParameterWord<*>) continue
-                val value = param.value
+        val body = line.body
+        val head = headWord(body) ?: return null
+        if (!head.id.isLetter('M')) return null
+        if (head.value.lexeme != "110") return null
+
+        // spec 7.1: only the *first* field of a line is a line number, so the `N` this looks for is
+        // M110's argument - which is why the search starts past the head rather than at the line.
+        var i = headEnd(body)
+        while (i < body.size) {
+            val token = body[i]
+            if (token is GIdentifier && token.isLetter('N')) {
+                val j = valueIndex(body, i)
+                val value = if (j < 0) null else body[j]
                 if (value is GInt) return value.int
             }
-            return line.number.int
+            i++
         }
-        return null
+        return line.number.int
     }
 }

@@ -81,21 +81,20 @@ data class TriggerCamera(
             return M(240).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TriggerCamera {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): TriggerCamera {
             return TriggerCamera(
-                offset = params.decimalOf('A'),
-                b = params.decimalOf('B'),
-                ms = params.intOf('D'),
-                feedrate = params.decimalOf('F'),
-                pos = params.decimalOf('I'),
-                j = params.decimalOf('J'),
-                p = params.intOf('P'),
-                length = params.decimalOf('R'),
-                s = params.decimalOf('S'),
-                x = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
+                offset = tokens.decimalOf('A'),
+                b = tokens.decimalOf('B'),
+                ms = tokens.intOf('D'),
+                feedrate = tokens.decimalOf('F'),
+                pos = tokens.decimalOf('I'),
+                j = tokens.decimalOf('J'),
+                p = tokens.intOf('P'),
+                length = tokens.decimalOf('R'),
+                s = tokens.decimalOf('S'),
+                x = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
             )
         }
     }

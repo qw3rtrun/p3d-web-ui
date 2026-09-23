@@ -46,7 +46,7 @@ class PowerOff : GRq<PowerOff> {
             return M(81).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PowerOff {
+        override fun decodeParams(tokens: List<GToken>): PowerOff {
             return PowerOff()
         }
     }

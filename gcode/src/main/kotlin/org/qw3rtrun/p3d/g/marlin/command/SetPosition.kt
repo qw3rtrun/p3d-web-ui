@@ -74,19 +74,18 @@ data class SetPosition(
             return G(92).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetPosition {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetPosition {
             return SetPosition(
-                pos = params.decimalOf('X'),
-                y = params.decimalOf('Y'),
-                z = params.decimalOf('Z'),
-                a = params.decimalOf('A'),
-                b = params.decimalOf('B'),
-                c = params.decimalOf('C'),
-                u = params.decimalOf('U'),
-                v = params.decimalOf('V'),
-                w = params.decimalOf('W'),
-                e = params.decimalOf('E'),
+                pos = tokens.decimalOf('X'),
+                y = tokens.decimalOf('Y'),
+                z = tokens.decimalOf('Z'),
+                a = tokens.decimalOf('A'),
+                b = tokens.decimalOf('B'),
+                c = tokens.decimalOf('C'),
+                u = tokens.decimalOf('U'),
+                v = tokens.decimalOf('V'),
+                w = tokens.decimalOf('W'),
+                e = tokens.decimalOf('E'),
             )
         }
     }

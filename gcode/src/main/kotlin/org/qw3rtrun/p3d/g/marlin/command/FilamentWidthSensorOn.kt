@@ -46,10 +46,9 @@ data class FilamentWidthSensorOn(
             return M(405).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): FilamentWidthSensorOn {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): FilamentWidthSensorOn {
             return FilamentWidthSensorOn(
-                d = params.intOf('D'),
+                d = tokens.intOf('D'),
             )
         }
     }

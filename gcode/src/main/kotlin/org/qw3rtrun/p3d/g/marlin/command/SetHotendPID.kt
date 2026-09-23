@@ -66,16 +66,15 @@ data class SetHotendPID(
             return M(301).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): SetHotendPID {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): SetHotendPID {
             return SetHotendPID(
-                index = params.intOf('E'),
-                value = params.decimalOf('P'),
-                i = params.decimalOf('I'),
-                d = params.decimalOf('D'),
-                c = params.decimalOf('C'),
-                l = params.decimalOf('L'),
-                f = params.decimalOf('F'),
+                index = tokens.intOf('E'),
+                value = tokens.decimalOf('P'),
+                i = tokens.decimalOf('I'),
+                d = tokens.decimalOf('D'),
+                c = tokens.decimalOf('C'),
+                l = tokens.decimalOf('L'),
+                f = tokens.decimalOf('F'),
             )
         }
     }

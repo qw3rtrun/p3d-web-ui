@@ -46,7 +46,7 @@ class PauseSDPrint : GRq<PauseSDPrint> {
             return M(25).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): PauseSDPrint {
+        override fun decodeParams(tokens: List<GToken>): PauseSDPrint {
             return PauseSDPrint()
         }
     }

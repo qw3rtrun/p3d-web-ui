@@ -6,8 +6,8 @@ package org.qw3rtrun.p3d.g.code.core.token
  * **A line knows tokens and nothing else.** Its shape is decided from two positions - the first
  * identifier and the last `*` - and both are found by walking tokens, so the line layer never builds
  * a word and never has to say what a word *is*. Words are the command layer's vocabulary
- * ([GCommandParser]), and a consumer that only routes, resends or re-prints lines never pays for
- * them.
+ * (the DSL builds them, `GEncoder` writes them), and a consumer that only routes, resends or
+ * re-prints lines never pays for them.
  *
  * [raw] is every token, in wire order. It is the stored, primary value of every line type, which is
  * what makes "a line reproduces its input" true by construction rather than by an override that a
@@ -36,8 +36,22 @@ sealed interface GCheckSumControlled : GLine {
 }
 
 /**
- * A line that carries no command: empty, or nothing but whitespace and/or comments. Spec section 5
- * calls such a line a no-op. It keeps its tokens so the line still reproduces its input.
+ * A line with **no field at all**: its tokens contain no identifier (spec section 5).
+ *
+ * That is every no-op line - empty, whitespace, a comment - which is what section 5 names. It is
+ * also a line of nothing but values or unlexable bytes: `?`, `42 99`, `"abc"` have no field either,
+ * and `GLiner` classifies on the first identifier, so they arrive here too. The KDoc used to say
+ * "whitespace and/or comments", which is narrower than the rule the liner applies and left a
+ * consumer matching on this type - `GCodeReader` does - believing a line of corrupt bytes was a
+ * no-op.
+ *
+ * Spec section 9 would call the second group an error, and an error type for it was declared here
+ * for a while and never produced. Producing one is a real option; it is not taken because nothing
+ * would act on the distinction, and a type nobody consumes is how the last one got stranded. Give
+ * a transport a reason to answer a garbled unnumbered line differently from a blank one and it
+ * becomes worth having.
+ *
+ * It keeps its tokens so the line still reproduces its input.
  */
 data class GMeaninglessLine(override val raw: List<GToken>) : GLine
 
@@ -66,11 +80,6 @@ data class GPacketLine(
 
 sealed interface GError : GLine {
     val msg: String
-}
-
-data class GNotIdentifierError(val head: GValue, override val raw: List<GToken>) : GError {
-    override val msg: String
-        get() = "GCode should start with a letter, but '${head.rawText()}'"
 }
 
 /**

@@ -46,10 +46,9 @@ data class DebugLevel(
             return M(111).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): DebugLevel {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): DebugLevel {
             return DebugLevel(
-                flags = params.intOf('S'),
+                flags = tokens.intOf('S'),
             )
         }
     }

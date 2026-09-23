@@ -87,23 +87,22 @@ data class TMCChopperTiming(
             return M(919).head
         }
 
-        override fun decodeParams(tokens: Sequence<GToken>): TMCChopperTiming {
-            val params = tokens.toList()
+        override fun decodeParams(tokens: List<GToken>): TMCChopperTiming {
             return TMCChopperTiming(
-                o = params.intOf('O'),
-                p = params.intOf('P'),
-                s = params.intOf('S'),
-                i = params.intOf('I'),
-                t = params.intOf('T'),
-                x = params.hasWord('X'),
-                y = params.hasWord('Y'),
-                z = params.hasWord('Z'),
-                a = params.hasWord('A'),
-                b = params.hasWord('B'),
-                c = params.hasWord('C'),
-                u = params.hasWord('U'),
-                v = params.hasWord('V'),
-                w = params.hasWord('W'),
+                o = tokens.intOf('O'),
+                p = tokens.intOf('P'),
+                s = tokens.intOf('S'),
+                i = tokens.intOf('I'),
+                t = tokens.intOf('T'),
+                x = tokens.hasWord('X'),
+                y = tokens.hasWord('Y'),
+                z = tokens.hasWord('Z'),
+                a = tokens.hasWord('A'),
+                b = tokens.hasWord('B'),
+                c = tokens.hasWord('C'),
+                u = tokens.hasWord('U'),
+                v = tokens.hasWord('V'),
+                w = tokens.hasWord('W'),
             )
         }
     }

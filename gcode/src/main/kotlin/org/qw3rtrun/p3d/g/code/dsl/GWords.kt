@@ -374,6 +374,20 @@ fun flag(letter: Char): GWord = GFlagWord(identifier(letter))
 /** A quoted string value (spec 3.4): `text("Hi")` renders as `"Hi"`, with inner quotes doubled. */
 fun text(value: String): GValue = GQuotedString(value)
 
+/**
+ * A bare rest-of-line string (spec 3.4a): the argument of `M117`, `M23`, `M118` and the handful of
+ * other commands Marlin reads a `string_arg` for.
+ *
+ * It carries **no letter** - the text is the argument - so it is a word with an empty identifier
+ * rather than a `word(letter, ...)`, and it renders undelimited: `M(117, bareString("Hello World"))`
+ * is `M117 Hello World`.
+ *
+ * Two rules the call site owns, because nothing below can check them: it goes **last** in a
+ * command, since everything to the end of the line belongs to it, and it cannot contain `;`, which
+ * every parser reads as the start of a comment (spec 3.4a).
+ */
+fun bareString(value: String): GWord = GUnnamedStr(GUnquotedString(value))
+
 /** An expression value (spec 3.5): `expr("bed[0]")` renders as `{bed[0]}`. */
 fun expr(inner: String): GValue = GRawExpression("{" + inner + "}")
 

@@ -48,14 +48,15 @@ interface GRqDecoder<out T : GRq<out T>> {
      * The command [tokens] spell, head included, or null when the head is not this decoder's.
      *
      * What a command word is, is `GCommandParser`'s rule rather than a second copy here, so a head
-     * this accepts is one a line can actually carry. Matching is on the head as written - the
-     * lexeme is part of a number's identity in this model, so a non-canonical `M0105` does not
-     * resolve - but not on its spacing: `G 1` and `G1` are the same head.
+     * this accepts is one a line can actually carry. Matching is on the head's **number as
+     * written** - the lexeme is part of a number's identity in this model, so a non-canonical
+     * `M0105` does not resolve - but not on its spacing (`G 1` and `G1` are one head) and not on
+     * its case (spec 2.2: `m104` is `M104`, which is `GCommandParser.headKey`'s job).
      */
     fun decode(tokens: Sequence<GToken>): T? {
         val all = tokens.toList()
         val head = GCommandParser.headWord(all) ?: return null
-        if (head() != head) return null
+        if (GCommandParser.headKey(head()) != GCommandParser.headKey(head)) return null
         return decodeParams(all.asSequence().drop(GCommandParser.headEnd(all)))
     }
 }

@@ -102,13 +102,16 @@ class MarlinRQTest {
     }
 
     @Test
-    fun `the head is matched on what it says, not on how it is spaced`() {
+    fun `the head is matched on what it says, not on how it is spaced or cased`() {
         // spec 2.1 lets a space separate a field from its value, so all three spell `M105 T2`.
         // The head the decoder compares against is canonical, which is what makes that true
         // without every decoder having to know what whitespace a line happened to carry.
         assertEquals(ReportHotendTemperature(index = 2), decode("M105 T2"))
         assertEquals(ReportHotendTemperature(index = 2), decode("M105T2"))
         assertEquals(ReportHotendTemperature(index = 2), decode("M 105 T 2"))
+        // spec 2.2: the dialects are case-insensitive, letter by letter - the command's as much
+        // as its parameters'. `GCommandParser.headKey` is what folds the head's.
+        assertEquals(ReportHotendTemperature(index = 2), decode("m105 t2"))
         // The lexeme is still part of a number's identity, so a non-canonical code is not M105.
         assertNull(decode("M0105 T2"))
     }

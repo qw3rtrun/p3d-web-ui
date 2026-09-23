@@ -852,8 +852,22 @@ is the [§4.1](#41-command-letters) set minus Marlin's development-only `D`. `GN
 declared but never produced: a line whose first token is a value has no field at that position, and
 the first *identifier* is what the shape is read from.
 
-Not yet covered by the implementation: line-length limits, and [§3.4](#34-string-values)'s bare
-rest-of-line strings.
+Not yet covered by *this* layer: line-length limits, and [§3.4](#34-string-values)'s bare
+rest-of-line strings. The latter is a layering fact rather than a gap: which commands take one
+depends on the command number, and nothing below a decoder knows it, so the reading is done one
+layer up - `GRqDecoder` is handed the tokens as lexed, and `MarlinWords.stringArg()` reassembles
+the string for the 22 Marlin commands that take one. **Where such a string starts has no universal
+rule**: it begins at the first field that is not one of *that command's* parameters, so `M117 H1
+ello World` is all message while `M118 P1 ello World` is a `P1` and a message. Each decoder passes
+its own letters, and reads its lettered parameters from `beforeStringArg()` - the region in front -
+so that a `P1` inside a message is text rather than a parameter. The DSL writes one with
+`bareString(text)`, which the encoder emits undelimited and last.
+
+Head matching on that layer is [§2.2](#22-case)-tolerant in the reading direction: `GRqDecoder` and
+`MarlinCommands.decode` compare through `GCommandParser.headKey()`, which folds the command letter
+to upper case, so `m104 s200` and `M104 S200` decode to the same command. The **number** keeps its
+lexeme, so `M0105` still does not resolve, and the writing direction is unchanged - the DSL emits
+uppercase, which is what [§2.2](#22-case) asks generators to do.
 
 ---
 

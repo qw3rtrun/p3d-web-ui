@@ -959,7 +959,8 @@ object MarlinCommands {
      * with the variant class you mean; [decode] is a best effort for the rest.
      */
     private val byHead: Map<GParameterWord<*>, GRqDecoder<*>> =
-        decoders.groupBy { it.head() }.mapValues { (_, claimants) -> claimants.first() }
+        decoders.groupBy { GCommandParser.headKey(it.head()) }
+            .mapValues { (_, claimants) -> claimants.first() }
 
     /** The codes above, whose [decode] is therefore approximate. */
     val ambiguousCodes: List<String> = listOf("G29", "G34", "M665", "M666")
@@ -967,13 +968,14 @@ object MarlinCommands {
     /**
      * The command [tokens] spell, head included, or null if no Marlin command has that head.
      *
-     * Matching is on the head as written, so a non-canonical `M0105` does not resolve -
-     * the lexeme is part of a number's identity in this model - but not on its spacing.
+     * Matching is on the head's number as written, so a non-canonical `M0105` does not
+     * resolve - the lexeme is part of a number's identity in this model - but not on its
+     * spacing, and not on its case (spec 2.2: `m104` is `M104`).
      */
     fun decode(tokens: Sequence<GToken>): GRq<*>? {
         val all = tokens.toList()
         val head = GCommandParser.headWord(all) ?: return null
-        val decoder = byHead[head] ?: return null
+        val decoder = byHead[GCommandParser.headKey(head)] ?: return null
         return decoder.decodeParams(all.asSequence().drop(GCommandParser.headEnd(all)))
     }
 }

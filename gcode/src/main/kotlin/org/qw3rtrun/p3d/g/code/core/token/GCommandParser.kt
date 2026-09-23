@@ -224,6 +224,30 @@ class GCommandParser {
         }
 
         /**
+         * [word] as the key two heads are **matched** by: its letter folded to upper case.
+         *
+         * spec 2.2: NIST and RepRapFirmware are case-insensitive outside comments and strings,
+         * and Marlin is too when `GCODE_CASE_INSENSITIVE` is compiled in - so `m104` is a line a
+         * host will be handed, and a decoder has to answer to it. **Reading is where the
+         * tolerance belongs**; spec 2.2's rule for generators is the opposite one, always emit
+         * uppercase, and the DSL does. [headWord] deliberately keeps the letter as the line
+         * spelled it, because that is provenance; this is the form to compare, and the two are
+         * separate for exactly that reason.
+         *
+         * The **number is untouched**: its lexeme is part of its identity (spec 4.1, `GNumber`),
+         * so `M0105` is still not `M105`. Case is a property of the writing, digits are not.
+         */
+        fun headKey(word: GParameterWord<*>): GParameterWord<*> {
+            val id = word.id
+            if (id !is GLetter) return word
+            val letter = id.letter
+            if (letter < 'a' || letter > 'z') return word
+            // Explicit ASCII, not `uppercaseChar()`: spec 1.1's wire format is 7-bit, and a
+            // locale-dependent or Unicode-wide fold is the bug `GIdentifier.isLetter` documents.
+            return GParameterWord(GLetter((letter.code - 32).toChar()), word.value)
+        }
+
+        /**
          * Where the command word that starts [tokens] ends - the index of the first parameter
          * token - or 0 when [tokens] do not start a command and nothing has been consumed.
          */

@@ -3,7 +3,9 @@ package org.qw3rtrun.p3d.g.code.core
 import org.qw3rtrun.p3d.g.code.core.token.GBlock
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GComment
+import org.qw3rtrun.p3d.g.code.core.token.GFlagWord
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GUnnamedStr
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 
 /**
@@ -138,8 +140,21 @@ object GEncoder {
         return out.append('*').append(checksum.get().lexeme).toString()
     }
 
+    /**
+     * One field: the identifier, then its value with no separator between them.
+     *
+     * A [GUnnamedStr] has no identifier to write - `GEmptyId` renders as nothing - and its value is
+     * spec 3.4a's bare rest-of-line string, so it reaches the wire undelimited and, being the rest
+     * of the line, only ever last. Nothing here enforces that position: a command carrying one is
+     * built by the command that documents it, and [encode]'s single space before each field is what
+     * separates it from the lettered parameters in front.
+     */
     private fun appendWord(out: StringBuilder, word: GWord) {
         out.append(word.id.rawText())
-        if (word is GParameterWord<*>) out.append(word.value.rawText())
+        when (word) {
+            is GParameterWord<*> -> out.append(word.value.rawText())
+            is GUnnamedStr -> out.append(word.str.rawText())
+            is GFlagWord -> {}
+        }
     }
 }

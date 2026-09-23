@@ -41,7 +41,7 @@ sealed interface GUnnamedWord<V : GValue> : GWord {
 }
 
 data class GUnnamedStr(val str: GString,
-                       override val raw: List<GToken>
+                       override val raw: List<GToken> = listOf(str)
 ) : GUnnamedWord<GString>
 
 /**

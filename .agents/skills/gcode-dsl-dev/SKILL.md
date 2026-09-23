@@ -58,7 +58,8 @@ breakdown comment in the test and [todo 10](https://github.com/qw3rtrun/p3d-web-
 prints every differing line.
 
 The 24 are **not** DSL gaps, and none should be "fixed" here: 20 are bare rest-of-line strings that
-need the command number to lex (spec 3.4a, deferred to todo 09 — a *model* gap above this layer),
+need the command number to lex (spec 3.4a — the DSL can *write* one, `bareString(text)`, and a
+decoder can read one back; what the corpus test lacks is the command number the *parser* never has),
 and the other 4 are inputs the encoder deliberately will not reproduce because emitting them would
 change the checksum for no gain. Before treating a corpus difference as your bug, check it is not
 one of those four.

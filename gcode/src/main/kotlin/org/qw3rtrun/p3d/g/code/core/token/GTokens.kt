@@ -140,10 +140,20 @@ data class GQuotedString(override val string: String) : GString {
     override fun rawText(): String = "\"${string.replace("\"", "\"\"")}\""
 }
 
-// This is a GCODE design gap, when some string parameters have no quote.
-// The problem is it depends only on the command's number itself, so it can be caught only when a semantic reveal
+/**
+ * A string that reaches the wire with no delimiters around it: spec 3.4a's bare rest-of-line string.
+ *
+ * This is a GCODE design gap, when some string parameters have no quote. The problem is it depends
+ * only on the command's number itself, so it can be caught only when a semantic reveal - which is
+ * why the token layer never produces one (`M117 Hello World` lexes letter by letter) and a decoder
+ * that knows the command number builds it, through `GUnnamedStr`.
+ *
+ * [rawText] is the string itself, quotes included if it happens to contain any: there is no
+ * delimiter to add and nothing to escape, because the value runs to the end of the line. Adding
+ * quotes here would emit `M117 "Hi"` and put the quotes on the printer's display.
+ */
 data class GUnquotedString(override val string: String) : GString {
-    override fun rawText(): String = "\"${string.replace("\"", "\"\"")}\""
+    override fun rawText(): String = string
 }
 
 data class GInt(val int: Int, override val lexeme: String = int.toString()) : GNumber {

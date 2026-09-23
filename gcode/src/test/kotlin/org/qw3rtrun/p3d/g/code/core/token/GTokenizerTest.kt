@@ -20,11 +20,10 @@ import org.junit.jupiter.params.provider.ValueSource
  */
 class GTokenizerTest {
 
-    private val tokenizer = GTokenizer()
 
-    private fun tokens(gcode: String): List<GToken> = tokenizer.parse(gcode).toList()
+    private fun tokens(gcode: String): List<GToken> = GTokenizer.parse(gcode).toList()
 
-    private fun reprint(gcode: String): String = tokenizer.parse(gcode).joinToString("") { it.rawText() }
+    private fun reprint(gcode: String): String = GTokenizer.parse(gcode).joinToString("") { it.rawText() }
 
     @Nested
     inner class Letters {
@@ -236,7 +235,7 @@ class GTokenizerTest {
         @Test
         fun `a number with two decimal points is an unknown token`() {
             // GCODE_spec.md section 3.1 allows at most one decimal point; section 9 asks for a
-            // lexical error rather than an exception out of the tokenizer.
+            // lexical error rather than an exception out of the GTokenizer.
             assertEquals(listOf(GLetter('X'), GUnknown("1.2.3")), tokens("X1.2.3"))
             assertEquals(listOf(GUnknown("1..2")), tokens("1..2"))
             assertEquals(listOf(GUnknown(".1.2")), tokens(".1.2"))
@@ -757,7 +756,7 @@ class GTokenizerTest {
 
         @Test
         fun `an exhausted iterator reports no next element`() {
-            val iter = tokenizer.parse("G".iterator())
+            val iter = GTokenizer.parse("G".iterator())
 
             assertTrue(iter.hasNext())
             assertEquals(GLetter('G'), iter.next())
@@ -766,7 +765,7 @@ class GTokenizerTest {
 
         @Test
         fun `next on an exhausted iterator throws`() {
-            val iter = tokenizer.parse(emptyList<Char>().iterator())
+            val iter = GTokenizer.parse(emptyList<Char>().iterator())
 
             assertFalse(iter.hasNext())
             assertThrows<NoSuchElementException> { iter.next() }
@@ -777,14 +776,14 @@ class GTokenizerTest {
             // A String source used to raise StringIndexOutOfBoundsException where a List source
             // raised NoSuchElementException (GCODE_TODO.md 1.17). Iterator.next() specifies the
             // latter, and the type must not depend on which overload the caller picked.
-            assertThrows<NoSuchElementException> { tokenizer.parse("".iterator()).next() }
-            assertThrows<NoSuchElementException> { tokenizer.parse(emptyList<Char>().iterator()).next() }
-            assertThrows<NoSuchElementException> { tokenizer.parse(emptySequence<Char>().iterator()).next() }
+            assertThrows<NoSuchElementException> { GTokenizer.parse("".iterator()).next() }
+            assertThrows<NoSuchElementException> { GTokenizer.parse(emptyList<Char>().iterator()).next() }
+            assertThrows<NoSuchElementException> { GTokenizer.parse(emptySequence<Char>().iterator()).next() }
         }
 
         @Test
         fun `next past the end of a non empty source throws NoSuchElementException`() {
-            val iter = tokenizer.parse("G".iterator())
+            val iter = GTokenizer.parse("G".iterator())
 
             assertEquals(GLetter('G'), iter.next())
             assertThrows<NoSuchElementException> { iter.next() }
@@ -801,29 +800,22 @@ class GTokenizerTest {
 
         @Test
         fun `a char sequence parse can be consumed twice`() {
-            val parsed = tokenizer.parse("G1 X2")
+            val parsed = GTokenizer.parse("G1 X2")
 
             assertEquals(parsed.toList(), parsed.toList())
             assertEquals(5, parsed.count())
         }
 
         @Test
-        fun `an iterable parse can be consumed twice`() {
-            val parsed = tokenizer.parse("G1 X2".toList())
-
-            assertEquals(parsed.toList(), parsed.toList())
-        }
-
-        @Test
         fun `a sequence parse is re-iterable when its source is`() {
-            val parsed = tokenizer.parse("G1 X2".asSequence())
+            val parsed = GTokenizer.parse("G1 X2".asSequence())
 
             assertEquals(parsed.toList(), parsed.toList())
         }
 
         @Test
         fun `a parse over a bare iterator is single use, by nature of the source`() {
-            val parsed = tokenizer.parse("G1 X2".iterator()).asSequence()
+            val parsed = GTokenizer.parse("G1 X2".iterator()).asSequence()
 
             assertEquals(5, parsed.count())
             assertThrows<IllegalStateException> { parsed.toList() }
@@ -831,7 +823,7 @@ class GTokenizerTest {
 
         @Test
         fun `parseLines can be consumed twice`() {
-            val parsed = tokenizer.parseLines(sequenceOf("G28", "M104 S200"))
+            val parsed = GTokenizer.parseLines(sequenceOf("G28", "M104 S200"))
 
             assertEquals(parsed.toList(), parsed.toList())
         }
@@ -846,7 +838,7 @@ class GTokenizerTest {
     inner class ParseLines {
 
         private fun reprintLines(lines: List<String>, terminator: String = "\n"): String =
-            tokenizer.parseLines(lines.asSequence(), terminator).joinToString("") { it.rawText() }
+            GTokenizer.parseLines(lines.asSequence(), terminator).joinToString("") { it.rawText() }
 
         @Test
         fun `a terminator is re-inserted between lines`() {
@@ -860,7 +852,7 @@ class GTokenizerTest {
                     GLetter('G'), GInt(28), GLineBreak("\n"),
                     GLetter('M'), GInt(104), GSpace, GLetter('S'), GInt(200)
                 ),
-                tokenizer.parseLines(sequenceOf("G28", "M104 S200")).toList()
+                GTokenizer.parseLines(sequenceOf("G28", "M104 S200")).toList()
             )
         }
 
@@ -871,7 +863,7 @@ class GTokenizerTest {
 
         @Test
         fun `an empty sequence produces no tokens`() {
-            assertEquals(emptyList<GToken>(), tokenizer.parseLines(emptySequence()).toList())
+            assertEquals(emptyList<GToken>(), GTokenizer.parseLines(emptySequence()).toList())
         }
 
         @Test
@@ -886,7 +878,7 @@ class GTokenizerTest {
 
         @Test
         fun `a CRLF terminator is still one line break token`() {
-            val breaks = tokenizer.parseLines(sequenceOf("G28", "G90"), "\r\n").filterIsInstance<GLineBreak>()
+            val breaks = GTokenizer.parseLines(sequenceOf("G28", "G90"), "\r\n").filterIsInstance<GLineBreak>()
 
             assertEquals(listOf(GLineBreak("\r\n")), breaks.toList())
         }
@@ -894,14 +886,14 @@ class GTokenizerTest {
         @Test
         fun `the line count survives the round trip`() {
             val program = listOf("; header", "G28", "G1 X1 F100", "", "G90")
-            val lines = GLiner(tokenizer.parseLines(program.asSequence()).iterator())
+            val lines = GLiner(GTokenizer.parseLines(program.asSequence()).iterator())
 
             assertEquals(program.size, lines.asSequence().count())
         }
 
         @Test
         fun `hasNext is idempotent and does not consume`() {
-            val iter = tokenizer.parse("XY".iterator())
+            val iter = GTokenizer.parse("XY".iterator())
 
             assertTrue(iter.hasNext())
             assertTrue(iter.hasNext())
@@ -924,27 +916,26 @@ class GTokenizerTest {
 
         @Test
         fun `char sequence`() {
-            assertEquals(expected, tokenizer.parse(source).toList())
+            assertEquals(expected, GTokenizer.parse(source).toList())
         }
 
         @Test
         fun `char iterator`() {
-            assertEquals(expected, tokenizer.parse(source.iterator()).asSequence().toList())
-        }
-
-        @Test
-        fun `char iterable`() {
-            assertEquals(expected, tokenizer.parse(source.toList()).toList())
+            assertEquals(expected, GTokenizer.parse(source.iterator()).asSequence().toList())
         }
 
         @Test
         fun `char sequence of chars`() {
-            assertEquals(expected, tokenizer.parse(source.asSequence()).toList())
+            assertEquals(expected, GTokenizer.parse(source.asSequence()).toList())
         }
 
-        // There is no `Stream<Char>` overload: it was the portable core's only java.util.stream
-        // dependency, nothing called it, and the four overloads above cover every caller. A JVM
-        // caller that wants one writes `parse(stream.asSequence()).asStream()` at its own edge.
+        // Two overloads have been removed, both for the same reason - nothing called them - and
+        // the three above cover every caller:
+        //
+        // - `Stream<Char>`, which was the portable core's only java.util.stream dependency. A JVM
+        //   caller that wants one writes `parse(stream.asSequence()).asStream()` at its own edge.
+        // - `Iterable<Char>`, whose only callers were the two cases here that existed to cover it.
+        //   A caller holding a `List<Char>` writes `parse(chars.asSequence())`.
     }
 
     @Nested

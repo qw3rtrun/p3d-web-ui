@@ -6,6 +6,11 @@ import java.math.BigDecimal
 // isWhitespace(), which accept whole Unicode categories. The wire format is 7-bit ASCII
 // (spec 1.1), so a non-ASCII character outside a comment or a quoted string is a lexical error
 // (spec 9), not a word - and these four lines transliterate to C, Rust and JS unchanged.
+//
+// `digit` is written out again in GFields.kt, GWords.kt and CheckSums.kt, and that is deliberate
+// rather than an oversight waiting to be tidied: a shared one-line predicate would be a
+// cross-file dependency between four layers to save three tokens each, and a port that takes one
+// file takes its predicate with it. Do not merge them.
 private fun isDigit(c: Char) = c >= '0' && c <= '9'
 private fun isUpper(c: Char) = c >= 'A' && c <= 'Z'
 private fun isLower(c: Char) = c >= 'a' && c <= 'z'
@@ -20,14 +25,22 @@ private fun isLetter(c: Char) = isUpper(c) || isLower(c)
  */
 private fun isSpace(c: Char) = c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
-class GTokenizer {
+/**
+ * The lexer: characters in, tokens out, per GCODE_spec.md sections 1 to 3.
+ *
+ * **An object, not a class.** It has no state - one instance was interchangeable with another and
+ * every caller built its own for nothing.
+ */
+object GTokenizer {
 
     fun parse(gcode: Iterator<Char>): Iterator<GToken> = GTokenizerIterator(gcode)
 
     // Sequence { ... } rather than Iterator.asSequence(): the latter is constrainOnce(), which made
     // the result consumable exactly once even when the source could be walked again (TODO 1.11).
     // Re-iterability is inherited from the source, so only the bare-Iterator overload is single-use.
-    fun parse(gcode: Iterable<Char>): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
+    //
+    // There is no `Iterable<Char>` overload: nothing called it, and a caller holding one writes
+    // `parse(it.asSequence())` or hands over its iterator.
     fun parse(gcode: Sequence<Char>): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
     fun parse(gcode: CharSequence): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
 
@@ -41,6 +54,20 @@ class GTokenizer {
      */
     fun parseLines(gcode: Sequence<String>, terminator: String = "\n"): Sequence<GToken> =
         Sequence { GTokenizerIterator(GLineCharIterator(gcode.iterator(), terminator)) }
+
+    /**
+     * **The whole read pipeline: text in, classified lines out** (spec sections 1 to 5, 7 and 8).
+     *
+     * The module's primary operation, and it had no name until now - every caller spelled
+     * `GLiner(tokenizer.parse(text).iterator())` for itself, which is also every place that would
+     * have to change if the pipeline ever grew a stage. `GLiner` stays public for a caller that
+     * wants to drive the lines by hand, or that already holds tokens.
+     *
+     * Re-iterable, like [parse] over the same source: each pass builds its own tokenizer and liner,
+     * so the sequence is not `constrainOnce`.
+     */
+    fun lines(gcode: CharSequence): Sequence<GLine> =
+        Sequence { GLiner(GTokenizerIterator(gcode.iterator())) }
 }
 
 /**
@@ -76,7 +103,12 @@ private class GLineCharIterator(
     }
 }
 
-class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
+/**
+ * The state machine itself. **Internal, and its scanners private**: which characters `number()` or
+ * `string()` consumes is how this lexer is built, not what it promises, and a port re-deciding that
+ * should not be breaking a contract. [GTokenizer] is the surface.
+ */
+internal class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
 
     private var ch: Char? = null
 
@@ -117,7 +149,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
      * Lexes one separator. Only the four characters of [isSpace] reach here, so the CR case is the
      * fall-through: there is no fifth possibility to guard against.
      */
-    fun space(current: Char): GToken {
+    private fun space(current: Char): GToken {
         ch = null
         if (current == ' ') return GSpace
         if (current == '\t') return GTab
@@ -141,7 +173,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
      * The lexeme is handed to the token verbatim, so a sign, leading zeros (`G01`) and a trailing
      * dot (`X1.`) survive `rawText()` unchanged.
      */
-    fun number(start: Char): GToken {
+    private fun number(start: Char): GToken {
         ch = null
         val raw = StringBuilder()
         var dots = 0
@@ -195,7 +227,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
      * [raw] is the exact lexeme. Only the lexeme can represent an unterminated string, which is a
      * lexical error (spec section 9) rather than a string that gains a closing quote it never had.
      */
-    fun string(): GToken {
+    private fun string(): GToken {
         ch = null
         val raw = StringBuilder().append('"')
         val text = StringBuilder()
@@ -233,7 +265,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
      * Lexes a brace expression, the same nested scan as [inlineComment] over `{` `}`. Unlike a
      * comment an expression keeps its delimiters in the token text, so there is one buffer, not two.
      */
-    fun expression(start: Char): GToken {
+    private fun expression(start: Char): GToken {
         ch = null
         val raw = StringBuilder().append(start)
         var depth = 1
@@ -260,7 +292,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
      * `\r` is `GUnknown`, exactly as outside a comment. The CR is still emitted, by the separator
      * rather than by the comment, so `;ab\r\n` round-trips byte for byte.
      */
-    fun tailComment(): GComment {
+    private fun tailComment(): GComment {
         ch = null
         val text = StringBuilder()
         var current: Char? = if (chars.hasNext()) chars.next() else null
@@ -285,7 +317,7 @@ class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
      * counter reached zero is what put it inside the comment text (TODO 1.2). `expression()` is the
      * same scan over `{` `}` and is deliberately kept in the same shape.
      */
-    fun inlineComment(start: Char): GToken {
+    private fun inlineComment(start: Char): GToken {
         ch = null
         val raw = StringBuilder().append(start)
         val text = StringBuilder()

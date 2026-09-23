@@ -57,11 +57,11 @@ class GSendWindowTest {
             // so - and it is the only test here that exercises both directions.
             val window = GSendWindow(capacity = 64)
             val reader = GCodeReader()
-            val tokenizer = GTokenizer()
+            val tokenizer = GTokenizer
 
             for (i in 0 until 20) {
                 val text = requireNotNull(window.send(if (i % 2 == 0) g28 else t0))
-                val line = GLiner(tokenizer.parse(text).iterator()).next()
+                val line = GTokenizer.lines(text).first()
 
                 assertInstanceOf(GAccepted::class.java, reader.read(line)) { "rejected: $text" }
             }
@@ -195,9 +195,9 @@ class GSendWindowTest {
             // window replays from there, and the session catches up.
             val window = GSendWindow(capacity = 4)
             val reader = GCodeReader()
-            val tokenizer = GTokenizer()
+            val tokenizer = GTokenizer
             fun deliver(text: String) =
-                reader.read(GLiner(tokenizer.parse(text).iterator()).next())
+                reader.read(GTokenizer.lines(text).first())
 
             val one = requireNotNull(window.send(g28))
             val two = requireNotNull(window.send(g28))
@@ -252,11 +252,11 @@ class GSendWindowTest {
         fun `the reset line is itself accepted by a reader mid-sequence`() {
             val window = GSendWindow(capacity = 4)
             val reader = GCodeReader()
-            val tokenizer = GTokenizer()
-            reader.read(GLiner(tokenizer.parse("N1 G28*18").iterator()).next())
+            val tokenizer = GTokenizer
+            reader.read(GTokenizer.lines("N1 G28*18").first())
 
             val reset = requireNotNull(window.reset(0))
-            val line = GLiner(tokenizer.parse(reset).iterator()).next()
+            val line = GTokenizer.lines(reset).first()
 
             assertInstanceOf(GAccepted::class.java, reader.read(line))
             assertEquals(0, reader.lastLine)

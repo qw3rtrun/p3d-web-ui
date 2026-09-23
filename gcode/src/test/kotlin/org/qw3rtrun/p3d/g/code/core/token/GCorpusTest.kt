@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Test
  */
 class GCorpusTest {
 
-    private val tokenizer = GTokenizer()
 
     private val corpus: String = requireNotNull(javaClass.getResourceAsStream("/marlin.gcode")) {
         "marlin.gcode fixture is missing from the test resources"
@@ -32,7 +31,7 @@ class GCorpusTest {
 
     @Test
     fun `the whole corpus tokenizes without failing`() {
-        val tokens = tokenizer.parse(corpus).toList()
+        val tokens = GTokenizer.parse(corpus).toList()
 
         assertTrue(tokens.size > 2500) { "expected 2500+ tokens, got ${tokens.size}" }
         assertTrue(tokens.none { it is GUnknown && it.str.isEmpty() })
@@ -41,7 +40,7 @@ class GCorpusTest {
     @Test
     fun `every line tokenizes into at least one token`() {
         lines.filter { it.isNotEmpty() }.forEach { line ->
-            val tokens = tokenizer.parse(line).toList()
+            val tokens = GTokenizer.parse(line).toList()
 
             assertTrue(tokens.isNotEmpty()) { "line [$line] produced no tokens" }
         }
@@ -49,7 +48,7 @@ class GCorpusTest {
 
     @Test
     fun `the corpus contains the token kinds it is meant to exercise`() {
-        val tokens = tokenizer.parse(corpus).toList()
+        val tokens = GTokenizer.parse(corpus).toList()
 
         assertTrue(tokens.any { it is GLetter }) { "no command letters in the corpus" }
         assertTrue(tokens.any { it is GInt }) { "no integers in the corpus" }
@@ -61,7 +60,7 @@ class GCorpusTest {
 
     @Test
     fun `the liner splits the corpus into one line per line break`() {
-        val parsed = GLiner(tokenizer.parse(corpus).iterator()).asSequence().toList()
+        val parsed = GTokenizer.lines(corpus).toList()
 
         assertEquals(lines.size, parsed.size)
         assertTrue(parsed.all { it.raw.isNotEmpty() }) { "a parsed line has no tokens" }
@@ -69,7 +68,7 @@ class GCorpusTest {
 
     @Test
     fun `no line break is counted twice`() {
-        val breaks = tokenizer.parse(corpus).count { it is GLineBreak }
+        val breaks = GTokenizer.parse(corpus).count { it is GLineBreak }
 
         assertEquals(corpus.count { it == '\n' }, breaks)
     }
@@ -86,7 +85,7 @@ class GCorpusTest {
         // inside comments and quoted strings, where it stays content. See the two tests below.
         val expected = listOf("!", "#", "'", ",", ".", "/", ":", "\\", "|", "~")
 
-        val actual = tokenizer.parse(corpus)
+        val actual = GTokenizer.parse(corpus)
             .filterIsInstance<GUnknown>()
             .map { it.str }
             .distinct()
@@ -100,7 +99,7 @@ class GCorpusTest {
     fun `no token outside a comment or a string carries a non ascii character`() {
         // GCODE_spec.md section 1.1 confines non-ASCII to comments and quoted strings. The corpus has
         // Cyrillic in both, so this is the test that separates "reclassified" from "broken".
-        val offenders = tokenizer.parse(corpus)
+        val offenders = GTokenizer.parse(corpus)
             .filter { it !is GComment && it !is GQuotedString }
             .map { it.rawText() }
             .filter { text -> text.any { it.code > 127 } }
@@ -114,7 +113,7 @@ class GCorpusTest {
     fun `the corpus still carries the non ascii characters of its comments`() {
         // U+2019 on line 140 and U+00B5 on lines 380-382. The fixture has no non-ASCII quoted string,
         // so the string half of the section 1.1 carve-out is pinned in GTokenizerTest instead.
-        val nonAscii = tokenizer.parse(corpus)
+        val nonAscii = GTokenizer.parse(corpus)
             .filterIsInstance<GComment>()
             .flatMap { comment -> comment.string.asSequence() }
             .filter { it.code > 127 }
@@ -129,7 +128,7 @@ class GCorpusTest {
     fun `no comment text carries a stray carriage return`() {
         // The fixture is CRLF. GCODE_spec.md section 1.2 makes both characters of a CRLF part of the
         // terminator, so neither belongs to the comment text; the CR is emitted by GLineBreak.
-        val withCr = tokenizer.parse(corpus)
+        val withCr = GTokenizer.parse(corpus)
             .filterIsInstance<GTailComment>()
             .filter { it.string.contains('\r') }
             .map { it.string }
@@ -144,13 +143,13 @@ class GCorpusTest {
     fun `the whole corpus round trips byte for byte including its terminators`() {
         // The per-line test below strips terminators, so it cannot see a CR moving between a comment
         // and its line break. This one parses the file exactly as checked out.
-        assertEquals(corpus, tokenizer.parse(corpus).joinToString("") { it.rawText() })
+        assertEquals(corpus, GTokenizer.parse(corpus).joinToString("") { it.rawText() })
     }
 
     @Test
     fun `each line round trips through the token stream`() {
         val failing = lines.filter { line ->
-            runCatching { tokenizer.parse(line).joinToString("") { it.rawText() } }.getOrNull() != line
+            runCatching { GTokenizer.parse(line).joinToString("") { it.rawText() } }.getOrNull() != line
         }
 
         // No quarantine: number tokens carry their original lexeme, so every line of the corpus
@@ -159,7 +158,7 @@ class GCorpusTest {
     }
     @Test
     fun `the liner classifies every corpus line and loses nothing`() {
-        val parsed = GLiner(tokenizer.parse(corpus).iterator()).asSequence().toList()
+        val parsed = GTokenizer.lines(corpus).toList()
         val kinds = parsed.groupingBy { it::class.simpleName!! }.eachCount()
 
         // The corpus is a file, not a serial capture: it has commands, blank/comment-only lines,
@@ -174,7 +173,7 @@ class GCorpusTest {
 
     @Test
     fun `the two unchecksummed line numbers are the ones the fixture actually contains`() {
-        val parsed = GLiner(tokenizer.parse(corpus).iterator()).asSequence().toList()
+        val parsed = GTokenizer.lines(corpus).toList()
 
         assertEquals(
             listOf("line number 100 has no checksum", "line number 101 has no checksum"),
@@ -204,7 +203,7 @@ class GCorpusTest {
         }
 
         private fun parse(text: String): List<GLine> =
-            GLiner(tokenizer.parse(text).iterator()).asSequence().toList()
+            GTokenizer.lines(text).toList()
 
         @Test
         fun `every line verifies`() {

@@ -2,9 +2,12 @@ package org.qw3rtrun.p3d.g.marlin
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GCommandParser
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.token.GLiner
+import org.qw3rtrun.p3d.g.code.core.token.GSpace
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 /**
@@ -45,18 +48,29 @@ class MarlinDocExamplesTest {
      * prefix, and `X0 Y0 Z0` belong to the `G0`. Reading the code off the line instead of off each
      * command is what made this test blame G53 for parameters it never had.
      */
-    private fun codeOf(cmd: org.qw3rtrun.p3d.g.code.core.token.GCommand): String? {
+    private fun codeOf(cmd: GCommand): String? {
         val letter = (cmd.head.id as? GLetter)?.letter?.uppercaseChar() ?: return null
         return letter + cmd.head.value.lexeme
     }
 
     /**
+     * A parsed command's parameters back as tokens - what a decoder is handed.
+     *
+     * Rebuilt from each word's `raw` rather than from the encoder, so a doc line's own spelling
+     * reaches the decoder unchanged; the separator the parser dropped between two words is put
+     * back, because a command whose argument runs to the end of the line can see it.
+     */
+    private fun paramTokens(cmd: GCommand): Sequence<GToken> =
+        cmd.params.asSequence().flatMap { sequenceOf(GSpace) + it.raw.asSequence() }
+
+    /**
      * Examples whose argument is a rest-of-line string, not lettered parameters.
      *
      * `M117 Hello World` has no parameters at all - the text *is* the argument - and `M32`'s
-     * example wraps a filename in `!...#`. Until the lexer can read a bare rest-of-line string
-     * (spec 3.4a, deferred to todo 09) these tokenize letter by letter into words that were never
-     * parameters, so the letters read off them are meaningless. A named list, not a silent catch.
+     * example wraps a filename in `!...#`. The *decoder* reads these now (spec 3.4a, through
+     * `stringArg()`), but the lexer still cannot: the command number is what says where the string
+     * starts, so at this level they tokenize letter by letter into words that were never
+     * parameters, and the letters read off them are meaningless. A named list, not a silent catch.
      */
     private val restOfLineArgument = setOf(
         "M0", "M1", "M16", "M23", "M28", "M30", "M32", "M33", "M75", "M117", "M118", "M550",
@@ -193,7 +207,7 @@ class MarlinDocExamplesTest {
                 if (wanted.isEmpty()) continue
 
                 val bestKept = variants.maxOf { decoder ->
-                    val kept = decoder.decodeParams(cmd.params).encode().params
+                    val kept = decoder.decodeParams(paramTokens(cmd)).encode().params
                         .mapNotNull { (it.id as? GLetter)?.letter?.uppercaseChar() }
                         .toSet()
                     wanted.count { it in kept }

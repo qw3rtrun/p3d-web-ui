@@ -10,7 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.token.GWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.dsl.G
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
@@ -46,7 +46,7 @@ class SelectWorkspaceG55 : GRq<SelectWorkspaceG55> {
             return G(55).head
         }
 
-        override fun decodeParams(params: List<GWord>): SelectWorkspaceG55 {
+        override fun decodeParams(tokens: Sequence<GToken>): SelectWorkspaceG55 {
             return SelectWorkspaceG55()
         }
     }

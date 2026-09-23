@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.word
@@ -52,7 +53,8 @@ data class SpindleCCWLaserOn(
             return M(4).head
         }
 
-        override fun decodeParams(params: List<GWord>): SpindleCCWLaserOn {
+        override fun decodeParams(tokens: Sequence<GToken>): SpindleCCWLaserOn {
+            val params = tokens.toList()
             return SpindleCCWLaserOn(
                 power = params.intOf('S'),
                 o = params.intOf('O'),

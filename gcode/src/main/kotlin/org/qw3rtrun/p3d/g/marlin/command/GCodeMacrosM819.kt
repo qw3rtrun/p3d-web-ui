@@ -10,33 +10,35 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
+import org.qw3rtrun.p3d.g.code.dsl.bareString
+import org.qw3rtrun.p3d.g.marlin.stringArg
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 
 /**
- * M819
+ * M819 [<gcode>]
  *
  * G-code macros.
  *
- * **This command also takes a rest-of-line string** (spec 3.4a) which this
- * model cannot hold yet - see todo 09. Only its lettered parameters are here.
+ * **`gcode` is a bare rest-of-line string** (spec 3.4a).
+ * It carries no letter, it is written last because everything to the end of the
+ * line belongs to it, and it cannot contain `;` - every parser reads that as the
+ * start of a comment.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M819.html">MarlinFirmare M819 doc</a>
  */
-class GCodeMacrosM819 : GRq<GCodeMacrosM819> {
+data class GCodeMacrosM819(
+    /** the rest of the line */
+    val gcode: String? = null,
+) : GRq<GCodeMacrosM819> {
 
     override fun encode(): GCommand {
-        return M(819)
-    }
-
-    override fun equals(other: Any?): Boolean {
-        return other is GCodeMacrosM819
-    }
-
-    override fun hashCode(): Int {
-        return 951555
+        val words = ArrayList<GWord>(1)
+        if (gcode != null) words.add(bareString(gcode))
+        return M(819, *words.toTypedArray())
     }
 
     override fun toString(): String {
@@ -49,8 +51,11 @@ class GCodeMacrosM819 : GRq<GCodeMacrosM819> {
             return M(819).head
         }
 
-        override fun decodeParams(params: List<GWord>): GCodeMacrosM819 {
-            return GCodeMacrosM819()
+        override fun decodeParams(tokens: Sequence<GToken>): GCodeMacrosM819 {
+            val all = tokens.toList()
+            return GCodeMacrosM819(
+                gcode = all.stringArg(),
+            )
         }
     }
 }

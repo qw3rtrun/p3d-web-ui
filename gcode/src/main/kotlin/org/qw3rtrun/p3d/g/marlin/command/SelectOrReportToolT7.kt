@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.T
 import org.qw3rtrun.p3d.g.code.dsl.word
@@ -50,7 +51,8 @@ data class SelectOrReportToolT7(
             return T(7).head
         }
 
-        override fun decodeParams(params: List<GWord>): SelectOrReportToolT7 {
+        override fun decodeParams(tokens: Sequence<GToken>): SelectOrReportToolT7 {
+            val params = tokens.toList()
             return SelectOrReportToolT7(
                 feedrate = params.decimalOf('F'),
                 s = params.boolOf('S'),

@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.flag
@@ -80,7 +81,8 @@ data class I2CPositionEncodersM862(
             return M(862).head
         }
 
-        override fun decodeParams(params: List<GWord>): I2CPositionEncodersM862 {
+        override fun decodeParams(tokens: Sequence<GToken>): I2CPositionEncodersM862 {
+            val params = tokens.toList()
             return I2CPositionEncodersM862(
                 index = params.intOf('I'),
                 o = params.boolOf('O'),

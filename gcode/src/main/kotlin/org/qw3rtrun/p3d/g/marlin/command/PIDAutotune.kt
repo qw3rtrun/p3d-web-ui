@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.flag
@@ -62,7 +63,8 @@ data class PIDAutotune(
             return M(303).head
         }
 
-        override fun decodeParams(params: List<GWord>): PIDAutotune {
+        override fun decodeParams(tokens: Sequence<GToken>): PIDAutotune {
+            val params = tokens.toList()
             return PIDAutotune(
                 index = params.intOf('E'),
                 count = params.intOf('C'),

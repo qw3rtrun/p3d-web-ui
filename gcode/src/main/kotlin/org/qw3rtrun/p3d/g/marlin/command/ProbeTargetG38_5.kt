@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.G
 import org.qw3rtrun.p3d.g.code.dsl.word
@@ -55,7 +56,8 @@ data class ProbeTargetG38_5(
             return G("38.5").head
         }
 
-        override fun decodeParams(params: List<GWord>): ProbeTargetG38_5 {
+        override fun decodeParams(tokens: Sequence<GToken>): ProbeTargetG38_5 {
+            val params = tokens.toList()
             return ProbeTargetG38_5(
                 pos = params.decimalOf('X'),
                 y = params.decimalOf('Y'),

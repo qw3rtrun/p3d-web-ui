@@ -25,7 +25,10 @@ Shape of a generated class, and why:
   generated cover asserts against. The KDoc marks them required; the type system does not.
 - **Decoding lives on the companion, not on the instance.** `head()` and `decodeParams()` describe
   the command *type*, so they sit in a `companion object : GRqDecoder<T>` and call sites read
-  `ReportHotendTemperature.decode(cmd)`. This mirrors `GRS`/`GRSDecoder`.
+  `ReportHotendTemperature.decode(tokens)`. This mirrors `GRS`/`GRSDecoder`.
+- **Decoding reads tokens, not words.** A decoder is handed the tokens that followed its head and
+  pairs them itself, because whether a line's tail is two words or one unquoted string depends on
+  the command number and nothing below the decoder knows it. See `GRqDecoder`.
 - **Decimals go through the lexeme.** `word(letter, v.toPlainString())` rather than
   `word(letter, v)`, so the number is validated as a G-code number on the way in and never
   reaches the wire in scientific notation.
@@ -57,6 +60,15 @@ KINDS = {
                 lambda l: "params.decimalOf('%s')" % l),
     "string":  ("String?",    "null",  lambda l, n: "word('%s', text(%s))" % (l, n),
                 lambda l: "params.stringOf('%s')" % l),
+    # spec 3.4a's bare rest-of-line string - Marlin's `string_arg`. It has no letter, so it is
+    # built and read by position: last in the command, because everything to the end of the line
+    # belongs to it. See `bareString` in the DSL and `stringArg` in MarlinWords.
+    #
+    # Its decode call is the one that is not a function of its own letter: where the string starts
+    # depends on *this command's* letters - `M117 H1 ello` is all message, `M118 P1 ello` is not -
+    # so `l` here is the command's letter list and `gen_class` is what fills it in.
+    "bare":    ("String?",    "null",  lambda l, n: "bareString(%s)" % n,
+                lambda l: "all.stringArg(%s)" % l),
 }
 
 # A representative value per kind, for the generated "every parameter round-trips" test.
@@ -67,6 +79,9 @@ SAMPLES = {
     "long": "1L",
     "decimal": 'BigDecimal("1.5")',
     "string": '"x"',
+    # Not "x": a one-letter sample is indistinguishable from a flag, and the point of this sample
+    # is to prove the string survives the trip whole, spaces and all.
+    "bare": '"a tail"',
 }
 
 # Where the generated Kotlin goes. One file per command class, named after the class it holds,
@@ -85,6 +100,17 @@ REGISTRY_FILE = "MarlinRQ.kt"
 # used, and the name the hand-written reference class established.
 NAME_OVERRIDES = {
     "M105": "ReportHotendTemperature",
+}
+
+# What one command's rest-of-line string is *called*. The docs name it - the pseudo-parameter is
+# tagged `string`, `filename`, `path` or `message` - but `commands.json` records only that the
+# command takes one, so the few whose argument is not a message are named here. `message` is the
+# default and is right for the rest.
+BARE_STRING_NAMES = {
+    "M23": "filename", "M28": "filename", "M30": "filename", "M928": "filename",
+    "M33": "path",
+    "M810": "gcode", "M811": "gcode", "M812": "gcode", "M813": "gcode", "M814": "gcode",
+    "M815": "gcode", "M816": "gcode", "M817": "gcode", "M818": "gcode", "M819": "gcode",
 }
 
 
@@ -174,11 +200,13 @@ def imports_for(letter, text):
         (r"\bGEncoder\b", "org.qw3rtrun.p3d.g.code.core.GEncoder"),
         (r"\bGCommand\b", "org.qw3rtrun.p3d.g.code.core.token.GCommand"),
         (r"\bGParameterWord\b", "org.qw3rtrun.p3d.g.code.core.token.GParameterWord"),
+        (r"\bGToken\b", "org.qw3rtrun.p3d.g.code.core.token.GToken"),
         (r"\bGWord\b", "org.qw3rtrun.p3d.g.code.core.token.GWord"),
         (None, "org.qw3rtrun.p3d.g.code.dsl.%s" % letter),
         (None, "org.qw3rtrun.p3d.g.protocol.GRq"),
         (None, "org.qw3rtrun.p3d.g.protocol.GRqDecoder"),
-        # The `params.<kind>Of(letter)` readers are `internal` extensions in the marlin package.
+        # The `params.<kind>Of(letter)` readers are `internal` extensions in the marlin package,
+        # over `List<GToken>` - the tokens `decodeParams` was handed, materialised once.
         # They resolved implicitly while the classes lived there; from `marlin.command` they have
         # to be imported, and only the ones a given class actually calls.
         (r"\bboolOf\(", "org.qw3rtrun.p3d.g.marlin.boolOf"),
@@ -187,6 +215,9 @@ def imports_for(letter, text):
         (r"\bintOf\(", "org.qw3rtrun.p3d.g.marlin.intOf"),
         (r"\blongOf\(", "org.qw3rtrun.p3d.g.marlin.longOf"),
         (r"\bstringOf\(", "org.qw3rtrun.p3d.g.marlin.stringOf"),
+        (r"\bstringArg\(", "org.qw3rtrun.p3d.g.marlin.stringArg"),
+        (r"\bbeforeStringArg\(", "org.qw3rtrun.p3d.g.marlin.beforeStringArg"),
+        (r"\bbareString\(", "org.qw3rtrun.p3d.g.code.dsl.bareString"),
         (r"\bflag\(", "org.qw3rtrun.p3d.g.code.dsl.flag"),
         (r"\btext\(", "org.qw3rtrun.p3d.g.code.dsl.text"),
         (r"\bword\(", "org.qw3rtrun.p3d.g.code.dsl.word"),
@@ -196,6 +227,11 @@ def imports_for(letter, text):
     other = sorted(f for f in used if not f.startswith("java."))
     jvm = sorted(f for f in used if f.startswith("java."))
     return ["import %s" % f for f in other + jvm]
+
+
+def bare_string(fields):
+    """Whether these fields include the command's rest-of-line string (spec 3.4a)."""
+    return any(f["kind"] == "bare" for f in fields)
 
 
 def gen_class(c, name):
@@ -215,6 +251,22 @@ def gen_class(c, name):
             "name": p["name"],
         })
 
+    # The rest-of-line string goes **last**, and that is the whole of spec 3.4a: everything to the
+    # end of the line belongs to it, so a lettered parameter after it would be inside it. Last in
+    # `fields` is last in the constructor, last in `encode` and last on the wire.
+    if c["bareString"]:
+        ktype, default, _, _ = KINDS["bare"]
+        bare_name = BARE_STRING_NAMES.get(c["code"], "message")
+        fields.append({
+            "prop": prop(bare_name, "string", used),
+            "letter": None,
+            "kind": "bare",
+            "ktype": ktype,
+            "default": default,
+            "optional": True,
+            "name": bare_name,
+        })
+
     out = []
     doc_url = "https://marlinfw.org/docs/gcode/%s.html" % c["code"].replace(".", "-")
 
@@ -222,7 +274,9 @@ def gen_class(c, name):
     #   M105 [R] [T<index>]
     sig = [c["code"]]
     for f in fields:
-        if f["kind"] == "flag":
+        if f["kind"] == "bare":
+            piece = "<%s>" % f["name"]
+        elif f["kind"] == "flag":
             piece = f["letter"]
         else:
             piece = "%s<%s>" % (f["letter"], f["name"] or "value")
@@ -233,9 +287,12 @@ def gen_class(c, name):
     out.append(" *")
     out.append(" * %s%s." % (c["title"], " (%s)" % c["group"] if c["group"] else ""))
     if c["bareString"]:
+        bare = [f for f in fields if f["kind"] == "bare"][0]
         out.append(" *")
-        out.append(" * **This command also takes a rest-of-line string** (spec 3.4a) which this")
-        out.append(" * model cannot hold yet - see todo 09. Only its lettered parameters are here.")
+        out.append(" * **`%s` is a bare rest-of-line string** (spec 3.4a)." % bare["prop"])
+        out.append(" * It carries no letter, it is written last because everything to the end of the")
+        out.append(" * line belongs to it, and it cannot contain `;` - every parser reads that as the")
+        out.append(" * start of a comment.")
     if any(not f["optional"] for f in fields):
         req = ", ".join("`%s`" % f["letter"] for f in fields if not f["optional"])
         out.append(" *")
@@ -248,8 +305,8 @@ def gen_class(c, name):
     if fields:
         out.append("data class %s(" % name)
         for f in fields:
-            label = "`%s`" % f["letter"]
-            if f["name"]:
+            label = "the rest of the line" if f["kind"] == "bare" else "`%s`" % f["letter"]
+            if f["name"] and f["kind"] != "bare":
                 label += " - %s" % f["name"]
             if not f["optional"]:
                 label += " (required)"
@@ -299,18 +356,32 @@ def gen_class(c, name):
     out.append("    }")
     out.append("")
     # The reading half is a property of the command *type*, not of one command, so it lives on the
-    # companion - the same split GRS/GRSDecoder already uses. `%s.decode(cmd)` is the call site.
+    # companion - the same split GRS/GRSDecoder already uses. `%s.decode(tokens)` is the call site.
     out.append("    companion object : GRqDecoder<%s> {" % name)
     out.append("")
     out.append("        override fun head(): GParameterWord<*> {")
     out.append("            return %s.head" % head_call)
     out.append("        }")
     out.append("")
-    out.append("        override fun decodeParams(params: List<GWord>): %s {" % name)
+    out.append("        override fun decodeParams(tokens: Sequence<GToken>): %s {" % name)
     if fields:
+        letter_list = ", ".join("'%s'" % f["letter"] for f in fields if f["letter"])
+        # Materialised once: every parameter below is its own scan of the tokens, and a Sequence
+        # makes no promise that it can be walked twice.
+        if bare_string(fields):
+            out.append("            val all = tokens.toList()")
+            # A letter *inside* the rest-of-line string is text, not a parameter, so the lettered
+            # ones are read from in front of it only: `M118 Hello World P1` has no `P`. A command
+            # that is *nothing but* its string - M117, M23, the macros - has no such region and
+            # would only get an unused `params`.
+            if letter_list:
+                out.append("            val params = all.beforeStringArg(%s)" % letter_list)
+        else:
+            out.append("            val params = tokens.toList()")
         out.append("            return %s(" % name)
         for f in fields:
-            out.append("                %s = %s," % (f["prop"], KINDS[f["kind"]][3](f["letter"])))
+            arg = letter_list if f["kind"] == "bare" else f["letter"]
+            out.append("                %s = %s," % (f["prop"], KINDS[f["kind"]][3](arg)))
         out.append("            )")
     else:
         # Not `this`: the companion is not an instance of the command. A fresh one compares equal
@@ -449,7 +520,9 @@ def main():
         "    val info: List<Info> = listOf(",
     ]
     for i, c in enumerate(commands):
-        letters = "".join(sorted({f["letter"] for f in all_fields[i]}))
+        # `None` is the rest-of-line string's letter, because it has none; the `bareString`
+        # flag in the same Info is what says the command takes one.
+        letters = "".join(sorted({f["letter"] for f in all_fields[i] if f["letter"]}))
         letter_set = ("setOf(" + ", ".join("'%s'" % ch for ch in letters) + ")"
                       if letters else "emptySet()")
         registry.append('        Info("%s", "%s", %s, %s),'
@@ -477,14 +550,16 @@ def main():
         % ", ".join('"%s"' % a for a in ambiguous),
         "",
         "    /**",
-        "     * The command [cmd] says it is, or null if no Marlin command has that head.",
+        "     * The command [tokens] spell, head included, or null if no Marlin command has that head.",
         "     *",
         "     * Matching is on the head as written, so a non-canonical `M0105` does not resolve -",
-        "     * the lexeme is part of a number's identity in this model.",
+        "     * the lexeme is part of a number's identity in this model - but not on its spacing.",
         "     */",
-        "    fun decode(cmd: GCommand): GRq<*>? {",
-        "        val decoder = byHead[cmd.head] ?: return null",
-        "        return decoder.decodeParams(cmd.params)",
+        "    fun decode(tokens: Sequence<GToken>): GRq<*>? {",
+        "        val all = tokens.toList()",
+        "        val head = GCommandParser.headWord(all) ?: return null",
+        "        val decoder = byHead[head] ?: return null",
+        "        return decoder.decodeParams(all.asSequence().drop(GCommandParser.headEnd(all)))",
         "    }",
         "}",
     ]
@@ -563,8 +638,9 @@ def main():
         "",
         "package org.qw3rtrun.p3d.g.marlin",
         "",
-        "import org.qw3rtrun.p3d.g.code.core.token.GCommand",
+        "import org.qw3rtrun.p3d.g.code.core.token.GCommandParser",
         "import org.qw3rtrun.p3d.g.code.core.token.GParameterWord",
+        "import org.qw3rtrun.p3d.g.code.core.token.GToken",
         "import org.qw3rtrun.p3d.g.marlin.command.*",
         "import org.qw3rtrun.p3d.g.protocol.GRq",
         "import org.qw3rtrun.p3d.g.protocol.GRqDecoder",
@@ -589,6 +665,10 @@ def main():
         "import org.junit.jupiter.api.Assertions.assertTrue",
         "import org.junit.jupiter.api.Test",
         "import org.qw3rtrun.p3d.g.code.core.GEncoder",
+        "import org.qw3rtrun.p3d.g.code.core.token.GCommand",
+        "import org.qw3rtrun.p3d.g.code.core.token.GCommandParser",
+        "import org.qw3rtrun.p3d.g.code.core.token.GToken",
+        "import org.qw3rtrun.p3d.g.code.core.token.GTokenizer",
         "import org.qw3rtrun.p3d.g.code.dsl.M",
         "import org.qw3rtrun.p3d.g.marlin.command.*",
         "import java.math.BigDecimal",
@@ -603,6 +683,16 @@ def main():
         " * 3. the registry resolves each command's own head and nothing else.",
         " */",
         "class MarlinCommandsTest {",
+        "",
+        "    /** A built command as the tokens a printer would receive - through the real encoder. */",
+        "    private fun tokens(cmd: GCommand): Sequence<GToken> =",
+        "        GTokenizer().parse(GEncoder.encode(cmd))",
+        "",
+        "    /** The same, less the head: what `decodeParams` is handed. */",
+        "    private fun paramTokens(cmd: GCommand): Sequence<GToken> {",
+        "        val all = tokens(cmd).toList()",
+        "        return all.asSequence().drop(GCommandParser.headEnd(all))",
+        "    }",
         "",
         "    @Test",
         "    fun `every command has a prototype`() {",
@@ -634,7 +724,7 @@ def main():
         "        // the other five. `all` and `decoders` are index-aligned, so zip pairs each",
         "        // command with its own companion.",
         "        for ((proto, decoder) in MarlinCommands.all.zip(MarlinCommands.decoders)) {",
-        "            assertEquals(proto, decoder.decodeParams(proto.encode().params)) {",
+        "            assertEquals(proto, decoder.decodeParams(paramTokens(proto.encode()))) {",
         "                \"round trip failed for \" + GEncoder.encode(proto.encode())",
         "            }",
         "        }",
@@ -642,11 +732,11 @@ def main():
         "",
         "    @Test",
         "    fun `the registry resolves a head it has and no other`() {",
-        "        assertNotNull(MarlinCommands.decode(M(105)))",
+        "        assertNotNull(MarlinCommands.decode(tokens(M(105))))",
         "        // `M0105` is the same number written differently, and the lexeme is part of a",
         "        // number's identity here, so it deliberately does not resolve.",
-        "        assertNull(MarlinCommands.decode(M(\"0105\")))",
-        "        assertNull(MarlinCommands.decode(M(998)))",
+        "        assertNull(MarlinCommands.decode(tokens(M(\"0105\"))))",
+        "        assertNull(MarlinCommands.decode(tokens(M(998))))",
         "    }",
         "",
     ]
@@ -667,9 +757,13 @@ def main():
             t.append("        %s(%s).let {" % (name, args))
             t.append('            val text = GEncoder.encode(it.encode())')
             for f in fields:
+                # A rest-of-line string has no letter to look for, so the sample text itself is
+                # what has to be on the wire - the space inside it included, which is what makes
+                # it one string and not two words.
+                shown = SAMPLES["bare"].strip(chr(34)) if f["kind"] == "bare" else f["letter"]
                 t.append('            assertTrue(text.contains(" %s")) { "%s missing %s in $text" }'
-                         % (f["letter"], c["code"], f["letter"]))
-            t.append("            assertEquals(it, %s.decodeParams(it.encode().params)) "
+                         % (shown, c["code"], shown))
+            t.append("            assertEquals(it, %s.decodeParams(paramTokens(it.encode()))) "
                      "{ \"round trip: $text\" }" % name)
             t.append("        }")
         t.append("    }")

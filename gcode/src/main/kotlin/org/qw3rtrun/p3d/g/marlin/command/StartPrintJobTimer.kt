@@ -10,33 +10,35 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
+import org.qw3rtrun.p3d.g.code.dsl.bareString
+import org.qw3rtrun.p3d.g.marlin.stringArg
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 
 /**
- * M75
+ * M75 [<message>]
  *
  * Start Print Job Timer (printjob).
  *
- * **This command also takes a rest-of-line string** (spec 3.4a) which this
- * model cannot hold yet - see todo 09. Only its lettered parameters are here.
+ * **`message` is a bare rest-of-line string** (spec 3.4a).
+ * It carries no letter, it is written last because everything to the end of the
+ * line belongs to it, and it cannot contain `;` - every parser reads that as the
+ * start of a comment.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M75.html">MarlinFirmare M75 doc</a>
  */
-class StartPrintJobTimer : GRq<StartPrintJobTimer> {
+data class StartPrintJobTimer(
+    /** the rest of the line */
+    val message: String? = null,
+) : GRq<StartPrintJobTimer> {
 
     override fun encode(): GCommand {
-        return M(75)
-    }
-
-    override fun equals(other: Any?): Boolean {
-        return other is StartPrintJobTimer
-    }
-
-    override fun hashCode(): Int {
-        return 630488
+        val words = ArrayList<GWord>(1)
+        if (message != null) words.add(bareString(message))
+        return M(75, *words.toTypedArray())
     }
 
     override fun toString(): String {
@@ -49,8 +51,11 @@ class StartPrintJobTimer : GRq<StartPrintJobTimer> {
             return M(75).head
         }
 
-        override fun decodeParams(params: List<GWord>): StartPrintJobTimer {
-            return StartPrintJobTimer()
+        override fun decodeParams(tokens: Sequence<GToken>): StartPrintJobTimer {
+            val all = tokens.toList()
+            return StartPrintJobTimer(
+                message = all.stringArg(),
+            )
         }
     }
 }

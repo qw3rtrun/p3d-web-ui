@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.G
 import org.qw3rtrun.p3d.g.code.dsl.word
@@ -56,7 +57,8 @@ data class SingleZProbe(
             return G(30).head
         }
 
-        override fun decodeParams(params: List<GWord>): SingleZProbe {
+        override fun decodeParams(tokens: Sequence<GToken>): SingleZProbe {
+            val params = tokens.toList()
             return SingleZProbe(
                 c = params.boolOf('C'),
                 pos = params.decimalOf('X'),

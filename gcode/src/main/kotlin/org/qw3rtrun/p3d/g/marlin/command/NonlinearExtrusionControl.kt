@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.flag
@@ -57,7 +58,8 @@ data class NonlinearExtrusionControl(
             return M(592).head
         }
 
-        override fun decodeParams(params: List<GWord>): NonlinearExtrusionControl {
+        override fun decodeParams(tokens: Sequence<GToken>): NonlinearExtrusionControl {
+            val params = tokens.toList()
             return NonlinearExtrusionControl(
                 coeff = params.decimalOf('A'),
                 b = params.decimalOf('B'),

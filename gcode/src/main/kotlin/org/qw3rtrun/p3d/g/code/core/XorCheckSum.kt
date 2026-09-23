@@ -5,6 +5,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GInt
 interface CheckSumCalculator {
     fun add(ch: Char)
     fun get(): GInt
+    fun add(str: String) = str.forEach { add(it) }
 }
 
 class XorCheckSum : CheckSumCalculator {

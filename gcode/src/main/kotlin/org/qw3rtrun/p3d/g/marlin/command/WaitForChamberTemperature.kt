@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.word
@@ -49,7 +50,8 @@ data class WaitForChamberTemperature(
             return M(191).head
         }
 
-        override fun decodeParams(params: List<GWord>): WaitForChamberTemperature {
+        override fun decodeParams(tokens: Sequence<GToken>): WaitForChamberTemperature {
+            val params = tokens.toList()
             return WaitForChamberTemperature(
                 temp = params.decimalOf('S'),
                 r = params.decimalOf('R'),

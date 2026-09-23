@@ -10,33 +10,35 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
+import org.qw3rtrun.p3d.g.code.dsl.bareString
+import org.qw3rtrun.p3d.g.marlin.stringArg
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 
 /**
- * M928
+ * M928 [<filename>]
  *
  * Start SD Logging (sdcard).
  *
- * **This command also takes a rest-of-line string** (spec 3.4a) which this
- * model cannot hold yet - see todo 09. Only its lettered parameters are here.
+ * **`filename` is a bare rest-of-line string** (spec 3.4a).
+ * It carries no letter, it is written last because everything to the end of the
+ * line belongs to it, and it cannot contain `;` - every parser reads that as the
+ * start of a comment.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M928.html">MarlinFirmare M928 doc</a>
  */
-class StartSDLogging : GRq<StartSDLogging> {
+data class StartSDLogging(
+    /** the rest of the line */
+    val filename: String? = null,
+) : GRq<StartSDLogging> {
 
     override fun encode(): GCommand {
-        return M(928)
-    }
-
-    override fun equals(other: Any?): Boolean {
-        return other is StartSDLogging
-    }
-
-    override fun hashCode(): Int {
-        return 48600
+        val words = ArrayList<GWord>(1)
+        if (filename != null) words.add(bareString(filename))
+        return M(928, *words.toTypedArray())
     }
 
     override fun toString(): String {
@@ -49,8 +51,11 @@ class StartSDLogging : GRq<StartSDLogging> {
             return M(928).head
         }
 
-        override fun decodeParams(params: List<GWord>): StartSDLogging {
-            return StartSDLogging()
+        override fun decodeParams(tokens: Sequence<GToken>): StartSDLogging {
+            val all = tokens.toList()
+            return StartSDLogging(
+                filename = all.stringArg(),
+            )
         }
     }
 }

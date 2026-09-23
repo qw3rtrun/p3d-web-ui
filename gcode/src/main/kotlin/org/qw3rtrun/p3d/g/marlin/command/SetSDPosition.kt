@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.word
@@ -46,7 +47,8 @@ data class SetSDPosition(
             return M(26).head
         }
 
-        override fun decodeParams(params: List<GWord>): SetSDPosition {
+        override fun decodeParams(tokens: Sequence<GToken>): SetSDPosition {
+            val params = tokens.toList()
             return SetSDPosition(
                 pos = params.longOf('S'),
             )

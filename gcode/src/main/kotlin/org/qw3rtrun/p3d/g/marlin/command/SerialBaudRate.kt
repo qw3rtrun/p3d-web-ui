@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.flag
@@ -54,7 +55,8 @@ data class SerialBaudRate(
             return M(575).head
         }
 
-        override fun decodeParams(params: List<GWord>): SerialBaudRate {
+        override fun decodeParams(tokens: Sequence<GToken>): SerialBaudRate {
+            val params = tokens.toList()
             return SerialBaudRate(
                 p = params.hasWord('P'),
                 baud = params.decimalOf('B'),

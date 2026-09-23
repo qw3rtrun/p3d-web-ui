@@ -10,33 +10,35 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
+import org.qw3rtrun.p3d.g.code.dsl.bareString
+import org.qw3rtrun.p3d.g.marlin.stringArg
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 
 /**
- * M30
+ * M30 [<filename>]
  *
  * Delete SD file (sdcard).
  *
- * **This command also takes a rest-of-line string** (spec 3.4a) which this
- * model cannot hold yet - see todo 09. Only its lettered parameters are here.
+ * **`filename` is a bare rest-of-line string** (spec 3.4a).
+ * It carries no letter, it is written last because everything to the end of the
+ * line belongs to it, and it cannot contain `;` - every parser reads that as the
+ * start of a comment.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M30.html">MarlinFirmare M30 doc</a>
  */
-class DeleteSDFile : GRq<DeleteSDFile> {
+data class DeleteSDFile(
+    /** the rest of the line */
+    val filename: String? = null,
+) : GRq<DeleteSDFile> {
 
     override fun encode(): GCommand {
-        return M(30)
-    }
-
-    override fun equals(other: Any?): Boolean {
-        return other is DeleteSDFile
-    }
-
-    override fun hashCode(): Int {
-        return 823493
+        val words = ArrayList<GWord>(1)
+        if (filename != null) words.add(bareString(filename))
+        return M(30, *words.toTypedArray())
     }
 
     override fun toString(): String {
@@ -49,8 +51,11 @@ class DeleteSDFile : GRq<DeleteSDFile> {
             return M(30).head
         }
 
-        override fun decodeParams(params: List<GWord>): DeleteSDFile {
-            return DeleteSDFile()
+        override fun decodeParams(tokens: Sequence<GToken>): DeleteSDFile {
+            val all = tokens.toList()
+            return DeleteSDFile(
+                filename = all.stringArg(),
+            )
         }
     }
 }

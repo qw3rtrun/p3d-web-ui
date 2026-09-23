@@ -4,10 +4,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.GEncoder
+import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 import org.qw3rtrun.p3d.g.marlin.command.*
-import org.qw3rtrun.p3d.g.code.dsl.M
-import org.qw3rtrun.p3d.g.code.dsl.flag
-import org.qw3rtrun.p3d.g.code.dsl.word
 import java.math.BigDecimal
 
 /**
@@ -21,7 +19,19 @@ import java.math.BigDecimal
  */
 class MarlinRQTest {
 
+    private val tokenizer = GTokenizer()
+
     private fun enc(rq: ReportHotendTemperature) = GEncoder.encode(rq.encode())
+
+    /**
+     * Decoding starts from a line, not from a built command.
+     *
+     * That is the whole shape of the reading side: a decoder is handed the tokens as lexed and
+     * decides for itself what they mean, because which letters are parameters at all depends on
+     * the command number - and the layer that produces words does not know it. Feeding these
+     * tests a `GCommand` would have let them pass over a split the tokenizer cannot make.
+     */
+    private fun decode(line: String) = ReportHotendTemperature.decode(tokenizer.parse(line))
 
     @Test
     fun `an unset parameter is not written`() {
@@ -50,7 +60,7 @@ class MarlinRQTest {
         // param - so find() returned null and the non-null cast threw for every input.
         assertEquals(
             ReportHotendTemperature(index = 2),
-            ReportHotendTemperature.decode(M(105, word('T', 2))),
+            decode("M105 T2"),
         )
     }
 
@@ -58,13 +68,13 @@ class MarlinRQTest {
     fun `decoding reads the R flag`() {
         assertEquals(
             ReportHotendTemperature(r = true, index = 1),
-            ReportHotendTemperature.decode(M(105, flag('R'), word('T', 1))),
+            decode("M105 R T1"),
         )
     }
 
     @Test
     fun `a bare M105 decodes to nothing set`() {
-        assertEquals(ReportHotendTemperature(), ReportHotendTemperature.decode(M(105)))
+        assertEquals(ReportHotendTemperature(), decode("M105"))
     }
 
     @Test
@@ -79,7 +89,7 @@ class MarlinRQTest {
         for (original in cases) {
             // Decoding goes through the companion, so the instance under test is only the input -
             // which is the point: one decoder per command type, not one per command built.
-            assertEquals(original, ReportHotendTemperature.decode(original.encode())) {
+            assertEquals(original, decode(enc(original))) {
                 "round trip failed for " + enc(original)
             }
         }
@@ -87,8 +97,20 @@ class MarlinRQTest {
 
     @Test
     fun `a different command does not decode`() {
-        assertNull(ReportHotendTemperature.decode(M(115)))
-        assertNull(ReportHotendTemperature.decode(M(155, word('S', 1))))
+        assertNull(decode("M115"))
+        assertNull(decode("M155 S1"))
+    }
+
+    @Test
+    fun `the head is matched on what it says, not on how it is spaced`() {
+        // spec 2.1 lets a space separate a field from its value, so all three spell `M105 T2`.
+        // The head the decoder compares against is canonical, which is what makes that true
+        // without every decoder having to know what whitespace a line happened to carry.
+        assertEquals(ReportHotendTemperature(index = 2), decode("M105 T2"))
+        assertEquals(ReportHotendTemperature(index = 2), decode("M105T2"))
+        assertEquals(ReportHotendTemperature(index = 2), decode("M 105 T 2"))
+        // The lexeme is still part of a number's identity, so a non-canonical code is not M105.
+        assertNull(decode("M0105 T2"))
     }
 
     @Test

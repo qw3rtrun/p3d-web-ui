@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.flag
@@ -56,7 +57,8 @@ data class I2CSend(
             return M(260).head
         }
 
-        override fun decodeParams(params: List<GWord>): I2CSend {
+        override fun decodeParams(tokens: Sequence<GToken>): I2CSend {
+            val params = tokens.toList()
             return I2CSend(
                 addr = params.intOf('A'),
                 byte = params.intOf('B'),

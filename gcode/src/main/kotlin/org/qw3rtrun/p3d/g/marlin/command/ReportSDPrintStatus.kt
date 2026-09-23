@@ -10,6 +10,7 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.flag
@@ -50,7 +51,8 @@ data class ReportSDPrintStatus(
             return M(27).head
         }
 
-        override fun decodeParams(params: List<GWord>): ReportSDPrintStatus {
+        override fun decodeParams(tokens: Sequence<GToken>): ReportSDPrintStatus {
+            val params = tokens.toList()
             return ReportSDPrintStatus(
                 seconds = params.intOf('S'),
                 c = params.hasWord('C'),

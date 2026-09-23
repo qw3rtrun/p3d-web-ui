@@ -154,10 +154,7 @@ class GCommandParser {
      * `D` (spec 4.1, Marlin debug builds) is deliberately absent: spec 4.2 also lists `D` as a
      * parameter letter (diameter, PID `D`), so treating it as a command would misread those.
      */
-    private fun isCommandLetter(c: Char, first: Boolean): Boolean =
-        c == 'G' || c == 'g' ||
-            c == 'M' || c == 'm' ||
-            (first && (c == 'T' || c == 't'))
+    private fun isCommandLetter(c: Char, first: Boolean): Boolean = Companion.isCommandLetter(c, first)
 
     /**
      * spec 4.1: `<unsigned-int>` optionally followed by a subcode, `.` plus `<unsigned-int>`.
@@ -190,6 +187,78 @@ class GCommandParser {
             val subcodeStart = i
             while (i < lexeme.length && digit(lexeme[i])) i++
             return i > subcodeStart && i == lexeme.length
+        }
+
+        /**
+         * spec 4.1: `G`, `M` and `T` head commands, `T` only while [first] - the rule the instance
+         * method of the same name documents in full, reachable without a parser instance.
+         */
+        fun isCommandLetter(c: Char, first: Boolean): Boolean =
+            c == 'G' || c == 'g' ||
+                c == 'M' || c == 'm' ||
+                (first && (c == 'T' || c == 't'))
+
+        /**
+         * The command word [tokens] start with, or null when they do not start one.
+         *
+         * **Tokens in, one word out** - the narrowest thing a decoder needs, and the reason it is
+         * here rather than a second copy inside the protocol layer: what a command word is, is
+         * this parser's rule, and a decoder disagreeing with it would accept heads no line can
+         * produce. Only the head is read; what a command's *parameters* mean is the decoder's own
+         * business, because it is the first thing in the stack that knows which command it holds.
+         *
+         * The word is **canonically spelled**: it carries `[id, number]` and nothing else, so `G1`
+         * and the `G 1` spec 2.1 also allows produce the same word and a decoder can compare it
+         * against its own head without knowing what whitespace the line happened to contain.
+         * [headEnd] says where the tokens it was read from end.
+         *
+         * `T` may head the command, because [tokens] are one command's - its first position is by
+         * definition the position spec 4.2's parameter reading cannot apply to.
+         */
+        fun headWord(tokens: List<GToken>): GParameterWord<GNumber>? {
+            val id = headIdIndex(tokens)
+            if (id < 0) return null
+            val num = headNumIndex(tokens, id)
+            if (num < 0) return null
+            return GParameterWord(tokens[id] as GIdentifier, tokens[num] as GNumber)
+        }
+
+        /**
+         * Where the command word that starts [tokens] ends - the index of the first parameter
+         * token - or 0 when [tokens] do not start a command and nothing has been consumed.
+         */
+        fun headEnd(tokens: List<GToken>): Int {
+            val id = headIdIndex(tokens)
+            if (id < 0) return 0
+            val num = headNumIndex(tokens, id)
+            return if (num < 0) 0 else num + 1
+        }
+
+        /** The index of the command letter [tokens] open with, or -1. */
+        private fun headIdIndex(tokens: List<GToken>): Int {
+            var i = 0
+            // Leading whitespace only: anything else in front of the letter means these are not
+            // one command's tokens, and guessing which of them to skip is how a head goes missing.
+            while (i < tokens.size && tokens[i] is GWhitespace) i++
+            if (i >= tokens.size) return -1
+            val id = tokens[i]
+            // spec 4.3: only A-Z are identifiers, so `*` - a GChecksum - heads nothing.
+            if (id !is GLetter) return -1
+            if (!isCommandLetter(id.letter, true)) return -1
+            return i
+        }
+
+        /** The index of the command number behind the letter at [idIndex], or -1. */
+        private fun headNumIndex(tokens: List<GToken>, idIndex: Int): Int {
+            // spec 2.1: a space may separate a field from its value, so `G 1` is one word.
+            var j = idIndex + 1
+            while (j < tokens.size && tokens[j] is GWhitespace) j++
+            if (j >= tokens.size) return -1
+            // spec 4.1: a command word is the letter *followed by a number*. A bare `G` is a flag.
+            val value = tokens[j]
+            if (value !is GNumber) return -1
+            if (!isCommandNumber(value.lexeme)) return -1
+            return j
         }
 
         private fun digit(c: Char) = c >= '0' && c <= '9'

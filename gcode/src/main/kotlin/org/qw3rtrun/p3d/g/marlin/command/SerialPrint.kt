@@ -10,31 +10,40 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.token.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GWord
 import org.qw3rtrun.p3d.g.code.dsl.M
+import org.qw3rtrun.p3d.g.code.dsl.bareString
 import org.qw3rtrun.p3d.g.code.dsl.word
+import org.qw3rtrun.p3d.g.marlin.beforeStringArg
 import org.qw3rtrun.p3d.g.marlin.intOf
+import org.qw3rtrun.p3d.g.marlin.stringArg
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 
 /**
- * M118 [P<value>]
+ * M118 [P<value>] [<message>]
  *
  * Serial print (hosts).
  *
- * **This command also takes a rest-of-line string** (spec 3.4a) which this
- * model cannot hold yet - see todo 09. Only its lettered parameters are here.
+ * **`message` is a bare rest-of-line string** (spec 3.4a).
+ * It carries no letter, it is written last because everything to the end of the
+ * line belongs to it, and it cannot contain `;` - every parser reads that as the
+ * start of a comment.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M118.html">MarlinFirmare M118 doc</a>
  */
 data class SerialPrint(
     /** `P` */
     val p: Int? = null,
+    /** the rest of the line */
+    val message: String? = null,
 ) : GRq<SerialPrint> {
 
     override fun encode(): GCommand {
-        val words = ArrayList<GWord>(1)
+        val words = ArrayList<GWord>(2)
         if (p != null) words.add(word('P', p))
+        if (message != null) words.add(bareString(message))
         return M(118, *words.toTypedArray())
     }
 
@@ -48,9 +57,12 @@ data class SerialPrint(
             return M(118).head
         }
 
-        override fun decodeParams(params: List<GWord>): SerialPrint {
+        override fun decodeParams(tokens: Sequence<GToken>): SerialPrint {
+            val all = tokens.toList()
+            val params = all.beforeStringArg('P')
             return SerialPrint(
                 p = params.intOf('P'),
+                message = all.stringArg('P'),
             )
         }
     }

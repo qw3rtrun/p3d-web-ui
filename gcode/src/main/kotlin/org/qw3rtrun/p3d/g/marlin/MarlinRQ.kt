@@ -11,8 +11,9 @@
 
 package org.qw3rtrun.p3d.g.marlin
 
-import org.qw3rtrun.p3d.g.code.core.token.GCommand
+import org.qw3rtrun.p3d.g.code.core.token.GCommandParser
 import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.marlin.command.*
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
@@ -964,14 +965,16 @@ object MarlinCommands {
     val ambiguousCodes: List<String> = listOf("G29", "G34", "M665", "M666")
 
     /**
-     * The command [cmd] says it is, or null if no Marlin command has that head.
+     * The command [tokens] spell, head included, or null if no Marlin command has that head.
      *
      * Matching is on the head as written, so a non-canonical `M0105` does not resolve -
-     * the lexeme is part of a number's identity in this model.
+     * the lexeme is part of a number's identity in this model - but not on its spacing.
      */
-    fun decode(cmd: GCommand): GRq<*>? {
-        val decoder = byHead[cmd.head] ?: return null
-        return decoder.decodeParams(cmd.params)
+    fun decode(tokens: Sequence<GToken>): GRq<*>? {
+        val all = tokens.toList()
+        val head = GCommandParser.headWord(all) ?: return null
+        val decoder = byHead[head] ?: return null
+        return decoder.decodeParams(all.asSequence().drop(GCommandParser.headEnd(all)))
     }
 }
 

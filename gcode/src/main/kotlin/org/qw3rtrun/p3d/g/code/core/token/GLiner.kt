@@ -48,7 +48,7 @@ class GLiner(private val source: Iterator<GToken>) : Iterator<GLine> {
         return line
     }
 
-    fun parseLine(tokens: List<GToken>): GLine {
+    private fun parseLine(tokens: List<GToken>): GLine {
         // One pass over the tokens finds both positions the line shape is read from. No `break` on
         // the marker: spec 5 puts the field last, so the last one wins.
         var headIndex = -1

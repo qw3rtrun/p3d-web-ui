@@ -9,7 +9,7 @@ plugins {
 group = 'org.qw3rtrun.p3d'
 version = '0.0.1-SNAPSHOT'
 
-def nodeVersionProp = "22.22.0"
+def nodeVersionProp = "24.21.0"
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
@@ -25,7 +25,7 @@ dependencies {
 
 frontend {
     //nodeDistributionProvided.set(true)
-    nodeVersion = "22.22.0"
+    nodeVersion = "24.21.0"
     packageJsonDirectory = file("${projectDir}/src/frontend")
     nodeInstallDirectory = file("${projectDir}/.node")
     assembleScript.set("run build")

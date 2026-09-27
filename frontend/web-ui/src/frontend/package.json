@@ -1,5 +1,5 @@
 {
-  "packageManager": "npm@11.7.0",
+  "packageManager": "npm@11.20.0",
   "name": "frontend",
   "private": true,
   "version": "0.0.0",
@@ -10,13 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.5.27"
+    "vue": "^3.5.43"
   },
   "devDependencies": {
-    "@types/node": "^20.19.30",
-    "@vitejs/plugin-vue": "^5.2.4",
-    "typescript": "^5.9.3",
-    "vite": "5.4.21",
-    "vue-tsc": "^2.2.12"
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "typescript": "^6.0.3",
+    "vite": "8.3.1",
+    "vue-tsc": "^3.3.11"
   }
 }

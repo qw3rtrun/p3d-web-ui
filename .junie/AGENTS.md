@@ -7,7 +7,7 @@
 - **JDK**: Java 25 (OpenJDK 25). The build conventions (`buildSrc/src/main/groovy/p3d.java-conventions.gradle`) enforce
   Java toolchain language version 25.
 - **Build Tool**: Gradle 9.2.1 via the included Gradle wrapper (`gradlew` / `gradlew.bat`).
-- **Node.js**: Handled automatically by the Gradle frontend plugin (Node version `22.22.0` configured in
+- **Node.js**: Handled automatically by the Gradle frontend plugin (Node version `24.21.0` configured in
   `frontend/web-ui/build.gradle`).
 
 ### Module Architecture

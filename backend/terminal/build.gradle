@@ -12,7 +12,7 @@ dependencies {
     implementation project(':gcode')
 
     // import a BOM
-    implementation platform('io.projectreactor:reactor-bom:2022.0.3')
+    implementation platform('io.projectreactor:reactor-bom:2025.0.7')
 
     // define dependencies without versions
     implementation 'io.projectreactor:reactor-core'

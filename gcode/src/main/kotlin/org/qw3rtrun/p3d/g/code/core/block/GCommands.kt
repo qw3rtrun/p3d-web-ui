@@ -107,7 +107,9 @@ data class GUnnamedStr(
 }
 
 /**
- * Something that can stand in a [GBlock]: a [GCommand] or a [org.qw3rtrun.p3d.g.code.core.token.GComment].
+ * Something that can stand in a [GBlock]: a [GCommand] or a [GCommentPart]. Sealed, and both
+ * variants live in this package - a comment *token* is wrapped rather than implementing this, so
+ * the token layer does not depend on the block layer.
  *
  * This is the *build* direction. A parsed line carries the exact tokens it was read from,
  * whitespace included; a block being built carries only what the author chose, and the encoder
@@ -115,14 +117,10 @@ data class GUnnamedStr(
  * of having to guess which of a parsed line's spaces were meaningful.
  *
  * ```
- * GEncoder.encode(GBlock(GCommand(GLetter('G'), GInt(28)), GTailComment(" note")))   // "G28 ; note"
+ * GEncoder.encode(GBlock(GCommand(GLetter('G'), GInt(28)), GCommentPart(GTailComment(" note"))))   // "G28 ; note"
  * ```
- *
- * **Temporarily not sealed.** A sealed interface may only be implemented in its own package, and
- * `GComment` still lives in `core.token`. This stays open only until `GComment` stops being a block
- * part (a `GCommentPart` wrapper takes its place); it is sealed again in that change.
  */
-interface GBlockPart
+sealed interface GBlockPart
 
 /**
  * A comment standing in a [GBlock]: spec section 6's comment, as a part of a line being built.
@@ -152,7 +150,7 @@ data class GCommentPart(val comment: GComment) : GBlockPart
  * `GEncoder.frame`, and a block that carried them could be framed twice.
  *
  * ```
- * val block = GBlock(GCommand(GLetter('G'), GInt(28)), GTailComment(" note"))
+ * val block = GBlock(GCommand(GLetter('G'), GInt(28)), GCommentPart(GTailComment(" note")))
  * GEncoder.encode(block)       // "G28 ; note"
  * GEncoder.frame(1, block)     // "N1 G28*18 ; note"
  * ```
@@ -168,7 +166,7 @@ data class GBlock(val parts: List<GBlockPart>) {
      * ```
      * val g28 = GCommand(GLetter('G'), GInt(28))
      * val m105 = GCommand(GLetter('M'), GInt(105))
-     * GBlock(g28, GTailComment("x"), m105).commands()   // [g28, m105]
+     * GBlock(g28, GCommentPart(GTailComment("x")), m105).commands()   // [g28, m105]
      * ```
      *
      * @return every [GCommand] among [parts], in order

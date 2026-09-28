@@ -37,13 +37,11 @@ class GLayeringTest {
      * The directories are asserted to exist and hold sources first, so a moved or renamed tree
      * cannot make the scan pass by finding nothing.
      *
-     * **The expected list is temporary, and every entry in it is a known violation being removed.**
-     * It must only ever shrink. The two `GTokenizer.kt` imports of `GLine` and `GLiner` went when
-     * `lines()` moved from `GTokenizer` to `GLiner`'s companion. What is left:
-     * - the `GTokens.kt` import of `GBlockPart` goes when `GComment` stops being a block part and
-     *   `GCommentPart` wraps it instead.
-     *
-     * After that the expected list is empty, permanently.
+     * **The expected list is empty, and stays empty.** It started with three known violations,
+     * removed one change at a time: `GTokenizer`'s imports of `GLine` and `GLiner` (the read
+     * pipeline moved to `GLiner.lines`), and `GTokens`' import of `GBlockPart` (a comment goes into a
+     * block as `GCommentPart` rather than being a block part itself). A new entry is a new
+     * dependency pointing the wrong way; fix the dependency, do not pin the entry.
      */
     @Test
     fun `the token layer names nothing above itself and block names nothing above token`() {
@@ -55,12 +53,7 @@ class GLayeringTest {
         val violations = violations(token, listOf(tokenPackage)) +
             violations(block, listOf(tokenPackage, blockPackage))
 
-        assertEquals(
-            listOf(
-                "GTokens.kt: import org.qw3rtrun.p3d.g.code.core.block.GBlockPart",
-            ),
-            violations,
-        )
+        assertEquals(emptyList<String>(), violations)
     }
 
     private fun sources(dir: File): List<File> =

@@ -6,7 +6,6 @@ import org.qw3rtrun.p3d.g.code.core.block.GBlock
 import org.qw3rtrun.p3d.g.code.core.block.GBlockPart
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
 import org.qw3rtrun.p3d.g.code.core.block.GCommentPart
-import org.qw3rtrun.p3d.g.code.core.token.GComment
 import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
 import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
@@ -74,15 +73,15 @@ object GEncoder {
     /**
      * A whole line: every part in order, **separated by a single space**, per spec section 5.
      *
-     * A comment renders through its own `rawText()`, so the caller's choice of `;` or `( )` and of
-     * whether to leave a space after the marker is preserved - `GTailComment(" move")` is `; move`
-     * and `GTailComment("move")` is `;move`. Both are legal (section 6) and the difference is the
-     * author's, not the encoder's.
+     * A `GCommentPart` renders through its comment's own `rawText()`, so the caller's choice of `;`
+     * or `( )` and of whether to leave a space after the marker is preserved - `GTailComment(" move")`
+     * is `; move` and `GTailComment("move")` is `;move`. Both are legal (section 6) and the
+     * difference is the author's, not the encoder's.
      *
      * ```
      * val g1 = GCommand(GLetter('G'), GInt(1), listOf(GParameterWord(GLetter('X'), GFloat("10.50"))))
-     * GEncoder.encode(GBlock(g1, GTailComment(" move")))   // "G1 X10.50 ; move"
-     * GEncoder.encode(GBlock(g1, GTailComment("move")))    // "G1 X10.50 ;move"
+     * GEncoder.encode(GBlock(g1, GCommentPart(GTailComment(" move"))))   // "G1 X10.50 ; move"
+     * GEncoder.encode(GBlock(g1, GCommentPart(GTailComment("move"))))    // "G1 X10.50 ;move"
      * ```
      *
      * @param block the line's parts, in order
@@ -112,8 +111,8 @@ object GEncoder {
      *
      * ```
      * val g28 = GCommand(GLetter('G'), GInt(28))
-     * GEncoder.frame(1, GBlock(g28, GTailComment(" home")))   // "N1 G28*18 ; home"
-     * GEncoder.frame(1, GBlock(GTailComment(" only")))        // "; only" - nothing to frame
+     * GEncoder.frame(1, GBlock(g28, GCommentPart(GTailComment(" home"))))   // "N1 G28*18 ; home"
+     * GEncoder.frame(1, GBlock(GCommentPart(GTailComment(" only"))))        // "; only" - nothing to frame
      * ```
      *
      * @param number the line number to put in the `N` field
@@ -123,10 +122,7 @@ object GEncoder {
      */
     fun frame(number: Int, block: GBlock, checksum: CheckSumCalculator = XorCheckSum()): String {
         var lastPayload = -1
-        for (i in block.parts.indices) {
-            val part = block.parts[i]
-            if (part !is GComment && part !is GCommentPart) lastPayload = i
-        }
+        for (i in block.parts.indices) if (block.parts[i] !is GCommentPart) lastPayload = i
         if (lastPayload < 0) return encode(block)
 
         val out = StringBuilder()
@@ -150,7 +146,6 @@ object GEncoder {
     private fun appendPart(out: StringBuilder, part: GBlockPart) {
         when (part) {
             is GCommand -> appendCommand(out, part)
-            is GComment -> out.append(part.rawText())
             is GCommentPart -> out.append(part.comment.rawText())
         }
     }

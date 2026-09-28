@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
-import org.qw3rtrun.p3d.g.code.core.block.GBlockPart
 import java.math.BigDecimal
 
 /**
@@ -155,7 +154,10 @@ data object GChecksum : GIdentifier {
 
 /**
  * A comment (spec 6): a `;` comment to the end of the line, or a parenthesised one. Comments are not
- * fields, and they can also be placed in a `GBlock` being built.
+ * fields.
+ *
+ * A token and nothing more. A line being *built* carries a comment as a `GCommentPart` wrapping one
+ * of these; the token does not know what a block is, because this layer names nothing above itself.
  *
  * ```
  * (GTokenizer.parse(";hi").first() as GComment).string   // "hi"
@@ -163,7 +165,7 @@ data object GChecksum : GIdentifier {
  *
  * @property string the comment's text, without its delimiters
  */
-sealed interface GComment : GToken, GBlockPart {
+sealed interface GComment : GToken {
     val string: String
 }
 

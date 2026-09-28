@@ -805,6 +805,7 @@ words**: fields are assembled only when a caller asks what the line commands.
 | Line number ([§7.1](#71-syntax)), checksum field ([§8.1](#81-syntax)) | `GInt` — the integer behind the `N`, and behind the last `*` |
 | A field ([§3](#3-value-types)) | `GWord`: a `GParameterWord` (identifier + value), a `GFlagWord` (identifier alone, [§3.2](#32-flag-value-less-parameters)), or a `GUnnamedStr` (value alone — [§3.4](#34-string-values)a's bare string, whose `id` is the empty `GEmptyId` so that every word has one) |
 | One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GNumber>, params: List<GWord>)` |
+| A line being built ([§5](#5-line-block-structure)), for `GEncoder` | `GBlock(parts: List<GBlockPart>)` — a `GBlockPart` is sealed and is either a `GCommand` or a `GCommentPart(comment: GComment)`. A comment *token* is wrapped rather than being a block part itself, so `core/token` names nothing in `core/block` |
 | Structural error ([§9](#9-error-handling)) | `GError`: `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum`, `GCheckSumFailedLine` |
 
 `raw` is every token of the line in wire order, terminator included, and it is the stored value of

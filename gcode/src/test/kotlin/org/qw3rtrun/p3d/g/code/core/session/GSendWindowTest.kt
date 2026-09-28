@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.g.code.core.session
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.block.GLiner
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
 import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
@@ -64,7 +65,7 @@ class GSendWindowTest {
 
             for (i in 0 until 20) {
                 val text = requireNotNull(window.send(if (i % 2 == 0) g28 else t0))
-                val line = GTokenizer.lines(text).first()
+                val line = GLiner.lines(text).first()
 
                 assertInstanceOf(GAccepted::class.java, reader.read(line)) { "rejected: $text" }
             }
@@ -200,7 +201,7 @@ class GSendWindowTest {
             val reader = GCodeReader()
             val tokenizer = GTokenizer
             fun deliver(text: String) =
-                reader.read(GTokenizer.lines(text).first())
+                reader.read(GLiner.lines(text).first())
 
             val one = requireNotNull(window.send(g28))
             val two = requireNotNull(window.send(g28))
@@ -256,10 +257,10 @@ class GSendWindowTest {
             val window = GSendWindow(capacity = 4)
             val reader = GCodeReader()
             val tokenizer = GTokenizer
-            reader.read(GTokenizer.lines("N1 G28*18").first())
+            reader.read(GLiner.lines("N1 G28*18").first())
 
             val reset = requireNotNull(window.reset(0))
-            val line = GTokenizer.lines(reset).first()
+            val line = GLiner.lines(reset).first()
 
             assertInstanceOf(GAccepted::class.java, reader.read(line))
             assertEquals(0, reader.lastLine)

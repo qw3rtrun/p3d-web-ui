@@ -23,8 +23,8 @@ import org.qw3rtrun.p3d.g.code.core.token.*
  *   while saving to SD, where a dropped line would corrupt the stored file.
  *
  * ```
- * GCodeReader(GNumbering.REQUIRED).read(GTokenizer.lines("G28\n").first())   // GUnnumbered
- * GCodeReader(GNumbering.OPTIONAL).read(GTokenizer.lines("G28\n").first())   // GAccepted, number null
+ * GCodeReader(GNumbering.REQUIRED).read(GLiner.lines("G28\n").first())   // GUnnumbered
+ * GCodeReader(GNumbering.OPTIONAL).read(GLiner.lines("G28\n").first())   // GAccepted, number null
  * ```
  */
 enum class GNumbering {
@@ -50,8 +50,8 @@ enum class GNumbering {
  *
  * ```
  * val reader = GCodeReader()
- * reader.read(GTokenizer.lines("N1 G28*18\n").first())   // GAccepted, number 1
- * reader.read(GTokenizer.lines("N1 G28*18\n").first())   // GDuplicate - the resend race, dropped
+ * reader.read(GLiner.lines("N1 G28*18\n").first())   // GAccepted, number 1
+ * reader.read(GLiner.lines("N1 G28*18\n").first())   // GDuplicate - the resend race, dropped
  * reader.lastLine                                        // 1
  * ```
  *
@@ -110,12 +110,12 @@ class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 
      *
      * ```
      * val reader = GCodeReader()
-     * reader.read(GTokenizer.lines("N5 M110 N7*127\n").first())   // GAccepted, number 5
+     * reader.read(GLiner.lines("N5 M110 N7*127\n").first())   // GAccepted, number 5
      * reader.lastLine                                             // 7
-     * GCodeReader().read(GTokenizer.lines("N1 G28*19\n").first()) // GCorrupted, resend 1
+     * GCodeReader().read(GLiner.lines("N1 G28*19\n").first()) // GCorrupted, resend 1
      * ```
      *
-     * @param line one classified line, as `GTokenizer.lines` or `GLiner` produce it
+     * @param line one classified line, as `GLiner.lines` or a `GLiner` produces it
      * @return the verdict: accepted, silently discarded, or rejected with the resend point
      */
     fun read(line: GLine): GReceipt {

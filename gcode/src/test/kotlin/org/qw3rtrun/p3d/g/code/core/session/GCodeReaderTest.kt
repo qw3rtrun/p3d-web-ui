@@ -18,7 +18,7 @@ class GCodeReaderTest {
 
 
     private fun lines(gcode: String): List<GLine> =
-        GTokenizer.lines(gcode).toList()
+        GLiner.lines(gcode).toList()
 
     private fun line(gcode: String): GLine = lines(gcode).single()
 

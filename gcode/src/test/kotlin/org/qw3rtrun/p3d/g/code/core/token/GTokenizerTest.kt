@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
 
 /**
  * Lexer tests - one nested group per token kind of GCODE_spec.md section 2, plus the iterator
@@ -887,9 +886,10 @@ class GTokenizerTest {
         @Test
         fun `the line count survives the round trip`() {
             val program = listOf("; header", "G28", "G1 X1 F100", "", "G90")
-            val lines = GLiner(GTokenizer.parseLines(program.asSequence()).iterator())
+            val tokens = GTokenizer.parseLines(program.asSequence()).toList()
 
-            assertEquals(program.size, lines.asSequence().count())
+            assertEquals(program.size - 1, tokens.count { it is GLineBreak })
+            assertEquals(program.joinToString("\n"), tokens.joinToString("") { it.rawText() })
         }
 
         @Test

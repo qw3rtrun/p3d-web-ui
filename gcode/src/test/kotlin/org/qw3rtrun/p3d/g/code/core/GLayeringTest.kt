@@ -38,9 +38,8 @@ class GLayeringTest {
      * cannot make the scan pass by finding nothing.
      *
      * **The expected list is temporary, and every entry in it is a known violation being removed.**
-     * It must only ever shrink:
-     * - the two `GTokenizer.kt` imports of `GLine` and `GLiner` go when `lines()` moves from
-     *   `GTokenizer` to `GLiner`'s companion;
+     * It must only ever shrink. The two `GTokenizer.kt` imports of `GLine` and `GLiner` went when
+     * `lines()` moved from `GTokenizer` to `GLiner`'s companion. What is left:
      * - the `GTokens.kt` import of `GBlockPart` goes when `GComment` stops being a block part and
      *   `GCommentPart` wraps it instead.
      *
@@ -58,8 +57,6 @@ class GLayeringTest {
 
         assertEquals(
             listOf(
-                "GTokenizer.kt: import org.qw3rtrun.p3d.g.code.core.block.GLine",
-                "GTokenizer.kt: import org.qw3rtrun.p3d.g.code.core.block.GLiner",
                 "GTokens.kt: import org.qw3rtrun.p3d.g.code.core.block.GBlockPart",
             ),
             violations,

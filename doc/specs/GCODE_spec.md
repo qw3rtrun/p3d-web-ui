@@ -740,10 +740,10 @@ both gone, nothing having called either, and the `Iterator`/`Sequence`/`CharSequ
 every caller.
 
 `GTokenizer` is an **object**: it holds no state, so an instance per call site bought nothing. It
-also carries `lines(text)`, the whole read pipeline under one name — text in, classified `GLine`s
-out, the tokenizer and the liner wired together — because that is the module's primary operation and
-every caller used to assemble it by hand. `GLiner` remains public for a caller that already holds
-tokens, or that wants to drive the lines as an `Iterator`. The state machine itself,
+offers tokens only. The whole read pipeline — text in, classified `GLine`s out — is
+`GLiner.lines(text)`, one layer up (see [B.3](#b3-line-model--tokenglineskt-tokenglinerkt-tokengcommandskt-tokengfieldskt)):
+a lexer that offered lines would depend on the layer above it, and `GLayeringTest` now fails the
+build if anything under `core/token` names `core/block`. The state machine itself,
 `GTokenizerIterator`, is `internal` and its six scanners are private: which characters `number()`
 consumes is how this lexer is built, not what it promises.
 
@@ -814,6 +814,12 @@ the marker. Both fields assemble across whitespace ([§2.1](#21-whitespace)) by 
 non-separator token, and [§8.3](#83-what-the-checksum-covers)'s covered range is then literally the
 tokens from the `N` up to the `*`: indentation before the `N` is outside it, a space before the
 marker is inside it, and the marker, its value and the terminator are outside it.
+
+`GLiner.lines(text)` is the whole read pipeline under one name — the tokenizer and the liner wired
+together, re-iterable — because that is the module's primary operation and every caller used to
+assemble it by hand. It is a companion function on `GLiner` rather than a member of `GTokenizer`, so
+the dependency runs from lines to tokens only. Construct a `GLiner` directly to drive the lines as an
+`Iterator`, or when the tokens are already in hand.
 
 The [§7.3](#73-pairing-rule) pairing rule is decided on the *presence* of the two markers and is
 decided **before** the [§7.1](#71-syntax) / [§8.1](#81-syntax) field-syntax rules, so it is reported

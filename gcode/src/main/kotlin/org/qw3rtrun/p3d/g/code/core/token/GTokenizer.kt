@@ -1,7 +1,5 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
-import org.qw3rtrun.p3d.g.code.core.block.GLine
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
 import java.math.BigDecimal
 
 private fun isDigit(c: Char) = c >= '0' && c <= '9'
@@ -17,16 +15,14 @@ private fun isSpace(c: Char) = c == ' ' || c == '\t' || c == '\n' || c == '\r'
  * **An object, not a class.** It has no state - one instance was interchangeable with another and
  * every caller built its own for nothing.
  *
- * Use it to tokenize a whole text ([parse]), a stream of already-split lines ([parseLines]), or to
- * run the whole read pipeline from text to classified lines in one call ([lines]). Every overload
- * yields tokens whose `rawText()` concatenates back to the input byte for byte.
+ * Use it to tokenize a whole text ([parse]) or a stream of already-split lines ([parseLines]).
+ * Every overload yields tokens whose `rawText()` concatenates back to the input byte for byte.
  *
  * There is no `Iterable<Char>` overload: nothing called it, and a caller holding one writes
  * `parse(it.asSequence())` or hands over its iterator.
  *
  * ```
  * GTokenizer.parse("G1 X10").toList()   // [GLetter('G'), GInt(1), GSpace, GLetter('X'), GInt(10)]
- * GTokenizer.lines("N1 G28*18\n").first() is GPacketLine   // true
  * ```
  */
 object GTokenizer {
@@ -92,28 +88,6 @@ object GTokenizer {
      */
     fun parseLines(gcode: Sequence<String>, terminator: String = "\n"): Sequence<GToken> =
         Sequence { GTokenizerIterator(GLineCharIterator(gcode.iterator(), terminator)) }
-
-    /**
-     * **The whole read pipeline: text in, classified lines out** (spec sections 1 to 5, 7 and 8).
-     *
-     * The module's primary operation, and it had no name until now - every caller spelled
-     * `GLiner(tokenizer.parse(text).iterator())` for itself, which is also every place that would
-     * have to change if the pipeline ever grew a stage. `GLiner` stays public for a caller that
-     * wants to drive the lines by hand, or that already holds tokens.
-     *
-     * Re-iterable, like [parse] over the same source: each pass builds its own tokenizer and liner,
-     * so the sequence is not `constrainOnce`.
-     *
-     * ```
-     * for (line in GTokenizer.lines("G28\nN1 G28*18\n")) println(line::class.simpleName)
-     * // GSimpleLine, GPacketLine
-     * ```
-     *
-     * @param gcode the text to read
-     * @return a re-iterable sequence of classified lines, each reproducing its own bytes
-     */
-    fun lines(gcode: CharSequence): Sequence<GLine> =
-        Sequence { GLiner(GTokenizerIterator(gcode.iterator())) }
 }
 
 /**

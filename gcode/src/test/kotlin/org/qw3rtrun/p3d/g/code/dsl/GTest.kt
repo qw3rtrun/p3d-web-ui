@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.g.code.dsl
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.block.GLiner
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.GBlock
@@ -99,7 +100,7 @@ class GTest {
             // ...and the asymmetry is real rather than hidden: what the DSL writes as a D *command*,
             // the parser reads back as a parameter with no command at all. That is the spec's own
             // ambiguity, not a bug in either half.
-            val line = GTokenizer.lines("D3").first()
+            val line = GLiner.lines("D3").first()
             assertEquals(emptyList<GCommand>(), GWordReader.parse(line))
         }
 
@@ -220,7 +221,7 @@ class GTest {
 
             for (i in blocks.indices) {
                 val framed = GEncoder.frame(i + 1, blocks[i])
-                val line = GTokenizer.lines(framed).first()
+                val line = GLiner.lines(framed).first()
 
                 assertInstanceOf(GPacketLine::class.java, line) { "did not verify: $framed" }
             }

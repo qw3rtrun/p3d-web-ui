@@ -5,6 +5,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 import org.qw3rtrun.p3d.g.code.core.token.GLineBreak
 import org.qw3rtrun.p3d.g.code.core.token.GToken
+import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 /**
  * Turns a token stream into a stream of classified lines, per GCODE_spec.md section 5.
@@ -30,10 +31,11 @@ import org.qw3rtrun.p3d.g.code.core.token.GToken
  * there is no `verify()` for a caller to forget: holding a `GPacketLine` means the line is intact.
  * A well-formed checksum field that does not match its bytes yields [GCheckSumFailedLine] instead.
  *
- * `GTokenizer.lines(text)` is the usual way in; construct a liner directly to drive the lines by
- * hand, or when the tokens are already in hand.
+ * [GLiner.lines] is the usual way in; construct a liner directly to drive the lines by hand, or when
+ * the tokens are already in hand.
  *
  * ```
+ * GLiner.lines("N1 G28*18\n").first() is GPacketLine   // true
  * val liner = GLiner(GTokenizer.parse("G28\nN1 G28*18\n").iterator())
  * liner.next()   // GSimpleLine
  * liner.next()   // GPacketLine, number 1, checksum 18
@@ -149,5 +151,29 @@ class GLiner(private val source: Iterator<GToken>) : Iterator<GLine> {
             tokens.subList(numberIndex + 1, starIndex),
             tokens,
         )
+    }
+
+    companion object {
+
+        /**
+         * **The whole read pipeline: text in, classified lines out** (spec sections 1 to 5, 7 and 8).
+         *
+         * It lives on the liner and not on the lexer because it is the liner's output: a lexer
+         * offering lines would depend on the layer above it. Construct a [GLiner] directly to drive
+         * the lines by hand, or when the tokens are already in hand.
+         *
+         * Re-iterable, like `GTokenizer.parse` over the same source: each pass builds its own
+         * tokenizer and liner, so the sequence is not `constrainOnce`.
+         *
+         * ```
+         * for (line in GLiner.lines("G28\nN1 G28*18\n")) println(line::class.simpleName)
+         * // GSimpleLine, GPacketLine
+         * ```
+         *
+         * @param gcode the text to read
+         * @return a re-iterable sequence of classified lines, each reproducing its own bytes
+         */
+        fun lines(gcode: CharSequence): Sequence<GLine> =
+            Sequence { GLiner(GTokenizer.parse(gcode.iterator())) }
     }
 }

@@ -11,7 +11,6 @@ import org.qw3rtrun.p3d.g.code.core.token.GChecksum
 import org.qw3rtrun.p3d.g.code.core.token.GFloat
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
-import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 /**
  * The word->command reading, spec sections 4 and 5. `GLiner` answers what *shape* a line has; this
@@ -25,7 +24,7 @@ class GWordReaderTest {
 
     /** The commands of the single line in [gcode]. */
     private fun commands(gcode: String): List<GCommand> =
-        GWordReader.parse(GTokenizer.lines(gcode).first())
+        GWordReader.parse(GLiner.lines(gcode).first())
 
     @Nested
     inner class OneCommand {
@@ -287,7 +286,7 @@ class GWordReaderTest {
         }.readBytes().decodeToString()
 
         private fun lines(): List<GLine> =
-            GTokenizer.lines(corpus).toList()
+            GLiner.lines(corpus).toList()
 
         @Test
         fun `word assembly over the whole corpus does not throw`() {

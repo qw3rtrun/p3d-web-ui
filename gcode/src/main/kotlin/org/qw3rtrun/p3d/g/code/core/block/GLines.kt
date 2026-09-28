@@ -18,7 +18,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GToken
  * ` G28`.
  *
  * ```
- * val line = GTokenizer.lines("N1 G28*18\n").first()
+ * val line = GLiner.lines("N1 G28*18\n").first()
  * line.raw.joinToString("") { it.rawText() }    // "N1 G28*18\n"
  * line.body.joinToString("") { it.rawText() }   // " G28"
  * ```
@@ -40,7 +40,7 @@ sealed interface GLine {
  * A line that carries a line number (spec 7): a verified packet, or one whose checksum failed.
  *
  * ```
- * (GTokenizer.lines("N1 G28*18\n").first() as GOrdered).number   // GInt(1)
+ * (GLiner.lines("N1 G28*18\n").first() as GOrdered).number   // GInt(1)
  * ```
  *
  * @property number the line number, with its lexeme
@@ -54,7 +54,7 @@ sealed interface GOrdered : GLine {
  * is asking for lines it can trust.
  *
  * ```
- * (GTokenizer.lines("N1 G28*18\n").first() as GCheckSumControlled).checksum   // GInt(18)
+ * (GLiner.lines("N1 G28*18\n").first() as GCheckSumControlled).checksum   // GInt(18)
  * ```
  *
  * @property checksum the checksum field's value, with its lexeme
@@ -82,8 +82,8 @@ sealed interface GCheckSumControlled : GLine {
  * It keeps its tokens so the line still reproduces its input.
  *
  * ```
- * GTokenizer.lines("; comment\n").first() is GMeaninglessLine   // true
- * GTokenizer.lines("?\n").first() is GMeaninglessLine           // true, and not a no-op
+ * GLiner.lines("; comment\n").first() is GMeaninglessLine   // true
+ * GLiner.lines("?\n").first() is GMeaninglessLine           // true, and not a no-op
  * ```
  */
 data class GMeaninglessLine(override val raw: List<GToken>) : GLine
@@ -93,7 +93,7 @@ data class GMeaninglessLine(override val raw: List<GToken>) : GLine
  * optional). The ordinary line of a G-code file, and of Marlin's default over a link.
  *
  * ```
- * GTokenizer.lines("G28\n").first() is GSimpleLine   // true
+ * GLiner.lines("G28\n").first() is GSimpleLine   // true
  * ```
  */
 data class GSimpleLine(override val raw: List<GToken>) : GLine
@@ -113,7 +113,7 @@ data class GSimpleLine(override val raw: List<GToken>) : GLine
  * 8), so holding one means the line is intact; there is no `verify()` for a caller to forget.
  *
  * ```
- * val line = GTokenizer.lines("N1 G28*18 G1 X5\n").first() as GPacketLine
+ * val line = GLiner.lines("N1 G28*18 G1 X5\n").first() as GPacketLine
  * line.body.joinToString("") { it.rawText() }   // " G28" - the G1 is outside the frame
  * ```
  */
@@ -129,7 +129,7 @@ data class GPacketLine(
  * the checksum (spec 8). Errors are values - the line still carries every token it was read from.
  *
  * ```
- * (GTokenizer.lines("N1 G28\n").first() as GError).msg   // "line number 1 has no checksum"
+ * (GLiner.lines("N1 G28\n").first() as GError).msg   // "line number 1 has no checksum"
  * ```
  *
  * @property msg a human-readable statement of the fault
@@ -147,7 +147,7 @@ sealed interface GError : GLine {
  * parse. The corpus fixture contains two such lines.
  *
  * ```
- * GTokenizer.lines("N1 G28\n").first()   // GMissingChecksum, number 1
+ * GLiner.lines("N1 G28\n").first()   // GMissingChecksum, number 1
  * ```
  */
 data class GMissingChecksum(val number: GInt?, override val raw: List<GToken>) : GError {
@@ -159,7 +159,7 @@ data class GMissingChecksum(val number: GInt?, override val raw: List<GToken>) :
  * Spec section 7.3: a checksum without a line number.
  *
  * ```
- * GTokenizer.lines("G28*18\n").first()   // GMissingLineNumber
+ * GLiner.lines("G28*18\n").first()   // GMissingLineNumber
  * ```
  */
 data class GMissingLineNumber(override val raw: List<GToken>) : GError {
@@ -171,7 +171,7 @@ data class GMissingLineNumber(override val raw: List<GToken>) : GError {
  * Spec section 7.1: `N` is present and paired with a `*`, but is not followed by an integer.
  *
  * ```
- * GTokenizer.lines("N G28*18\n").first()   // GMalformedLineNumber
+ * GLiner.lines("N G28*18\n").first()   // GMalformedLineNumber
  * ```
  */
 data class GMalformedLineNumber(override val raw: List<GToken>) : GError {
@@ -189,8 +189,8 @@ data class GMalformedLineNumber(override val raw: List<GToken>) : GError {
  *   `*1234` is not a mismatch: there is nothing to compare it against.
  *
  * ```
- * GTokenizer.lines("N1 G28*ABC\n").first()    // GMalformedChecksum
- * GTokenizer.lines("N1 G28*1234\n").first()   // GMalformedChecksum
+ * GLiner.lines("N1 G28*ABC\n").first()    // GMalformedChecksum
+ * GLiner.lines("N1 G28*1234\n").first()   // GMalformedChecksum
  * ```
  */
 data class GMalformedChecksum(val number: GInt, override val raw: List<GToken>) : GError {
@@ -212,7 +212,7 @@ data class GMalformedChecksum(val number: GInt, override val raw: List<GToken>) 
  * [GCheckSumControlled]: a consumer matching on that interface is asking for lines it can trust.
  *
  * ```
- * (GTokenizer.lines("N1 G28*19\n").first() as GCheckSumFailedLine).msg
+ * (GLiner.lines("N1 G28*19\n").first() as GCheckSumFailedLine).msg
  * // "checksum mismatch on line 1: computed 18, received 19"
  * ```
  */

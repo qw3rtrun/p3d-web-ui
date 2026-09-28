@@ -2,9 +2,9 @@ package org.qw3rtrun.p3d.g.code.dsl
 
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.block.GLiner
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
-import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
 import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
 import org.qw3rtrun.p3d.g.code.core.token.GInt
@@ -18,7 +18,7 @@ import org.qw3rtrun.p3d.g.marlin.command.SetLCDMessage
 class M117DecoderTest {
 
 
-    fun line(str: String) = GTokenizer.lines(str).first().body
+    fun line(str: String) = GLiner.lines(str).first().body
     fun decode(gcode: String) = MarlinCommands.decode(line(gcode))
     fun crc(gcode: String) = XorCheckSum().let { it.add(gcode); it.get() }
     fun pack(gcode: String) = "${gcode}*${crc(gcode).rawText()}"

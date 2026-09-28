@@ -32,8 +32,8 @@ sealed interface GReceipt {
  * is accepted without moving the counter.
  *
  * ```
- * GCodeReader().read(GTokenizer.lines("N1 G28*18\n").first())   // GAccepted(number = 1)
- * GCodeReader().read(GTokenizer.lines("; c\n").first())         // GAccepted(number = null)
+ * GCodeReader().read(GLiner.lines("N1 G28*18\n").first())   // GAccepted(number = 1)
+ * GCodeReader().read(GLiner.lines("; c\n").first())         // GAccepted(number = null)
  * ```
  */
 data class GAccepted(override val line: GLine, val number: Int?) : GReceipt
@@ -50,8 +50,8 @@ data class GAccepted(override val line: GLine, val number: Int?) : GReceipt
  *
  * ```
  * val reader = GCodeReader()
- * reader.read(GTokenizer.lines("N1 G28*18\n").first())
- * reader.read(GTokenizer.lines("N1 G28*18\n").first())   // GDuplicate(number = 1, lastLine = 1)
+ * reader.read(GLiner.lines("N1 G28*18\n").first())
+ * reader.read(GLiner.lines("N1 G28*18\n").first())   // GDuplicate(number = 1, lastLine = 1)
  * ```
  */
 data class GDuplicate(override val line: GLine, val number: Int, val lastLine: Int) : GReceipt
@@ -63,7 +63,7 @@ data class GDuplicate(override val line: GLine, val number: Int, val lastLine: I
  * computed from - a rejected line never moves the counter.
  *
  * ```
- * val receipt = GCodeReader().read(GTokenizer.lines("N3 G28*16\n").first()) as GRejected
+ * val receipt = GCodeReader().read(GLiner.lines("N3 G28*16\n").first()) as GRejected
  * receipt.msg      // "Error:Line Number is not Last Line Number+1, Last Line: 0"
  * receipt.resend   // 1
  * ```
@@ -84,7 +84,7 @@ sealed interface GRejected : GReceipt {
  * Spec 7.2: a gap, or a number too far behind to be the resend race of [GDuplicate].
  *
  * ```
- * GCodeReader().read(GTokenizer.lines("N3 G28*16\n").first())   // GOutOfSequence(number = 3, lastLine = 0)
+ * GCodeReader().read(GLiner.lines("N3 G28*16\n").first())   // GOutOfSequence(number = 3, lastLine = 0)
  * ```
  */
 data class GOutOfSequence(
@@ -100,7 +100,7 @@ data class GOutOfSequence(
  * Spec 8: the checksum field is well formed and does not match the bytes.
  *
  * ```
- * GCodeReader().read(GTokenizer.lines("N1 G28*19\n").first())   // GCorrupted(expected = 18, received = 19)
+ * GCodeReader().read(GLiner.lines("N1 G28*19\n").first())   // GCorrupted(expected = 18, received = 19)
  * ```
  */
 data class GCorrupted(
@@ -117,7 +117,7 @@ data class GCorrupted(
  * Spec 7.3: a line number with no checksum.
  *
  * ```
- * GCodeReader().read(GTokenizer.lines("N1 G28\n").first()).msg
+ * GCodeReader().read(GLiner.lines("N1 G28\n").first()).msg
  * // "Error:No Checksum with line number, Last Line: 0"
  * ```
  */
@@ -131,8 +131,8 @@ data class GUnchecksummed(override val line: GLine, override val lastLine: Int) 
  * neither when the session demands both.
  *
  * ```
- * GCodeReader().read(GTokenizer.lines("G28*18\n").first())                    // GUnnumbered
- * GCodeReader(GNumbering.REQUIRED).read(GTokenizer.lines("G28\n").first())   // GUnnumbered
+ * GCodeReader().read(GLiner.lines("G28*18\n").first())                    // GUnnumbered
+ * GCodeReader(GNumbering.REQUIRED).read(GLiner.lines("G28\n").first())   // GUnnumbered
  * ```
  */
 data class GUnnumbered(override val line: GLine, override val lastLine: Int) : GRejected {
@@ -150,7 +150,7 @@ data class GUnnumbered(override val line: GLine, override val lastLine: Int) : G
  * `strtol`, not a decision worth copying.
  *
  * ```
- * GCodeReader().read(GTokenizer.lines("N1 G28*ABC\n").first()).msg
+ * GCodeReader().read(GLiner.lines("N1 G28*ABC\n").first()).msg
  * // "Error:checksum is not a number, Last Line: 0"
  * ```
  */

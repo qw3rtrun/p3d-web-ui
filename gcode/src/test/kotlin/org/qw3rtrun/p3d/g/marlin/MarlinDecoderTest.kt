@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.qw3rtrun.p3d.g.code.core.block.GLiner
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
@@ -58,7 +59,7 @@ class MarlinDecoderTest {
 
     /** The same through the liner, which is what strips `N…` and `*…` (spec 7 and 8). */
     private fun decodeLine(line: String): GRq<*>? =
-        MarlinCommands.decode(GTokenizer.lines(line).first().body)
+        MarlinCommands.decode(GLiner.lines(line).first().body)
 
     private fun encode(rq: GRq<*>) = GEncoder.encode(rq.encode())
 

@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.g.code.dsl
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.block.GLiner
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.GBlock
 import org.qw3rtrun.p3d.g.code.core.block.GBlockPart
@@ -27,7 +28,7 @@ class GDslCorpusTest {
         requireNotNull(javaClass.getResourceAsStream("/marlin.gcode")).readBytes().decodeToString()
 
     private fun lines(): List<GLine> =
-        GTokenizer.lines(corpus).toList()
+        GLiner.lines(corpus).toList()
 
     private fun raw(line: GLine): String =
         line.raw.filter { it !is GLineBreak }.joinToString("") { it.rawText() }.trim()

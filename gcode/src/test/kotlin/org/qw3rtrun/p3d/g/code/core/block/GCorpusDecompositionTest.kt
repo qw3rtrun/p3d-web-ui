@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import java.io.File
-import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 /**
  * A snapshot of what the corpora *mean*, line by line: the kind of line the liner decided on, the
@@ -34,7 +33,7 @@ class GCorpusDecompositionTest {
      * framing fields as `-` when the line carries none, and the commands `' | '`-separated.
      */
     private fun decompose(gcode: String): List<String> =
-        GTokenizer.lines(gcode).map { line ->
+        GLiner.lines(gcode).map { line ->
             val kind = line.javaClass.simpleName
             val number = if (line is GOrdered) line.number.lexeme else "-"
             val checksum = if (line is GCheckSumControlled) line.checksum.lexeme else "-"

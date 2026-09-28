@@ -920,4 +920,30 @@ class GLinerTest {
             assertEquals(gcode, actual)
         }
     }
+
+    @Nested
+    inner class ReadPipeline {
+
+        @Test
+        fun `lines reads a text into classified lines`() {
+            val classes = GLiner.lines("G28\nN1 G28*18\n").map { it::class }.toList()
+
+            assertEquals(listOf(GSimpleLine::class, GPacketLine::class), classes)
+        }
+
+        @Test
+        fun `lines is re-iterable`() {
+            val lines = GLiner.lines("G28\nN1 G28*18\n")
+
+            assertEquals(lines.toList(), lines.toList())
+        }
+
+        @Test
+        fun `the line count survives the round trip`() {
+            val program = listOf("; header", "G28", "G1 X1 F100", "", "G90")
+            val lines = GLiner(GTokenizer.parseLines(program.asSequence()).iterator())
+
+            assertEquals(program.size, lines.asSequence().count())
+        }
+    }
 }

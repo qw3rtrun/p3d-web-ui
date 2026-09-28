@@ -31,6 +31,7 @@
  */
 package org.qw3rtrun.p3d.g.code.dsl
 
+import org.qw3rtrun.p3d.g.code.core.block.GCommentPart
 import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
 import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
@@ -1229,28 +1230,35 @@ fun bareString(value: String): GWord = GUnnamedStr(GUnquotedString(value))
 fun expr(inner: String): GValue = GRawExpression("{" + inner + "}")
 
 /**
- * A trailing comment (spec 6): `;<text>`. A leading space is the caller's to include.
+ * A trailing comment (spec 6): `;<text>`, as a part of a block. A leading space is the caller's to
+ * include.
+ *
+ * Returns the block layer's [GCommentPart], not the `GTailComment` token: a comment built here is
+ * always going into a line, and the token itself is not a block part.
  *
  * ```
- * tailComment(" x").rawText()   // "; x"
+ * GEncoder.encode(block(tailComment(" x")))   // "; x"
  * ```
  *
  * @param text the comment's text, after the `;`
- * @return the comment
+ * @return the comment, ready to stand in a block
  */
-fun tailComment(text: String): GComment = GTailComment(text)
+fun tailComment(text: String): GCommentPart = GCommentPart(GTailComment(text))
 
 /**
- * An inline comment (spec 6): `(<text>)`.
+ * An inline comment (spec 6): `(<text>)`, as a part of a block.
+ *
+ * Returns the block layer's [GCommentPart], not the `GInlineComment` token, for the same reason as
+ * [tailComment].
  *
  * ```
- * inlineComment("x").rawText()   // "(x)"
+ * GEncoder.encode(block(G(28), inlineComment("x"), G(90)))   // "G28 (x) G90"
  * ```
  *
  * @param text the comment's text, between the parentheses
- * @return the comment
+ * @return the comment, ready to stand in a block
  */
-fun inlineComment(text: String): GComment = GInlineComment(text)
+fun inlineComment(text: String): GCommentPart = GCommentPart(GInlineComment(text))
 
 /**
  * A number value from its exact lexeme, per spec 3.1: optional sign, digits, optional single `.`.

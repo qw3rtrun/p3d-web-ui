@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.code.core
+package org.qw3rtrun.p3d.g.code.core.block
 
 /**
  * Picks the algorithm for a `*` field, per GCODE_spec.md section 8.1: **the digit count decides**.

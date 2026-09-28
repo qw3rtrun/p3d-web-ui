@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.code.core.session
 
-import org.qw3rtrun.p3d.g.code.core.token.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GLine
 
 /**
  * What a [GCodeReader] concluded about one line, per GCODE_spec.md sections 7.2 and 8.5.

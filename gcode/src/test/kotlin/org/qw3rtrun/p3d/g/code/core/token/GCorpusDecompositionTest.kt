@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import org.qw3rtrun.p3d.g.code.core.GEncoder
+import org.qw3rtrun.p3d.g.code.core.block.GCheckSumControlled
+import org.qw3rtrun.p3d.g.code.core.block.GOrdered
 import java.io.File
 
 /**

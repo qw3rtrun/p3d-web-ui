@@ -1,5 +1,16 @@
 package org.qw3rtrun.p3d.g.code.core.session
 
+import org.qw3rtrun.p3d.g.code.core.block.GCheckSumFailedLine
+import org.qw3rtrun.p3d.g.code.core.block.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GMalformedChecksum
+import org.qw3rtrun.p3d.g.code.core.block.GMalformedLineNumber
+import org.qw3rtrun.p3d.g.code.core.block.GMeaninglessLine
+import org.qw3rtrun.p3d.g.code.core.block.GMissingChecksum
+import org.qw3rtrun.p3d.g.code.core.block.GMissingLineNumber
+import org.qw3rtrun.p3d.g.code.core.block.GOrdered
+import org.qw3rtrun.p3d.g.code.core.block.headEnd
+import org.qw3rtrun.p3d.g.code.core.block.headWord
+import org.qw3rtrun.p3d.g.code.core.block.valueIndex
 import org.qw3rtrun.p3d.g.code.core.token.*
 
 /**
@@ -29,7 +40,7 @@ enum class GNumbering {
  * pure function from bytes to tokens to lines; a session has a counter. That boundary is deliberate
  * and worth keeping: the counter lives here, not in the tokenizer or the liner.
  *
- * It is also deliberately **free of I/O**. A reader is driven by a plain iterator of [GLine] and
+ * It is also deliberately **free of I/O**. A reader is driven by a plain iterator of [org.qw3rtrun.p3d.g.code.core.block.GLine] and
  * returns a value per line; it never reads, writes, blocks or schedules. Sending the resend request
  * a [GRejected] describes is the transport layer's job, and so is the send window on the other side
  * of the link. That is what makes the session portable along with the rest of `code/core`.

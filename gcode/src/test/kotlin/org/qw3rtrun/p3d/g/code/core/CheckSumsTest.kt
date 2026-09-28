@@ -5,6 +5,9 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
+import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
+import org.qw3rtrun.p3d.g.code.core.block.checkSumCalculatorFor
 
 /**
  * Tests for the algorithm selector of GCODE_spec.md section 8.1 - the rule that the **digit count**,

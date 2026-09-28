@@ -1,11 +1,11 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import org.qw3rtrun.p3d.g.code.core.token.GCommand
-import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.block.GCommand
+import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.token.GToken
-import org.qw3rtrun.p3d.g.code.core.token.headEnd
-import org.qw3rtrun.p3d.g.code.core.token.headKey
-import org.qw3rtrun.p3d.g.code.core.token.headWord
+import org.qw3rtrun.p3d.g.code.core.block.headEnd
+import org.qw3rtrun.p3d.g.code.core.block.headKey
+import org.qw3rtrun.p3d.g.code.core.block.headWord
 
 /**
  * A request this host can send: one typed command that knows how to write itself.
@@ -39,7 +39,7 @@ interface GRq<T : GRq<T>> {
 /**
  * The reading half of a command: tokens in, one typed request out.
  *
- * **Decoding takes tokens, not words.** Splitting a line into [org.qw3rtrun.p3d.g.code.core.token.GWord]s
+ * **Decoding takes tokens, not words.** Splitting a line into [org.qw3rtrun.p3d.g.code.core.block.GWord]s
  * - and so into a [GCommand] - is already an interpretation, and it is one the token layer is not
  * entitled to make: whether `M117 Hello World` carries two flag words or one unquoted string
  * depends on the command number alone (see `GUnquotedString`), and nothing below this interface

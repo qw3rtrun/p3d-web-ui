@@ -3,8 +3,11 @@ package org.qw3rtrun.p3d.g.code.dsl
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.Crc16CheckSum
+import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.GEncoder
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GCommand
+import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
 import org.qw3rtrun.p3d.g.code.core.token.*
 import java.math.BigDecimal
 

@@ -4,6 +4,13 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
+import org.qw3rtrun.p3d.g.code.core.block.GCommand
+import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
+import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
+import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.block.GWord
+import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.token.*
 
 /**

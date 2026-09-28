@@ -4,11 +4,13 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
+import org.qw3rtrun.p3d.g.code.core.block.CheckSumCalculator
+import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 
 /**
  * Tests for the XOR checksum of GCODE_spec.md section 8.2 - the algorithm, its 8-bit masking and the
- * streaming contract of [CheckSumCalculator].
+ * streaming contract of [org.qw3rtrun.p3d.g.code.core.block.CheckSumCalculator].
  */
 class XorCheckSumTest {
 

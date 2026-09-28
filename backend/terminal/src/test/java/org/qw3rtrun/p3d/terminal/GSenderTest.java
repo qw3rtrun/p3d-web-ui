@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.terminal;
 
 import org.junit.jupiter.api.Test;
-import org.qw3rtrun.p3d.g.code.core.token.GCommand;
+import org.qw3rtrun.p3d.g.code.core.block.GCommand;
 import org.qw3rtrun.p3d.g.code.dsl.GKt;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
 

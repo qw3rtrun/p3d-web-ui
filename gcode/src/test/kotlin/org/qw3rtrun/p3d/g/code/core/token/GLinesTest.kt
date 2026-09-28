@@ -5,6 +5,17 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.block.GCheckSumControlled
+import org.qw3rtrun.p3d.g.code.core.block.GError
+import org.qw3rtrun.p3d.g.code.core.block.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GMalformedChecksum
+import org.qw3rtrun.p3d.g.code.core.block.GMalformedLineNumber
+import org.qw3rtrun.p3d.g.code.core.block.GMeaninglessLine
+import org.qw3rtrun.p3d.g.code.core.block.GMissingChecksum
+import org.qw3rtrun.p3d.g.code.core.block.GMissingLineNumber
+import org.qw3rtrun.p3d.g.code.core.block.GOrdered
+import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
+import org.qw3rtrun.p3d.g.code.core.block.GSimpleLine
 
 /**
  * The line model of GCODE_spec.md section 5: what each line kind carries, and the sealed hierarchy

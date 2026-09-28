@@ -3,8 +3,8 @@ package org.qw3rtrun.p3d.g.code.core.session
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.token.GLine
-import org.qw3rtrun.p3d.g.code.core.token.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GLiner
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 /**

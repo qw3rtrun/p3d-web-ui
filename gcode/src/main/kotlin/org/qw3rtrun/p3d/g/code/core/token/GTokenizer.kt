@@ -1,5 +1,7 @@
 package org.qw3rtrun.p3d.g.code.core.token
 
+import org.qw3rtrun.p3d.g.code.core.block.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GLiner
 import java.math.BigDecimal
 
 private fun isDigit(c: Char) = c >= '0' && c <= '9'

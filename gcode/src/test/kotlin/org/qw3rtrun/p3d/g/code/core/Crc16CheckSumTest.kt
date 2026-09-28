@@ -5,6 +5,9 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
+import org.qw3rtrun.p3d.g.code.core.block.CheckSumCalculator
+import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
+import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 
 /**
@@ -81,7 +84,8 @@ class Crc16CheckSumTest {
     fun `unlike the xor checksum the order of the characters matters`() {
         // The reason section 8.4 calls this strictly stronger: XOR is commutative, this is not.
         assertNotEquals(crcOf("AB").int, crcOf("BA").int)
-        assertEquals(XorCheckSum().also { "AB".forEach(it::add) }.get().int,
+        assertEquals(
+            XorCheckSum().also { "AB".forEach(it::add) }.get().int,
                      XorCheckSum().also { "BA".forEach(it::add) }.get().int)
     }
 

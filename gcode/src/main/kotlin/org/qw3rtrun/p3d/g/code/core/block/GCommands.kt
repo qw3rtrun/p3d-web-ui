@@ -1,4 +1,11 @@
-package org.qw3rtrun.p3d.g.code.core.token
+package org.qw3rtrun.p3d.g.code.core.block
+
+import org.qw3rtrun.p3d.g.code.core.token.GEmptyId
+import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
+import org.qw3rtrun.p3d.g.code.core.token.GNumber
+import org.qw3rtrun.p3d.g.code.core.token.GString
+import org.qw3rtrun.p3d.g.code.core.token.GToken
+import org.qw3rtrun.p3d.g.code.core.token.GValue
 
 /**
  * A field: an identifier and, usually, the value behind it (GCODE_spec.md section 3).
@@ -74,7 +81,7 @@ data class GFlagWord(
  * such an argument at all (see `GRqDecoder`); the token layer lexes `Hello World` letter by letter
  * and the command parser never assembles one.
  *
- * [id] is [GEmptyId] so that a `GWord` always has one and `GEncoder` can write it unconditionally -
+ * [id] is [org.qw3rtrun.p3d.g.code.core.token.GEmptyId] so that a `GWord` always has one and `GEncoder` can write it unconditionally -
  * it renders as nothing. That is the compromise: the honest shape splits `GWord` into a named half
  * and an unnamed one and lets `GEmptyId` disappear, which touches the DSL's parameter check, the
  * parser's structural test, the encoder and every generated `encode()`. Not worth it for one
@@ -99,7 +106,7 @@ data class GUnnamedStr(
 }
 
 /**
- * Something that can stand in a [GBlock]: a [GCommand] or a [GComment].
+ * Something that can stand in a [GBlock]: a [GCommand] or a [org.qw3rtrun.p3d.g.code.core.token.GComment].
  *
  * This is the *build* direction. A parsed line carries the exact tokens it was read from,
  * whitespace included; a block being built carries only what the author chose, and the encoder
@@ -109,8 +116,12 @@ data class GUnnamedStr(
  * ```
  * GEncoder.encode(GBlock(GCommand(GLetter('G'), GInt(28)), GTailComment(" note")))   // "G28 ; note"
  * ```
+ *
+ * **Temporarily not sealed.** A sealed interface may only be implemented in its own package, and
+ * `GComment` still lives in `core.token`. This stays open only until `GComment` stops being a block
+ * part (a `GCommentPart` wrapper takes its place); it is sealed again in that change.
  */
-sealed interface GBlockPart
+interface GBlockPart
 
 /**
  * A line being built: spec section 5's "line (block)", as a value the encoder can render.

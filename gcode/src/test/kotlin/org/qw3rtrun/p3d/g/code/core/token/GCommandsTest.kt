@@ -4,6 +4,10 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.GEncoder
+import org.qw3rtrun.p3d.g.code.core.block.GCommand
+import org.qw3rtrun.p3d.g.code.core.block.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.block.GWord
 
 /**
  * The command model of GCODE_spec.md section 4: a head word, its parameter words, and what
@@ -66,7 +70,8 @@ class GCommandsTest {
     @Test
     fun `the identifier and number constructor creates expected head`() {
         val fromIdAndNum = GCommand(GLetter('M'), GInt(104), listOf(GParameterWord(GLetter('S'), GInt(200))))
-        val explicit = GCommand(GParameterWord(GLetter('M'), GInt(104)), listOf(GParameterWord(GLetter('S'), GInt(200))))
+        val explicit =
+            GCommand(GParameterWord(GLetter('M'), GInt(104)), listOf(GParameterWord(GLetter('S'), GInt(200))))
 
         assertEquals(explicit, fromIdAndNum)
         assertEquals("M104 S200", GEncoder.encode(fromIdAndNum))

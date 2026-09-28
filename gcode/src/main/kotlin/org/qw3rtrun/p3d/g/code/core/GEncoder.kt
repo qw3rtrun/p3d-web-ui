@@ -1,13 +1,15 @@
 package org.qw3rtrun.p3d.g.code.core
 
-import org.qw3rtrun.p3d.g.code.core.token.GBlock
-import org.qw3rtrun.p3d.g.code.core.token.GBlockPart
-import org.qw3rtrun.p3d.g.code.core.token.GCommand
+import org.qw3rtrun.p3d.g.code.core.block.CheckSumCalculator
+import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlockPart
+import org.qw3rtrun.p3d.g.code.core.block.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GComment
-import org.qw3rtrun.p3d.g.code.core.token.GFlagWord
-import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.token.GUnnamedStr
-import org.qw3rtrun.p3d.g.code.core.token.GWord
+import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
+import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
+import org.qw3rtrun.p3d.g.code.core.block.GWord
 
 /**
  * Emits wire-ready text: a command (GCODE_spec.md section 4), and the `N`/`*` framing around it
@@ -115,7 +117,7 @@ object GEncoder {
      *
      * @param number the line number to put in the `N` field
      * @param block the line's parts, in order
-     * @param checksum a fresh calculator for the algorithm to use; [XorCheckSum] by default
+     * @param checksum a fresh calculator for the algorithm to use; [org.qw3rtrun.p3d.g.code.core.block.XorCheckSum] by default
      * @return the framed line, without a terminator
      */
     fun frame(number: Int, block: GBlock, checksum: CheckSumCalculator = XorCheckSum()): String {
@@ -165,7 +167,7 @@ object GEncoder {
      * most order-sensitive lines in the encoder and a silent divergence waiting to happen.
      *
      * The algorithm is the caller's to choose by passing the calculator: [XorCheckSum] (section 8.2,
-     * the default and what Marlin expects) or [Crc16CheckSum] (section 8.4, five digits, stronger).
+     * the default and what Marlin expects) or [org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum] (section 8.4, five digits, stronger).
      * A calculator carries the state of one line, so a fresh one is needed per call.
      *
      * ```

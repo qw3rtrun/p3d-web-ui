@@ -4,6 +4,9 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.block.GError
+import org.qw3rtrun.p3d.g.code.core.block.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
 
 /**
  * Corpus level tests over `src/test/resources/marlin.gcode` - 300+ lines of real Marlin flavoured

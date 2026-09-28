@@ -12,8 +12,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.qw3rtrun.p3d.g.code.core.GEncoder
-import org.qw3rtrun.p3d.g.code.core.XorCheckSum
-import org.qw3rtrun.p3d.g.code.core.token.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 import org.qw3rtrun.p3d.g.marlin.command.AutoHome
 import org.qw3rtrun.p3d.g.marlin.command.BedLeveling3Point

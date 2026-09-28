@@ -1,5 +1,10 @@
 package org.qw3rtrun.p3d.g.code.dsl
 
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlockPart
+import org.qw3rtrun.p3d.g.code.core.block.GCommand
+import org.qw3rtrun.p3d.g.code.core.block.GWord
+import org.qw3rtrun.p3d.g.code.core.block.isCommandNumber
 import org.qw3rtrun.p3d.g.code.core.token.*
 
 /**

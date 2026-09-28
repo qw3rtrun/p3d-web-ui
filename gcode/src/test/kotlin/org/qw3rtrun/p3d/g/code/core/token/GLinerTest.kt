@@ -8,6 +8,19 @@ import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.ValueSource
+import org.qw3rtrun.p3d.g.code.core.block.GCheckSumControlled
+import org.qw3rtrun.p3d.g.code.core.block.GCheckSumFailedLine
+import org.qw3rtrun.p3d.g.code.core.block.GError
+import org.qw3rtrun.p3d.g.code.core.block.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GMalformedChecksum
+import org.qw3rtrun.p3d.g.code.core.block.GMalformedLineNumber
+import org.qw3rtrun.p3d.g.code.core.block.GMeaninglessLine
+import org.qw3rtrun.p3d.g.code.core.block.GMissingChecksum
+import org.qw3rtrun.p3d.g.code.core.block.GMissingLineNumber
+import org.qw3rtrun.p3d.g.code.core.block.GOrdered
+import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
+import org.qw3rtrun.p3d.g.code.core.block.GSimpleLine
 
 class GLinerTest {
 

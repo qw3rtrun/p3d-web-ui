@@ -3,10 +3,13 @@ package org.qw3rtrun.p3d.g.code.dsl
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.GEncoder
-import org.qw3rtrun.p3d.g.code.core.XorCheckSum
-import org.qw3rtrun.p3d.g.code.core.token.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
-import org.qw3rtrun.p3d.g.code.core.token.GUnnamedStr
+import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
+import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
+import org.qw3rtrun.p3d.g.code.core.token.GInt
+import org.qw3rtrun.p3d.g.code.core.token.GLetter
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GUnquotedString
 import org.qw3rtrun.p3d.g.marlin.MarlinCommands
 import org.qw3rtrun.p3d.g.marlin.command.SerialPrint
@@ -75,5 +78,12 @@ class M117DecoderTest {
             "M118 P0 Hello",
             GEncoder.encode(SerialPrint(p = 0, message = "Hello").encode()),
         )
+    }
+
+    @Test
+    fun sample() {
+        fun List<GToken>.print(): String = map { it.rawText() }.joinToString(" ")
+        val gcode: List<GToken> = listOf(GLetter('M'), GInt(1))
+        println(gcode.print())
     }
 }

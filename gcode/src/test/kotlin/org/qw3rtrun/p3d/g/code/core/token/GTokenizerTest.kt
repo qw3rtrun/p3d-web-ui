@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.qw3rtrun.p3d.g.code.core.block.GLiner
 
 /**
  * Lexer tests - one nested group per token kind of GCODE_spec.md section 2, plus the iterator

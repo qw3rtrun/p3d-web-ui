@@ -901,6 +901,77 @@ discontinuity (spec [§7.2](../specs/GCODE_spec.md#72-semantics), needs a statef
 
 ---
 
+## 5. The `token` / `block` layering split — 2026-09-28 (branch `agentic`)
+
+**What:** `code/core/token` now holds only the bottom layer — `GTokens.kt`, `GTokenizer.kt` and
+`GPairing.kt` — and everything that reads tokens as lines, commands or checksums lives in
+`code/core/block`: `GLiner`, `GLines`, `GCommands`, `GFields`, `CheckSums`, `XorCheckSum`,
+`Crc16CheckSum`. **Why:** the token layer is what a port transliterates first, and it had grown two
+dependencies on the layer above it, which a port would have had to carry up with it.
+
+The two violations, and nothing else — an inventory of ~25 token-taking helpers outside `core/token`
+found only `valueIndex` to be purely lexical; the rest (`headWord`, `headKey`, `headEnd`,
+`isCommandLetter`, `isCommandNumber`, `checkSumCalculatorFor`, the `MarlinWords` accessors) encode
+command, framing or Marlin policy and stayed where they were:
+
+- **V1** — `GComment : GToken, GBlockPart`: a token type implementing the block layer's "things that
+  go in a block" vocabulary. Fixed by `data class GCommentPart(val comment: GComment) : GBlockPart`
+  in `block/GCommands.kt`; the DSL's `tailComment`/`inlineComment` return it; `GComment` is a token
+  only and `GBlockPart` is sealed again (`GCommand | GCommentPart`).
+- **V2** — `GTokenizer.lines()`: the lexer offered the tokens-to-lines pipeline, so it imported
+  `GLine` and `GLiner`. Fixed by moving it to `GLiner.lines(text)`, a companion function;
+  `GTokenizer.lines` is deleted.
+
+`valueIndex` — spec §2.1/§2.3's pairing rule, stated over `GWhitespace` and `GValue` alone — moved
+from `block/GFields.kt` to `token/GPairing.kt`, pinned first by 12 characterisation tests
+(`GPairingTest`) run green against the old location.
+
+**The guard.** `core/GLayeringTest` scans the two directories as text and fails on any
+`org.qw3rtrun.p3d.` occurrence — import, code or KDoc link — in `token/*` that is not
+`g.code.core.token`, or in `block/*` that is not `token` or `block`, and on any import that is not
+`kotlin.*`, an allowed project package or exactly `java.math.BigDecimal`. It asserts both
+directories are non-empty so a moved tree cannot pass on an empty scan. Its first run, with
+`emptyList()` expected, listed exactly the two violations:
+
+```
+expected: <[]> but was: <[
+  GTokenizer.kt: import org.qw3rtrun.p3d.g.code.core.block.GLine,
+  GTokenizer.kt: import org.qw3rtrun.p3d.g.code.core.block.GLiner,
+  GTokens.kt: import org.qw3rtrun.p3d.g.code.core.block.GBlockPart]>
+```
+
+The list was pinned, shrank to the `GTokens.kt` entry with V2, and is `emptyList()` permanently
+since V1c. A probe line `// see [org.qw3rtrun.p3d.g.code.core.session.GReceipt]` appended to
+`GTokens.kt` was reported as a fourth entry, so non-import occurrences are caught.
+
+| Commit | Step | `:gcode:test` |
+|---|---|---|
+| `ddbb74e` | main sources moved to `core/block`, `GBlockPart` temporarily unsealed | 842 (HEAD before it: 841; +1 is an uncommitted scratch test that went in with it, `M117DecoderTest.sample()`) |
+| `391549a` | test sources moved to match, per-class counts identical | 842 |
+| `d4c824e` | `GLayeringTest`, three violations pinned | 843 |
+| `0adc942` | V2: `lines()` → `GLiner.lines`; spec B.2/B.3 | 846 |
+| `a326915` | `valueIndex` → `token/GPairing.kt`; spec B.2/B.3, `gcode-dsl-dev` | 858 |
+| `c358f46` | V1a: `GCommentPart` and its encoder branch | 862 |
+| `ef77baf` | V1b: DSL comment builders return `GCommentPart` | 862 |
+| `1e6189c` | V1c: `GComment` a token only, `GBlockPart` resealed, guard empty; spec B.3 | 862 |
+
+`GDslCorpusTest` held at **303 / 279 / 24** throughout, 0 failures at every step, and
+`./gradlew build -x :app:test` green at every step. After the last:
+
+```
+$ grep -rn 'org\.qw3rtrun' gcode/src/main/kotlin/org/qw3rtrun/p3d/g/code/core/token/ | grep -v 'core\.token'
+$
+```
+
+**Deliberately not done:** splitting `block` into separate line and command packages; moving
+`GEncoder` into `block`; renaming `GFields.kt`; touching the `MarlinWords` accessors; a named helper
+for the repeated `rawText` join; merging the duplicated ASCII predicates; fixing IDE-generated
+fully-qualified KDoc names outside `token`; any Gradle module split. The `GWordReaderTest` oracle
+still hand-folds `N`/`n` on purpose — sharing `isLetter` with the code under test would be
+tautological.
+
+---
+
 ## Appendix — probe output
 
 Verbatim results from the temporary probe test (deleted after the review):

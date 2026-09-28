@@ -62,21 +62,28 @@ When observable behaviour changes, the spec's Appendix B and the relevant queue 
 
 ```
 gcode/src/main/kotlin/.../code/core/**      portable core — kotlin.* imports ONLY
-  token/GTokens.kt      token model, rawText() round-trip contract
-  token/GTokenizer.kt   the lexer (an object): parse() overloads, lines() = the whole pipeline.
+  token/                the bottom layer. Names nothing above itself - GLayeringTest enforces it
+    GTokens.kt          token model, rawText() round-trip contract
+    GTokenizer.kt       the lexer (an object): parse() overloads - tokens only.
                         GTokenizerIterator, the state machine, is internal - scanners private
-  token/GLiner.kt       tokens -> classified lines (framing, checksum verification)
-  token/GLines.kt       GLine hierarchy and the structural errors - tokens only
-  token/GCommands.kt    GWord, GBlock, GCommand - the command layer's vocabulary
-  token/GFields.kt      reading a field off tokens: the spec 2.1 pairing rule, the command head
-  XorCheckSum.kt        streaming XOR checksum
+    GPairing.kt         valueIndex: the spec 2.1 pairing rule (identifier, whitespace, value)
+  block/                lines, commands, checksums. May name token/ and itself, nothing else
+    GLiner.kt           tokens -> classified lines (framing, checksum verification);
+                        GLiner.lines(text) = the whole read pipeline
+    GLines.kt           GLine hierarchy and the structural errors - tokens only
+    GCommands.kt        GWord, GBlock, GBlockPart (GCommand | GCommentPart), GCommand
+    GFields.kt          the command head: headWord/headEnd/headKey, isCommandLetter/Number
+    CheckSums.kt        checkSumCalculatorFor: the digit count picks the algorithm
+    XorCheckSum.kt      streaming XOR checksum
+    Crc16CheckSum.kt    streaming CRC-16/XMODEM
+  GEncoder.kt           GCommand / GBlock -> wire text, and N/* framing
   session/**            GCodeReader (line numbering), GSendWindow (resend window)
 gcode/src/main/kotlin/.../code/dsl/**       the writing facade — FULL KOTLIN, see gcode-dsl-dev
   G.kt                  command + line builders (the sink, GSender, is in :backend:terminal)
   GWords.kt             21 parameter letters x 5 shapes, plus the generic escape hatches
 gcode/src/main/kotlin/.../marlin/**         domain edge — may use :backend:core types
 gcode/src/main/java/**                      pre-migration Java, being replaced
-gcode/src/test/kotlin/.../token/GWordReader.kt   test apparatus: the command-agnostic
+gcode/src/test/kotlin/.../block/GWordReader.kt   test apparatus: the command-agnostic
                                             decomposition the corpus contracts are measured with.
                                             Production reads with MarlinCommands.decode.
 gcode/src/test/resources/marlin.gcode       414 lines of real captured G-code — the corpus fixture

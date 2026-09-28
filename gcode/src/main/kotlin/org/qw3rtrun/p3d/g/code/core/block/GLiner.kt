@@ -6,6 +6,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GInt
 import org.qw3rtrun.p3d.g.code.core.token.GLineBreak
 import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
+import org.qw3rtrun.p3d.g.code.core.token.valueIndex
 
 /**
  * Turns a token stream into a stream of classified lines, per GCODE_spec.md section 5.

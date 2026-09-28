@@ -10,7 +10,7 @@ import org.qw3rtrun.p3d.g.code.core.block.GMissingLineNumber
 import org.qw3rtrun.p3d.g.code.core.block.GOrdered
 import org.qw3rtrun.p3d.g.code.core.block.headEnd
 import org.qw3rtrun.p3d.g.code.core.block.headWord
-import org.qw3rtrun.p3d.g.code.core.block.valueIndex
+import org.qw3rtrun.p3d.g.code.core.token.valueIndex
 import org.qw3rtrun.p3d.g.code.core.token.*
 
 /**

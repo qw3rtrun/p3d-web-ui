@@ -726,7 +726,7 @@ re-emits correctly. It is now the module's **only** such liability: the second o
 Recorded rather than fixed, per
 [issue #4](https://github.com/qw3rtrun/p3d-web-ui/issues/4).
 
-### B.2 Tokenizer — `token/GTokenizer.kt`
+### B.2 Tokenizer — `token/GTokenizer.kt`, `token/GPairing.kt`
 
 `GTokenizer.parse(…)` yields a lazy `Sequence<GToken>`/`Iterator<GToken>` over a character stream,
 dispatching on the first character exactly as in the [§2](#2-lexical-structure-tokens) table:
@@ -741,11 +741,20 @@ every caller.
 
 `GTokenizer` is an **object**: it holds no state, so an instance per call site bought nothing. It
 offers tokens only. The whole read pipeline — text in, classified `GLine`s out — is
-`GLiner.lines(text)`, one layer up (see [B.3](#b3-line-model--tokenglineskt-tokenglinerkt-tokengcommandskt-tokengfieldskt)):
+`GLiner.lines(text)`, one layer up (see [B.3](#b3-line-model--blockglineskt-blockglinerkt-blockgcommandskt-blockgfieldskt)):
 a lexer that offered lines would depend on the layer above it, and `GLayeringTest` now fails the
 build if anything under `core/token` names `core/block`. The state machine itself,
 `GTokenizerIterator`, is `internal` and its six scanners are private: which characters `number()`
 consumes is how this lexer is built, not what it promises.
+
+`GPairing.kt` holds the one reading rule that is lexical rather than structural:
+`valueIndex(tokens, idIndex)`, [§2.1](#21-whitespace)'s pairing of an identifier with the value
+behind it. Only `GWhitespace` is crossed — a comment, another identifier or a line break ends the
+field — and only a `GValue` pairs, so `N 1` → 2, `X  10` → 3, `X\t10` → 2, `X"a"` and `X{a}` → 1,
+while `N*`, `X Y`, `X (c) 10`, `X;c`, `X\n10` and `X?` → -1 (all pinned by `GPairingTest`). It is the
+module's only copy of the rule, and the layers above reuse it rather than restate it: the liner pairs
+`N` and `*` with it, `GFields.kt` finds a command head with it, and the Marlin decoders read their
+parameters with it.
 
 Deviations from this spec, as currently written (all verified by running the module):
 
@@ -757,7 +766,7 @@ Deviations from this spec, as currently written (all verified by running the mod
 * a subcode ([§4.1](#41-command-letters)) is lexed as a decimal: `G29.1` → `GLetter(G), GFloat(29.1)`;
 * bare rest-of-line strings ([§3.4](#34-string-values)) are not recognised — `M117 Hello World`
   becomes one `GLetter` per character. This is a layering fact, not an open gap: the characters are
-  reassembled one layer up, by a decoder that knows the command number (see [B.3](#b3-line-model--tokenglineskt-tokenglinerkt-tokengcommandskt-tokengfieldskt)).
+  reassembled one layer up, by a decoder that knows the command number (see [B.3](#b3-line-model--blockglineskt-blockglinerkt-blockgcommandskt-blockgfieldskt)).
 
 Conforming as of the number-lexeme pass: the optional sign of [§3.1](#31-numeric-values) is part of
 the number token (`G1 E-5` → `… GLetter(E), GInt(-5)`), a tab is `GTab`
@@ -781,7 +790,7 @@ quoted strings are unaffected — `marlin.gcode` keeps the `’` and `µ` in its
 digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` from lexing as
 `GFloat(1.2)`.
 
-### B.3 Line model — `token/GLines.kt`, `token/GLiner.kt`, `token/GCommands.kt`, `token/GFields.kt`
+### B.3 Line model — `block/GLines.kt`, `block/GLiner.kt`, `block/GCommands.kt`, `block/GFields.kt`
 
 The module reads a line in two passes over two vocabularies. **A line is tokens**: its shape is
 decided from token positions alone, and nothing above the lexer is built to answer it. **A command is
@@ -845,10 +854,10 @@ short line does not throw — `N*` yields `GMalformedLineNumber`, not `IllegalAr
 
 **Reading a line into commands is a decoder's job, not a second pass of this layer's.** `GFields.kt`
 carries what the layer still owes a reader, as functions over tokens rather than a parser object:
-`valueIndex()` is [§2.1](#21-whitespace)'s pairing rule — an identifier and the value behind it,
-whitespace absorbed — in the module's only copy of it, and `headWord()` / `headEnd()` / `headKey()`
-read the one field that is a command ([§2.3](#23-grammar-ebnf) makes `command-word` a specialisation
-of `word`, so it is the same rule). A command number is accepted only as
+`headWord()` / `headEnd()` / `headKey()` read the one field that is a command. [§2.3](#23-grammar-ebnf)
+makes `command-word` a specialisation of `word`, so the head is found with the same pairing rule as
+every other field — `valueIndex()`, which lives one layer down in `token/GPairing.kt` (see
+[B.2](#b2-tokenizer--tokengtokenizerkt-tokengpairingkt)) because it is stated over token kinds alone. A command number is accepted only as
 `<unsigned-int>[.<unsigned-int>]` ([§4.1](#41-command-letters)) by `isCommandNumber()`, which the DSL
 shares, so `G29.1` is one command word carrying `GFloat("29.1")` — the subcode stays on the number,
 which is what re-emits `29.1` rather than `29` and `.1`. `isCommandLetter()` accepts `G`, `M` and a

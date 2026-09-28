@@ -4,8 +4,8 @@ import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.token.GNumber
 import org.qw3rtrun.p3d.g.code.core.token.GToken
-import org.qw3rtrun.p3d.g.code.core.token.GValue
 import org.qw3rtrun.p3d.g.code.core.token.GWhitespace
+import org.qw3rtrun.p3d.g.code.core.token.valueIndex
 
 /**
  * Reading a field off tokens - GCODE_spec.md sections 2.1, 3 and 4 - and the one field that is a
@@ -20,45 +20,12 @@ import org.qw3rtrun.p3d.g.code.core.token.GWhitespace
  * half had no production caller left once `MarlinCommands.decode` existed, and now lives in the
  * test apparatus that measures the module against a real corpus.
  *
- * spec 2.3 is the reason the two sit together: `command-word`, `line-number` and `checksum` are
- * *specialisations* of `word` - lexically ordinary fields whose letters are given structural
- * meaning - so the rule that finds a value is the rule the head is found with.
+ * spec 2.3 makes `command-word`, `line-number` and `checksum` *specialisations* of `word` -
+ * lexically ordinary fields whose letters are given structural meaning - so the head is found with
+ * the same pairing rule every other field is: `valueIndex`, in `core.token`'s `GPairing.kt`. The
+ * rule is lexical and reused one way, from this layer down to that one; it does not need to share a
+ * file with the head to stay the same rule, only to have a single copy, and it has one.
  */
-
-/**
- * The index of the value paired with the identifier at [idIndex], or -1 when it carries none.
- *
- * spec 2.1: whitespace may separate an identifier from its value, so `N 1`, `* 12` and `X  10`
- * each assemble across it. **Only whitespace is crossed** - a comment between the two ends the
- * field, and so does another identifier, which is what makes `N*` a bare `N` rather than an `N`
- * carrying a `*`.
- *
- * This is the module's only copy of that rule. It was five: the liner pairing `N` with its number
- * and `*` with its checksum, the command reader pairing any letter with its value and `G` with
- * `1`, and the Marlin decoders pairing a documented letter with what follows it. The rule decides
- * whether `N 1` is a line number and whether `X 10` is one field or two, so a spec correction had
- * to reach all five and would have reached three.
- *
- * [idIndex] is not checked: a caller that has found an identifier passes its index, and one that
- * passes anything else gets the token behind it, which is the same question asked of a different
- * position rather than an error.
- *
- * ```
- * valueIndex(GTokenizer.parse("N 1").toList(), 0)        // 2
- * valueIndex(GTokenizer.parse("N*").toList(), 0)         // -1
- * valueIndex(GTokenizer.parse("X (c) 10").toList(), 0)   // -1 - a comment ends the field
- * ```
- *
- * @param tokens the tokens to read
- * @param idIndex the index of the identifier whose value is wanted
- * @return the index of its value token, or -1 when it has none
- */
-fun valueIndex(tokens: List<GToken>, idIndex: Int): Int {
-    var i = idIndex + 1
-    while (i < tokens.size && tokens[i] is GWhitespace) i++
-    if (i < tokens.size && tokens[i] is GValue) return i
-    return -1
-}
 
 /**
  * The command word [tokens] start with, or null when they do not start one.

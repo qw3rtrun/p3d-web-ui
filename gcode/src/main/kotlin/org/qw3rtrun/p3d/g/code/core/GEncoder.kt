@@ -27,6 +27,12 @@ import org.qw3rtrun.p3d.g.code.core.token.GWord
  * consumer that no longer exists; it is deleted, and git history has it if that layer arrives.
  *
  * Stateless and allocation-light: one `StringBuilder` per line.
+ *
+ * ```
+ * val g28 = GCommand(GLetter('G'), GInt(28))
+ * GEncoder.encode(g28)       // "G28"
+ * GEncoder.frame(1, g28)     // "N1 G28*18"
+ * ```
  */
 object GEncoder {
 
@@ -41,6 +47,20 @@ object GEncoder {
      *
      * Within a word there is no separator: the identifier is followed immediately by its value, so
      * a value's lexeme is what reaches the wire (`X10.50` stays `X10.50`, see `GNumber`).
+     *
+     * A [GUnnamedStr] has no identifier to write - `GEmptyId` renders as nothing - and its value is
+     * spec 3.4a's bare rest-of-line string, so it reaches the wire undelimited and, being the rest
+     * of the line, only ever last. Nothing here enforces that position: a command carrying one is
+     * built by the command that documents it, and the single space before each field is what
+     * separates it from the lettered parameters in front.
+     *
+     * ```
+     * val x = GParameterWord(GLetter('X'), GFloat("10.50"))
+     * GEncoder.encode(GCommand(GLetter('G'), GInt(1), listOf(x)))   // "G1 X10.50"
+     * ```
+     *
+     * @param command the command to render
+     * @return the command's text, without a terminator
      */
     fun encode(command: GCommand): String {
         val out = StringBuilder()
@@ -55,6 +75,15 @@ object GEncoder {
      * whether to leave a space after the marker is preserved - `GTailComment(" move")` is `; move`
      * and `GTailComment("move")` is `;move`. Both are legal (section 6) and the difference is the
      * author's, not the encoder's.
+     *
+     * ```
+     * val g1 = GCommand(GLetter('G'), GInt(1), listOf(GParameterWord(GLetter('X'), GFloat("10.50"))))
+     * GEncoder.encode(GBlock(g1, GTailComment(" move")))   // "G1 X10.50 ; move"
+     * GEncoder.encode(GBlock(g1, GTailComment("move")))    // "G1 X10.50 ;move"
+     * ```
+     *
+     * @param block the line's parts, in order
+     * @return the line's text, unframed and without a terminator
      */
     fun encode(block: GBlock): String {
         val out = StringBuilder()
@@ -77,6 +106,17 @@ object GEncoder {
      * payload, and only the run of comments after it is appended past the marker. A block that is
      * nothing but comments has no payload and cannot be framed - there is nothing to acknowledge or
      * resend - so it comes back as its own text, unnumbered.
+     *
+     * ```
+     * val g28 = GCommand(GLetter('G'), GInt(28))
+     * GEncoder.frame(1, GBlock(g28, GTailComment(" home")))   // "N1 G28*18 ; home"
+     * GEncoder.frame(1, GBlock(GTailComment(" only")))        // "; only" - nothing to frame
+     * ```
+     *
+     * @param number the line number to put in the `N` field
+     * @param block the line's parts, in order
+     * @param checksum a fresh calculator for the algorithm to use; [XorCheckSum] by default
+     * @return the framed line, without a terminator
      */
     fun frame(number: Int, block: GBlock, checksum: CheckSumCalculator = XorCheckSum()): String {
         var lastPayload = -1
@@ -108,7 +148,6 @@ object GEncoder {
         }
     }
 
-    /** The command word, then each parameter behind a single space. */
     private fun appendCommand(out: StringBuilder, command: GCommand) {
         appendWord(out, command.head)
         for (i in command.params.indices) {
@@ -128,19 +167,21 @@ object GEncoder {
      * The algorithm is the caller's to choose by passing the calculator: [XorCheckSum] (section 8.2,
      * the default and what Marlin expects) or [Crc16CheckSum] (section 8.4, five digits, stronger).
      * A calculator carries the state of one line, so a fresh one is needed per call.
+     *
+     * ```
+     * val g28 = GCommand(GLetter('G'), GInt(28))
+     * GEncoder.frame(1, g28)                    // "N1 G28*18"
+     * GEncoder.frame(1, g28, Crc16CheckSum())   // "N1 G28*14291"
+     * ```
+     *
+     * @param number the line number to put in the `N` field
+     * @param command the command to frame
+     * @param checksum a fresh calculator for the algorithm to use; [XorCheckSum] by default
+     * @return the framed line, without a terminator
      */
     fun frame(number: Int, command: GCommand, checksum: CheckSumCalculator = XorCheckSum()): String =
         frame(number, GBlock(listOf(command)), checksum)
 
-    /**
-     * One field: the identifier, then its value with no separator between them.
-     *
-     * A [GUnnamedStr] has no identifier to write - `GEmptyId` renders as nothing - and its value is
-     * spec 3.4a's bare rest-of-line string, so it reaches the wire undelimited and, being the rest
-     * of the line, only ever last. Nothing here enforces that position: a command carrying one is
-     * built by the command that documents it, and [encode]'s single space before each field is what
-     * separates it from the lettered parameters in front.
-     */
     private fun appendWord(out: StringBuilder, word: GWord) {
         out.append(word.id.rawText())
         when (word) {

@@ -24,7 +24,19 @@ import org.qw3rtrun.p3d.g.code.core.token.GParameterWord
  *
  * It holds the **exact bytes** it emitted rather than the commands behind them: section 8.3 makes a
  * checksum a property of the bytes, so a replay that re-encoded could differ from what was
- * checksummed the first time.
+ * checksummed the first time. The outstanding lines are kept oldest first, as two parallel lists of
+ * numbers and texts.
+ *
+ * ```
+ * val window = GSendWindow()
+ * window.send(GCommand(GLetter('G'), GInt(28)))   // "N1 G28*18"
+ * window.resendFrom(1)                            // ["N1 G28*18"] - after `Resend: 1`
+ * window.acknowledge()                            // true - after `ok`
+ * ```
+ *
+ * @property capacity how many lines may be outstanding at once; Marlin's `BUFSIZE` is 4
+ * @property next the number the next line will carry
+ * @property inFlight how many lines are sent and not yet acknowledged
  */
 class GSendWindow(
     val capacity: Int = 4,
@@ -32,15 +44,12 @@ class GSendWindow(
     private val calculator: () -> CheckSumCalculator = ::XorCheckSum,
 ) {
 
-    /** The number the next line will carry. */
     var next: Int = first
         private set
 
-    /** Sent and not yet acknowledged, oldest first, parallel to [outstandingText]. */
     private val outstandingNumber = ArrayList<Int>()
     private val outstandingText = ArrayList<String>()
 
-    /** How many lines are in flight. */
     val inFlight: Int
         get() = outstandingNumber.size
 
@@ -51,6 +60,15 @@ class GSendWindow(
      * A refused send consumes no line number. It has to be that way round: a gap in the sequence is
      * exactly what the firmware rejects, so letting a full window burn a number would turn back
      * pressure into a protocol fault.
+     *
+     * ```
+     * val window = GSendWindow(capacity = 1)
+     * window.send(GCommand(GLetter('G'), GInt(28)))   // "N1 G28*18"
+     * window.send(GCommand(GLetter('G'), GInt(28)))   // null, and next is still 2
+     * ```
+     *
+     * @param command the command to number, frame and hold
+     * @return the framed line to transmit, or null when the window is full
      */
     fun send(command: GCommand): String? {
         if (inFlight >= capacity) return null
@@ -65,6 +83,13 @@ class GSendWindow(
     /**
      * Records one `ok`: the oldest outstanding line is done and its slot is free. Returns false when
      * there was nothing outstanding, which is a stray acknowledgement rather than a fault.
+     *
+     * ```
+     * val window = GSendWindow()
+     * window.acknowledge()   // false - nothing was sent
+     * ```
+     *
+     * @return true when a line was released, false for a stray `ok`
      */
     fun acknowledge(): Boolean {
         if (outstandingNumber.isEmpty()) return false
@@ -73,7 +98,18 @@ class GSendWindow(
         return true
     }
 
-    /** Whether [number] is still held and so can be replayed. */
+    /**
+     * Whether [number] is still held and so can be replayed.
+     *
+     * ```
+     * val window = GSendWindow()
+     * window.send(GCommand(GLetter('G'), GInt(28)))
+     * window.canResendFrom(1)   // true
+     * ```
+     *
+     * @param number the line number a `Resend:` asked for
+     * @return true when [resendFrom] would replay from [number]
+     */
     fun canResendFrom(number: Int): Boolean = indexOf(number) >= 0
 
     /**
@@ -90,6 +126,18 @@ class GSendWindow(
      * outstanding line. A peer that asks anyway has lost sync further than a replay can repair, and
      * the answer is a fresh [reset], not a partial replay. Reported as a value rather than thrown,
      * because it is a statement about the session and not a bug in the caller.
+     *
+     * On rewind, anything before [number] stays acknowledged and everything from it is in flight.
+     *
+     * ```
+     * val window = GSendWindow()
+     * window.send(GCommand(GLetter('G'), GInt(28)))
+     * window.resendFrom(1)   // ["N1 G28*18"]
+     * window.resendFrom(9)   // [] - not held
+     * ```
+     *
+     * @param number the line number from the firmware's `Resend:` request
+     * @return the lines to retransmit, byte for byte as first sent, or empty when [number] is not held
      */
     fun resendFrom(number: Int): List<String> {
         val from = indexOf(number)
@@ -98,7 +146,6 @@ class GSendWindow(
         val replay = ArrayList<String>(outstandingText.size - from)
         for (i in from until outstandingText.size) replay.add(outstandingText[i])
 
-        // Rewind: anything before `number` stays acknowledged, everything from it is in flight.
         while (outstandingNumber.size > 0 && outstandingNumber[0] < number) {
             outstandingNumber.removeAt(0)
             outstandingText.removeAt(0)
@@ -116,6 +163,14 @@ class GSendWindow(
      *
      * Everything outstanding is abandoned: after the counter moves, the numbers those lines carried
      * no longer mean anything, so there is nothing left to resend.
+     *
+     * ```
+     * val window = GSendWindow()
+     * window.reset(0)   // "N1 M110 N0*124", and next is 1 again
+     * ```
+     *
+     * @param to the value the counter is set to; the next line sent carries `to + 1`
+     * @return the framed `M110` line to transmit
      */
     fun reset(to: Int): String? {
         val m110 = GCommand(

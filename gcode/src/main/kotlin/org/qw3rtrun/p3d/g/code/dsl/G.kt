@@ -33,29 +33,91 @@ import org.qw3rtrun.p3d.g.code.core.token.*
  * arguments, overloads. The layering rule makes only the `code/core` package portable; this is a
  * host-side convenience over it, and a port re-implements the core and writes its own facade.
  *
+ * The file has two halves: the **command** builders of spec 4 - [G], [M], [T] and the general
+ * [command] - and the **line** builders of spec 5 - [block], [line], [comment] and [commentLine].
  * Parameter words live in `GWords.kt`.
  */
 
-// ---------------------------------------------------------------------------
-// Commands - spec 4
-// ---------------------------------------------------------------------------
-
-/** `G<number>` with [params], as in `G(1, X(10), F(1800))`. */
+/**
+ * `G<number>` with [params].
+ *
+ * ```
+ * GEncoder.encode(G(1, X(10), F(1800)))   // "G1 X10 F1800"
+ * ```
+ *
+ * @param number the command number, rendered in canonical decimal
+ * @param params the parameter words, in wire order
+ * @return the command
+ */
 fun G(number: Int, vararg params: GWord): GCommand = command('G', number, *params)
 
-/** `G<lexeme>`, for a subcode or a non-canonical number: `G("29.1")`, `G("01")`. */
+/**
+ * `G<lexeme>`, for a subcode or a non-canonical number. Throws `IllegalArgumentException` when
+ * [lexeme] is not a command number (spec 4.1).
+ *
+ * ```
+ * GEncoder.encode(G("29.1", P(1)))   // "G29.1 P1"
+ * GEncoder.encode(G("01"))           // "G01"
+ * ```
+ *
+ * @param lexeme the command number exactly as it should reach the wire
+ * @param params the parameter words, in wire order
+ * @return the command
+ */
 fun G(lexeme: String, vararg params: GWord): GCommand = command('G', lexeme, *params)
 
-/** `M<number>` with [params]. */
+/**
+ * `M<number>` with [params].
+ *
+ * ```
+ * GEncoder.encode(M(104, S(200)))   // "M104 S200"
+ * ```
+ *
+ * @param number the command number, rendered in canonical decimal
+ * @param params the parameter words, in wire order
+ * @return the command
+ */
 fun M(number: Int, vararg params: GWord): GCommand = command('M', number, *params)
 
-/** `M<lexeme>`, for a subcode or a non-canonical number. */
+/**
+ * `M<lexeme>`, for a subcode or a non-canonical number. Throws `IllegalArgumentException` when
+ * [lexeme] is not a command number (spec 4.1).
+ *
+ * ```
+ * GEncoder.encode(M("0105"))   // "M0105"
+ * ```
+ *
+ * @param lexeme the command number exactly as it should reach the wire
+ * @param params the parameter words, in wire order
+ * @return the command
+ */
 fun M(lexeme: String, vararg params: GWord): GCommand = command('M', lexeme, *params)
 
-/** `T<number>` - tool select, spec 4.1. */
+/**
+ * `T<number>` - tool select, spec 4.1.
+ *
+ * ```
+ * GEncoder.encode(T(0))   // "T0"
+ * ```
+ *
+ * @param number the tool number, rendered in canonical decimal
+ * @param params the parameter words, in wire order
+ * @return the command
+ */
 fun T(number: Int, vararg params: GWord): GCommand = command('T', number, *params)
 
-/** `T<lexeme>`. */
+/**
+ * `T<lexeme>` - tool select with the number written exactly as given. Throws
+ * `IllegalArgumentException` when [lexeme] is not a command number (spec 4.1).
+ *
+ * ```
+ * GEncoder.encode(T("1"))   // "T1"
+ * ```
+ *
+ * @param lexeme the tool number exactly as it should reach the wire
+ * @param params the parameter words, in wire order
+ * @return the command
+ */
 fun T(lexeme: String, vararg params: GWord): GCommand = command('T', lexeme, *params)
 
 /**
@@ -72,27 +134,55 @@ fun T(lexeme: String, vararg params: GWord): GCommand = command('T', lexeme, *pa
  *   parser takes, because it is the common one. As the Marlin debug *command* spec 4.1 lists, write
  *   `command('D', 3)`; the parser will still read it back as a parameter, and that asymmetry is the
  *   spec's own ambiguity rather than this file's.
+ *
+ * ```
+ * GEncoder.encode(command('D', 3))                   // "D3"
+ * GEncoder.encode(command('M', 110, word('N', 7)))   // "M110 N7"
+ * ```
+ *
+ * @param letter the command letter, A-Z in either case
+ * @param number the command number, rendered in canonical decimal
+ * @param params the parameter words, in wire order
+ * @return the command
  */
 fun command(letter: Char, number: Int, vararg params: GWord): GCommand =
     command(letter, number.toString(), *params)
 
-/** `<letter><lexeme>` for any command letter. */
+/**
+ * `<letter><lexeme>` for any command letter - the one builder every other command builder is.
+ *
+ * Throws `IllegalArgumentException` at the call site for three programmer errors:
+ *
+ * - [letter] is not A-Z (spec 4.3).
+ * - [lexeme] is not a command number (spec 4.1), judged by the reader's own `isCommandNumber` so the
+ *   DSL cannot build a command that will not read back. `G-1` and `G29.` are not commands, and
+ *   finding that out at the call site beats discovering it when a printer answers
+ *   `echo:Unknown command`.
+ * - A parameter is `*` (spec 8). It is never a parameter - it is the line's checksum field, and
+ *   `GEncoder.frame` is what puts one there. A block carrying its own `*` would be checksummed twice.
+ *
+ * `N` is deliberately *not* refused, even though it is structural too. Spec 7.1 makes only the
+ * **first field of a line** a line number, so an `N` inside a command is an ordinary parameter - and
+ * one command's argument is exactly that: `M110 N7` sets the line-number counter (spec 7.2).
+ * Refusing it here would have made `M110` unwritable, which is the same over-wide rule todo 05 had to
+ * narrow when a line number is read.
+ *
+ * ```
+ * GEncoder.encode(command('G', "38.2", Z(-10)))   // "G38.2 Z-10"
+ * command('G', "-1")                             // throws IllegalArgumentException
+ * command('G', 1, GFlagWord(GChecksum))          // throws IllegalArgumentException
+ * ```
+ *
+ * @param letter the command letter, A-Z in either case
+ * @param lexeme the command number exactly as it should reach the wire
+ * @param params the parameter words, in wire order
+ * @return the command
+ */
 fun command(letter: Char, lexeme: String, vararg params: GWord): GCommand {
-    // spec 4.1, using the reader's own rule so the DSL cannot build a command that will not read
-    // back. `G-1` and `G29.` are not commands, and finding that out at the call site beats
-    // discovering it when a printer answers `echo:Unknown command`.
     require(isCommandNumber(lexeme)) {
         "spec 4.1: a command number is an unsigned integer with an optional subcode, got '$lexeme'"
     }
     for (param in params) {
-        // spec 8: `*` is never a parameter - it is the line's checksum field, and `GEncoder.frame`
-        // is what puts one there. A block carrying its own `*` would be checksummed twice.
-        //
-        // `N` is deliberately *not* refused, even though it is structural too. Spec 7.1 makes only
-        // the **first field of a line** a line number, so an `N` inside a command is an ordinary
-        // parameter - and one command's argument is exactly that: `M110 N7` sets the line-number
-        // counter (spec 7.2). Refusing it here would have made `M110` unwritable, which is the same
-        // over-wide rule todo 05 had to narrow when a line number is read.
         require(param.id != GChecksum) {
             "spec 8: `*` is the line's checksum field, not a parameter - use GEncoder.frame"
         }
@@ -100,22 +190,65 @@ fun command(letter: Char, lexeme: String, vararg params: GWord): GCommand {
     return GCommand(identifier(letter), number(lexeme), params.toList())
 }
 
-// ---------------------------------------------------------------------------
-// Lines - spec 5
-// ---------------------------------------------------------------------------
-
-/** A line made of [parts] in order: commands and comments, as spec 5 allows. */
+/**
+ * A line made of [parts] in order: commands and comments, as spec 5 allows.
+ *
+ * ```
+ * GEncoder.encode(block(G(53), G(0, X(0))))   // "G53 G0 X0"
+ * ```
+ *
+ * @param parts the commands and comments, in wire order
+ * @return the line, unframed
+ */
 fun block(vararg parts: GBlockPart): GBlock = GBlock(parts.toList())
 
-/** This command as a line of its own - the common case. */
+/**
+ * This command as a line of its own - the common case.
+ *
+ * ```
+ * GEncoder.encode(G(28).line())   // "G28"
+ * ```
+ *
+ * @receiver the command
+ * @return a line holding only this command
+ */
 fun GCommand.line(): GBlock = GBlock(listOf(this))
 
-/** This command with a trailing `;` comment: `G(1, X(10)) comment " move"`. */
+/**
+ * This command with a trailing `;` comment. A leading space in [text] is the caller's to include.
+ *
+ * ```
+ * GEncoder.encode(G(1, X(10)) comment " move")   // "G1 X10 ; move"
+ * ```
+ *
+ * @receiver the command
+ * @param text the comment's text, after the `;`
+ * @return a line of the command and the comment
+ */
 infix fun GCommand.comment(text: String): GBlock = GBlock(listOf(this, tailComment(text)))
 
-/** This line with a trailing `;` comment appended. */
+/**
+ * This line with a trailing `;` comment appended.
+ *
+ * ```
+ * GEncoder.encode(block(G(53), G(0, X(0))) comment " machine")   // "G53 G0 X0 ; machine"
+ * ```
+ *
+ * @receiver the line
+ * @param text the comment's text, after the `;`
+ * @return a new line with the comment as its last part
+ */
 infix fun GBlock.comment(text: String): GBlock = GBlock(parts + tailComment(text))
 
-/** A line that is nothing but a `;` comment - spec 5 calls it a no-op. */
+/**
+ * A line that is nothing but a `;` comment - spec 5 calls it a no-op.
+ *
+ * ```
+ * GEncoder.encode(commentLine(" LAYER:42"))   // "; LAYER:42"
+ * ```
+ *
+ * @param text the comment's text, after the `;`
+ * @return a line holding only the comment
+ */
 fun commentLine(text: String): GBlock = GBlock(listOf(tailComment(text)))
 

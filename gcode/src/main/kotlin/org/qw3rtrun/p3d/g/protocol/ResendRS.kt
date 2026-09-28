@@ -18,6 +18,18 @@ import java.util.regex.Pattern
  * All four decode to the same [ResendRs]; [encode] normalises to the `Resend: <n>` form the
  * spec's own worked example uses, the way [AdvancedOkRs] normalises its field order.
  *
+ * The shape read is `rs` or `Resend`, then an optional `:`, then an optional `N` marker which may
+ * itself be followed by a `:`, then the number. The separators are optional throughout because all
+ * four documented spellings differ only in which of them are present. Spec 9: a digit run too wide
+ * for `Int` is malformed input off the wire, not a crash, so it does not match.
+ *
+ * ```
+ * ResendRs.decode("rs N123")          // ResendRs(123)
+ * ResendRs(123).encode()              // "Resend: 123"
+ * ResendRs.match("rs:99999999999")    // false
+ * ```
+ *
+ * @property lineNumber the line the machine wants resent, and every line after it
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 data class ResendRs(val lineNumber: Int) : GProtoRs<ResendRs> {
@@ -26,9 +38,6 @@ data class ResendRs(val lineNumber: Int) : GProtoRs<ResendRs> {
 
     companion object : GRsDecoder<ResendRs> {
 
-        // `rs` or `Resend`, then an optional `:`, then an optional `N` marker which may itself be
-        // followed by a `:`, then the number. The separators are optional throughout because all
-        // four documented spellings differ only in which of them are present.
         private val RESEND_PATTERN = Pattern.compile(
             "^(?>rs|resend)[ \t]*:?[ \t]*(?>n[ \t]*:?[ \t]*)?([0-9]+)$",
             Pattern.CASE_INSENSITIVE
@@ -37,7 +46,6 @@ data class ResendRs(val lineNumber: Int) : GProtoRs<ResendRs> {
         override fun match(line: String): Boolean {
             val matcher = RESEND_PATTERN.matcher(line.trim())
             if (!matcher.matches()) return false
-            // spec 9: a digit run too wide for Int is malformed input off the wire, not a crash.
             return matcher.group(1).toIntOrNull() != null
         }
 

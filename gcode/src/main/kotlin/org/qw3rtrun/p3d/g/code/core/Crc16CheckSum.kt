@@ -5,8 +5,9 @@ import org.qw3rtrun.p3d.g.code.core.token.GInt
 /**
  * The CRC16 of GCODE_spec.md section 8.4, the second algorithm the `*` field can carry.
  *
- * **The variant is CRC-16/XMODEM**: polynomial `0x1021`, initial value `0x0000`, MSB-first (no
- * reflection of input or output), no final XOR. That is read off RepRapFirmware's `src/Storage/CRC16`
+ * **The variant is CRC-16/XMODEM**: polynomial `0x1021` - CCITT `x^16 + x^12 + x^5 + 1` in its
+ * MSB-first encoding - initial value `0x0000`, MSB-first (no reflection of input or output), no
+ * final XOR. That is read off RepRapFirmware's `src/Storage/CRC16`
  * - the only firmware that accepts this field - and not chosen by plausibility; section 8.4 carries
  * the citation and the vector. Three other algorithms answer to "CCITT CRC-16 with poly 0x1021" and
  * none of them agrees with this one on any input, so guessing would have rejected every genuine line.
@@ -18,6 +19,13 @@ import org.qw3rtrun.p3d.g.code.core.token.GInt
  * Streaming, like [XorCheckSum]: one character in, integer state, mask on the way out, so it can run
  * over a growing serial buffer. Also like [XorCheckSum], [add] takes a `Char` and not a byte - see
  * [CheckSumCalculator] for what that costs outside ASCII.
+ *
+ * ```
+ * val crc = Crc16CheckSum()
+ * crc.add("123456789")
+ * crc.get()                                               // GInt(12739, "12739") - the XMODEM check value
+ * GEncoder.frame(1, GCommand(GLetter('G'), GInt(28)), Crc16CheckSum())   // "N1 G28*14291"
+ * ```
  */
 class Crc16CheckSum : CheckSumCalculator {
     private var crc = 0
@@ -36,6 +44,14 @@ class Crc16CheckSum : CheckSumCalculator {
      * (section 8.1), so a CRC of 6939 emitted as four digits would be read back as an XOR checksum
      * and rejected, and one of 57 as three digits would be read as a *valid* XOR checksum of a
      * different line.
+     *
+     * ```
+     * val crc = Crc16CheckSum()
+     * crc.add("123456789")
+     * crc.get().lexeme   // "12739"
+     * ```
+     *
+     * @return the CRC of every character added so far, with a five-digit lexeme
      */
     override fun get(): GInt {
         val value = crc and 0xffff
@@ -53,7 +69,6 @@ class Crc16CheckSum : CheckSumCalculator {
     }
 
     private companion object {
-        /** CCITT `x^16 + x^12 + x^5 + 1`, in its MSB-first encoding. */
         const val POLYNOMIAL = 0x1021
     }
 }

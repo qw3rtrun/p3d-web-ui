@@ -10,6 +10,11 @@ import java.util.regex.Pattern
  * else, addressed to a human. Decode the family with [CommentRsDecoder] when you do not care
  * which.
  *
+ * ```
+ * CommentRsDecoder.decode("//action:pause")   // ActionRs("pause")
+ * CommentRsDecoder.decode("// x")             // DebugRs("x")
+ * ```
+ *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 interface CommentRs<D : CommentRs<D>> : GProtoRs<D>
@@ -25,6 +30,14 @@ interface CommentRs<D : CommentRs<D>> : GProtoRs<D>
  * the `//` prefix between them and no line is claimed by both. A host that only wants the text
  * should decode with [CommentRsDecoder] and read [ActionRs.action] too, rather than expect this
  * class to cover the whole prefix.
+ *
+ * ```
+ * DebugRs.decode("// hi")            // DebugRs("hi")
+ * DebugRs.decode("//action:pause")   // null
+ * DebugRs("").encode()               // "//"
+ * ```
+ *
+ * @property text the line after `//`, trimmed
  */
 data class DebugRs(val text: String) : CommentRs<DebugRs> {
 
@@ -56,6 +69,14 @@ data class DebugRs(val text: String) : CommentRs<DebugRs> {
  * takes the text to show. The command is not checked against the documented set - an unknown
  * action is a host that is older than the firmware, and the spec says hosts ignore what they do
  * not understand rather than treat it as a broken line.
+ *
+ * ```
+ * ActionRs.decode("//action:out_of_filament T0")   // ActionRs("out_of_filament", "T0")
+ * ActionRs("prompt_begin", "Continue?").encode()   // "//action:prompt_begin Continue?"
+ * ```
+ *
+ * @property action the action's command word
+ * @property argument the rest of the line after the command word, or null when there is none
  */
 data class ActionRs(val action: String, val argument: String? = null) : CommentRs<ActionRs> {
 
@@ -79,7 +100,13 @@ data class ActionRs(val action: String, val argument: String? = null) : CommentR
     }
 }
 
-/** Either kind of `//` line, tried most specific first. */
+/**
+ * Either kind of `//` line, tried most specific first.
+ *
+ * ```
+ * CommentRsDecoder.decode("//action:pause")   // ActionRs("pause")
+ * ```
+ */
 object CommentRsDecoder : GRsDecoder<CommentRs<*>> {
 
     override fun match(line: String): Boolean = ActionRs.match(line) || DebugRs.match(line)

@@ -137,14 +137,22 @@ Concretely:
 - **Simple state machines over cleverness.** Modes are an `enum` plus a `when` over `(state, byte)`,
   nesting is a small `Int` counter. It reads as a table and ports as a table.
 
-**Where the line is.** Density is not licence for the two things that actually cost time here:
+**No inline comments, anywhere, ever.** There are exactly two places a comment is allowed to exist,
+in this module and in the DSL alike:
 
-1. **Byte-exact reviewability.** Every non-obvious rule still carries a one-line comment citing its
-   spec section (`// spec 3.1: at least one digit somewhere in the number`). Dense code with the
-   spec cited beside it is reviewable; dense code without it is not, and unreviewable is the one
-   failure mode this module cannot afford. Comment the *why*, never the *what*. **This one holds in
-   `code/dsl` too** — the facade cites spec sections exactly the same way.
-2. **Correctness invariants.** Round-trip fidelity, errors-as-values and the one-write lookahead rule
+1. **On top of the class/interface/object** — the main doc: what it is, its use cases, and an
+   example of use.
+2. **On each public method** — a doc comment (KDoc/Javadoc) with description, `@param`, `@return`,
+   and an example of use.
+
+Nothing else gets a comment. No line-level `// spec 3.1: ...` notes, no comments inside a function
+body, no comments on private members, no commented-out code. If a rule is non-obvious enough to need
+a citation, the citation belongs in the enclosing class's top-of-file doc or the method's doc
+comment — write it there, not beside the line it governs. This holds in `code/dsl` too.
+
+**Where the line is.** Density is not licence for the one thing that actually costs time here:
+
+1. **Correctness invariants.** Round-trip fidelity, errors-as-values and the one-write lookahead rule
    are not negotiable for performance. They are cheap; keep them. In `code/dsl` the *byte* half of
    this holds — a number keeps the lexeme it was written with, and framed output must parse back as a
    verified packet — but **errors-as-values does not**: a bad argument there throws, by design.

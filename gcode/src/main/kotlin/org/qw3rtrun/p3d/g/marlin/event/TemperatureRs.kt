@@ -14,6 +14,15 @@ import java.util.regex.Pattern
  * [target] is absent for a sensor that cannot be heated - the probe and the board report a reading
  * and nothing else. [power] is absent for every sensor Marlin does not write a `@` field for, which
  * is all of them except the active hotend, the bed, the chamber and the individual hotends.
+ *
+ * ```
+ * BareTemperatureRs.decode("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0")?.bed
+ * // HeaterReading(current = 23.87, target = 0.00, power = 0)
+ * ```
+ *
+ * @property current the reading, with the digits the machine wrote
+ * @property target the set point, or null for a sensor that cannot be heated
+ * @property power how hard the heater is driven, from its `@` field, or null when none is written
  */
 data class HeaterReading(
     val current: BigDecimal,
@@ -44,6 +53,22 @@ data class HeaterReading(
  * `P` probe, `L` cooler, `M` board, `R` redundant, and `T0`..`T7` for the individual hotends of a
  * multi-hotend machine, which are reported *in addition to* the active one in `T`.
  *
+ * ```
+ * TemperatureRsDecoder.decode("ok T:210.00 /210.00")?.ok   // true
+ * TemperatureRsDecoder.decode("T:24.31 /0.00")?.bed        // null - no heated bed reported
+ * ```
+ *
+ * @property hotend the active hotend, `T`
+ * @property bed the bed, `B`
+ * @property chamber the chamber, `C`
+ * @property probe the probe, `P`
+ * @property cooler the cooler, `L`
+ * @property board the board, `M`
+ * @property redundant the redundant sensor, `R`
+ * @property hotends the per-hotend readings of a multi-hotend machine, keyed by tool index
+ * @property ok true when the report rode in on an `ok`, which is how `M109` and `M190` end their
+ *   wait. Derived from the type rather than stored, so it cannot disagree with what the value
+ *   answers to: it is exactly `this is OkRs<*>`.
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 interface TemperatureRs<D : TemperatureRs<D>> : GEventRs<D>, TemperatureReportedEvent {
@@ -56,15 +81,8 @@ interface TemperatureRs<D : TemperatureRs<D>> : GEventRs<D>, TemperatureReported
     val board: HeaterReading?
     val redundant: HeaterReading?
 
-    /** The per-hotend readings of a multi-hotend machine, keyed by tool index. */
     val hotends: Map<Int, HeaterReading>
 
-    /**
-     * True when the report rode in on an `ok`, which is how `M109` and `M190` end their wait.
-     *
-     * Derived from the type rather than stored, so it cannot disagree with what the value answers
-     * to: it is exactly `this is OkRs<*>`.
-     */
     val ok: Boolean get() = this is OkRs<*>
 
     override fun hotend(): TemperatureReport? = hotend?.let(TemperatureFields::toReport)
@@ -74,7 +92,16 @@ interface TemperatureRs<D : TemperatureRs<D>> : GEventRs<D>, TemperatureReported
     override fun encode(): String = TemperatureFields.encode(this)
 }
 
-/** A temperature report on a line of its own: `M105`'s answer, or `M155`'s auto-report. */
+/**
+ * A temperature report on a line of its own: `M105`'s answer, or `M155`'s auto-report. It never
+ * matches a line that starts with `ok`.
+ *
+ * ```
+ * BareTemperatureRs.decode("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0")?.encode()
+ * // "T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0"
+ * BareTemperatureRs.decode("ok T:210.00 /210.00")   // null
+ * ```
+ */
 data class BareTemperatureRs(
     override val hotend: HeaterReading? = null,
     override val bed: HeaterReading? = null,
@@ -108,6 +135,10 @@ data class BareTemperatureRs(
  *
  * It answers to [OkRs], so a host that acknowledges on `OKReceivedEvent` sees this line for what it
  * is instead of treating it as an unrelated report and stalling on the `ok` it is still waiting for.
+ *
+ * ```
+ * OkTemperatureRs.decode("ok T:210.00 /210.00 B:60.00 /60.00 @:127 B@:80")?.hotend?.power   // 127
+ * ```
  */
 data class OkTemperatureRs(
     override val hotend: HeaterReading? = null,
@@ -137,7 +168,14 @@ data class OkTemperatureRs(
     }
 }
 
-/** A temperature report of either kind. */
+/**
+ * A temperature report of either kind.
+ *
+ * ```
+ * TemperatureRsDecoder.decode("T:24.31 /0.00")               // BareTemperatureRs
+ * TemperatureRsDecoder.decode("//action:prompt_begin T:1")   // null
+ * ```
+ */
 object TemperatureRsDecoder : GRsDecoder<TemperatureRs<*>> {
 
     override fun match(line: String): Boolean = TemperatureFields.scan(line) != null
@@ -154,11 +192,17 @@ object TemperatureRsDecoder : GRsDecoder<TemperatureRs<*>> {
  *
  * Kept here rather than duplicated across the two so that a change to Marlin's field set is made
  * once. [Fields] is what the scanner produces before it is known which class the line becomes.
+ *
+ * A field is either a power field (`@:127`, `B@:80`, `@1:0`) or a sensor field (`T:210.00 /210.00`).
+ * Power comes first in the scanner's alternation because `B@` would otherwise start matching as
+ * sensor `B`.
+ *
+ * ```
+ * TemperatureFields.scan("ok T:1.0")?.ok   // true
+ * ```
  */
 internal object TemperatureFields {
 
-    // A power field (`@:127`, `B@:80`, `@1:0`) or a sensor field (`T:210.00 /210.00`). Power comes
-    // first in the alternation because `B@` would otherwise start matching as sensor `B`.
     private val FIELD = Pattern.compile(
         "(?>([BC]?)@([0-9]?):[ \t]*([0-9]+))" +
                 "|(?>([TBCPLMR])([0-9]?):[ \t]*([-+]?(?>[0-9]*\\.)?[0-9]+)" +
@@ -166,6 +210,16 @@ internal object TemperatureFields {
         Pattern.CASE_INSENSITIVE
     )
 
+    /**
+     * One scanned report, before it is known whether it becomes a [BareTemperatureRs] or an
+     * [OkTemperatureRs]: the same payload, plus whether the line opened with `ok`.
+     *
+     * ```
+     * TemperatureFields.scan("T:24.31 /0.00")?.toBare()   // BareTemperatureRs(T:24.31 /0.00)
+     * ```
+     *
+     * @property ok whether the line opened with `ok`
+     */
     class Fields(
         val ok: Boolean,
         val hotend: HeaterReading?,
@@ -177,11 +231,41 @@ internal object TemperatureFields {
         val redundant: HeaterReading?,
         val hotends: Map<Int, HeaterReading>,
     ) {
+        /**
+         * These fields as a report on a line of its own.
+         *
+         * ```
+         * TemperatureFields.scan("T:24.31 /0.00")?.toBare()   // BareTemperatureRs(T:24.31 /0.00)
+         * ```
+         *
+         * @return a [BareTemperatureRs] with the same readings
+         */
         fun toBare() = BareTemperatureRs(hotend, bed, chamber, probe, cooler, board, redundant, hotends)
 
+        /**
+         * These fields as a report carried on an `ok`.
+         *
+         * ```
+         * TemperatureFields.scan("ok T:1.0")?.toOk()   // OkTemperatureRs(ok T:1.0)
+         * ```
+         *
+         * @return an [OkTemperatureRs] with the same readings
+         */
         fun toOk() = OkTemperatureRs(hotend, bed, chamber, probe, cooler, board, redundant, hotends)
     }
 
+    /**
+     * [reading] as the `:backend:core` event type, whose target and power are not nullable: an
+     * absent target reads as 0.0 and an absent power as 0.
+     *
+     * ```
+     * TemperatureFields.toReport(HeaterReading(BigDecimal("1.5")))
+     * // TemperatureReport[current=1.5, target=0.0, power=0]
+     * ```
+     *
+     * @param reading one sensor's reading
+     * @return the same reading as a `TemperatureReport`
+     */
     fun toReport(reading: HeaterReading): TemperatureReport =
         TemperatureReport(
             reading.current.toDouble(),
@@ -189,11 +273,21 @@ internal object TemperatureFields {
             reading.power ?: 0,
         )
 
+    /**
+     * [rs] as the line a printer would send. The fields go in Marlin's own order, from
+     * `print_heater_states`: the sensors first, then every power field. A host that re-encodes a
+     * report has to produce the order a printer would.
+     *
+     * ```
+     * TemperatureFields.encode(BareTemperatureRs(hotend = HeaterReading(BigDecimal("1.0"))))   // "T:1.0"
+     * ```
+     *
+     * @param rs a report of either kind
+     * @return the report's text, led by `ok` when [rs] rode in on one
+     */
     fun encode(rs: TemperatureRs<*>): String {
         val out = StringBuilder()
         if (rs.ok) out.append("ok")
-        // Marlin's own field order, from print_heater_states: the sensors first, then every power
-        // field. A host that re-encodes a report has to produce the order a printer would.
         appendTemp(out, 'T', rs.hotend)
         appendTemp(out, 'B', rs.bed)
         appendTemp(out, 'C', rs.chamber)
@@ -232,7 +326,19 @@ internal object TemperatureFields {
      * Every field has to be one this knows, with only whitespace between them, and there has to be
      * at least one sensor. A looser scan that took any line *containing* a `T:` would claim
      * `//action:prompt_begin T:1` and half the `echo:` traffic, and the caller would never learn
-     * that the rest of the line was dropped on the floor.
+     * that the rest of the line was dropped on the floor. Spec 9: a power value too wide for `Int` is
+     * malformed input off the wire, so the line does not scan.
+     *
+     * `C@` is written for the chamber and for the cooler alike - a Marlin quirk, not a choice this
+     * code can make. It goes to the chamber, the commoner of the two.
+     *
+     * ```
+     * TemperatureFields.scan("ok T:1.0")?.ok                     // true
+     * TemperatureFields.scan("//action:prompt_begin T:1")        // null
+     * ```
+     *
+     * @param line one received line
+     * @return the scanned fields, or null when the line is not wholly a temperature report
      */
     fun scan(line: String): Fields? {
         var rest = line.trim()
@@ -255,7 +361,6 @@ internal object TemperatureFields {
                 if (temps.put(key, readTemp(matcher) ?: return null) != null) return null
             } else {
                 val key = matcher.group(1).uppercase() + "@" + matcher.group(2)
-                // spec 9: a digit run too wide for Int is malformed input off the wire.
                 val power = matcher.group(3).toIntOrNull() ?: return null
                 if (powers.put(key, power) != null) return null
             }
@@ -273,8 +378,6 @@ internal object TemperatureFields {
             ok = ok,
             hotend = temps["T"]?.let { reading(it, powers["@"]) },
             bed = temps["B"]?.let { reading(it, powers["B@"]) },
-            // `C@` is written for the chamber and for the cooler alike - a Marlin quirk, not a
-            // choice this code can make. It goes to the chamber, the commoner of the two.
             chamber = temps["C"]?.let { reading(it, powers["C@"]) },
             probe = temps["P"]?.let { reading(it, null) },
             cooler = temps["L"]?.let { reading(it, null) },

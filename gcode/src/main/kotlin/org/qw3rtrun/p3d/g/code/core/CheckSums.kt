@@ -15,12 +15,23 @@ package org.qw3rtrun.p3d.g.code.core
  * misroute a large share of real CRC lines.
  *
  * Keeping the dispatch here is also what stops either calculator learning that the other exists.
+ *
+ * Section 8.1 spells the field `*<unsigned-int>`: **digits only**. A sign is not part of one, and
+ * `GInt` will happily carry `+57` as a lexeme of length 3, which would otherwise be read as a
+ * three-digit XOR field. RepRapFirmware's parser leaves its checksum state on the first non-digit and
+ * then rejects the line, so this agrees with it.
+ *
+ * ```
+ * checkSumCalculatorFor("57")      // an XorCheckSum
+ * checkSumCalculatorFor("00057")   // a Crc16CheckSum
+ * checkSumCalculatorFor("1234")    // null - no algorithm has four digits
+ * checkSumCalculatorFor("+57")     // null - not digits only
+ * ```
+ *
+ * @param lexeme the checksum field's value, exactly as written after the `*`
+ * @return a fresh calculator for the algorithm that width selects, or null when none does
  */
 fun checkSumCalculatorFor(lexeme: String): CheckSumCalculator? {
-    // Section 8.1 spells the field `*<unsigned-int>`: digits only. A sign is not part of one, and
-    // `GInt` will happily carry `+57` as a lexeme of length 3, which would otherwise be read as a
-    // three-digit XOR field. RepRapFirmware's parser leaves its checksum state on the first
-    // non-digit and then rejects the line, so this agrees with it.
     for (i in 0 until lexeme.length) {
         val ch = lexeme[i]
         if (ch < '0' || ch > '9') return null

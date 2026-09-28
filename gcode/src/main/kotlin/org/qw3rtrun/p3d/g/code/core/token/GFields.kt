@@ -35,6 +35,16 @@ package org.qw3rtrun.p3d.g.code.core.token
  * [idIndex] is not checked: a caller that has found an identifier passes its index, and one that
  * passes anything else gets the token behind it, which is the same question asked of a different
  * position rather than an error.
+ *
+ * ```
+ * valueIndex(GTokenizer.parse("N 1").toList(), 0)        // 2
+ * valueIndex(GTokenizer.parse("N*").toList(), 0)         // -1
+ * valueIndex(GTokenizer.parse("X (c) 10").toList(), 0)   // -1 - a comment ends the field
+ * ```
+ *
+ * @param tokens the tokens to read
+ * @param idIndex the index of the identifier whose value is wanted
+ * @return the index of its value token, or -1 when it has none
  */
 fun valueIndex(tokens: List<GToken>, idIndex: Int): Int {
     var i = idIndex + 1
@@ -59,6 +69,25 @@ fun valueIndex(tokens: List<GToken>, idIndex: Int): Int {
  *
  * `T` may head the command, because [tokens] are one command's - its first position is by
  * definition the position spec 4.2's parameter reading cannot apply to.
+ *
+ * How the head is found, which [headEnd] shares:
+ *
+ * - **Leading whitespace only** is skipped. Anything else in front of the letter means these are not
+ *   one command's tokens, and guessing which of them to skip is how a head goes missing.
+ * - Spec 4.3: only A-Z are identifiers, so `*` - a `GChecksum` - heads nothing; the letter must be a
+ *   command letter per [isCommandLetter], as the first of the command.
+ * - Spec 2.1: a space may separate a field from its value, so `G 1` is one word, paired by
+ *   [valueIndex].
+ * - Spec 4.1: a command word is the letter *followed by a number*, one that [isCommandNumber] accepts.
+ *   A bare `G` is a flag.
+ *
+ * ```
+ * headWord(GTokenizer.parse("G 1 X10").toList())   // GParameterWord(GLetter('G'), GInt(1))
+ * headWord(GTokenizer.parse("X10").toList())       // null
+ * ```
+ *
+ * @param tokens one command's tokens, from its start
+ * @return the command word, canonically spelled, or null when [tokens] do not start a command
  */
 fun headWord(tokens: List<GToken>): GParameterWord<GNumber>? {
     val id = headIdIndex(tokens)
@@ -80,20 +109,37 @@ fun headWord(tokens: List<GToken>): GParameterWord<GNumber>? {
  *
  * The **number is untouched**: its lexeme is part of its identity (spec 4.1, [GNumber]), so `M0105`
  * is still not `M105`. Case is a property of the writing, digits are not.
+ *
+ * The fold is explicit ASCII, not `uppercaseChar()`: spec 1.1's wire format is 7-bit, and a
+ * locale-dependent or Unicode-wide fold is the bug `GIdentifier.isLetter` documents.
+ *
+ * ```
+ * headKey(GParameterWord(GLetter('m'), GInt(104)))   // GParameterWord(GLetter('M'), GInt(104))
+ * ```
+ *
+ * @param word a command head, as [headWord] reads it
+ * @return the same word with a lowercase letter folded to upper case, or [word] itself otherwise
  */
 fun headKey(word: GParameterWord<*>): GParameterWord<*> {
     val id = word.id
     if (id !is GLetter) return word
     val letter = id.letter
     if (letter < 'a' || letter > 'z') return word
-    // Explicit ASCII, not `uppercaseChar()`: spec 1.1's wire format is 7-bit, and a
-    // locale-dependent or Unicode-wide fold is the bug `GIdentifier.isLetter` documents.
     return GParameterWord(GLetter((letter.code - 32).toChar()), word.value)
 }
 
 /**
  * Where the command word that starts [tokens] ends - the index of the first parameter token - or 0
- * when [tokens] do not start a command and nothing has been consumed.
+ * when [tokens] do not start a command and nothing has been consumed. The head is found by the same
+ * rule as [headWord].
+ *
+ * ```
+ * headEnd(GTokenizer.parse("G1 X10").toList())   // 2
+ * headEnd(GTokenizer.parse("X10").toList())      // 0
+ * ```
+ *
+ * @param tokens one command's tokens, from its start
+ * @return the index just past the command word's number, or 0
  */
 fun headEnd(tokens: List<GToken>): Int {
     val id = headIdIndex(tokens)
@@ -112,6 +158,16 @@ fun headEnd(tokens: List<GToken>): Int {
  *
  * `D` (spec 4.1, Marlin debug builds) is deliberately absent: spec 4.2 also lists `D` as a
  * parameter letter (diameter, PID `D`), so treating it as a command would misread those.
+ *
+ * ```
+ * isCommandLetter('T', true)    // true
+ * isCommandLetter('T', false)   // false
+ * isCommandLetter('D', true)    // false
+ * ```
+ *
+ * @param c the letter to test
+ * @param first whether no command has started yet - the only position in which `T` heads one
+ * @return true when [c] heads a command in that position
  */
 fun isCommandLetter(c: Char, first: Boolean): Boolean =
     c == 'G' || c == 'g' ||
@@ -129,12 +185,26 @@ fun isCommandLetter(c: Char, first: Boolean): Boolean =
  * this file would refuse to read back. That symmetry is the point: a builder and a reader
  * disagreeing about what a command number is would let a round-trip test pass on input no firmware
  * accepts.
+ *
+ * A lexeme that does not start with a digit - a sign, a leading dot, or no digits at all - is
+ * refused; one that is all digits is a plain command number; otherwise it must be digits, one `.`,
+ * and at least one more digit.
+ *
+ * ```
+ * isCommandNumber("29.1")   // true
+ * isCommandNumber("01")     // true
+ * isCommandNumber("-1")     // false
+ * isCommandNumber("29.")    // false
+ * ```
+ *
+ * @param lexeme a number token's exact characters
+ * @return true when [lexeme] is a valid command number
  */
 fun isCommandNumber(lexeme: String): Boolean {
     var i = 0
     while (i < lexeme.length && digit(lexeme[i])) i++
-    if (i == 0) return false                    // a sign, a leading dot, or no digits at all
-    if (i == lexeme.length) return true         // plain command number
+    if (i == 0) return false
+    if (i == lexeme.length) return true
     if (lexeme[i] != '.') return false
     i++
     val subcodeStart = i
@@ -142,26 +212,19 @@ fun isCommandNumber(lexeme: String): Boolean {
     return i > subcodeStart && i == lexeme.length
 }
 
-/** The index of the command letter [tokens] open with, or -1. */
 private fun headIdIndex(tokens: List<GToken>): Int {
     var i = 0
-    // Leading whitespace only: anything else in front of the letter means these are not one
-    // command's tokens, and guessing which of them to skip is how a head goes missing.
     while (i < tokens.size && tokens[i] is GWhitespace) i++
     if (i >= tokens.size) return -1
     val id = tokens[i]
-    // spec 4.3: only A-Z are identifiers, so `*` - a GChecksum - heads nothing.
     if (id !is GLetter) return -1
     if (!isCommandLetter(id.letter, true)) return -1
     return i
 }
 
-/** The index of the command number behind the letter at [idIndex], or -1. */
 private fun headNumIndex(tokens: List<GToken>, idIndex: Int): Int {
-    // spec 2.1: a space may separate a field from its value, so `G 1` is one word.
     val j = valueIndex(tokens, idIndex)
     if (j < 0) return -1
-    // spec 4.1: a command word is the letter *followed by a number*. A bare `G` is a flag.
     val value = tokens[j]
     if (value !is GNumber) return -1
     if (!isCommandNumber(value.lexeme)) return -1

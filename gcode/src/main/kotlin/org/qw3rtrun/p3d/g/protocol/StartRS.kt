@@ -9,6 +9,11 @@ package org.qw3rtrun.p3d.g.protocol
  * Seeing it mid-session means the board reset, which is the one reason a host cares: the line
  * number sequence restarts and any send window is stale.
  *
+ * ```
+ * StartRs.match(" START ")   // true - trimmed and case-insensitive
+ * StartRs.encode()           // "start"
+ * ```
+ *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 object StartRs : GProtoRs<StartRs>, GRsDecoder<StartRs> {

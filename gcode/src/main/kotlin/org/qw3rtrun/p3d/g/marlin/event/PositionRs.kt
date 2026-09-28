@@ -20,8 +20,26 @@ import java.util.regex.Pattern
  *
  * Both are kept as maps rather than named fields because the axis set is a compile-time decision:
  * `I`, `J`, `K`, `U`, `V`, `W` exist on machines with more than three axes, `E` is absent on a
- * machine with no extruder, and a delta reports `Count A: B: C:` instead of `X: Y: Z:`.
+ * machine with no extruder, and a delta reports `Count A: B: C:` instead of `X: Y: Z:`. [encode]
+ * writes the axes in `X Y Z I J K U V W E A B C` order - `E` last, the way Marlin writes it, and
+ * `A`/`B`/`C` for the delta and SCARA count labels.
  *
+ * **The whole line or nothing**, for the same reason [TemperatureRs] scans that way: a line that
+ * merely contains an `X:` is not a position report, and half-reading one loses the part that was not
+ * understood without telling anyone. Everything after `Count` is stepper positions, and there is only
+ * one `Count`. Spec 9: a step count too wide for `Int` is malformed input off the wire, so the line
+ * does not match. A bare `Count X:0` is not a position report, and neither is an empty one. `X` is
+ * the anchor: Marlin's `report_logical_position` always writes at least X, Y and Z, and without an
+ * anchor this would claim `T:93.2 B:22.9` - the target-less temperature report the RepRap spec shows -
+ * as a position on axes T and B.
+ *
+ * ```
+ * PositionRs.decode("X:1.00 Y:2.00 Z:3.00 Count X:10")?.counts   // {X=10}
+ * PositionRs.decode("T:93.2 B:22.9")                             // null
+ * ```
+ *
+ * @property axes the logical position, per axis letter, with the digits the machine wrote
+ * @property counts the stepper position in steps, per axis label; empty when the line has no `Count`
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 data class PositionRs(
@@ -48,7 +66,6 @@ data class PositionRs(
 
     companion object : GRsDecoder<PositionRs> {
 
-        // `E` last, the way Marlin writes it, and `A`/`B`/`C` for the delta and SCARA count labels.
         private val AXIS_ORDER = "XYZIJKUVWEABC".toCharArray()
 
         private val FIELD = Pattern.compile("([XYZIJKUVWEABC]):[ \t]*([-+]?(?>[0-9]*\\.)?[0-9]+)")
@@ -61,11 +78,6 @@ data class PositionRs(
             return scanned
         }
 
-        /**
-         * The whole line or nothing, for the same reason [TemperatureRs] scans that way: a line
-         * that merely contains an `X:` is not a position report, and half-reading one loses the
-         * part that was not understood without telling anyone.
-         */
         private fun scan(line: String): PositionRs? {
             val rest = line.trim()
             if (rest.isEmpty()) return null
@@ -80,7 +92,6 @@ data class PositionRs(
                     continue
                 }
                 if (rest.startsWith(COUNT, at)) {
-                    // Everything after `Count` is stepper positions, and there is only one `Count`.
                     if (inCounts) return null
                     inCounts = true
                     at += COUNT.length
@@ -89,7 +100,6 @@ data class PositionRs(
                 if (!matcher.find(at) || matcher.start() != at) return null
                 val axis = matcher.group(1)[0]
                 if (inCounts) {
-                    // spec 9: a step count too wide for Int is malformed input off the wire.
                     val steps = matcher.group(2).toIntOrNull() ?: return null
                     if (counts.put(axis, steps) != null) return null
                 } else {
@@ -98,11 +108,7 @@ data class PositionRs(
                 }
                 at = matcher.end()
             }
-            // A bare `Count X:0` is not a position report, and neither is an empty one.
             if (axes.isEmpty()) return null
-            // `X` is the anchor. Marlin's report_logical_position always writes at least X, Y and
-            // Z, and without an anchor this claims `T:93.2 B:22.9` - the target-less temperature
-            // report the RepRap spec shows - as a position on axes T and B.
             if (!axes.containsKey('X')) return null
             if (inCounts && counts.isEmpty()) return null
             return PositionRs(axes, counts)

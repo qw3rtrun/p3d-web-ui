@@ -2,15 +2,24 @@ package org.qw3rtrun.p3d.g.protocol
 
 import java.util.regex.Pattern
 
-/** The three prefixes an error reply is written with, and the lexeme each one writes. */
+/**
+ * The three prefixes an error reply is written with, and the lexeme each one writes:
+ *
+ * - `BANGS` - `!!`, the original two-character error prefix.
+ * - `ERROR` - `Error:`, what Marlin and RepRapFirmware send.
+ * - `FATAL` - `fatal:`, Repetier Firmware.
+ *
+ * ```
+ * ErrorPrefix.ERROR.lexeme   // "Error:"
+ * ```
+ *
+ * @property lexeme the prefix exactly as it is written on the wire
+ */
 enum class ErrorPrefix(val lexeme: String) {
-    /** `!!` - the original two-character error prefix. */
     BANGS("!!"),
 
-    /** `Error:` - what Marlin and RepRapFirmware send. */
     ERROR("Error:"),
 
-    /** `fatal:` - Repetier Firmware. */
     FATAL("fatal:"),
 }
 
@@ -30,27 +39,33 @@ enum class ErrorPrefix(val lexeme: String) {
  * a decoder. What this class does promise is [lastLine], because the resend protocol of spec 8.5
  * is addressed by line number and the number is right there in the text.
  *
+ * On the way out, `!!` is a two-character prefix and takes a space before the message, the way `//`
+ * does; `Error:` and `fatal:` end in their own separator, and the spec's example has nothing after
+ * it.
+ *
+ * ```
+ * ErrorRs.decode("Error:checksum mismatch, Last Line: 66555")?.lastLine   // 66555
+ * ErrorRs(ErrorPrefix.BANGS, "hw").encode()                               // "!! hw"
+ * ```
+ *
+ * @property prefix which of the three prefixes the line was written with
+ * @property message the machine's own words, after the prefix, trimmed
+ * @property lastLine the line number in a `Last Line: <n>` message, or null when the message does not
+ *   name one. Only the `Last Line:` spelling is read. `expected line <n1> got <n2>` names two numbers
+ *   with no marker saying which is which, so reading it would be a guess. Spec 9: a number too wide
+ *   for `Int` is malformed input, so the field reads as absent.
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 data class ErrorRs(val prefix: ErrorPrefix, val message: String) : GProtoRs<ErrorRs> {
 
-    /**
-     * The line number in a `Last Line: <n>` message, or null when the message does not name one.
-     *
-     * Only the `Last Line:` spelling is read. `expected line <n1> got <n2>` names two numbers with
-     * no marker saying which is which, so reading it would be a guess.
-     */
     val lastLine: Int?
         get() {
             val matcher = LAST_LINE_PATTERN.matcher(message)
             if (!matcher.find()) return null
-            // spec 9: a number too wide for Int is malformed input, so the field reads as absent.
             return matcher.group(1).toIntOrNull()
         }
 
     override fun encode(): String = when (prefix) {
-        // `!!` is a two-character prefix and takes a space, the way `//` does. `Error:` and
-        // `fatal:` end in their own separator, and the spec's example has nothing after it.
         ErrorPrefix.BANGS -> if (message.isEmpty()) prefix.lexeme else prefix.lexeme + " " + message
         else -> prefix.lexeme + message
     }

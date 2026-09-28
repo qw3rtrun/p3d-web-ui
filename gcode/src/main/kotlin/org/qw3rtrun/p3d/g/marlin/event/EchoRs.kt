@@ -12,6 +12,11 @@ import java.util.regex.Pattern
  * a rejected command comes out under it. [UnknownCommand] is split out because a host has to act on
  * it; everything else is [EchoMessage].
  *
+ * ```
+ * EchoRsDecoder.decode("echo:Unknown command: \"M9999\"")   // UnknownCommand("M9999")
+ * EchoRsDecoder.decode("echo:busy")                         // EchoMessage("busy")
+ * ```
+ *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 interface EchoRs<D : EchoRs<D>> : GEventRs<D>
@@ -21,6 +26,13 @@ interface EchoRs<D : EchoRs<D>> : GEventRs<D>
  *
  * Deliberately does **not** match [UnknownCommand], so the two partition the prefix between them
  * and no line is claimed by both, the way `DebugRs` and `ActionRs` partition `//`.
+ *
+ * ```
+ * EchoMessage.decode("echo:busy")   // EchoMessage("busy")
+ * EchoMessage("busy").encode()      // "echo:busy"
+ * ```
+ *
+ * @property text the line after `echo:`, trimmed
  */
 data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
 
@@ -45,6 +57,12 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
  *
  * Worth its own class because it is the one `echo:` a host must not ignore: it means a command was
  * accepted by the wire protocol, acknowledged with an `ok`, and then did nothing at all.
+ *
+ * ```
+ * UnknownCommand.decode("echo:Unknown command: \"M9999\"")   // UnknownCommand("M9999")
+ * ```
+ *
+ * @property command the rejected command, as the firmware quoted it
  */
 data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
 
@@ -67,7 +85,13 @@ data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
     }
 }
 
-/** Either kind of `echo:` line, tried most specific first. */
+/**
+ * Either kind of `echo:` line, tried most specific first.
+ *
+ * ```
+ * EchoRsDecoder.decode("echo:Unknown command: \"M9999\"")   // UnknownCommand("M9999")
+ * ```
+ */
 object EchoRsDecoder : GRsDecoder<EchoRs<*>> {
 
     override fun match(line: String): Boolean = UnknownCommand.match(line) || EchoMessage.match(line)

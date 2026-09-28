@@ -24,11 +24,17 @@ package org.qw3rtrun.p3d.g.protocol
  * replies are normal: `M105` answers with a bare temperature report, `M115` with
  * `FIRMWARE_NAME:...`. Those have their own decoders and are not part of this base set.
  *
+ * ```
+ * BaseRsDecoder.decode("wait")     // WaitRs
+ * BaseRsDecoder.decode("T:20.0")   // null - not a base protocol reply
+ * ```
+ *
+ * @property decoders one decoder per reply kind. `ok` comes first because it is far and away the
+ *   most common.
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 object BaseRsDecoder : GRsDecoder<GRs<*>> {
 
-    /** One decoder per reply kind. `ok` comes first because it is far and away the most common. */
     val decoders: List<GRsDecoder<GRs<*>>> = listOf(
         OkRsDecoder,
         WaitRs,

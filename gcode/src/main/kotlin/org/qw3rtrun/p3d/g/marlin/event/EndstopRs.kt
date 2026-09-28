@@ -24,6 +24,10 @@ import java.util.regex.Pattern
  * without its terminator is wrong rather than merely partial - see todo 12 on the multi-line
  * problem, which is still open.
  *
+ * ```
+ * EndstopReportHeader.decode("Reporting endstop status")   // EndstopReportHeader
+ * ```
+ *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 object EndstopReportHeader : GEventRs<EndstopReportHeader>, GRsDecoder<EndstopReportHeader> {
@@ -44,6 +48,15 @@ object EndstopReportHeader : GEventRs<EndstopReportHeader>, GRsDecoder<EndstopRe
  * Marlin's own set, from `Endstops::report_states`: `<axis>_min` / `<axis>_max` for axes `x`, `y`,
  * `z`, `a`..`w` and their duplicates `x2`, `y2`, `z2`, `z3`, `z4`, plus `z_probe`, `probe_en` and
  * `filament`.
+ *
+ * ```
+ * EndstopStateRs.decode("x_min: TRIGGERED")     // EndstopStateRs("x_min", triggered = true)
+ * EndstopStateRs.match("busy: processing")      // false
+ * EndstopStateRs("z_probe", false).encode()     // "z_probe: open"
+ * ```
+ *
+ * @property name the endstop's name, as Marlin wrote it
+ * @property triggered true for `TRIGGERED`, false for `open`
  */
 data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<EndstopStateRs> {
 
@@ -69,7 +82,13 @@ data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<Endsto
     }
 }
 
-/** Either line of an `M119` report. */
+/**
+ * Either line of an `M119` report.
+ *
+ * ```
+ * EndstopRsDecoder.decode("y_max: open")   // EndstopStateRs("y_max", triggered = false)
+ * ```
+ */
 object EndstopRsDecoder : GRsDecoder<GRs<*>> {
 
     override fun match(line: String): Boolean =

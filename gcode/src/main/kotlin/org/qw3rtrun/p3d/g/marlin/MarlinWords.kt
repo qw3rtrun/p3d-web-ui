@@ -28,6 +28,12 @@ import java.math.BigDecimal
  * Every accessor returns `null` for "the command does not carry this letter", because on this side
  * of the DSL an absent optional parameter is the normal case - 831 of Marlin's 882 documented
  * parameters are optional.
+ *
+ * ```
+ * val params = GTokenizer.parse(" X10 T").toList()
+ * params.valueOf('X')   // GInt(10)
+ * params.hasWord('T')   // true
+ * ```
  */
 
 /**
@@ -36,15 +42,26 @@ import java.math.BigDecimal
  * Null also for a letter that is *there* but carries no value - the bare `T` of `G33 T` - because
  * a valued property has no way to say "present, without a value"; [hasWord] is the reading for a
  * parameter modelled as a flag.
+ *
+ * The pairing is spec 2.1's, which is `valueIndex`'s and not a fourth copy of it here. **The first
+ * spelling of the letter wins**, value or not: a line carrying `X` and then `X10` is malformed, and
+ * quietly preferring the second would hide it.
+ *
+ * ```
+ * GTokenizer.parse(" X10 T").toList().valueOf('X')   // GInt(10)
+ * GTokenizer.parse(" X10 T").toList().valueOf('T')   // null - present, but no value
+ * GTokenizer.parse("X X10").toList().valueOf('X')    // null - the first spelling wins
+ * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letter the parameter letter, in either case
+ * @return the value token paired with the letter's first occurrence, or null
  */
 internal fun List<GToken>.valueOf(letter: Char): GValue? {
     var i = 0
     while (i < size) {
         val token = this[i]
         if (token is GIdentifier && token.isLetter(letter)) {
-            // spec 2.1's pairing, which is `valueIndex`'s and not a fourth copy of it here.
-            // The first spelling of the letter wins, value or not: a line carrying `X` and then
-            // `X10` is malformed, and quietly preferring the second would hide it.
             val j = valueIndex(this, i)
             return if (j < 0) null else this[j] as GValue
         }
@@ -58,17 +75,50 @@ internal fun List<GToken>.valueOf(letter: Char): GValue? {
  *
  * True for a bare `X` and also for an `X5`: a flag parameter in the model cannot hold the 5, so a
  * value the model does not expect is reported as presence rather than silently dropped.
+ *
+ * ```
+ * GTokenizer.parse(" X10 T").toList().hasWord('T')   // true
+ * GTokenizer.parse(" X10 T").toList().hasWord('x')   // true - case-insensitive
+ * GTokenizer.parse(" X10 T").toList().hasWord('Y')   // false
+ * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letter the parameter letter, in either case
+ * @return true when any identifier spells the letter
  */
 internal fun List<GToken>.hasWord(letter: Char): Boolean =
     any { it is GIdentifier && it.isLetter(letter) }
 
+/**
+ * An integer parameter. `X1.0` where an int was documented takes the integral part rather than
+ * losing the word.
+ *
+ * ```
+ * GTokenizer.parse("X1.0").toList().intOf('X')   // 1
+ * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letter the parameter letter, in either case
+ * @return the integer value, or null when the letter carries no number
+ */
 internal fun List<GToken>.intOf(letter: Char): Int? = when (val v = valueOf(letter)) {
     is GInt -> v.int
-    // `X1.0` where an int was documented: take the integral part rather than losing the word.
     is GFloat -> v.value.toInt()
     else -> null
 }
 
+/**
+ * A long parameter, for values past `Int`'s range. A decimal takes its integral part, as [intOf]
+ * does.
+ *
+ * ```
+ * GTokenizer.parse("S4000000000.0").toList().longOf('S')   // 4000000000L
+ * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letter the parameter letter, in either case
+ * @return the value as a `Long`, or null when the letter carries no number
+ */
 internal fun List<GToken>.longOf(letter: Char): Long? = when (val v = valueOf(letter)) {
     is GInt -> v.int.toLong()
     is GFloat -> v.value.toLong()
@@ -80,6 +130,15 @@ internal fun List<GToken>.longOf(letter: Char): Long? = when (val v = valueOf(le
  *
  * `GInt` is accepted as well as `GFloat` because `M140 S60` and `M140 S60.0` are the same
  * temperature, and the encoder writes whichever the caller's scale asked for.
+ *
+ * ```
+ * GTokenizer.parse("S60").toList().decimalOf('S')     // BigDecimal("60")
+ * GTokenizer.parse("S60.0").toList().decimalOf('S')   // BigDecimal("60.0")
+ * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letter the parameter letter, in either case
+ * @return the decimal, with the scale it was written with, or null when the letter carries no number
  */
 internal fun List<GToken>.decimalOf(letter: Char): BigDecimal? = when (val v = valueOf(letter)) {
     is GFloat -> v.value
@@ -87,12 +146,35 @@ internal fun List<GToken>.decimalOf(letter: Char): BigDecimal? = when (val v = v
     else -> null
 }
 
-/** Marlin writes booleans as `S1` / `S0` (spec 3.3), so any non-zero number is true. */
+/**
+ * A boolean parameter. Marlin writes booleans as `S1` / `S0` (spec 3.3), so any non-zero number is
+ * true.
+ *
+ * ```
+ * GTokenizer.parse("S1").toList().boolOf('S')   // true
+ * GTokenizer.parse("S0").toList().boolOf('S')   // false
+ * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letter the parameter letter, in either case
+ * @return whether the number is non-zero, or null when the letter carries no number
+ */
 internal fun List<GToken>.boolOf(letter: Char): Boolean? = when (val v = valueOf(letter)) {
     is GNumber -> v.number.toDouble() != 0.0
     else -> null
 }
 
+/**
+ * A quoted-string parameter (spec 3.4), decoded.
+ *
+ * ```
+ * GTokenizer.parse("S\"hi\"").toList().stringOf('S')   // "hi"
+ * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letter the parameter letter, in either case
+ * @return the string's text, or null when the letter carries no quoted string
+ */
 internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueOf(letter)) {
     is GQuotedString -> v.string
     else -> null
@@ -139,12 +221,24 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
  * comment or the terminator, is separation rather than content and is dropped; whitespace *inside*
  * is the whole point and is kept exactly. Nothing left is reported as null, like every other absent
  * parameter here.
+ *
+ * The string is rebuilt from there to the end of the line in the bytes it was written in:
+ * `rawText()` per token is what makes `M117 done: 10.50 (ok)` come back with its digits and its
+ * parentheses intact. [letters] match case-insensitively, through `GIdentifier.isLetter`'s own ASCII
+ * folding (spec 2.2), so `M118 p1 x` reads `p1` as the parameter.
+ *
+ * ```
+ * GTokenizer.parse(" P1 ello World").toList().stringArg('P')    // "ello World"
+ * GTokenizer.parse(" Hi (there) ;c").toList().stringArg()       // "Hi (there)"
+ * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letters this command's own lettered parameters
+ * @return the bare string, or null when the command carries none
  */
 internal fun List<GToken>.stringArg(vararg letters: Char): String? {
     var i = stringArgStart(letters)
 
-    // From there to the end of the line, in the bytes it was written in: `rawText()` per token is
-    // what makes `M117 done: 10.50 (ok)` come back with its digits and its parentheses intact.
     val out = StringBuilder()
     while (i < size) {
         val token = this[i]
@@ -166,19 +260,24 @@ internal fun List<GToken>.stringArg(vararg letters: Char): String? {
  * because a letter inside the string is text and not a parameter: `M118 Hello World P1` carries the
  * message `Hello World P1` and no `P`. Scanning the whole line for `P` instead would find that one,
  * which is how a message comes back having quietly set a parameter the sender never wrote.
+ *
+ * The bare string begins past the run of `<letter><value>` fields spelling one of [letters], and
+ * past the whitespace separating it from them (spec 2.1 lets a space sit inside a field, so the
+ * pairing is `valueIndex`'s). A letter of this command's that carries **no** value ends the run
+ * rather than being skipped - the model has no way to say "present, without a value" for a valued
+ * parameter, and guessing would swallow a word of the string. [stringArg] starts at the same index.
+ *
+ * ```
+ * GTokenizer.parse(" P1 Hello World P1").toList().beforeStringArg('P')   // [GSpace, P, 1, GSpace]
+ * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letters this command's own lettered parameters
+ * @return a view of the tokens in front of the bare string
  */
 internal fun List<GToken>.beforeStringArg(vararg letters: Char): List<GToken> =
     subList(0, stringArgStart(letters))
 
-/**
- * The index where the bare string begins: past the run of `<letter><value>` fields spelling one of
- * [letters], and past the whitespace separating it from them (spec 2.1 lets a space sit inside a
- * field, so the pairing is `valueOf`'s).
- *
- * A letter of this command's that carries **no** value ends the run rather than being skipped - the
- * model has no way to say "present, without a value" for a valued parameter, and guessing would
- * swallow a word of the string.
- */
 private fun List<GToken>.stringArgStart(letters: CharArray): Int {
     var i = 0
     while (i < size) {
@@ -196,7 +295,6 @@ private fun List<GToken>.stringArgStart(letters: CharArray): Int {
     return i
 }
 
-/** spec 2.2: case-insensitive, through `GIdentifier.isLetter`'s own ASCII folding. */
 private fun GIdentifier.isOneOf(letters: CharArray): Boolean {
     var i = 0
     while (i < letters.size) {

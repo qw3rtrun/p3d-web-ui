@@ -13,8 +13,26 @@ import org.qw3rtrun.p3d.g.code.core.token.headWord
  * The writing direction has the semantics in hand - the caller holds a `SetHotendTemperature`, so
  * what every parameter means is already decided - and that is why [encode] may produce a
  * [GCommand]. Reading is the other way round and is [GRqDecoder]'s job.
+ *
+ * Every Marlin command class in `marlin.command` implements it, and `MarlinCommands.all` lists one
+ * bare instance of each.
+ *
+ * ```
+ * GEncoder.encode(ReportHotendTemperature(index = 0).encode())   // "M105 T0"
+ * ```
  */
 interface GRq<T : GRq<T>> {
+
+    /**
+     * This request as a command, ready for `GEncoder`. An absent optional parameter is absent from
+     * the command, so a bare instance encodes to exactly its code.
+     *
+     * ```
+     * GEncoder.encode(ReportHotendTemperature().encode())   // "M105"
+     * ```
+     *
+     * @return the command, with every parameter this request carries
+     */
     fun encode(): GCommand
 }
 
@@ -28,10 +46,24 @@ interface GRq<T : GRq<T>> {
  * knows the command number. A decoder does. So it is handed the tokens as lexed and decides for
  * itself what they mean - which is also what lets a command with a rest-of-line argument be read at
  * all, rather than being mis-split before it ever reaches its decoder.
+ *
+ * Every Marlin command class's companion object implements it, so the class name is the decoder.
+ *
+ * ```
+ * ReportHotendTemperature.decode(GTokenizer.parse("M105 T0").toList())   // ReportHotendTemperature(M105 T0)
+ * ```
  */
 interface GRqDecoder<out T : GRq<out T>> {
 
-    /** The command word this decoder answers to, canonically spelled: `G1`, `M104`, `G38.2`. */
+    /**
+     * The command word this decoder answers to, canonically spelled: `G1`, `M104`, `G38.2`.
+     *
+     * ```
+     * ReportHotendTemperature.head()   // GParameterWord(GLetter('M'), GInt(105))
+     * ```
+     *
+     * @return the command word, `[id, number]` and nothing else
+     */
     fun head(): GParameterWord<*>
 
     /**
@@ -47,6 +79,13 @@ interface GRqDecoder<out T : GRq<out T>> {
      * through a command, which is an API describing its own hazard instead of ruling it out. Every
      * implementation opened with `toList()` anyway, and what a line hands over (`GLine.body`) is a
      * `List` to begin with, so the sequence only ever bought two copies per decode.
+     *
+     * ```
+     * ReportHotendTemperature.decodeParams(GTokenizer.parse(" T0").toList())   // ReportHotendTemperature(M105 T0)
+     * ```
+     *
+     * @param tokens what followed the head, as lexed
+     * @return the typed request; a parameter the tokens do not carry is absent
      */
     fun decodeParams(tokens: List<GToken>): T
 
@@ -58,12 +97,21 @@ interface GRqDecoder<out T : GRq<out T>> {
      * the lexeme is part of a number's identity in this model, so a non-canonical `M0105` does not
      * resolve - but not on its spacing (`G 1` and `G1` are one head) and not on its case
      * (spec 2.2: `m104` is `M104`, which is `headKey`'s job).
+     *
+     * The head is stripped with `subList`, not `drop`: a view onto the tokens already in hand, the
+     * same way a framed line's body is a slice of its raw. Nothing is copied to strip a head.
+     *
+     * ```
+     * ReportHotendTemperature.decode(GTokenizer.parse("m105 T0").toList())   // ReportHotendTemperature(M105 T0)
+     * ReportHotendTemperature.decode(GTokenizer.parse("M0105").toList())     // null
+     * ```
+     *
+     * @param tokens one command's tokens, head included
+     * @return the typed request, or null when the head is not this decoder's
      */
     fun decode(tokens: List<GToken>): T? {
         val head = headWord(tokens) ?: return null
         if (headKey(head()) != headKey(head)) return null
-        // `subList`, not `drop`: a view onto the tokens already in hand, the same way a framed
-        // line's body is a slice of its raw. Nothing is copied to strip a head.
         return decodeParams(tokens.subList(headEnd(tokens), tokens.size))
     }
 }

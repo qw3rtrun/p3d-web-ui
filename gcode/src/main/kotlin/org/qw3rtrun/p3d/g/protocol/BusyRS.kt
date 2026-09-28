@@ -14,8 +14,21 @@ import java.util.regex.Pattern
  * ([PROCESSING], [PAUSED_FOR_USER], [PAUSED_FOR_INPUT]) but says "possible reasons are", not
  * "the reasons are", and firmwares do add their own - an enum would turn a reason this code has
  * not seen into a line that does not decode at all, which is worse than a string it cannot
- * interpret. Compare against the constants when you need to branch.
+ * interpret. Compare against the constants when you need to branch:
  *
+ * - `PROCESSING` - busy with a lengthy command: homing, heat-up, auto levelling.
+ * - `PAUSED_FOR_USER` - paused, awaiting an action by the user on the machine's own controller.
+ * - `PAUSED_FOR_INPUT` - paused, awaiting input from the user on the machine's own controller.
+ *
+ * The reason has to start with a non-space, so that a bare `busy:` does not decode to an empty
+ * reason, which would encode back to `busy: ` and not round-trip.
+ *
+ * ```
+ * BusyRs.decode("busy: processing")   // BusyRs(BusyRs.PROCESSING)
+ * BusyRs.match("busy:")               // false
+ * ```
+ *
+ * @property reason the reason, as the machine wrote it
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 data class BusyRs(val reason: String) : GProtoRs<BusyRs> {
@@ -24,17 +37,12 @@ data class BusyRs(val reason: String) : GProtoRs<BusyRs> {
 
     companion object : GRsDecoder<BusyRs> {
 
-        /** Busy with a lengthy command - homing, heat-up, auto levelling. */
         const val PROCESSING = "processing"
 
-        /** Paused, awaiting an action by the user on the machine's own controller. */
         const val PAUSED_FOR_USER = "paused for user"
 
-        /** Paused, awaiting input from the user on the machine's own controller. */
         const val PAUSED_FOR_INPUT = "paused for input"
 
-        // The reason has to start with a non-space so that a bare `busy:` does not decode to an
-        // empty reason, which would encode back to `busy: ` and not round-trip.
         private val BUSY_PATTERN = Pattern.compile(
             "^busy[ \t]*:[ \t]*(\\S.*)$",
             Pattern.CASE_INSENSITIVE

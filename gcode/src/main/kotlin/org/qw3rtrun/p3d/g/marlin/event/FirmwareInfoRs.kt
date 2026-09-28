@@ -19,6 +19,16 @@ import java.util.regex.Pattern
  * contain spaces (`MACHINE_TYPE:3D Printer`). So the fields are found by looking for the *next*
  * key rather than by splitting, which is why this keeps the raw map instead of named properties.
  *
+ * The line is identified by its first key, `FIRMWARE_NAME`, which Marlin always writes first.
+ * Without that anchor any line holding an uppercase word and a colon would be claimed.
+ *
+ * ```
+ * val info = FirmwareInfoRs.decode("FIRMWARE_NAME:Marlin 2.1 MACHINE_TYPE:3D Printer")
+ * info?.machineType()   // "3D Printer"
+ * FirmwareInfoRs.decode("MACHINE_TYPE:3D Printer")   // null - no FIRMWARE_NAME anchor
+ * ```
+ *
+ * @property keyValues every field, keyed by its name, in the order the line wrote them
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<FirmwareInfoRs>, FirmwareInfoReportEvent {
@@ -28,12 +38,20 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
 
     override fun fullReportString(): String = encode()
 
-    /** The machine's UUID, or null when it sends none or sends one that is not a UUID. */
+    /**
+     * The machine's UUID, or null when it sends none or sends one that is not a UUID. Spec 9: a
+     * malformed field off the wire reads as absent rather than throwing.
+     *
+     * ```
+     * FirmwareInfoRs.decode("FIRMWARE_NAME:M UUID:nope")?.uuid()   // null
+     * ```
+     *
+     * @return the parsed `UUID` field, or null
+     */
     override fun uuid(): UUID? = keyValues["UUID"]?.let {
         try {
             UUID.fromString(it)
         } catch (e: IllegalArgumentException) {
-            // spec 9: a malformed field off the wire reads as absent rather than throwing.
             null
         }
     }
@@ -46,7 +64,15 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
 
     override fun machineType(): String? = keyValues["MACHINE_TYPE"]
 
-    /** The extruder count, or 0 when it is absent or unreadable. */
+    /**
+     * The extruder count, or 0 when it is absent or unreadable.
+     *
+     * ```
+     * FirmwareInfoRs.decode("FIRMWARE_NAME:M EXTRUDER_COUNT:2")?.extruderCount()   // 2
+     * ```
+     *
+     * @return the `EXTRUDER_COUNT` field as an integer, or 0
+     */
     override fun extruderCount(): Int = keyValues["EXTRUDER_COUNT"]?.trim()?.toIntOrNull() ?: 0
 
     companion object : GRsDecoder<FirmwareInfoRs> {
@@ -65,8 +91,6 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
 
         private fun scan(line: String): FirmwareInfoRs? {
             val text = line.trim()
-            // The line is identified by its first key, which Marlin always writes first. Without
-            // that anchor any line holding an uppercase word and a colon would be claimed.
             if (!text.startsWith("$REQUIRED_KEY:")) return null
             val matcher = KEY.matcher(text)
             if (!matcher.find()) return null
@@ -95,6 +119,17 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
  * Marlin documents 43 of these in `gcode/host/M115.cpp`, and the name is **not** checked against
  * that list: a capability this code has not heard of is a firmware newer than this code, which is
  * the normal direction of travel and not a broken line.
+ *
+ * Marlin writes the flag as 0 or 1; the RepRap ecosystem has sent `true`/`false`, and the decoder
+ * this replaces accepted both, so both stay readable.
+ *
+ * ```
+ * CapabilityRs.decode("Cap:EEPROM:1")    // CapabilityRs("EEPROM", enabled = true)
+ * CapabilityRs.decode("Cap:X:true")      // CapabilityRs("X", enabled = true)
+ * ```
+ *
+ * @property capability the feature's name, as the firmware wrote it
+ * @property enabled whether the feature is compiled in and on
  */
 data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<CapabilityRs>, CapabilityReportEvent {
 
@@ -121,8 +156,6 @@ data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<Capa
             return CapabilityRs(matcher.group(1), readEnabled(matcher.group(2)))
         }
 
-        // Marlin writes 0 or 1; the RepRap ecosystem has sent `true`/`false`, and the decoder this
-        // replaces accepted both, so both stay readable.
         private fun readEnabled(value: String): Boolean =
             if (value.equals("true", ignoreCase = true)) true
             else if (value.equals("false", ignoreCase = true)) false

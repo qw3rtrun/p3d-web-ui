@@ -27,10 +27,16 @@ import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
  * **Null is not an error.** Most of what a printer says is still outside this set: the whole of
  * tiers 2 to 4 in todo 12, every `M503` settings line, the boot banner. Those lines are the
  * caller's to keep as raw text.
+ *
+ * ```
+ * MarlinRsDecoder.decode("ok T:210.00 /210.00")        // OkTemperatureRs
+ * MarlinRsDecoder.decode("Reporting nothing at all")   // null
+ * ```
+ *
+ * @property decoders tier 1 first, then the base protocol
  */
 object MarlinRsDecoder : GRsDecoder<GRs<*>> {
 
-    /** Tier 1 first, then the base protocol. */
     val decoders: List<GRsDecoder<GRs<*>>> = listOf(
         TemperatureRsDecoder,
         PositionRs,

@@ -1,5 +1,6 @@
 package org.qw3rtrun.p3d.g.code.core.block
 
+import org.qw3rtrun.p3d.g.code.core.token.GComment
 import org.qw3rtrun.p3d.g.code.core.token.GEmptyId
 import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
 import org.qw3rtrun.p3d.g.code.core.token.GNumber
@@ -122,6 +123,25 @@ data class GUnnamedStr(
  * part (a `GCommentPart` wrapper takes its place); it is sealed again in that change.
  */
 interface GBlockPart
+
+/**
+ * A comment standing in a [GBlock]: spec section 6's comment, as a part of a line being built.
+ *
+ * A wrapper rather than the token itself, so that the token layer does not have to know what a
+ * block is. `GComment` is a lexer token and stays one; being "something that can go in a block" is
+ * this layer's vocabulary, and a token implementing it would make `core.token` depend on
+ * `core.block`. The encoder renders it through the comment's own `rawText()`, so the author's
+ * marker and spacing are kept.
+ *
+ * ```
+ * val g28 = GCommand(GLetter('G'), GInt(28))
+ * GEncoder.encode(GBlock(g28, GCommentPart(GTailComment(" note"))))    // "G28 ; note"
+ * GEncoder.frame(1, GBlock(g28, GCommentPart(GTailComment(" home"))))  // "N1 G28*18 ; home"
+ * ```
+ *
+ * @property comment the comment token to emit
+ */
+data class GCommentPart(val comment: GComment) : GBlockPart
 
 /**
  * A line being built: spec section 5's "line (block)", as a value the encoder can render.

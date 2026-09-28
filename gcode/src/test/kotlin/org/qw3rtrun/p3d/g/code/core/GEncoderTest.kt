@@ -7,6 +7,8 @@ import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.block.GLiner
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GCommentPart
 import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
 import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
 import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
@@ -203,6 +205,36 @@ class GEncoderTest {
             ch == ' ' -> '\t'
             ch in 'A'..'Y' -> ch + 1
             else -> 'Z'
+        }
+    }
+
+    @Nested
+    inner class CommentParts {
+
+        private val g28 = GCommand(GLetter('G'), GInt(28))
+
+        private val g90 = GCommand(GLetter('G'), GInt(90))
+
+        @Test
+        fun `a comment part renders through its comment`() {
+            assertEquals("G28 ; note", GEncoder.encode(GBlock(g28, GCommentPart(GTailComment(" note")))))
+        }
+
+        @Test
+        fun `a trailing comment part sits after the checksum and is not covered by it`() {
+            assertEquals("N1 G28*18 ; home", GEncoder.frame(1, GBlock(g28, GCommentPart(GTailComment(" home")))))
+        }
+
+        @Test
+        fun `a block of nothing but a comment part is not framed`() {
+            assertEquals("; only", GEncoder.frame(1, GBlock(GCommentPart(GTailComment(" only")))))
+        }
+
+        @Test
+        fun `a comment part between two commands is covered by the checksum`() {
+            val block = GBlock(g28, GCommentPart(GInlineComment("x")), g90)
+
+            assertEquals("N1 G28 (x) G90*37", GEncoder.frame(1, block))
         }
     }
 }

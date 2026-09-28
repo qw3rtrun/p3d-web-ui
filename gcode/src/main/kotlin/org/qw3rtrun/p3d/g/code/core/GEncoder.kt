@@ -5,6 +5,7 @@ import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.block.GBlock
 import org.qw3rtrun.p3d.g.code.core.block.GBlockPart
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
+import org.qw3rtrun.p3d.g.code.core.block.GCommentPart
 import org.qw3rtrun.p3d.g.code.core.token.GComment
 import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
 import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
@@ -122,7 +123,10 @@ object GEncoder {
      */
     fun frame(number: Int, block: GBlock, checksum: CheckSumCalculator = XorCheckSum()): String {
         var lastPayload = -1
-        for (i in block.parts.indices) if (block.parts[i] !is GComment) lastPayload = i
+        for (i in block.parts.indices) {
+            val part = block.parts[i]
+            if (part !is GComment && part !is GCommentPart) lastPayload = i
+        }
         if (lastPayload < 0) return encode(block)
 
         val out = StringBuilder()
@@ -147,6 +151,7 @@ object GEncoder {
         when (part) {
             is GCommand -> appendCommand(out, part)
             is GComment -> out.append(part.rawText())
+            is GCommentPart -> out.append(part.comment.rawText())
         }
     }
 

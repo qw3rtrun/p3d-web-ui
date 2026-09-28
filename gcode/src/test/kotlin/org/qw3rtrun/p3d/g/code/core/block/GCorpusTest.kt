@@ -1,12 +1,18 @@
-package org.qw3rtrun.p3d.g.code.core.token
+package org.qw3rtrun.p3d.g.code.core.block
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.block.GError
-import org.qw3rtrun.p3d.g.code.core.block.GLine
-import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
+import org.qw3rtrun.p3d.g.code.core.token.GComment
+import org.qw3rtrun.p3d.g.code.core.token.GFloat
+import org.qw3rtrun.p3d.g.code.core.token.GInt
+import org.qw3rtrun.p3d.g.code.core.token.GLetter
+import org.qw3rtrun.p3d.g.code.core.token.GLineBreak
+import org.qw3rtrun.p3d.g.code.core.token.GQuotedString
+import org.qw3rtrun.p3d.g.code.core.token.GTailComment
+import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
+import org.qw3rtrun.p3d.g.code.core.token.GUnknown
 
 /**
  * Corpus level tests over `src/test/resources/marlin.gcode` - 300+ lines of real Marlin flavoured

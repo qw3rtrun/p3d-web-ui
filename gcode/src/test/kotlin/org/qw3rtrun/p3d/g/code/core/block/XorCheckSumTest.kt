@@ -1,11 +1,9 @@
-package org.qw3rtrun.p3d.g.code.core
+package org.qw3rtrun.p3d.g.code.core.block
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
-import org.qw3rtrun.p3d.g.code.core.block.CheckSumCalculator
-import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 
 /**

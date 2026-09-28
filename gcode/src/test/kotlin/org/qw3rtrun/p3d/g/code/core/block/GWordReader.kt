@@ -1,13 +1,11 @@
-package org.qw3rtrun.p3d.g.code.core.token
+package org.qw3rtrun.p3d.g.code.core.block
 
-import org.qw3rtrun.p3d.g.code.core.block.GCommand
-import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
-import org.qw3rtrun.p3d.g.code.core.block.GLine
-import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.block.GWord
-import org.qw3rtrun.p3d.g.code.core.block.isCommandLetter
-import org.qw3rtrun.p3d.g.code.core.block.isCommandNumber
-import org.qw3rtrun.p3d.g.code.core.block.valueIndex
+import org.qw3rtrun.p3d.g.code.core.token.GChecksum
+import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
+import org.qw3rtrun.p3d.g.code.core.token.GLetter
+import org.qw3rtrun.p3d.g.code.core.token.GNumber
+import org.qw3rtrun.p3d.g.code.core.token.GToken
+import org.qw3rtrun.p3d.g.code.core.token.GValue
 
 /**
  * The **command-agnostic** reading of a line: every field into a [org.qw3rtrun.p3d.g.code.core.block.GWord], the words grouped into

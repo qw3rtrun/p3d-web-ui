@@ -12,6 +12,7 @@ import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.block.GWord
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.token.*
+import org.qw3rtrun.p3d.g.code.core.block.GWordReader
 
 /**
  * Tests for the encoder: GCODE_spec.md section 4 for a command's text, sections 7 and 8 for the

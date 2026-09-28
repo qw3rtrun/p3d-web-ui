@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.code.core.token
+package org.qw3rtrun.p3d.g.code.core.block
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -6,9 +6,8 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import org.qw3rtrun.p3d.g.code.core.GEncoder
-import org.qw3rtrun.p3d.g.code.core.block.GCheckSumControlled
-import org.qw3rtrun.p3d.g.code.core.block.GOrdered
 import java.io.File
+import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 /**
  * A snapshot of what the corpora *mean*, line by line: the kind of line the liner decided on, the

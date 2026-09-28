@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.code.core.token
+package org.qw3rtrun.p3d.g.code.core.block
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -7,11 +7,11 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertDoesNotThrow
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.qw3rtrun.p3d.g.code.core.block.GCommand
-import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
-import org.qw3rtrun.p3d.g.code.core.block.GLine
-import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.block.GWord
+import org.qw3rtrun.p3d.g.code.core.token.GChecksum
+import org.qw3rtrun.p3d.g.code.core.token.GFloat
+import org.qw3rtrun.p3d.g.code.core.token.GInt
+import org.qw3rtrun.p3d.g.code.core.token.GLetter
+import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 /**
  * The word->command reading, spec sections 4 and 5. `GLiner` answers what *shape* a line has; this

@@ -9,6 +9,7 @@ import org.qw3rtrun.p3d.g.code.core.block.GBlock
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
 import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
 import org.qw3rtrun.p3d.g.code.core.token.*
+import org.qw3rtrun.p3d.g.code.core.block.GWordReader
 import java.math.BigDecimal
 
 /**

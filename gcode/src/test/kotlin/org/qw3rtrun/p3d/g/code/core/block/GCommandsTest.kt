@@ -1,13 +1,14 @@
-package org.qw3rtrun.p3d.g.code.core.token
+package org.qw3rtrun.p3d.g.code.core.block
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.GEncoder
-import org.qw3rtrun.p3d.g.code.core.block.GCommand
-import org.qw3rtrun.p3d.g.code.core.block.GLine
-import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.block.GWord
+import org.qw3rtrun.p3d.g.code.core.token.GFloat
+import org.qw3rtrun.p3d.g.code.core.token.GInt
+import org.qw3rtrun.p3d.g.code.core.token.GLetter
+import org.qw3rtrun.p3d.g.code.core.token.GQuotedString
+import org.qw3rtrun.p3d.g.code.core.token.GRawExpression
 
 /**
  * The command model of GCODE_spec.md section 4: a head word, its parameter words, and what

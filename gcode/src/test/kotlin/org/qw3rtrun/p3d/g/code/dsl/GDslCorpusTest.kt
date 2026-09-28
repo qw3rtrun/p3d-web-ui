@@ -11,6 +11,7 @@ import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
 import org.qw3rtrun.p3d.g.code.core.block.GWord
 import org.qw3rtrun.p3d.g.code.core.token.*
+import org.qw3rtrun.p3d.g.code.core.block.GWordReader
 
 /**
  * The rule, as a number: **any valid G-code can be written with the DSL**.

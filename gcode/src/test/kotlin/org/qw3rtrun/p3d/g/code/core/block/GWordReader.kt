@@ -64,7 +64,7 @@ object GWordReader {
                 continue
             }
 
-            val j = valueIndex(tokens, i)
+            val j = tokens.valueIndex(i)
             if (j >= 0) {
                 // The word's raw is a slice of the line, so it spells what the line spelled without
                 // copying anything: identifier, the spaces it crossed, and the value. The cast is

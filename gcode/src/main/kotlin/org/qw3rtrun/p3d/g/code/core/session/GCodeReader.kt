@@ -163,7 +163,7 @@ class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 
         while (i < body.size) {
             val token = body[i]
             if (token is GIdentifier && token.isLetter('N')) {
-                val j = valueIndex(body, i)
+                val j = body.valueIndex(i)
                 val value = if (j < 0) null else body[j]
                 if (value is GInt) return value.int
             }

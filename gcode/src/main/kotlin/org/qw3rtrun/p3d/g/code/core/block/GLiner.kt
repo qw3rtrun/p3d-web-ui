@@ -119,7 +119,7 @@ class GLiner(private val source: Iterator<GToken>) : Iterator<GLine> {
         var numberIndex = -1
         val head = tokens[headIndex]
         if (head is GIdentifier && head.isLetter('N')) {
-            numberIndex = valueIndex(tokens, headIndex)
+            numberIndex = tokens.valueIndex(headIndex)
             val value = if (numberIndex < 0) null else tokens[numberIndex]
             if (value !is GInt) return GMalformedLineNumber(tokens)
             lineNumber = value
@@ -129,7 +129,7 @@ class GLiner(private val source: Iterator<GToken>) : Iterator<GLine> {
         if (lineNumber == null) return GMissingLineNumber(tokens)
         if (starIndex < 0) return GMissingChecksum(lineNumber, tokens)
 
-        val checksumIndex = valueIndex(tokens, starIndex)
+        val checksumIndex = tokens.valueIndex(starIndex)
         val checksum = if (checksumIndex < 0) null else tokens[checksumIndex]
         if (checksum !is GInt) return GMalformedChecksum(lineNumber, tokens)
 

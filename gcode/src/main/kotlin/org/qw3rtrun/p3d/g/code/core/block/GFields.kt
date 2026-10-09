@@ -22,7 +22,7 @@ import org.qw3rtrun.p3d.g.code.core.token.valueIndex
  *
  * spec 2.3 makes `command-word`, `line-number` and `checksum` *specialisations* of `word` -
  * lexically ordinary fields whose letters are given structural meaning - so the head is found with
- * the same pairing rule every other field is: `valueIndex`, in `core.token`'s `GPairing.kt`. The
+ * the same pairing rule every other field is: `valueIndex`, in `core.token`'s `GTokens.kt`. The
  * rule is lexical and reused one way, from this layer down to that one; it does not need to share a
  * file with the head to stay the same rule, only to have a single copy, and it has one.
  */
@@ -197,7 +197,7 @@ private fun headIdIndex(tokens: List<GToken>): Int {
 }
 
 private fun headNumIndex(tokens: List<GToken>, idIndex: Int): Int {
-    val j = valueIndex(tokens, idIndex)
+    val j = tokens.valueIndex(idIndex)
     if (j < 0) return -1
     val value = tokens[j]
     if (value !is GNumber) return -1

@@ -62,7 +62,7 @@ internal fun List<GToken>.valueOf(letter: Char): GValue? {
     while (i < size) {
         val token = this[i]
         if (token is GIdentifier && token.isLetter(letter)) {
-            val j = valueIndex(this, i)
+            val j = valueIndex(i)
             return if (j < 0) null else this[j] as GValue
         }
         i++
@@ -288,7 +288,7 @@ private fun List<GToken>.stringArgStart(letters: CharArray): Int {
         }
         if (token !is GIdentifier) break
         if (!token.isOneOf(letters)) break
-        val j = valueIndex(this, i)
+        val j = valueIndex(i)
         if (j < 0) break
         i = j + 1
     }

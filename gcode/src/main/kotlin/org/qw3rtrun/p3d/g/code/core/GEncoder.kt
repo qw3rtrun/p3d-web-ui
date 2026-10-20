@@ -2,14 +2,14 @@ package org.qw3rtrun.p3d.g.code.core
 
 import org.qw3rtrun.p3d.g.code.core.block.CheckSumCalculator
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
-import org.qw3rtrun.p3d.g.code.core.block.GBlockDraft
-import org.qw3rtrun.p3d.g.code.core.block.GBlockPart
-import org.qw3rtrun.p3d.g.code.core.block.GCommand
-import org.qw3rtrun.p3d.g.code.core.block.GCommentPart
-import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
-import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
-import org.qw3rtrun.p3d.g.code.core.block.GWord
+import org.qw3rtrun.p3d.g.code.core.command.GBlockDraft
+import org.qw3rtrun.p3d.g.code.core.command.GBlockPart
+import org.qw3rtrun.p3d.g.code.core.command.GCommand
+import org.qw3rtrun.p3d.g.code.core.command.GCommentPart
+import org.qw3rtrun.p3d.g.code.core.command.GFlagWord
+import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.command.GUnnamedStr
+import org.qw3rtrun.p3d.g.code.core.command.GWord
 
 /**
  * Emits wire-ready text: a command (GCODE_spec.md section 4), and the `N`/`*` framing around it

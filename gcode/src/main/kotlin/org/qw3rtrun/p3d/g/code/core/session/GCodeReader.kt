@@ -8,8 +8,8 @@ import org.qw3rtrun.p3d.g.code.core.block.GMeaninglessBlock
 import org.qw3rtrun.p3d.g.code.core.block.GMissingChecksum
 import org.qw3rtrun.p3d.g.code.core.block.GMissingLineNumber
 import org.qw3rtrun.p3d.g.code.core.block.GOrdered
-import org.qw3rtrun.p3d.g.code.core.block.headEnd
-import org.qw3rtrun.p3d.g.code.core.block.headWord
+import org.qw3rtrun.p3d.g.code.core.command.headEnd
+import org.qw3rtrun.p3d.g.code.core.command.headWord
 import org.qw3rtrun.p3d.g.code.core.block.valueIndex
 import org.qw3rtrun.p3d.g.code.core.token.*
 

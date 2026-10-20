@@ -15,8 +15,9 @@ import org.qw3rtrun.p3d.g.code.core.token.GToken
  * **One word for one thing.** Spec 5 calls it a "line (block)"; this layer calls it a block, and
  * leaves "line" to the three things that really are lines of text: the `GLineBreak` that ends one,
  * the line *number* of section 7, and the characters the lexer reads through. A block that was
- * *read* is this type and carries its tokens; a block being *built* is a [GBlockDraft] and carries
- * parts.
+ * *read* is this type and carries its tokens; a block being *built* is a `GBlockDraft`, one layer
+ * up in `core.command`, and carries parts. The link is deliberately not a KDoc one: this layer may
+ * not name the layer above it, and `GLayeringTest` reads KDoc as source.
  *
  * [raw] is every token, in wire order. It is the stored, primary value of every block type, which is
  * what makes "a block reproduces its input" true by construction rather than by an override that a

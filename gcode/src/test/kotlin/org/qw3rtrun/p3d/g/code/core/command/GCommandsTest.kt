@@ -1,9 +1,10 @@
-package org.qw3rtrun.p3d.g.code.core.block
+package org.qw3rtrun.p3d.g.code.core.command
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.GEncoder
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
 import org.qw3rtrun.p3d.g.code.core.token.GFloat
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 import org.qw3rtrun.p3d.g.code.core.token.GLetter

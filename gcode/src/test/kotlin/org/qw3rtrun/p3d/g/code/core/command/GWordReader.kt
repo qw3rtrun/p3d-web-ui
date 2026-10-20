@@ -1,5 +1,7 @@
-package org.qw3rtrun.p3d.g.code.core.block
+package org.qw3rtrun.p3d.g.code.core.command
 
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.valueIndex
 import org.qw3rtrun.p3d.g.code.core.token.GChecksum
 import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
@@ -8,8 +10,8 @@ import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GValue
 
 /**
- * The **command-agnostic** reading of a block: every field into a [org.qw3rtrun.p3d.g.code.core.block.GWord], the words grouped into
- * [org.qw3rtrun.p3d.g.code.core.block.GCommand]s. Test apparatus, and deliberately not production code.
+ * The **command-agnostic** reading of a block: every field into a [GWord], the words grouped into
+ * [GCommand]s. Test apparatus, and deliberately not production code.
  *
  * Production reads a block with `MarlinCommands.decode` (or one command class's `decode`), which is
  * the stronger reader for one reason: it knows the command number, so it can tell that
@@ -44,9 +46,9 @@ object GWordReader {
     /**
      * The fields of [tokens], in wire order (spec sections 2.1 and 3).
      *
-     * An identifier followed by a value is one [org.qw3rtrun.p3d.g.code.core.block.GParameterWord] carrying both and any whitespace
+     * An identifier followed by a value is one [GParameterWord] carrying both and any whitespace
      * between them, since spec 2.1 lets a space separate a field from its value: `X10`, `X 10` and
-     * `X  10` are one word each. An identifier followed by anything else is a [org.qw3rtrun.p3d.g.code.core.block.GFlagWord] (spec
+     * `X  10` are one word each. An identifier followed by anything else is a [GFlagWord] (spec
      * 3.2), and what followed it is examined again from scratch - `G28 X Y` is three words, not one
      * word and a lost `Y`.
      *

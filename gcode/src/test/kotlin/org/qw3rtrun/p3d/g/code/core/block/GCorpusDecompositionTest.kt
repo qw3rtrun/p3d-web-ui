@@ -1,12 +1,13 @@
 package org.qw3rtrun.p3d.g.code.core.block
 
+import java.io.File
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.fail
 import org.qw3rtrun.p3d.g.code.core.GEncoder
-import java.io.File
+import org.qw3rtrun.p3d.g.code.core.command.GWordReader
 
 /**
  * A snapshot of what the corpora *mean*, block by block: the kind of block the reader decided on, the

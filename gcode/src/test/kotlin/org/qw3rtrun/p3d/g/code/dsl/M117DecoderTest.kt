@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
-import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
+import org.qw3rtrun.p3d.g.code.core.command.GUnnamedStr
 import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 import org.qw3rtrun.p3d.g.code.core.token.GLetter

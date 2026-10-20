@@ -94,7 +94,7 @@ For actual text use `text(…)` (spec 3.4); for an expression `expr(…)` (spec 
 
 ### Never restate a parser rule — share it
 
-`command()` validates through `isCommandNumber` in `code/core/block/GFields.kt`, which is
+`command()` validates through `isCommandNumber` in `code/core/command/GHead.kt`, which is
 top-level for exactly this. **A builder and a reader disagreeing about what a command number is
 would let a round-trip test pass on input no firmware accepts.** If you need a rule the reading side
 already knows, share it the same way; do not copy the condition.
@@ -157,7 +157,8 @@ class, with no privileges it does not have.
 
 ### The dependency runs one way
 
-`dsl` imports `code.core.GEncoder`, `code.core.token.*` and `code.core.block.*`. **Nothing in
+`dsl` imports `code.core.GEncoder`, `code.core.token.*`, `code.core.block.*` and
+`code.core.command.*` - the commands and words it builds live in the last of those. **Nothing in
 `code/core` imports `dsl`** — check that this still holds after any change, because it is what keeps
 the core portable on its own:
 

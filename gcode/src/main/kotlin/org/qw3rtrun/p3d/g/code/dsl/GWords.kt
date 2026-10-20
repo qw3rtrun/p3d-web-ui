@@ -31,11 +31,11 @@
  */
 package org.qw3rtrun.p3d.g.code.dsl
 
-import org.qw3rtrun.p3d.g.code.core.block.GCommentPart
-import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
-import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
-import org.qw3rtrun.p3d.g.code.core.block.GWord
+import org.qw3rtrun.p3d.g.code.core.command.GCommentPart
+import org.qw3rtrun.p3d.g.code.core.command.GFlagWord
+import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.command.GUnnamedStr
+import org.qw3rtrun.p3d.g.code.core.command.GWord
 import org.qw3rtrun.p3d.g.code.core.token.*
 import java.math.BigDecimal
 

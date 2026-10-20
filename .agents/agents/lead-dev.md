@@ -88,7 +88,8 @@ question.
 
 ```
 gcode/                     the G-code protocol module — TWO standards, see below
-  code/core/**             portable core: tokenizer, block reader, checksums, encoder, session
+  code/core/**             portable core, three layers: token/ -> block/ -> command/,
+                           plus GEncoder and session/ above them
   code/dsl/**              the writing facade: G.kt, GWords.kt, GSender
   marlin/**                domain edge: commands, events, decoders
 backend/core/              shared domain types (Kotlin + Java, Spring BOM)

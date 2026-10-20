@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.code.core.block
+package org.qw3rtrun.p3d.g.code.core.command
 
 import org.qw3rtrun.p3d.g.code.core.token.GComment
 import org.qw3rtrun.p3d.g.code.core.token.GEmptyId
@@ -11,7 +11,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GValue
 /**
  * A field: an identifier and, usually, the value behind it (GCODE_spec.md section 3).
  *
- * Words belong to the **command** layer, not the block layer. A block is classified from its tokens -
+ * Words are **this** layer's vocabulary, not the block layer's. A block is classified from its tokens -
  * where `N` is and where the last `*` is - and nothing above that needs a word until someone asks
  * what the block *commands*. The **writing** direction is where they are produced now: the DSL and
  * `GRq.encode()` build them, and `GEncoder` consumes them. Reading a block back into words - the
@@ -82,8 +82,8 @@ data class GFlagWord(
  * such an argument at all (see `GRqDecoder`); the token layer lexes `Hello World` letter by letter
  * and the command parser never assembles one.
  *
- * [id] is [org.qw3rtrun.p3d.g.code.core.token.GEmptyId] so that a `GWord` always has one and `GEncoder` can write it unconditionally -
- * it renders as nothing. That is the compromise: the honest shape splits `GWord` into a named half
+ * [id] is [GEmptyId] so that a `GWord` always has one and `GEncoder` can write it
+ * unconditionally - it renders as nothing. That is the compromise: the honest shape splits `GWord` into a named half
  * and an unnamed one and lets `GEmptyId` disappear, which touches the DSL's parameter check, the
  * parser's structural test, the encoder and every generated `encode()`. Not worth it for one
  * unnamed word type; revisit when there is a second.
@@ -109,11 +109,12 @@ data class GUnnamedStr(
 /**
  * Something that can stand in a [GBlockDraft]: a [GCommand] or a [GCommentPart]. Sealed, and both
  * variants live in this package - a comment *token* is wrapped rather than implementing this, so
- * the token layer does not depend on the block layer.
+ * the token layer does not depend on this one.
  *
- * This is the *build* direction, and the reason the two types are spelled apart: a [GBlock] was
- * read and carries the exact tokens it was read from, whitespace included; a [GBlockDraft] is
- * being built and carries only what the author chose, leaving the bytes to the encoder. Keeping
+ * This is the *build* direction, and the reason the two types are spelled apart: a `GBlock` - one
+ * layer down, in `core.block` - was read and carries the exact tokens it was read from, whitespace
+ * included; a [GBlockDraft] is being built and carries only what the author chose, leaving the
+ * bytes to the encoder. Keeping
  * them apart is what lets `GEncoder` emit one canonical spelling instead of having to guess which
  * of a parsed block's spaces were meaningful.
  *
@@ -129,7 +130,7 @@ sealed interface GBlockPart
  * A wrapper rather than the token itself, so that the token layer does not have to know what a
  * block is. `GComment` is a lexer token and stays one; being "something that can go in a block" is
  * this layer's vocabulary, and a token implementing it would make `core.token` depend on
- * `core.block`. The encoder renders it through the comment's own `rawText()`, so the author's
+ * `core.command`. The encoder renders it through the comment's own `rawText()`, so the author's
  * marker and spacing are kept.
  *
  * ```

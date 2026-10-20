@@ -1,8 +1,8 @@
 package org.qw3rtrun.p3d.terminal;
 
 import org.qw3rtrun.p3d.g.code.core.GEncoder;
-import org.qw3rtrun.p3d.g.code.core.block.GBlockDraft;
-import org.qw3rtrun.p3d.g.code.core.block.GCommand;
+import org.qw3rtrun.p3d.g.code.core.command.GBlockDraft;
+import org.qw3rtrun.p3d.g.code.core.command.GCommand;
 import org.qw3rtrun.p3d.g.code.dsl.GKt;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;

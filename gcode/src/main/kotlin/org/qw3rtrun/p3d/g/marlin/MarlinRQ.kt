@@ -1,10 +1,10 @@
 package org.qw3rtrun.p3d.g.marlin
 
-import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.token.GToken
-import org.qw3rtrun.p3d.g.code.core.block.headEnd
-import org.qw3rtrun.p3d.g.code.core.block.headKey
-import org.qw3rtrun.p3d.g.code.core.block.headWord
+import org.qw3rtrun.p3d.g.code.core.command.headEnd
+import org.qw3rtrun.p3d.g.code.core.command.headKey
+import org.qw3rtrun.p3d.g.code.core.command.headWord
 import org.qw3rtrun.p3d.g.marlin.command.*
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder

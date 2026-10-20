@@ -5,9 +5,9 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
-import org.qw3rtrun.p3d.g.code.core.block.GCommand
-import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.block.GWord
+import org.qw3rtrun.p3d.g.code.core.command.GCommand
+import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.command.GWord
 import org.qw3rtrun.p3d.g.code.core.token.*
 
 /**

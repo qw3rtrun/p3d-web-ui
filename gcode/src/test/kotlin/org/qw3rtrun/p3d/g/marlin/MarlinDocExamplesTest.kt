@@ -3,8 +3,8 @@ package org.qw3rtrun.p3d.g.marlin
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
-import org.qw3rtrun.p3d.g.code.core.block.GCommand
-import org.qw3rtrun.p3d.g.code.core.block.GWordReader
+import org.qw3rtrun.p3d.g.code.core.command.GCommand
+import org.qw3rtrun.p3d.g.code.core.command.GWordReader
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.token.GSpace
 import org.qw3rtrun.p3d.g.code.core.token.GToken

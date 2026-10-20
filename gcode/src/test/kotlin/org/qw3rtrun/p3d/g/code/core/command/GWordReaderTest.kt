@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.g.code.core.block
+package org.qw3rtrun.p3d.g.code.core.command
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -7,14 +7,16 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertDoesNotThrow
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.token.GChecksum
 import org.qw3rtrun.p3d.g.code.core.token.GFloat
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 
 /**
- * The word->command reading, spec sections 4 and 5. `GBlockReader` answers what *shape* a block has; this
- * answers what *commands* it carries, without knowing what any of them mean.
+ * The word->command reading, spec sections 4 and 5. `GBlockReader`, one layer down, answers what
+ * *shape* a block has; this answers what *commands* it carries, without knowing what any mean.
  *
  * It covers test apparatus, and that is deliberate - see [GWordReader]. The three corpus contracts
  * are measured through this reader, so it has to be right even though nothing ships it.
@@ -194,7 +196,7 @@ class GWordReaderTest {
     }
 
     @Nested
-    inner class LinesWithoutCommands {
+    inner class BlocksWithoutCommands {
 
         @Test
         fun `a comment only block has no commands`() {

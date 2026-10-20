@@ -561,7 +561,7 @@ class GBlockReaderTest {
 
     /** Spec section 5: a block of only whitespace and/or comments is a no-op. */
     @Nested
-    inner class EmptyLines {
+    inner class EmptyBlocks {
 
         @ParameterizedTest
         @ValueSource(strings = ["\n", "\r\n", "   \n", "\t\n", "; comment\n", "(comment)\n", "  ; c  \n"])

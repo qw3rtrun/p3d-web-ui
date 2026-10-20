@@ -687,6 +687,17 @@ raw capture. The rules are recorded in the `low-level-protocol-dev` skill
 (`.agents/skills/low-level-protocol-dev/SKILL.md`) and the outstanding gaps in
 [the `:gcode` issue queue](https://github.com/qw3rtrun/p3d-web-ui/issues/18).
 
+**Three layers, one direction.** `core/token` ([B.1](#b1-tokens--tokengtokenskt),
+[B.2](#b2-tokenizer--tokengtokenizerkt-tokengtokenskt)) is tokens and the lexer; `core/block`
+([B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgfieldskt)) is blocks, framing,
+checksums and the field-pairing rule; `core/command`
+([B.4](#b4-command-model--commandgcommandskt-commandgheadkt)) is words, commands, drafts and the
+command head. Each may name itself and everything below it, and nothing above: `GLayeringTest`
+scans the source text of all three and fails the build on the first name pointing the wrong way,
+KDoc links included. `GEncoder` and `core/session` sit above all three and are allowed to span —
+the encoder writes a command's words and frames a block around them in one pass, because
+[§8.3](#83-what-the-checksum-covers)'s checksum covers the bytes as transmitted.
+
 **One word per thing.** [§5](#5-line-block-structure) calls the unit a "line (block)"; the module
 calls it a **block**, everywhere, in one spelling. It used to carry three names for it — a parsed
 one was a `line`, an authored one a `block`, and a framed one a `packet` — which read as three
@@ -750,16 +761,16 @@ every caller.
 
 `GTokenizer` is an **object**: it holds no state, so an instance per call site bought nothing. It
 offers tokens only. The whole read pipeline — text in, classified `GBlock`s out — is
-`GBlockReader.blocks(text)`, one layer up (see [B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgcommandskt-blockgfieldskt)):
+`GBlockReader.blocks(text)`, one layer up (see [B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgfieldskt)):
 a lexer that offered blocks would depend on the layer above it, and `GLayeringTest` now fails the
-build if anything under `core/token` names `core/block`. The state machine itself,
+build if any of the three layers names one above it. The state machine itself,
 `GTokenizerIterator`, is `internal` and its six scanners are private: which characters `number()`
 consumes is how this lexer is built, not what it promises.
 
 This layer offers tokens and nothing else. The pairing rule that reads a *field* off them —
 `valueIndex` — is stated over token kinds alone but answers a field question, and lives one layer up
 in `block/GFields.kt` (see
-[B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgcommandskt-blockgfieldskt)).
+[B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgfieldskt)).
 
 A host that builds tokens rather than lexing them has one conversion per kind: `asGInt()` on `Int`,
 `Short`, `Byte` and `String`, `asGFloat()` on `BigDecimal`, `String` and `Int`, `asGLetter()` on
@@ -781,7 +792,7 @@ Deviations from this spec, as currently written (all verified by running the mod
 * a subcode ([§4.1](#41-command-letters)) is lexed as a decimal: `G29.1` → `GLetter(G), GFloat(29.1)`;
 * bare rest-of-line strings ([§3.4](#34-string-values)) are not recognised — `M117 Hello World`
   becomes one `GLetter` per character. This is a layering fact, not an open gap: the characters are
-  reassembled one layer up, by a decoder that knows the command number (see [B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgcommandskt-blockgfieldskt)).
+  reassembled one layer up, by a decoder that knows the command number (see [B.4](#b4-command-model--commandgcommandskt-commandgheadkt)).
 
 Conforming as of the number-lexeme pass: the optional sign of [§3.1](#31-numeric-values) is part of
 the number token (`G1 E-5` → `… GLetter(E), GInt(-5)`), a tab is `GTab`
@@ -805,7 +816,7 @@ quoted strings are unaffected — `marlin.gcode` keeps the `’` and `µ` in its
 digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` from lexing as
 `GFloat(1.2)`.
 
-### B.3 Block model — `block/GBlocks.kt`, `block/GBlockReader.kt`, `block/GCommands.kt`, `block/GFields.kt`
+### B.3 Block model — `block/GBlocks.kt`, `block/GBlockReader.kt`, `block/GFields.kt`
 
 The module reads a block in two passes over two vocabularies. **A block is tokens**: its shape is
 decided from token positions alone, and nothing above the lexer is built to answer it. **A command is
@@ -818,9 +829,6 @@ words**: fields are assembled only when a caller asks what the block commands.
 | Unnumbered block | `GPlainBlock` |
 | `N…*…` framed block ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GFramedBlock(number, checksum, body, raw)` — also `GOrdered`, `GCheckSumControlled` |
 | Line number ([§7.1](#71-syntax)), checksum field ([§8.1](#81-syntax)) | `GInt` — the integer behind the `N`, and behind the last `*` |
-| A field ([§3](#3-value-types)) | `GWord`: a `GParameterWord` (identifier + value), a `GFlagWord` (identifier alone, [§3.2](#32-flag-value-less-parameters)), or a `GUnnamedStr` (value alone — [§3.4](#34-string-values)a's bare string, whose `id` is the empty `GEmptyId` so that every word has one) |
-| One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GNumber>, params: List<GWord>)` |
-| A block being built ([§5](#5-line-block-structure)), for `GEncoder` | `GBlockDraft(parts: List<GBlockPart>)` — a `GBlockPart` is sealed and is either a `GCommand` or a `GCommentPart(comment: GComment)`. A comment *token* is wrapped rather than being a block part itself, so `core/token` names nothing in `core/block` |
 | Structural error ([§9](#9-error-handling)) | `GError`: `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum`, `GCheckSumFailedBlock` |
 
 `raw` is every token of the block in wire order, terminator included, and it is the stored value
@@ -870,22 +878,52 @@ trailing line break is a token like any other, so an unterminated block keeps it
 short block does not throw — `N*` yields `GMalformedLineNumber`, not `IllegalArgumentException`
 (TODO 1.3).
 
-**Reading a block into commands is a decoder's job, not a second pass of this layer's.** `GFields.kt`
-carries what the layer still owes a reader, as functions over tokens rather than a parser object:
-`headWord()` / `headEnd()` / `headKey()` read the one field that is a command. [§2.3](#23-grammar-ebnf)
-makes `command-word` a specialisation of `word`, so the head is found with the same pairing rule as
-every other field — `valueIndex()`, at the foot of the same file. Only `GWhitespace` is crossed — a
-comment, another identifier or a line break ends the field — and only a `GValue` pairs, so `N 1` →
-2, `X  10` → 3, `X\t10` → 2, `X"a"` and `X{a}` → 1, while `N*`, `X Y`, `X (c) 10`, `X;c`, `X\n10`
-and `X?` → -1 (all pinned by `GFieldsTest`). It is the module's only copy of the rule and the
-readers above reuse it rather than restate it: the reader pairs `N` and `*` with it, `headWord()`
-finds a command head with it, and the Marlin decoders read their parameters with it. The rule is
-stated over token kinds alone, which is why it sat in `token/` until it moved beside the field
-reader it serves. A command number is accepted only as
-`<unsigned-int>[.<unsigned-int>]` ([§4.1](#41-command-letters)) by `isCommandNumber()`, which the DSL
-shares, so `G29.1` is one command word carrying `GFloat("29.1")` — the subcode stays on the number,
-which is what re-emits `29.1` rather than `29` and `.1`. `isCommandLetter()` accepts `G`, `M` and a
-line-initial `T`.
+A block whose tokens hold no identifier is a `GMeaninglessBlock` whatever those tokens are — `?` and
+`42 99` as much as a blank one — because the first *identifier* is what the shape is read from and
+such a block has no field at any position. [§9](#9-error-handling) would call the first two an
+error; a `GNotIdentifierError` was declared for them and never produced, and has been deleted rather
+than left as a type no producer fills and no consumer reads.
+
+`GFields.kt` is the one thing this layer still owes a reader of fields: `valueIndex()`,
+[§2.1](#21-whitespace)'s pairing of an identifier with the value behind it. Only `GWhitespace` is
+crossed — a comment, another identifier or a line break ends the field — and only a `GValue` pairs,
+so `N 1` → 2, `X  10` → 3, `X\t10` → 2, `X"a"` and `X{a}` → 1, while `N*`, `X Y`, `X (c) 10`,
+`X;c`, `X\n10` and `X?` → -1 (all pinned by `GFieldsTest`). It is the module's only copy of the
+rule and every reader above reuses it rather than restating it: `GBlockReader` pairs `N` and `*`
+with it, the command head is found with it, and the Marlin decoders read their parameters with it.
+It is stated over token kinds alone, which is why it sat in `token/` for a while; it answers a
+*field* question, which is why it sits here.
+
+---
+
+### B.4 Command model — `command/GCommands.kt`, `command/GHead.kt`
+
+The third layer, and the first one that speaks in **words** rather than token positions. It may
+name `block` and `token`; neither may name it, which is what `GLayeringTest` enforces. The split is
+not cosmetic: a consumer that routes, resends or re-prints blocks never builds a word, and the
+block layer never asks what a block *commands*.
+
+| Spec concept | Type |
+|---|---|
+| A field ([§3](#3-value-types)) | `GWord`: a `GParameterWord` (identifier + value), a `GFlagWord` (identifier alone, [§3.2](#32-flag-value-less-parameters)), or a `GUnnamedStr` (value alone — [§3.4](#34-string-values)a's bare string, whose `id` is the empty `GEmptyId` so that every word has one) |
+| One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GNumber>, params: List<GWord>)` |
+| A block being built ([§5](#5-line-block-structure)), for `GEncoder` | `GBlockDraft(parts: List<GBlockPart>)` — a `GBlockPart` is sealed and is either a `GCommand` or a `GCommentPart(comment: GComment)`. A comment *token* is wrapped rather than being a block part itself, so `core/token` names nothing in this layer |
+
+A word carries `raw`, the tokens it was read from, spelling included — provenance, not identity.
+What round-trips a block is `GBlock.raw` one layer down, so a word built by the DSL may carry the
+canonical `[id, value]` while one read from `G 1` carries the space as well, and neither is wrong.
+
+**Reading a block into commands is a decoder's job, not a second pass of the block layer's.**
+`GHead.kt` carries what reading still owes, as functions over tokens rather than a parser object:
+`headWord()` / `headEnd()` / `headKey()` read the one field that is a command.
+[§2.3](#23-grammar-ebnf) makes `command-word` a specialisation of `word`, so the head is found with
+the same pairing rule as every other field — `valueIndex()`, one layer down (see
+[B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgfieldskt)). A command number is
+accepted only as `<unsigned-int>[.<unsigned-int>]` ([§4.1](#41-command-letters)) by
+`isCommandNumber()`, which the DSL shares, so `G29.1` is one command word carrying `GFloat("29.1")`
+— the subcode stays on the number, which is what re-emits `29.1` rather than `29` and `.1`.
+`isCommandLetter()` accepts `G`, `M` and a line-initial `T` — the
+[§4.1](#41-command-letters) set minus Marlin's development-only `D`.
 
 A **command-agnostic** decomposition — every field of a block into a `GWord`, the words split at each
 `G`/`M` word ([§4.3](#43-rules)) and at a `T` word only while no command has started, with `N`
@@ -905,14 +943,6 @@ whole macro. `GCorpusDecompositionTest` freezes that reading:
 every line of both corpora, plus a hand-built edge-case set covering the table above, as its line
 kind, its framing fields and its canonically encoded commands.
 
-`isCommandLetter()` treats `G`, `M` and (line-initially) `T` as command letters, which is the
-[§4.1](#41-command-letters) set minus Marlin's development-only `D`. A block whose tokens hold
-no identifier is a `GMeaninglessBlock` whatever those tokens are - `?` and `42 99` as much as a
-blank one - because the first *identifier* is what the shape is read from and such a block has no
-field at any position. [§9](#9-error-handling) would call the first two an error; a `GNotIdentifierError` was
-declared for them and never produced, and has been deleted rather than left as a type no producer
-fills and no consumer reads.
-
 **A valued parameter sent bare does not round-trip.** `M104 F` is legal — the letter is present and
 carries nothing — and the word model can say so (`GFlagWord`), but the decoder accessors collapse
 "absent" and "present without a value" to `null`, because a `BigDecimal?` property has no third
@@ -924,7 +954,7 @@ valueless letter is the default (`value_float()` returns 0), so this is recorded
 `MarlinDocExamplesTest` pins the affected doc examples line by line, and `stringArgStart()` depends
 on this: a bare own-letter has to *end* the lettered run precisely because it cannot be represented.
 
-Not yet covered by *this* layer: line-length limits, and [§3.4](#34-string-values)'s bare
+Not yet covered by either of these layers: line-length limits, and [§3.4](#34-string-values)'s bare
 rest-of-line strings. The latter is a layering fact rather than a gap: which commands take one
 depends on the command number, and nothing below a decoder knows it, so the reading is done one
 layer up - `GRqDecoder` is handed the tokens as lexed, and `MarlinWords.stringArg()` reassembles

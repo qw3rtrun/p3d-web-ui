@@ -6,11 +6,11 @@ import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.GEncoder
-import org.qw3rtrun.p3d.g.code.core.block.GBlockDraft
-import org.qw3rtrun.p3d.g.code.core.block.GCommand
+import org.qw3rtrun.p3d.g.code.core.command.GBlockDraft
+import org.qw3rtrun.p3d.g.code.core.command.GCommand
 import org.qw3rtrun.p3d.g.code.core.block.GFramedBlock
 import org.qw3rtrun.p3d.g.code.core.token.*
-import org.qw3rtrun.p3d.g.code.core.block.GWordReader
+import org.qw3rtrun.p3d.g.code.core.command.GWordReader
 import java.math.BigDecimal
 
 /**

@@ -3,10 +3,10 @@ package org.qw3rtrun.p3d.g.code.core.session
 import org.qw3rtrun.p3d.g.code.core.block.CheckSumCalculator
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
-import org.qw3rtrun.p3d.g.code.core.block.GCommand
+import org.qw3rtrun.p3d.g.code.core.command.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
-import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
 
 /**
  * The host's side of GCODE_spec.md section 8.5: number and frame outgoing blocks, keep the ones that

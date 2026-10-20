@@ -1,6 +1,6 @@
 ---
 name: gcode-dsl-dev
-description: Write or review the G-code building DSL in this repo - the `code/dsl` package (`G.kt`, `GWords.kt`), the host-side facade for *writing* G-code. Use for command and parameter builders, line/block builders, comments, bare rest-of-line strings, and anything measured by GDslCorpusTest. This layer is deliberately the INVERSE of the portable core: full Kotlin, infix and extension functions, BigDecimal, JVM types and throwing on a bad call site are all correct here. Do NOT use for `code/core` (tokenizer, liner, checksums, encoder) - that is `low-level-protocol-dev`.
+description: Write or review the G-code building DSL in this repo - the `code/dsl` package (`G.kt`, `GWords.kt`), the host-side facade for *writing* G-code. Use for command and parameter builders, block builders, comments, bare rest-of-line strings, and anything measured by GDslCorpusTest. This layer is deliberately the INVERSE of the portable core: full Kotlin, infix and extension functions, BigDecimal, JVM types and throwing on a bad call site are all correct here. Do NOT use for `code/core` (tokenizer, block reader, checksums, encoder) - that is `low-level-protocol-dev`.
 ---
 
 # The G-code building DSL
@@ -8,7 +8,7 @@ description: Write or review the G-code building DSL in this repo - the `code/ds
 ## Which layer am I in
 
 This skill governs **one package**: `gcode/src/main/kotlin/org/qw3rtrun/p3d/g/code/dsl/**` —
-`G.kt` (commands, lines, comments) and `GWords.kt` (parameter words, `bareString`, `text`, `expr`).
+`G.kt` (commands, blocks, comments) and `GWords.kt` (parameter words, `bareString`, `text`, `expr`).
 Its tests are `dsl/GTest.kt`, `dsl/GDslCorpusTest.kt` and `dsl/M117DecoderTest.kt`.
 
 **`GSender` is not in this package.** It is the Java-facing sink, it lives in
@@ -30,9 +30,9 @@ boundary, and the core's rules do not merely relax here, several of them *revers
 |---|---|---|
 | **Errors are values; never throw on bad input** | `require(...)` → `IllegalArgumentException` | A tokenizer's input arrives off a serial link, where malformed is the normal case. A builder's input is *source code someone wrote*. `X("abc")` is a programmer error at the call site, and failing there beats discovering it when a printer answers `echo:Unknown command`. `GWords.kt` states this in its own KDoc: "this module throws only for those." |
 | `BigDecimal` | a `BigDecimal` overload on **every** letter | The core admits `BigDecimal` as its one portability liability (todo 02). Here it is not a liability at all — callers hold JVM decimals and the facade's job is to accept them. |
-| Extension and infix functions, "no extension DSLs" | `infix fun GCommand.comment`, `infix fun GBlock.comment`, `GCommand.line()` | These *are* the facade. `G(1, X(10)) comment " move"` is the ergonomic win the layer exists to provide. |
+| Extension and infix functions, "no extension DSLs" | `infix fun GCommand.comment`, `infix fun GBlockDraft.comment`, `GCommand.block()` | These *are* the facade. `G(1, X(10)) comment " move"` is the ergonomic win the layer exists to provide. |
 | JVM types | `java.math.BigDecimal`, `StringBuilder`, whatever reads best at the call site | The call site is a JVM host writing Kotlin or Java. Nothing here is ported, so nothing here has to transliterate. (The `java.util.function.Consumer` constructor that used to be cited here belongs to `GSender`, in `:backend:terminal`.) |
-| `map`/`filter`/`toList` and allocation | `params.toList()`, `parts + tailComment(text)` | The ban is about **per-byte hot paths**. A builder runs once per authored line; clarity wins. |
+| `map`/`filter`/`toList` and allocation | `params.toList()`, `parts + tailComment(text)` | The ban is about **per-byte hot paths**. A builder runs once per authored block; clarity wins. |
 | "Write C, not idiomatic Kotlin" | idiomatic Kotlin — overloads, default arguments, `vararg` | Optimise for the **call site**, not for transliteration. |
 
 **What does not reverse.** Two core rules hold with full force, because they are about the bytes on
@@ -40,27 +40,27 @@ the wire rather than about the language:
 
 1. **Byte-exactness.** See *The lexeme rule*.
 2. **Spec citation.** Every non-obvious rule carries its section number in a comment
-   (`// spec 8: * is the line's checksum field`). Density is bought with comments here too.
+   (`// spec 8: * is the block's checksum field`). Density is bought with comments here too.
 
 ## The rule, as a number
 
 > **Any valid G-code can be written with the DSL.**
 
-`GDslCorpusTest` is the gate, and it is not a smoke test — it takes every line of
+`GDslCorpusTest` is the gate, and it is not a smoke test — it takes every block of
 `gcode/src/test/resources/marlin.gcode` apart and **rewrites it through the DSL's public builders
 only**, never from the parsed objects (that would test the encoder instead), then compares:
 
 | Assertion | Value | Meaning |
 |---|---|---|
-| `inexpressible` | **empty list** | no quarantine; there is no real line the DSL cannot say |
-| `expressible` | **303** | non-blank corpus lines, all of them |
+| `inexpressible` | **empty list** | no quarantine; there is no real block the DSL cannot say |
+| `expressible` | **303** | non-blank corpus blocks, all of them |
 | `byteExact` | **279** | identical bytes, modulo the encoder's canonical spacing |
 | `notByteExact.size` | **24** | four named causes, pinned in a comment in the test |
 
 **These numbers are a contract.** A change either keeps them or updates them *together with* the
 breakdown comment in the test and [todo 10](https://github.com/qw3rtrun/p3d-web-ui/issues/12). Moving
 `byteExact` silently is the failure this test exists to prevent — which is why its failure message
-prints every differing line.
+prints every differing block.
 
 The 24 are **not** DSL gaps, and none should be "fixed" here: 20 are bare rest-of-line strings that
 need the command number to lex (spec 3.4a — the DSL can *write* one, `bareString(text)`, and a
@@ -101,16 +101,16 @@ already knows, share it the same way; do not copy the condition.
 
 ### Structural fields: `*` is refused, `N` is not
 
-- `*` (`GChecksum`) as a parameter is refused — it is the line's checksum field and
-  `GEncoder.frame` is what puts one there. A block carrying its own `*` would be checksummed twice.
+- `*` (`GChecksum`) as a parameter is refused — it is the block's checksum field and
+  `GEncoder.frame` is what puts one there. A draft carrying its own `*` would be checksummed twice.
 - **`N` is deliberately allowed.** Spec 7.1 makes only the *first field of a line* a line number, so
   an `N` inside a command is an ordinary parameter — and `M110 N7` sets the line-number counter
   (spec 7.2). Refusing it made `M110` unwritable.
 
 That over-wide-guard mistake has now been made **twice** in this module — once in the line-number
 rule (todo 05) and once here — and both times it was found by something real failing, not by
-review. When you add a guard, write out the line it would refuse and check that
-line is genuinely invalid.
+review. When you add a guard, write out the block it would refuse and check that
+block is genuinely invalid.
 
 ### Letter collisions resolve the way the *parser* resolves them
 
@@ -174,8 +174,8 @@ Follow the `tdd` skill for the loop. On top of it, for this layer:
 - **Assert the rendered string, not the object graph.** `assertEquals("G1 X10.5 F1800", encode(...))`
   is the claim; asserting a `GRq`'s shape tests the model, which `core` already tests.
 - **Every builder ships a round-trip-through-the-parser case.** `GTest.kt`'s
-  `everything the DSL frames parses back as a verified packet` frames DSL output and asserts it
-  comes back as a `GPacketLine` — i.e. the checksum verifies. A builder that emits bytes the parser
+  `everything the DSL frames parses back as a verified framed block` frames DSL output and asserts it
+  comes back as a `GFramedBlock` — i.e. the checksum verifies. A builder that emits bytes the parser
   rejects is the defect class this layer can actually introduce.
 - **Refusals are tests too.** `require` is the contract here, so a rule you add needs an
   `assertThrows<IllegalArgumentException>` naming what it refuses. See
@@ -214,7 +214,7 @@ grep -c '^val [A-Z]: GWord = GFlagWord' gcode/src/main/kotlin/org/qw3rtrun/p3d/g
 - [ ] `GDslCorpusTest`'s four numbers unchanged, or changed with the comment and todo 10 together
 - [ ] no number re-rendered from its value; lexeme preserved end to end
 - [ ] new rules validated by sharing the parser's function, not by a copied condition
-- [ ] any new guard checked against a real line it would refuse
+- [ ] any new guard checked against a real block it would refuse
 - [ ] new builder has a rendered-string test, a round-trip-through-the-parser case, and a refusal test
 - [ ] a new letter has all five shapes, or uses the generic helpers instead
 - [ ] spec section cited for every non-obvious rule

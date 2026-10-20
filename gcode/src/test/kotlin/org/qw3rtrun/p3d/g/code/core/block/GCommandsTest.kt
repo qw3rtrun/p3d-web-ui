@@ -12,8 +12,8 @@ import org.qw3rtrun.p3d.g.code.core.token.GRawExpression
 
 /**
  * The command model of GCODE_spec.md section 4: a head word, its parameter words, and what
- * [GEncoder] makes of them. The types live one layer above a line - a line is tokens, and only
- * The DSL and `GRq.encode()` build these; `GWordReader` reads a line back into them.
+ * [GEncoder] makes of them. The types live one layer above a block - a block is tokens, and only
+ * The DSL and `GRq.encode()` build these; `GWordReader` reads a block back into them.
  */
 class GCommandsTest {
 
@@ -97,9 +97,9 @@ class GCommandsTest {
     }
 
     @Test
-    fun `a command is not a line`() {
+    fun `a command is not a block`() {
         val command = GCommand(GLetter('G'), GInt(1))
 
-        assertFalse(command as Any is GLine)
+        assertFalse(command as Any is GBlock)
     }
 }

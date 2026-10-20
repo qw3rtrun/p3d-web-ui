@@ -10,12 +10,12 @@ import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
  * Unit tests for reading a field off tokens - `GFields.kt`'s [valueIndex], GCODE_spec.md section
  * 2.1's pairing of an identifier with the value behind it.
  *
- * The rule is the module's only copy, so every reader above it - the liner's `N` and `*`, the
+ * The rule is the module's only copy, so every reader above it - the reader's `N` and `*`, the
  * command head, the Marlin decoders - is measured here: whitespace is crossed, a comment, another
  * identifier or a line break ends the field, and only a `GValue` pairs.
  *
  * The head readers in the same file are measured by `GWordReaderTest` and the corpus contracts,
- * which exercise them over real lines rather than token positions.
+ * which exercise them over real blocks rather than token positions.
  */
 class GFieldsTest {
 

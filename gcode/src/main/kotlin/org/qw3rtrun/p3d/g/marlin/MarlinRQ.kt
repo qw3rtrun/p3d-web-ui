@@ -24,7 +24,7 @@ import java.math.BigDecimal
  * claimed by more than one class**: the lookup keeps the first. Marlin documents
  * `G29`, `G34`, `M665`, `M666` once per variant - six G29 pages, one per bed-leveling
  * system, and two each for the others - and which one a printer means depends on how
- * its firmware was compiled, which no amount of reading the line can tell you. Build
+ * its firmware was compiled, which no amount of reading the block can tell you. Build
  * with the variant class you mean; [decode] is a best effort for the rest.
  *
  * ```

@@ -2,7 +2,7 @@ package org.qw3rtrun.p3d.g.marlin
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
 import org.qw3rtrun.p3d.g.code.core.block.GWordReader
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
@@ -31,18 +31,18 @@ class MarlinDocExamplesTest {
             .map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("#") }
 
-    private fun parse(line: String) =
-        GLiner.lines(line)
+    private fun parse(block: String) =
+        GBlockReader.blocks(block)
             .flatMap { GWordReader.parse(it).asSequence() }
             .toList()
 
-    private fun codeOf(line: String) = line.trim().split(Regex("\\s+")).first().uppercase()
+    private fun codeOf(block: String) = block.trim().split(Regex("\\s+")).first().uppercase()
 
     /**
      * The code of a *parsed* command, from its own head.
      *
-     * Not the first word of the line: `G53 G0 X0 Y0 Z0` is two commands, `G53` being a modal
-     * prefix, and `X0 Y0 Z0` belong to the `G0`. Reading the code off the line instead of off each
+     * Not the first word of the block: `G53 G0 X0 Y0 Z0` is two commands, `G53` being a modal
+     * prefix, and `X0 Y0 Z0` belong to the `G0`. Reading the code off the block instead of off each
      * command is what made this test blame G53 for parameters it never had.
      */
     private fun codeOf(cmd: GCommand): String? {
@@ -53,9 +53,9 @@ class MarlinDocExamplesTest {
     /**
      * A parsed command's parameters back as tokens - what a decoder is handed.
      *
-     * Rebuilt from each word's `raw` rather than from the encoder, so a doc line's own spelling
+     * Rebuilt from each word's `raw` rather than from the encoder, so a doc example's own spelling
      * reaches the decoder unchanged; the separator the parser dropped between two words is put
-     * back, because a command whose argument runs to the end of the line can see it.
+     * back, because a command whose argument runs to the end of the block can see it.
      */
     private fun paramTokens(cmd: GCommand): List<GToken> =
         cmd.params.flatMap { listOf(GSpace) + it.raw }
@@ -118,16 +118,16 @@ class MarlinDocExamplesTest {
     fun `every parameter letter in a doc example is modelled`() {
         val missing = ArrayList<String>()
 
-        for (line in examples) {
-            if (codeOf(line) in restOfLineArgument || codeOf(line) in undocumentedCodes) continue
+        for (block in examples) {
+            if (codeOf(block) in restOfLineArgument || codeOf(block) in undocumentedCodes) continue
 
-            for (cmd in parse(line)) {
+            for (cmd in parse(block)) {
                 val code = codeOf(cmd) ?: continue
                 if (code in restOfLineArgument || code in undocumentedCodes) continue
 
                 val known = MarlinCommands.info.filter { it.code == code }
                 if (known.isEmpty()) {
-                    missing.add("$line  ->  no command class for $code")
+                    missing.add("$block  ->  no command class for $code")
                     continue
                 }
                 // A code can be documented as several variants (six G29 pages, one per
@@ -140,7 +140,7 @@ class MarlinDocExamplesTest {
                     val letter = (word.id as? GLetter)?.letter?.uppercaseChar() ?: continue
                     if (letter !in modelled) {
                         missing.add(
-                            "$line  ->  $code has no property for '$letter' " +
+                            "$block  ->  $code has no property for '$letter' " +
                                 "(modelled: ${modelled.sorted()})"
                         )
                     }
@@ -155,7 +155,7 @@ class MarlinDocExamplesTest {
     fun `every example resolves to a command class`() {
         val unresolved = examples
             .filter { codeOf(it) !in undocumentedCodes }
-            .filter { line -> MarlinCommands.info.none { it.code == codeOf(line) } }
+            .filter { block -> MarlinCommands.info.none { it.code == codeOf(block) } }
 
         assertEquals(emptyList<String>(), unresolved)
     }
@@ -165,7 +165,7 @@ class MarlinDocExamplesTest {
      *
      * Marlin lets a parameter documented with a value be sent bare, meaning "on": `M104 F`,
      * `G61 S0 XY`, `M919 XYZE`, `M420 C`. A `BigDecimal?` / `Int?` property cannot hold
-     * "present, no value" - null already means absent - so decoding such a line drops that letter.
+     * "present, no value" - null already means absent - so decoding such a block drops that letter.
      *
      * This is pinned rather than fixed because fixing it means a second property per valued
      * parameter (1044 of them) to carry presence separately, and nothing in this project sends
@@ -182,10 +182,10 @@ class MarlinDocExamplesTest {
     fun `a valued parameter sent bare is not read back`() {
         val lost = ArrayList<String>()
 
-        for (line in examples) {
-            if (codeOf(line) in restOfLineArgument || codeOf(line) in undocumentedCodes) continue
+        for (block in examples) {
+            if (codeOf(block) in restOfLineArgument || codeOf(block) in undocumentedCodes) continue
 
-            for (cmd in parse(line)) {
+            for (cmd in parse(block)) {
                 val code = codeOf(cmd) ?: continue
                 if (code in restOfLineArgument || code in undocumentedCodes) continue
 
@@ -209,7 +209,7 @@ class MarlinDocExamplesTest {
                         .toSet()
                     wanted.count { it in kept }
                 }
-                if (bestKept < wanted.size) lost.add(line)
+                if (bestKept < wanted.size) lost.add(block)
             }
         }
 

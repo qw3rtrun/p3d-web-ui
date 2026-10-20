@@ -3,7 +3,7 @@ package org.qw3rtrun.p3d.g.code.core.session
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
 import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
@@ -11,10 +11,10 @@ import org.qw3rtrun.p3d.g.code.core.block.GWord
 import org.qw3rtrun.p3d.g.code.core.token.*
 
 /**
- * The host's side of GCODE_spec.md section 8.5: the window of unacknowledged lines, and rewinding
+ * The host's side of GCODE_spec.md section 8.5: the window of unacknowledged blocks, and rewinding
  * it when the firmware asks for a resend.
  *
- * Deliberately **no I/O**. The window numbers, frames and remembers lines; sending them and reading
+ * Deliberately **no I/O**. The window numbers, frames and remembers blocks; sending them and reading
  * the replies belongs to the transport layer, which is a different module. That split is what the
  * todo called "the parsing half belongs here, the I/O half does not", and it is also what keeps the
  * session portable with the rest of `code/core`.
@@ -31,7 +31,7 @@ class GSendWindowTest {
     inner class Numbering {
 
         @Test
-        fun `each line is framed with the next number and a checksum`() {
+        fun `each block is framed with the next number and a checksum`() {
             val window = GSendWindow()
 
             assertEquals("N1 G28*18", window.send(g28))
@@ -55,7 +55,7 @@ class GSendWindowTest {
         }
 
         @Test
-        fun `everything it emits parses back as a verified packet in sequence`() {
+        fun `everything it emits parses back as a verified framed block in sequence`() {
             // The property that ties this to the other half of the session: what the window sends,
             // a reader accepts. If the two ever disagree about numbering or the checksum, this says
             // so - and it is the only test here that exercises both directions.
@@ -65,9 +65,9 @@ class GSendWindowTest {
 
             for (i in 0 until 20) {
                 val text = requireNotNull(window.send(if (i % 2 == 0) g28 else t0))
-                val line = GLiner.lines(text).first()
+                val block = GBlockReader.blocks(text).first()
 
-                assertInstanceOf(GAccepted::class.java, reader.read(line)) { "rejected: $text" }
+                assertInstanceOf(GAccepted::class.java, reader.read(block)) { "rejected: $text" }
             }
             assertEquals(20, reader.lastLine)
         }
@@ -109,7 +109,7 @@ class GSendWindowTest {
         @Test
         fun `a full window does not consume a line number`() {
             // The refused command was never framed, so the next one must still get N3 - otherwise a
-            // rejected send would punch a gap in the sequence and the next line would be refused.
+            // rejected send would punch a gap in the sequence and the next block would be refused.
             val window = GSendWindow(capacity = 2)
             window.send(g28)
             window.send(g28)
@@ -135,7 +135,7 @@ class GSendWindowTest {
         }
 
         @Test
-        fun `a resend rewinds the window so the replayed lines are outstanding again`() {
+        fun `a resend rewinds the window so the replayed blocks are outstanding again`() {
             val window = GSendWindow(capacity = 4)
             window.send(g28)
             window.send(g28)
@@ -146,15 +146,15 @@ class GSendWindowTest {
             window.resendFrom(2)
 
             assertEquals(2, window.inFlight)
-            // ...and numbering carries on after the replayed lines, not from the rewind point.
+            // ...and numbering carries on after the replayed blocks, not from the rewind point.
             assertEquals("N4 G28*23", window.send(g28))
         }
 
         @Test
-        fun `the line the firmware asked for is always still held`() {
+        fun `the block the firmware asked for is always still held`() {
             // Not a coincidence worth relying on blindly, so it is asserted: `Resend: n` always has
-            // n = last accepted + 1, and the host cannot have seen an `ok` for a line the firmware
-            // never accepted, so n is never older than the oldest unacknowledged line.
+            // n = last accepted + 1, and the host cannot have seen an `ok` for a block the firmware
+            // never accepted, so n is never older than the oldest unacknowledged block.
             val window = GSendWindow(capacity = 4)
             window.send(g28)
             window.send(g28)
@@ -167,7 +167,7 @@ class GSendWindowTest {
         }
 
         @Test
-        fun `asking for a line that was dropped from the window yields nothing`() {
+        fun `asking for a block that was dropped from the window yields nothing`() {
             // A peer asking outside the window has lost sync beyond what a resend can repair; the
             // host's answer is a fresh `M110`, not a replay. Reported as an empty replay rather than
             // as a thrown exception, because it is a statement about the session and not a bug in
@@ -201,7 +201,7 @@ class GSendWindowTest {
             val reader = GCodeReader()
             val tokenizer = GTokenizer
             fun deliver(text: String) =
-                reader.read(GLiner.lines(text).first())
+                reader.read(GBlockReader.blocks(text).first())
 
             val one = requireNotNull(window.send(g28))
             val two = requireNotNull(window.send(g28))
@@ -225,7 +225,7 @@ class GSendWindowTest {
 
         @Test
         fun `reset emits an M110 and renumbers from there`() {
-            // spec 7.2: `M110 N<n>` is how a host resynchronises. The M110 line itself is exempt
+            // spec 7.2: `M110 N<n>` is how a host resynchronises. The M110 block itself is exempt
             // from the continuity check, which is what lets it be sent when the sequence is broken.
             val window = GSendWindow(capacity = 4)
             window.send(g28)
@@ -241,7 +241,7 @@ class GSendWindowTest {
         @Test
         fun `reset clears the outstanding window`() {
             // Whatever was in flight is abandoned: after a resynchronisation there is nothing left
-            // to resend, because the numbers those lines carried no longer mean anything.
+            // to resend, because the numbers those blocks carried no longer mean anything.
             val window = GSendWindow(capacity = 4)
             window.send(g28)
             window.send(g28)
@@ -253,16 +253,16 @@ class GSendWindowTest {
         }
 
         @Test
-        fun `the reset line is itself accepted by a reader mid-sequence`() {
+        fun `the reset block is itself accepted by a reader mid-sequence`() {
             val window = GSendWindow(capacity = 4)
             val reader = GCodeReader()
             val tokenizer = GTokenizer
-            reader.read(GLiner.lines("N1 G28*18").first())
+            reader.read(GBlockReader.blocks("N1 G28*18").first())
 
             val reset = requireNotNull(window.reset(0))
-            val line = GLiner.lines(reset).first()
+            val block = GBlockReader.blocks(reset).first()
 
-            assertInstanceOf(GAccepted::class.java, reader.read(line))
+            assertInstanceOf(GAccepted::class.java, reader.read(block))
             assertEquals(0, reader.lastLine)
         }
     }

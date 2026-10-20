@@ -13,7 +13,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GInt
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 
 /**
- * The word->command reading, spec sections 4 and 5. `GLiner` answers what *shape* a line has; this
+ * The word->command reading, spec sections 4 and 5. `GBlockReader` answers what *shape* a block has; this
  * answers what *commands* it carries, without knowing what any of them mean.
  *
  * It covers test apparatus, and that is deliberate - see [GWordReader]. The three corpus contracts
@@ -22,9 +22,9 @@ import org.qw3rtrun.p3d.g.code.core.token.GLetter
 class GWordReaderTest {
 
 
-    /** The commands of the single line in [gcode]. */
+    /** The commands of the single block in [gcode]. */
     private fun commands(gcode: String): List<GCommand> =
-        GWordReader.parse(GLiner.lines(gcode).first())
+        GWordReader.parse(GBlockReader.blocks(gcode).first())
 
     @Nested
     inner class OneCommand {
@@ -108,7 +108,7 @@ class GWordReaderTest {
         @Test
         fun `a bare command letter is not a command`() {
             // spec 4.1: a command word is a letter followed by an unsigned integer. `G` alone is a
-            // flag word, so the line carries no command at all.
+            // flag word, so the block carries no command at all.
             assertEquals(emptyList<GCommand>(), commands("G"))
         }
     }
@@ -148,7 +148,7 @@ class GWordReaderTest {
     inner class SeveralCommands {
 
         /**
-         * spec 4.3: multiple commands on one line are not portable and Marlin executes only the
+         * spec 4.3: multiple commands on one block are not portable and Marlin executes only the
          * first, but the parser reports what is there and leaves that policy to the caller.
          */
         @Test
@@ -164,7 +164,7 @@ class GWordReaderTest {
 
         /**
          * spec 4.1/4.2: `T` is a command letter *and* a conventional parameter letter. After a
-         * command has started it is that command's parameter - 40 corpus lines (`G29 T`,
+         * command has started it is that command's parameter - 40 corpus blocks (`G29 T`,
          * `G12 P1 S1 T3`, `G26 C P T3.0`) depend on this, and splitting at `T` misparses all of them.
          */
         @Test
@@ -197,7 +197,7 @@ class GWordReaderTest {
     inner class LinesWithoutCommands {
 
         @Test
-        fun `a comment only line has no commands`() {
+        fun `a comment only block has no commands`() {
             assertEquals(emptyList<GCommand>(), commands("; just a comment"))
         }
 
@@ -207,14 +207,14 @@ class GWordReaderTest {
         }
 
         /**
-         * spec 4.1: with `GCODE_MOTION_MODES` an axis letter may start a line and inherit the last
-         * motion command. Resolving that needs the previous line, which this parser does not have -
-         * so such a line reports no command rather than guessing one. Characterisation point for
+         * spec 4.1: with `GCODE_MOTION_MODES` an axis letter may start a block and inherit the last
+         * motion command. Resolving that needs the previous block, which this parser does not have -
+         * so such a block reports no command rather than guessing one. Characterisation point for
          * [05](https://github.com/qw3rtrun/p3d-web-ui/issues/7), which owns
-         * session state; the corpus contains no such line.
+         * session state; the corpus contains no such block.
          */
         @Test
-        fun `a line of only parameters reports no command`() {
+        fun `a block of only parameters reports no command`() {
             assertEquals(emptyList<GCommand>(), commands("X10 Y10"))
         }
 
@@ -233,7 +233,7 @@ class GWordReaderTest {
 
         /** spec 7/8: `N` and `*` are structural, never commands or parameters of one. */
         @Test
-        fun `a packet line's commands exclude the line number and the checksum`() {
+        fun `a framed block's commands exclude the line number and the checksum`() {
             assertEquals(
                 listOf(GCommand(GLetter('G'), GInt(28))),
                 commands("N1 G28*18\n")
@@ -241,9 +241,9 @@ class GWordReaderTest {
         }
 
         /**
-         * spec 4: the same holds when the line is *not* a well-formed packet. A `GPacketLine` keeps
+         * spec 4: the same holds when the block is *not* a well-formed framed block. A `GFramedBlock` keeps
          * `N` out of its payload, but a line number with no checksum keeps its word - so the skip
-         * has to be here, not in the line shape. Without it `N100 M110` re-emitted as `M110N100`.
+         * has to be here, not in the block shape. Without it `N100 M110` re-emitted as `M110N100`.
          */
         @Test
         fun `an unpaired line number is not a parameter of the command`() {
@@ -259,9 +259,9 @@ class GWordReaderTest {
         /**
          * Characterisation point. spec 5 puts `*<checksum>` last and says nothing about content
          * after it, so the letters of a garbled field become flag parameters: `*ABC` lexes as `*`
-         * plus three separate letters, not one token. The shape layer already reports this line as
+         * plus three separate letters, not one token. The shape layer already reports this block as
          * `GMalformedChecksum`, so a caller reading commands off it has an error in hand either way.
-         * If a tail concept lands on the line types (todo 04 wants one for spec 8.3), exclude it
+         * If a tail concept lands on the block types (todo 04 wants one for spec 8.3), exclude it
          * here too and this assertion changes.
          */
         @Test
@@ -285,33 +285,33 @@ class GWordReaderTest {
             "marlin.gcode fixture is missing from the test resources"
         }.readBytes().decodeToString()
 
-        private fun lines(): List<GLine> =
-            GLiner.lines(corpus).toList()
+        private fun blocks(): List<GBlock> =
+            GBlockReader.blocks(corpus).toList()
 
         @Test
         fun `word assembly over the whole corpus does not throw`() {
-            assertDoesNotThrow { lines().forEach { GWordReader.parse(it) } }
+            assertDoesNotThrow { blocks().forEach { GWordReader.parse(it) } }
         }
 
         /**
          * A census, so the command/parameter ratio cannot drift silently. `T` heading a command only
-         * while none has started is what keeps this at one command per line for all but three lines,
-         * which are pinned below - splitting at every `T` instead turns 40 lines into two commands.
+         * while none has started is what keeps this at one command per block for all but three blocks,
+         * which are pinned below - splitting at every `T` instead turns 40 blocks into two commands.
          */
         @Test
-        fun `the corpus is one command per line, with three named exceptions`() {
+        fun `the corpus is one command per block, with three named exceptions`() {
             var withWords = 0
             val multi = ArrayList<String>()
-            for (line in lines()) {
-                if (GWordReader.words(line.body).isEmpty()) continue
+            for (block in blocks()) {
+                if (GWordReader.words(block.body).isEmpty()) continue
                 withWords++
-                val cmds = GWordReader.parse(line)
+                val cmds = GWordReader.parse(block)
                 if (cmds.size != 1) {
-                    multi.add(line.raw.joinToString("") { it.rawText() }.trim() + " -> " + cmds.size)
+                    multi.add(block.raw.joinToString("") { it.rawText() }.trim() + " -> " + cmds.size)
                 }
             }
 
-            assertTrue(withWords > 290) { "expected 290+ corpus lines with words, got $withWords" }
+            assertTrue(withWords > 290) { "expected 290+ corpus blocks with words, got $withWords" }
             assertEquals(
                 listOf(
                     // spec 4.3: splitting at each G/M. G53 is a modal prefix - "move in machine
@@ -329,10 +329,10 @@ class GWordReaderTest {
 
         /**
          * The property that catches a flag or a subcode being quietly dropped. Structural words are
-         * excluded on both sides: spec 4 makes `N` and `*` belong to the line, not to a command.
+         * excluded on both sides: spec 4 makes `N` and `*` belong to the block, not to a command.
          *
          * "Structural" means the `*` field and **the line number**, and the line number can only be
-         * the first word (spec 7.1, and Marlin takes one only when `N` opens the line). An earlier
+         * the first word (spec 7.1, and Marlin takes one only when `N` opens the block). An earlier
          * version of this filter excluded *every* `N` word, on both sides, so it agreed with the
          * parser while both were wrong together. What it hid: `M0 Click to continue` is a bare
          * rest-of-line string that today lexes letter by letter (todo 09), and every `n` in
@@ -340,21 +340,21 @@ class GWordReaderTest {
          * what `M110 N<n>` needs as well - see `GWordReader.isStructural`.
          */
         @Test
-        fun `the commands of a corpus line re-emit its parametric words`() {
-            for (line in lines()) {
-                val words = GWordReader.words(line.body).filterIndexed { i, w ->
+        fun `the commands of a corpus block re-emit its parametric words`() {
+            for (block in blocks()) {
+                val words = GWordReader.words(block.body).filterIndexed { i, w ->
                     val id = w.id
                     id != GChecksum && !(i == 0 && id is GLetter && (id.letter == 'N' || id.letter == 'n'))
                 }
                 if (words.isEmpty()) continue
                 val expected = words.joinToString("") { w -> w.raw.joinToString("") { it.rawText() } }
-                val actual = GWordReader.parse(line).joinToString("") { cmd ->
+                val actual = GWordReader.parse(block).joinToString("") { cmd ->
                     cmd.head.raw.joinToString("") { it.rawText() } +
                         cmd.params.joinToString("") { w -> w.raw.joinToString("") { it.rawText() } }
                 }
 
                 assertEquals(expected, actual) {
-                    "words lost on: " + line.raw.joinToString("") { it.rawText() }.trim()
+                    "words lost on: " + block.raw.joinToString("") { it.rawText() }.trim()
                 }
             }
         }
@@ -379,8 +379,8 @@ class GWordReaderTest {
         }
 
         @Test
-        fun `M110 keeps its argument on a framed line too`() {
-            // Two `N`s: the first is the line number and belongs to the line, the second is the
+        fun `M110 keeps its argument on a framed block too`() {
+            // Two `N`s: the first is the line number and belongs to the block, the second is the
             // argument and belongs to the command. This is the case Marlin special-cases by
             // searching for a second `N` (queue.cpp), so getting it wrong is not academic.
             assertEquals(
@@ -392,12 +392,12 @@ class GWordReaderTest {
         @Test
         fun `a leading line number is still structural`() {
             // Corpus line 173. Without the skip the line number became a parameter of M110 and
-            // re-emitted the line as `M110N100`, with the words in the wrong order.
+            // re-emitted the block as `M110N100`, with the words in the wrong order.
             assertEquals(listOf(GCommand(GLetter('M'), GInt(110))), commands("N100 M110"))
         }
 
         @Test
-        fun `an N that does not open the line is a parameter`() {
+        fun `an N that does not open the block is a parameter`() {
             // spec 7.1: the line number "should be the first field". Marlin only takes one when `N`
             // is the first character, so a later `N` is a parameter of whatever command precedes it.
             assertEquals(

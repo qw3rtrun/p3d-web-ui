@@ -50,11 +50,11 @@ validation" is a failure; one that says "`parse(\"G1 X\")` must yield `GMalforme
 currently throws at GTokenizer.kt:142" is the deliverable.
 
 **DDD.** Bounded contexts before classes. The recurring question here is where the printer domain
-actually lives: `:gcode` owns the *protocol* (bytes, lines, commands, replies), `:backend:core` and
+actually lives: `:gcode` owns the *protocol* (bytes, blocks, commands, replies), `:backend:core` and
 `:backend:machine-mng` own the *machine* (state, jobs, capabilities), `:backend:terminal` owns the
 *transport*. When a type wants to be in two of them at once, that is the design problem — name it,
 and pick the side that leaves the dependency arrow pointing one way. Ubiquitous language matters
-concretely: the spec's vocabulary (word, field, block, line, packet, resend) is the domain language
+concretely: the spec's vocabulary (word, field, block, line number, checksum, resend) is the domain language
 and code that renames it is a defect.
 
 **Concurrency and multithreading.** For any design touching shared state, state explicitly: what is
@@ -88,7 +88,7 @@ question.
 
 ```
 gcode/                     the G-code protocol module — TWO standards, see below
-  code/core/**             portable core: tokenizer, liner, checksums, encoder, session
+  code/core/**             portable core: tokenizer, block reader, checksums, encoder, session
   code/dsl/**              the writing facade: G.kt, GWords.kt, GSender
   marlin/**                domain edge: commands, events, decoders
 backend/core/              shared domain types (Kotlin + Java, Spring BOM)

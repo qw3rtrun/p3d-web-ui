@@ -9,7 +9,7 @@ import java.io.File
  * The dependency direction inside the portable core, enforced over the source text.
  *
  * `core/token` is the bottom layer: tokens and the lexer. It may name nothing above itself - not in
- * an import, not in code, not in a KDoc link. `core/block` sits on top of it: lines, commands and
+ * an import, not in code, not in a KDoc link. `core/block` sits on top of it: blocks, commands and
  * checksums, and may name `token` and itself. Both may import `kotlin.*`, and `java.math.BigDecimal`
  * is the one JVM type the core still carries (see the `low-level-protocol-dev` skill's known debt).
  *
@@ -32,15 +32,15 @@ class GLayeringTest {
     private val blockPackage = "g.code.core.block"
 
     /**
-     * Every line in `core/token` and `core/block` that reaches outside what its layer may name.
+     * Every source line in `core/token` and `core/block` that reaches outside what its layer may name.
      *
      * The directories are asserted to exist and hold sources first, so a moved or renamed tree
      * cannot make the scan pass by finding nothing.
      *
      * **The expected list is empty, and stays empty.** It started with three known violations,
-     * removed one change at a time: `GTokenizer`'s imports of `GLine` and `GLiner` (the read
-     * pipeline moved to `GLiner.lines`), and `GTokens`' import of `GBlockPart` (a comment goes into a
-     * block as `GCommentPart` rather than being a block part itself). A new entry is a new
+     * removed one change at a time: `GTokenizer`'s imports of `GBlock` and `GBlockReader` (the read
+     * pipeline moved to `GBlockReader.blocks`), and `GTokens`' import of `GBlockPart` (a comment goes
+     * into a block as `GCommentPart` rather than being a block part itself). A new entry is a new
      * dependency pointing the wrong way; fix the dependency, do not pin the entry.
      */
     @Test

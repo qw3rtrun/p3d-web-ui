@@ -1,10 +1,10 @@
 package org.qw3rtrun.p3d.g.code.core.session
 
-import org.qw3rtrun.p3d.g.code.core.block.GCheckSumFailedLine
-import org.qw3rtrun.p3d.g.code.core.block.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GCheckSumFailedBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
 import org.qw3rtrun.p3d.g.code.core.block.GMalformedChecksum
 import org.qw3rtrun.p3d.g.code.core.block.GMalformedLineNumber
-import org.qw3rtrun.p3d.g.code.core.block.GMeaninglessLine
+import org.qw3rtrun.p3d.g.code.core.block.GMeaninglessBlock
 import org.qw3rtrun.p3d.g.code.core.block.GMissingChecksum
 import org.qw3rtrun.p3d.g.code.core.block.GMissingLineNumber
 import org.qw3rtrun.p3d.g.code.core.block.GOrdered
@@ -14,17 +14,17 @@ import org.qw3rtrun.p3d.g.code.core.block.valueIndex
 import org.qw3rtrun.p3d.g.code.core.token.*
 
 /**
- * Whether a session demands that every transmitted line be numbered and checksummed (spec 7.3).
+ * Whether a session demands that every transmitted block be numbered and checksummed (spec 7.3).
  *
- * - `OPTIONAL` - a file, or Marlin's default over a link: a line may carry no number at all, and
+ * - `OPTIONAL` - a file, or Marlin's default over a link: a block may carry no number at all, and
  *   consumes none. Spec 7.2 - "line numbers are optional, and are conventionally omitted for G-code
  *   stored in files, where there is no lossy link to protect".
- * - `REQUIRED` - a strict link: an unnumbered command line is refused. Marlin applies exactly this
- *   while saving to SD, where a dropped line would corrupt the stored file.
+ * - `REQUIRED` - a strict link: an unnumbered command block is refused. Marlin applies exactly this
+ *   while saving to SD, where a dropped block would corrupt the stored file.
  *
  * ```
- * GCodeReader(GNumbering.REQUIRED).read(GLiner.lines("G28\n").first())   // GUnnumbered
- * GCodeReader(GNumbering.OPTIONAL).read(GLiner.lines("G28\n").first())   // GAccepted, number null
+ * GCodeReader(GNumbering.REQUIRED).read(GBlockReader.blocks("G28\n").first())   // GUnnumbered
+ * GCodeReader(GNumbering.OPTIONAL).read(GBlockReader.blocks("G28\n").first())   // GAccepted, number null
  * ```
  */
 enum class GNumbering {
@@ -34,14 +34,14 @@ enum class GNumbering {
 
 /**
  * The session layer: line-number continuity (GCODE_spec.md section 7.2), `M110`, and the verdict a
- * host answers a bad line with (section 8.5).
+ * host answers a bad block with (section 8.5).
  *
  * **This is the first stateful piece of the module, and the only one.** Everything below it is a
- * pure function from bytes to tokens to lines; a session has a counter. That boundary is deliberate
- * and worth keeping: the counter lives here, not in the tokenizer or the liner.
+ * pure function from bytes to tokens to blocks; a session has a counter. That boundary is deliberate
+ * and worth keeping: the counter lives here, not in the tokenizer or the reader.
  *
- * It is also deliberately **free of I/O**. A reader is driven by a plain iterator of [org.qw3rtrun.p3d.g.code.core.block.GLine] and
- * returns a value per line; it never reads, writes, blocks or schedules. Sending the resend request
+ * It is also deliberately **free of I/O**. A reader is driven by a plain iterator of [org.qw3rtrun.p3d.g.code.core.block.GBlock] and
+ * returns a value per block; it never reads, writes, blocks or schedules. Sending the resend request
  * a [GRejected] describes is the transport layer's job, and so is the send window on the other side
  * of the link. That is what makes the session portable along with the rest of `code/core`.
  *
@@ -50,15 +50,15 @@ enum class GNumbering {
  *
  * ```
  * val reader = GCodeReader()
- * reader.read(GLiner.lines("N1 G28*18\n").first())   // GAccepted, number 1
- * reader.read(GLiner.lines("N1 G28*18\n").first())   // GDuplicate - the resend race, dropped
+ * reader.read(GBlockReader.blocks("N1 G28*18\n").first())   // GAccepted, number 1
+ * reader.read(GBlockReader.blocks("N1 G28*18\n").first())   // GDuplicate - the resend race, dropped
  * reader.lastLine                                        // 1
  * ```
  *
- * @property numbering whether an unnumbered command line is accepted or refused
+ * @property numbering whether an unnumbered command block is accepted or refused
  * @property lastLine the last accepted line number. Starts at 0, so a session's first transmitted
- *   line is `N1` - Marlin initialises `last_N` the same way, and it is why a session conventionally
- *   opens with `M110 N0` rather than relying on the default. Only an accepted line moves it. A
+ *   block is `N1` - Marlin initialises `last_N` the same way, and it is why a session conventionally
+ *   opens with `M110 N0` rather than relying on the default. Only an accepted block moves it. A
  *   rejected one never does, which is what makes [GRejected.resend] answerable, and a discarded
  *   duplicate does not either.
  */
@@ -68,35 +68,35 @@ class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 
         private set
 
     /**
-     * What to do with [line], per sections 7.2 and 8.5. The checks run in this order:
+     * What to do with [block], per sections 7.2 and 8.5. The checks run in this order:
      *
      * 1. Spec 5: "a line number is only consumed by a line that is actually transmitted". A blank or
-     *    comment-only line is not one, so it is accepted, consumes nothing, and is exempt from the
+     *    comment-only block is not one, so it is accepted, consumes nothing, and is exempt from the
      *    numbering mode - there is nothing on it to number.
      * 2. Spec 8.5 step 2: the checksum is judged first. It costs nothing to order it this way here
-     *    because the liner has already decided it - a `GPacketLine` is verified by construction
+     *    because the reader has already decided it - a `GFramedBlock` is verified by construction
      *    (todo 04) - and it matches RepRapFirmware, which validates at buffer-fill time before the
-     *    line number is looked at anywhere. Marlin checks the number first; both reject the line and
+     *    line number is looked at anywhere. Marlin checks the number first; both reject the block and
      *    both ask for the same resend, so the only thing riding on the order is the message.
-     * 3. Spec 9 then spec 7.3: a line that did not parse into a judgeable shape, and then the two
+     * 3. Spec 9 then spec 7.3: a block that did not parse into a judgeable shape, and then the two
      *    pairing faults. Order matters between these two only in that a malformed field is a
      *    narrower statement than an unpaired one.
      * 4. Everything that is not ordered carries no line number: spec 7.2 makes that legal in a file
      *    and Marlin accepts it over a link too, so it is the [numbering] mode's decision, not an
      *    error by itself. It consumes no number either way.
-     * 5. Spec 7.2: an `M110` line sets the counter and is exempt from continuity, because
+     * 5. Spec 7.2: an `M110` block sets the counter and is exempt from continuity, because
      *    resynchronising is the one thing a host does *because* the sequence is already broken.
      * 6. The next number in sequence is accepted and becomes [lastLine].
-     * 7. Spec 7.2: a repeat of the last line, or the one before it, is discarded in silence rather
+     * 7. Spec 7.2: a repeat of the last block, or the one before it, is discarded in silence rather
      *    than refused. The host had already retransmitted when the resend request reached it;
      *    answering the second copy with another request would not converge. Anything else is out of
      *    sequence.
      *
-     * **The `M110` value** is `M110`'s own **`N` parameter**, not the line's number (spec 7.2), so
+     * **The `M110` value** is `M110`'s own **`N` parameter**, not the block's line number (spec 7.2), so
      * `N1 M110 N7` leaves the counter at 7; with no parameter it falls back to the line number, as
-     * Marlin does. Spec 7.1 makes only the *first* field of a line a line number, which is why the
-     * search for that `N` starts past the command head rather than at the start of the line. The
-     * command is **read off the line's head, not the raw text.** Marlin decides a line is an `M110`
+     * Marlin does. Spec 7.1 makes only the *first* field of a block a line number, which is why the
+     * search for that `N` starts past the command head rather than at the start of the block. The
+     * command is **read off the block's head, not the raw text.** Marlin decides a block is an `M110`
      * with `strstr(command, "M110")`, which means `M117 M110` resets its counter - a consequence of
      * scanning text rather than an intended rule. Copying it would let a status message silently
      * resynchronise the session, so this diverges knowingly.
@@ -110,51 +110,51 @@ class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 
      *
      * ```
      * val reader = GCodeReader()
-     * reader.read(GLiner.lines("N5 M110 N7*127\n").first())   // GAccepted, number 5
+     * reader.read(GBlockReader.blocks("N5 M110 N7*127\n").first())   // GAccepted, number 5
      * reader.lastLine                                             // 7
-     * GCodeReader().read(GLiner.lines("N1 G28*19\n").first()) // GCorrupted, resend 1
+     * GCodeReader().read(GBlockReader.blocks("N1 G28*19\n").first()) // GCorrupted, resend 1
      * ```
      *
-     * @param line one classified line, as `GLiner.lines` or a `GLiner` produces it
+     * @param block one classified block, as `GBlockReader.blocks` or a `GBlockReader` produces it
      * @return the verdict: accepted, silently discarded, or rejected with the resend point
      */
-    fun read(line: GLine): GReceipt {
-        if (line is GMeaninglessLine) return GAccepted(line, null)
+    fun read(block: GBlock): GReceipt {
+        if (block is GMeaninglessBlock) return GAccepted(block, null)
 
-        if (line is GCheckSumFailedLine) {
-            return GCorrupted(line, line.expected.int, line.received.int, lastLine)
+        if (block is GCheckSumFailedBlock) {
+            return GCorrupted(block, block.expected.int, block.received.int, lastLine)
         }
 
-        if (line is GMalformedChecksum) return GMalformed(line, "checksum is not a number", lastLine)
-        if (line is GMalformedLineNumber) return GMalformed(line, "line number is not a number", lastLine)
-        if (line is GMissingChecksum) return GUnchecksummed(line, lastLine)
-        if (line is GMissingLineNumber) return GUnnumbered(line, lastLine)
+        if (block is GMalformedChecksum) return GMalformed(block, "checksum is not a number", lastLine)
+        if (block is GMalformedLineNumber) return GMalformed(block, "line number is not a number", lastLine)
+        if (block is GMissingChecksum) return GUnchecksummed(block, lastLine)
+        if (block is GMissingLineNumber) return GUnnumbered(block, lastLine)
 
-        if (line !is GOrdered) {
-            if (numbering == GNumbering.REQUIRED) return GUnnumbered(line, lastLine)
-            return GAccepted(line, null)
+        if (block !is GOrdered) {
+            if (numbering == GNumbering.REQUIRED) return GUnnumbered(block, lastLine)
+            return GAccepted(block, null)
         }
 
-        val number = line.number.int
+        val number = block.number.int
 
-        val reset = resetValue(line)
+        val reset = resetValue(block)
         if (reset != null) {
             lastLine = reset
-            return GAccepted(line, number)
+            return GAccepted(block, number)
         }
 
         if (number == lastLine + 1) {
             lastLine = number
-            return GAccepted(line, number)
+            return GAccepted(block, number)
         }
 
-        if (number == lastLine || number == lastLine - 1) return GDuplicate(line, number, lastLine)
+        if (number == lastLine || number == lastLine - 1) return GDuplicate(block, number, lastLine)
 
-        return GOutOfSequence(line, number, lastLine)
+        return GOutOfSequence(block, number, lastLine)
     }
 
-    private fun resetValue(line: GOrdered): Int? {
-        val body = line.body
+    private fun resetValue(block: GOrdered): Int? {
+        val body = block.body
         val head = headWord(body) ?: return null
         if (!head.id.isLetter('M')) return null
         if (head.value.lexeme != "110") return null
@@ -169,6 +169,6 @@ class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 
             }
             i++
         }
-        return line.number.int
+        return block.number.int
     }
 }

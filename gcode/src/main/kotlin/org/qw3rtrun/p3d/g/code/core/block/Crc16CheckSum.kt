@@ -10,7 +10,8 @@ import org.qw3rtrun.p3d.g.code.core.token.GInt
  * final XOR. That is read off RepRapFirmware's `src/Storage/CRC16`
  * - the only firmware that accepts this field - and not chosen by plausibility; section 8.4 carries
  * the citation and the vector. Three other algorithms answer to "CCITT CRC-16 with poly 0x1021" and
- * none of them agrees with this one on any input, so guessing would have rejected every genuine line.
+ * none of them agrees with this one on any input, so guessing would have rejected every genuine
+ * block.
  *
  * Computed a bit at a time rather than through a 256-entry table. RRF uses a table because it is
  * flashing a PanelDue; here the input is one serial line, the two forms are identical in output, and
@@ -43,7 +44,7 @@ class Crc16CheckSum : CheckSumCalculator {
      * The padding is load-bearing rather than cosmetic: the digit count is what selects the algorithm
      * (section 8.1), so a CRC of 6939 emitted as four digits would be read back as an XOR checksum
      * and rejected, and one of 57 as three digits would be read as a *valid* XOR checksum of a
-     * different line.
+     * different block.
      *
      * ```
      * val crc = Crc16CheckSum()

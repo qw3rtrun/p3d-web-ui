@@ -12,14 +12,14 @@ package org.qw3rtrun.p3d.g.code.core.block
  * on the wire, and the two disagree exactly where it matters: `*00057` is a five-digit CRC field
  * carrying 57, while its `int` is 57, which looks like two digits and would select the XOR checksum.
  * A CRC is zero-padded by definition (section 8.4), so reading the width off the number would
- * misroute a large share of real CRC lines.
+ * misroute a large share of real CRC blocks.
  *
  * Keeping the dispatch here is also what stops either calculator learning that the other exists.
  *
  * Section 8.1 spells the field `*<unsigned-int>`: **digits only**. A sign is not part of one, and
  * `GInt` will happily carry `+57` as a lexeme of length 3, which would otherwise be read as a
  * three-digit XOR field. RepRapFirmware's parser leaves its checksum state on the first non-digit and
- * then rejects the line, so this agrees with it.
+ * then rejects the block, so this agrees with it.
  *
  * ```
  * checkSumCalculatorFor("57")      // an XorCheckSum

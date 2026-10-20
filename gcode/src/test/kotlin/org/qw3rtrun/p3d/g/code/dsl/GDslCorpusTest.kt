@@ -2,12 +2,12 @@ package org.qw3rtrun.p3d.g.code.dsl
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.GEncoder
-import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlockDraft
 import org.qw3rtrun.p3d.g.code.core.block.GBlockPart
 import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
-import org.qw3rtrun.p3d.g.code.core.block.GLine
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
 import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
 import org.qw3rtrun.p3d.g.code.core.block.GWord
@@ -17,9 +17,9 @@ import org.qw3rtrun.p3d.g.code.core.block.GWordReader
 /**
  * The rule, as a number: **any valid G-code can be written with the DSL**.
  *
- * Every line of the corpus is taken apart and *rewritten through the DSL's public API* - not rebuilt
+ * Every block of the corpus is taken apart and *rewritten through the DSL's public API* - not rebuilt
  * from the parsed objects, which would only test the encoder - and the result is compared with the
- * original. A line the DSL cannot express fails here, so the rule cannot rot quietly.
+ * original. A block the DSL cannot express fails here, so the rule cannot rot quietly.
  */
 class GDslCorpusTest {
 
@@ -27,11 +27,11 @@ class GDslCorpusTest {
     private val corpus: String =
         requireNotNull(javaClass.getResourceAsStream("/marlin.gcode")).readBytes().decodeToString()
 
-    private fun lines(): List<GLine> =
-        GLiner.lines(corpus).toList()
+    private fun blocks(): List<GBlock> =
+        GBlockReader.blocks(corpus).toList()
 
-    private fun raw(line: GLine): String =
-        line.raw.filter { it !is GLineBreak }.joinToString("") { it.rawText() }.trim()
+    private fun raw(block: GBlock): String =
+        block.raw.filter { it !is GLineBreak }.joinToString("") { it.rawText() }.trim()
 
     /** Runs of spaces and tabs squeezed to one space - the encoder's canonical spacing. */
     private fun collapse(text: String): String {
@@ -46,10 +46,10 @@ class GDslCorpusTest {
         return out.toString()
     }
 
-    /** Rebuilds [line] using only the DSL's public builders, or null if it cannot be said. */
-    private fun rewrite(line: GLine): GBlock? {
+    /** Rebuilds [block] using only the DSL's public builders, or null if it cannot be said. */
+    private fun rewrite(block: GBlock): GBlockDraft? {
         val parts = ArrayList<GBlockPart>()
-        for (cmd in GWordReader.parse(line)) {
+        for (cmd in GWordReader.parse(block)) {
             val id = cmd.head.id
             if (id !is GLetter) return null
             val params = ArrayList<GWord>()
@@ -74,7 +74,7 @@ class GDslCorpusTest {
             }
             parts.add(command(id.letter, cmd.head.value.lexeme, *params.toTypedArray()))
         }
-        for (token in line.raw) {
+        for (token in block.raw) {
             if (token is GTailComment) parts.add(tailComment(token.string))
             if (token is GInlineComment) parts.add(inlineComment(token.string))
         }
@@ -89,11 +89,11 @@ class GDslCorpusTest {
         val inexpressible = ArrayList<String>()
         val notByteExact = ArrayList<String>()
 
-        for (line in lines()) {
-            val text = raw(line)
+        for (block in blocks()) {
+            val text = raw(block)
             if (text.isEmpty()) continue
 
-            val rebuilt = rewrite(line)
+            val rebuilt = rewrite(block)
             if (rebuilt == null) {
                 inexpressible.add(text)
                 continue
@@ -104,9 +104,9 @@ class GDslCorpusTest {
             if (encoded == collapse(text)) byteExact++ else notByteExact.add("$text  ->  $encoded")
         }
 
-        // The rule itself, with no quarantine: there is no line of real G-code the DSL cannot say.
+        // The rule itself, with no quarantine: there is no block of real G-code the DSL cannot say.
         assertEquals(emptyList<String>(), inexpressible) {
-            "the DSL cannot express ${inexpressible.size} corpus lines"
+            "the DSL cannot express ${inexpressible.size} corpus blocks"
         }
         assertEquals(303, expressible)
 

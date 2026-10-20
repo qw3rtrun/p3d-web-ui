@@ -687,6 +687,15 @@ raw capture. The rules are recorded in the `low-level-protocol-dev` skill
 (`.agents/skills/low-level-protocol-dev/SKILL.md`) and the outstanding gaps in
 [the `:gcode` issue queue](https://github.com/qw3rtrun/p3d-web-ui/issues/18).
 
+**One word per thing.** [§5](#5-line-block-structure) calls the unit a "line (block)"; the module
+calls it a **block**, everywhere, in one spelling. It used to carry three names for it — a parsed
+one was a `line`, an authored one a `block`, and a framed one a `packet` — which read as three
+concepts and were one. "Line" survives only where something really is a line of text: the
+`GLineBreak` that ends one, the line *number* of [§7](#7-line-numbering), and the characters the
+lexer walks. Framing is an adjective on a block (`GFramedBlock`), and direction is the one
+distinction the types do keep: a block that was **read** is a `GBlock` and carries its tokens, a
+block being **built** is a `GBlockDraft` and carries its parts.
+
 ### B.1 Tokens — `token/GTokens.kt`
 
 | Spec token ([§2](#2-lexical-structure-tokens)) | Type |
@@ -740,9 +749,9 @@ both gone, nothing having called either, and the `Iterator`/`Sequence`/`CharSequ
 every caller.
 
 `GTokenizer` is an **object**: it holds no state, so an instance per call site bought nothing. It
-offers tokens only. The whole read pipeline — text in, classified `GLine`s out — is
-`GLiner.lines(text)`, one layer up (see [B.3](#b3-line-model--blockglineskt-blockglinerkt-blockgcommandskt-blockgfieldskt)):
-a lexer that offered lines would depend on the layer above it, and `GLayeringTest` now fails the
+offers tokens only. The whole read pipeline — text in, classified `GBlock`s out — is
+`GBlockReader.blocks(text)`, one layer up (see [B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgcommandskt-blockgfieldskt)):
+a lexer that offered blocks would depend on the layer above it, and `GLayeringTest` now fails the
 build if anything under `core/token` names `core/block`. The state machine itself,
 `GTokenizerIterator`, is `internal` and its six scanners are private: which characters `number()`
 consumes is how this lexer is built, not what it promises.
@@ -750,7 +759,7 @@ consumes is how this lexer is built, not what it promises.
 This layer offers tokens and nothing else. The pairing rule that reads a *field* off them —
 `valueIndex` — is stated over token kinds alone but answers a field question, and lives one layer up
 in `block/GFields.kt` (see
-[B.3](#b3-line-model--blockglineskt-blockglinerkt-blockgcommandskt-blockgfieldskt)).
+[B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgcommandskt-blockgfieldskt)).
 
 A host that builds tokens rather than lexing them has one conversion per kind: `asGInt()` on `Int`,
 `Short`, `Byte` and `String`, `asGFloat()` on `BigDecimal`, `String` and `Int`, `asGLetter()` on
@@ -772,7 +781,7 @@ Deviations from this spec, as currently written (all verified by running the mod
 * a subcode ([§4.1](#41-command-letters)) is lexed as a decimal: `G29.1` → `GLetter(G), GFloat(29.1)`;
 * bare rest-of-line strings ([§3.4](#34-string-values)) are not recognised — `M117 Hello World`
   becomes one `GLetter` per character. This is a layering fact, not an open gap: the characters are
-  reassembled one layer up, by a decoder that knows the command number (see [B.3](#b3-line-model--blockglineskt-blockglinerkt-blockgcommandskt-blockgfieldskt)).
+  reassembled one layer up, by a decoder that knows the command number (see [B.3](#b3-block-model--blockgblockskt-blockgblockreaderkt-blockgcommandskt-blockgfieldskt)).
 
 Conforming as of the number-lexeme pass: the optional sign of [§3.1](#31-numeric-values) is part of
 the number token (`G1 E-5` → `… GLetter(E), GInt(-5)`), a tab is `GTab`
@@ -796,32 +805,34 @@ quoted strings are unaffected — `marlin.gcode` keeps the `’` and `µ` in its
 digit class alone that keeps `X١` from lexing as `GInt(1, "١")` and `X١.٢` from lexing as
 `GFloat(1.2)`.
 
-### B.3 Line model — `block/GLines.kt`, `block/GLiner.kt`, `block/GCommands.kt`, `block/GFields.kt`
+### B.3 Block model — `block/GBlocks.kt`, `block/GBlockReader.kt`, `block/GCommands.kt`, `block/GFields.kt`
 
-The module reads a line in two passes over two vocabularies. **A line is tokens**: its shape is
+The module reads a block in two passes over two vocabularies. **A block is tokens**: its shape is
 decided from token positions alone, and nothing above the lexer is built to answer it. **A command is
-words**: fields are assembled only when a caller asks what the line commands.
+words**: fields are assembled only when a caller asks what the block commands.
 
 | Spec concept | Type |
 |---|---|
-| Any line/block ([§5](#5-line-block-structure)) | `GLine { val raw: List<GToken>; val body: List<GToken> }` |
-| Line of only whitespace and/or comments ([§5](#5-line-block-structure)) | `GMeaninglessLine` |
-| Unnumbered line | `GSimpleLine` |
-| `N…*…` framed line ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GPacketLine(number, checksum, body, raw)` — also `GOrdered`, `GCheckSumControlled` |
+| Any block ([§5](#5-line-block-structure)) | `GBlock { val raw: List<GToken>; val body: List<GToken> }` |
+| Block of only whitespace and/or comments ([§5](#5-line-block-structure)) | `GMeaninglessBlock` |
+| Unnumbered block | `GPlainBlock` |
+| `N…*…` framed block ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GFramedBlock(number, checksum, body, raw)` — also `GOrdered`, `GCheckSumControlled` |
 | Line number ([§7.1](#71-syntax)), checksum field ([§8.1](#81-syntax)) | `GInt` — the integer behind the `N`, and behind the last `*` |
 | A field ([§3](#3-value-types)) | `GWord`: a `GParameterWord` (identifier + value), a `GFlagWord` (identifier alone, [§3.2](#32-flag-value-less-parameters)), or a `GUnnamedStr` (value alone — [§3.4](#34-string-values)a's bare string, whose `id` is the empty `GEmptyId` so that every word has one) |
 | One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GNumber>, params: List<GWord>)` |
-| A line being built ([§5](#5-line-block-structure)), for `GEncoder` | `GBlock(parts: List<GBlockPart>)` — a `GBlockPart` is sealed and is either a `GCommand` or a `GCommentPart(comment: GComment)`. A comment *token* is wrapped rather than being a block part itself, so `core/token` names nothing in `core/block` |
-| Structural error ([§9](#9-error-handling)) | `GError`: `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum`, `GCheckSumFailedLine` |
+| A block being built ([§5](#5-line-block-structure)), for `GEncoder` | `GBlockDraft(parts: List<GBlockPart>)` — a `GBlockPart` is sealed and is either a `GCommand` or a `GCommentPart(comment: GComment)`. A comment *token* is wrapped rather than being a block part itself, so `core/token` names nothing in `core/block` |
+| Structural error ([§9](#9-error-handling)) | `GError`: `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum`, `GCheckSumFailedBlock` |
 
-`raw` is every token of the line in wire order, terminator included, and it is the stored value of
-every line type — so "a line reproduces its input" holds by construction rather than by an override.
-`body` is the range a command may be read from: `raw` for every type except `GPacketLine`, where it
+`raw` is every token of the block in wire order, terminator included, and it is the stored value
+of every block type — so "a block reproduces its input" holds by construction rather than by an
+override.
+`body` is the range a command may be read from: `raw` for every type except `GFramedBlock`, where it
 is a **slice of `raw`** running from past the line number to the marker. The two therefore cannot
 disagree.
 
-`GLiner` is a single `Iterator<GLine>`: it splits a token stream at `GLineBreak` and classifies each
-line from two positions found in one pass — the **first identifier**, which is the line's first field
+`GBlockReader` is a single `Iterator<GBlock>`: it splits a token stream at `GLineBreak` — the one
+point where a line of text and a block coincide — and classifies each block from two positions found
+in one pass: the **first identifier**, which is the block's first field
 ([§5](#5-line-block-structure): whitespace ([§2.1](#21-whitespace)) and comments
 ([§6](#6-comments)) are not fields, so it is not necessarily token 0), and the **last `GChecksum`**,
 since [§5](#5-line-block-structure) puts the checksum field last. A `*` the lexer put inside a
@@ -831,35 +842,35 @@ non-separator token, and [§8.3](#83-what-the-checksum-covers)'s covered range i
 tokens from the `N` up to the `*`: indentation before the `N` is outside it, a space before the
 marker is inside it, and the marker, its value and the terminator are outside it.
 
-`GLiner.lines(text)` is the whole read pipeline under one name — the tokenizer and the liner wired
+`GBlockReader.blocks(text)` is the whole read pipeline under one name — the tokenizer and the reader wired
 together, re-iterable — because that is the module's primary operation and every caller used to
-assemble it by hand. It is a companion function on `GLiner` rather than a member of `GTokenizer`, so
-the dependency runs from lines to tokens only. Construct a `GLiner` directly to drive the lines as an
+assemble it by hand. It is a companion function on `GBlockReader` rather than a member of `GTokenizer`, so
+the dependency runs from blocks to tokens only. Construct a `GBlockReader` directly to drive the blocks as an
 `Iterator`, or when the tokens are already in hand.
 
 The [§7.3](#73-pairing-rule) pairing rule is decided on the *presence* of the two markers and is
 decided **before** the [§7.1](#71-syntax) / [§8.1](#81-syntax) field-syntax rules, so it is reported
-as typed [§9](#9-error-handling) variants rather than by falling back to `GSimpleLine`:
+as typed [§9](#9-error-handling) variants rather than by falling back to `GPlainBlock`:
 
 | Input | Result |
 |---|---|
-| `N1 G28*18`, `n1 g28*18`, ` N1 G28*18`, `\tN1 G28*18`, `(c)N1 G28*18` | `GPacketLine` — the match is case-insensitive ([§2.2](#22-case)) and position-tolerant |
+| `N1 G28*18`, `n1 g28*18`, ` N1 G28*18`, `\tN1 G28*18`, `(c)N1 G28*18` | `GFramedBlock` — the match is case-insensitive ([§2.2](#22-case)) and position-tolerant |
 | `N 1 G28 * 18` | both fields assemble across whitespace ([§2.1](#21-whitespace)) — though the extra bytes are covered, so the value differs |
-| `N1 G28*12*59` | `GPacketLine(number = GInt(1), checksum = GInt(59))` — the **last** `*` is the field ([§5](#5-line-block-structure)) and `*12` is inside the bytes the checksum covers ([§8.3](#83-what-the-checksum-covers)). Marlin agrees: `get_serial_commands` uses `strrchr(command, '*')` |
-| `N1 G28*18 G1 X5` | `GPacketLine` whose body is `G28` alone — what follows the marker is outside the frame, as in Marlin, which writes a `\0` over the `*` |
-| `N1 G28*19` | `GCheckSumFailedLine(number, expected, received)` ([§8.5](#85-failure-handling-and-the-resend-protocol)) — well-framed, well-formed, wrong value |
+| `N1 G28*12*59` | `GFramedBlock(number = GInt(1), checksum = GInt(59))` — the **last** `*` is the field ([§5](#5-line-block-structure)) and `*12` is inside the bytes the checksum covers ([§8.3](#83-what-the-checksum-covers)). Marlin agrees: `get_serial_commands` uses `strrchr(command, '*')` |
+| `N1 G28*18 G1 X5` | `GFramedBlock` whose body is `G28` alone — what follows the marker is outside the frame, as in Marlin, which writes a `\0` over the `*` |
+| `N1 G28*19` | `GCheckSumFailedBlock(number, expected, received)` ([§8.5](#85-failure-handling-and-the-resend-protocol)) — well-framed, well-formed, wrong value |
 | `N1 G28` | `GMissingChecksum(number = GInt(1))` |
 | `G28*18`, `*12`, `* 12`, `*`, `*ABC` | `GMissingLineNumber` — the marker is unpaired wherever it sits and whether or not it carries a value |
 | `N*`, `NX*12` | `GMalformedLineNumber` |
 | `N1 G28*`, `N1*`, `N1 G28*X`, `N1 G28*10.5`, `N1 G28*1234` | `GMalformedChecksum(number = GInt(1))` — the marker is present but its value is not an integer of a width an algorithm claims ([§8.1](#81-syntax)); a host tells this from `GMissingChecksum` to decide a resend ([§8.5](#85-failure-handling-and-the-resend-protocol)) |
 
-A `GPacketLine` is **only ever built for a line whose checksum verified**, so holding one means the
-line is intact and there is no `verify()` to forget. Nothing is dropped by index arithmetic: the
-trailing line break is a token like any other, so an unterminated line keeps its last token and a
-short line does not throw — `N*` yields `GMalformedLineNumber`, not `IllegalArgumentException`
+A `GFramedBlock` is **only ever built for a block whose checksum verified**, so holding one means
+the block is intact and there is no `verify()` to forget. Nothing is dropped by index arithmetic: the
+trailing line break is a token like any other, so an unterminated block keeps its last token and a
+short block does not throw — `N*` yields `GMalformedLineNumber`, not `IllegalArgumentException`
 (TODO 1.3).
 
-**Reading a line into commands is a decoder's job, not a second pass of this layer's.** `GFields.kt`
+**Reading a block into commands is a decoder's job, not a second pass of this layer's.** `GFields.kt`
 carries what the layer still owes a reader, as functions over tokens rather than a parser object:
 `headWord()` / `headEnd()` / `headKey()` read the one field that is a command. [§2.3](#23-grammar-ebnf)
 makes `command-word` a specialisation of `word`, so the head is found with the same pairing rule as
@@ -867,7 +878,7 @@ every other field — `valueIndex()`, at the foot of the same file. Only `GWhite
 comment, another identifier or a line break ends the field — and only a `GValue` pairs, so `N 1` →
 2, `X  10` → 3, `X\t10` → 2, `X"a"` and `X{a}` → 1, while `N*`, `X Y`, `X (c) 10`, `X;c`, `X\n10`
 and `X?` → -1 (all pinned by `GFieldsTest`). It is the module's only copy of the rule and the
-readers above reuse it rather than restate it: the liner pairs `N` and `*` with it, `headWord()`
+readers above reuse it rather than restate it: the reader pairs `N` and `*` with it, `headWord()`
 finds a command head with it, and the Marlin decoders read their parameters with it. The rule is
 stated over token kinds alone, which is why it sat in `token/` until it moved beside the field
 reader it serves. A command number is accepted only as
@@ -876,29 +887,29 @@ shares, so `G29.1` is one command word carrying `GFloat("29.1")` — the subcode
 which is what re-emits `29.1` rather than `29` and `.1`. `isCommandLetter()` accepts `G`, `M` and a
 line-initial `T`.
 
-A **command-agnostic** decomposition — every field of a line into a `GWord`, the words split at each
+A **command-agnostic** decomposition — every field of a block into a `GWord`, the words split at each
 `G`/`M` word ([§4.3](#43-rules)) and at a `T` word only while no command has started, with `N`
 ([§7](#7-line-numbering)) and `*` ([§8](#8-checksum-and-crc)) skipped as structural — used to be a
 `GCommandParser` class in this layer. It has no production caller: a host that wants to know what a
-line commands asks `MarlinCommands.decode`, which knows the command number and can therefore read
+block commands asks `MarlinCommands.decode`, which knows the command number and can therefore read
 what words cannot ([§3.4](#34-string-values)a). It survives as `GWordReader` in the test sources,
-because three corpus contracts measure the module against **arbitrary** lines — including commands
+because three corpus contracts measure the module against **arbitrary** blocks — including commands
 no class models — and a Marlin-only decoder cannot express that question.
 
-Verified by running: the whole corpus is one command per line except `G53 G0 X0 Y0 Z0` and
+Verified by running: the whole corpus is one command per block except `G53 G0 X0 Y0 Z0` and
 `G53 G1 X20` (two each — `G53` is a modal prefix) and `M815 G0 X0 Y0|G0 Z10|M300 S440 P50`, which
 that reader reports as **four** because `M815`'s argument is a bare rest-of-line string and a
 command-agnostic reader cannot know it. That is not fixable there and is not a defect of it: the
-same line through `MarlinCommands.decode` is one `GCodeMacrosM815` whose `gcode` property is the
+same block through `MarlinCommands.decode` is one `GCodeMacrosM815` whose `gcode` property is the
 whole macro. `GCorpusDecompositionTest` freezes that reading:
 every line of both corpora, plus a hand-built edge-case set covering the table above, as its line
 kind, its framing fields and its canonically encoded commands.
 
 `isCommandLetter()` treats `G`, `M` and (line-initially) `T` as command letters, which is the
-[§4.1](#41-command-letters) set minus Marlin's development-only `D`. A line whose tokens hold
-no identifier is a `GMeaninglessLine` whatever those tokens are - `?` and `42 99` as much as a blank
-line - because the first *identifier* is what the shape is read from and such a line has no field at
-any position. [§9](#9-error-handling) would call the first two an error; a `GNotIdentifierError` was
+[§4.1](#41-command-letters) set minus Marlin's development-only `D`. A block whose tokens hold
+no identifier is a `GMeaninglessBlock` whatever those tokens are - `?` and `42 99` as much as a
+blank one - because the first *identifier* is what the shape is read from and such a block has no
+field at any position. [§9](#9-error-handling) would call the first two an error; a `GNotIdentifierError` was
 declared for them and never produced, and has been deleted rather than left as a type no producer
 fills and no consumer reads.
 

@@ -24,7 +24,7 @@ most expensive mistake available to you. Decide before you write anything:
 
 | Files you are editing | Load this skill | House style |
 |---|---|---|
-| `code/core/**` — tokens, tokenizer, liner, checksums, encoder, session | **`low-level-protocol-dev`** | Portable subset. *Write C, not idiomatic Kotlin* — the section below applies in full. |
+| `code/core/**` — tokens, tokenizer, block reader, checksums, encoder, session | **`low-level-protocol-dev`** | Portable subset. *Write C, not idiomatic Kotlin* — the section below applies in full. |
 | `code/dsl/**` — `G.kt`, `GWords.kt`, `GSender` | **`gcode-dsl-dev`** | Full Kotlin. The section below **does not apply**; that skill's inversion table replaces it. |
 | `marlin/**`, `decoder/**`, `event/**` | `low-level-protocol-dev` | Domain edge: the core's rules, relaxed only where its layering table says so. |
 
@@ -66,20 +66,20 @@ gcode/src/main/kotlin/.../code/core/**      portable core — kotlin.* imports O
     GTokens.kt          token model, rawText() round-trip contract
     GTokenizer.kt       the lexer (an object): parse() overloads - tokens only.
                         GTokenizerIterator, the state machine, is internal - scanners private
-  block/                lines, commands, checksums. May name token/ and itself, nothing else
-    GLiner.kt           tokens -> classified lines (framing, checksum verification);
-                        GLiner.lines(text) = the whole read pipeline
-    GLines.kt           GLine hierarchy and the structural errors - tokens only
-    GCommands.kt        GWord, GBlock, GBlockPart (GCommand | GCommentPart), GCommand
+  block/                blocks, commands, checksums. May name token/ and itself, nothing else
+    GBlockReader.kt     tokens -> classified blocks (framing, checksum verification);
+                        GBlockReader.blocks(text) = the whole read pipeline
+    GBlocks.kt          GBlock hierarchy and the structural errors - tokens only
+    GCommands.kt        GWord, GBlockDraft, GBlockPart (GCommand | GCommentPart), GCommand
     GFields.kt          the command head: headWord/headEnd/headKey, isCommandLetter/Number,
                         and valueIndex: the spec 2.1 pairing rule (identifier, ws, value)
     CheckSums.kt        checkSumCalculatorFor: the digit count picks the algorithm
     XorCheckSum.kt      streaming XOR checksum
     Crc16CheckSum.kt    streaming CRC-16/XMODEM
-  GEncoder.kt           GCommand / GBlock -> wire text, and N/* framing
+  GEncoder.kt           GCommand / GBlockDraft -> wire text, and N/* framing
   session/**            GCodeReader (line numbering), GSendWindow (resend window)
 gcode/src/main/kotlin/.../code/dsl/**       the writing facade — FULL KOTLIN, see gcode-dsl-dev
-  G.kt                  command + line builders (the sink, GSender, is in :backend:terminal)
+  G.kt                  command + block builders (the sink, GSender, is in :backend:terminal)
   GWords.kt             21 parameter letters x 5 shapes, plus the generic escape hatches
 gcode/src/main/kotlin/.../marlin/**         domain edge — may use :backend:core types
 gcode/src/main/java/**                      pre-migration Java, being replaced
@@ -162,7 +162,7 @@ comment — write it there, not beside the line it governs. This holds in `code/
 1. **Correctness invariants.** Round-trip fidelity, errors-as-values and the one-write lookahead rule
    are not negotiable for performance. They are cheap; keep them. In `code/dsl` the *byte* half of
    this holds — a number keeps the lexeme it was written with, and framed output must parse back as a
-   verified packet — but **errors-as-values does not**: a bad argument there throws, by design.
+   verified framed block — but **errors-as-values does not**: a bad argument there throws, by design.
 
 The skill's "Translation notes" section says the same thing and is the canonical statement of it;
 this section is the operational version. When in doubt, ask what a competent C programmer would

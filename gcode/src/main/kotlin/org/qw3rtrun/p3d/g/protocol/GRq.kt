@@ -77,7 +77,7 @@ interface GRqDecoder<out T : GRq<out T>> {
      * scan of these tokens - one per letter - so what a decoder needs is something it may walk
      * repeatedly. This took a `Sequence` and documented that a single-use one would throw halfway
      * through a command, which is an API describing its own hazard instead of ruling it out. Every
-     * implementation opened with `toList()` anyway, and what a line hands over (`GLine.body`) is a
+     * implementation opened with `toList()` anyway, and what a line hands over (`GBlock.body`) is a
      * `List` to begin with, so the sequence only ever bought two copies per decode.
      *
      * ```

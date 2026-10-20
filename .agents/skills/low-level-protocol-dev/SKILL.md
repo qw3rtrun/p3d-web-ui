@@ -25,7 +25,7 @@ verbosity here, it is the only way the behaviour is reviewable against a spec.
 
 | Layer | Where | May depend on |
 |---|---|---|
-| **Portable core** | `gcode/src/main/kotlin/.../code/core/**` — tokens, tokenizer, liner, checksums, encoders | Kotlin stdlib basics only (see the allow-list). No JVM library, no third-party, no other module |
+| **Portable core** | `gcode/src/main/kotlin/.../code/core/**` — tokens, tokenizer, block reader, checksums, encoders | Kotlin stdlib basics only (see the allow-list). No JVM library, no third-party, no other module |
 | **Writing facade** | `gcode/src/main/kotlin/.../code/dsl/**` — `G.kt`, `GWords.kt`, `GSender` | The core. **Not governed by this skill** — see below |
 | **Domain edge** | `gcode/.../decoder/**`, `gcode/.../event/**` | The core, plus `:backend:core` message types |
 | **Transport / app** | `:backend:terminal` (Netty), `:backend:api` (WebFlux), `:app` | Anything. Reactor, Spring, coroutines all live here |
@@ -152,8 +152,8 @@ same way; a table, if you use one, is a `IntArray` literal, not a generated stru
 
 ### Framing: never index from the end to skip a terminator
 
-`GPacketLine.tail` computed `subList(i + 1, tokens.size - 1)`, assuming a trailing line break. Input
-without one silently dropped a real token, and a short line threw (TODO 1.3). Test the terminator
+`GFramedBlock.tail` computed `subList(i + 1, tokens.size - 1)`, assuming a trailing line break. Input
+without one silently dropped a real token, and a short block threw (TODO 1.3). Test the terminator
 explicitly, and make every buffer-boundary case — empty, no terminator, terminator only, split
 mid-token — a named test.
 

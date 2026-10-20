@@ -4,13 +4,13 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
-import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlockDraft
 import org.qw3rtrun.p3d.g.code.core.block.GCommentPart
 import org.qw3rtrun.p3d.g.code.core.block.GFlagWord
-import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
+import org.qw3rtrun.p3d.g.code.core.block.GFramedBlock
 import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.block.GWord
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
@@ -91,11 +91,11 @@ class GEncoderTest {
         }
 
         @Test
-        fun `encoding is canonical and does not inherit the spacing a line was parsed with`() {
+        fun `encoding is canonical and does not inherit the spacing a block was parsed with`() {
             // A parsed word carries its original bytes in `raw` - `X  10` is one word with two
             // spaces inside it. The encoder renders the field, not the bytes it came from, so that
             // what it emits is always the same shape and can be checksummed predictably.
-            val parsed = GLiner.lines("G1  X  10").first()
+            val parsed = GBlockReader.blocks("G1  X  10").first()
             val command = GWordReader.parse(parsed).single()
 
             assertEquals("G1 X10", GEncoder.encode(command))
@@ -108,13 +108,13 @@ class GEncoderTest {
         @Test
         fun `the spec worked example round-trips both ways`() {
             // spec 8.3's example, in both directions: encoding T0 as line 3 yields N3 T0*57, and
-            // parsing N3 T0*57 yields a verified packet.
+            // parsing N3 T0*57 yields a verified framed block.
             val encoded = GEncoder.frame(3, cmd('T', 0))
 
             assertEquals("N3 T0*57", encoded)
             assertInstanceOf(
-                GPacketLine::class.java,
-                GLiner.lines(encoded).first()
+                GFramedBlock::class.java,
+                GBlockReader.blocks(encoded).first()
             )
         }
 
@@ -144,7 +144,7 @@ class GEncoderTest {
         }
 
         @Test
-        fun `everything the encoder frames parses back as a verified packet`() {
+        fun `everything the encoder frames parses back as a verified framed block`() {
             // The property that matters: encode then parse is the identity on commands, and the
             // checksum the encoder computed is the one the verifier recomputes. If the encoder and
             // the verifier ever disagree about the covered byte range, this is what says so.
@@ -160,13 +160,13 @@ class GEncoderTest {
                 for (calculator in listOf(XorCheckSum(), Crc16CheckSum())) {
                     val command = commands[number]
                     val framed = GEncoder.frame(number, command, calculator)
-                    val line = GLiner.lines(framed).first()
+                    val block = GBlockReader.blocks(framed).first()
 
-                    assertInstanceOf(GPacketLine::class.java, line, "did not verify: $framed")
-                    assertEquals(GInt(number), (line as GPacketLine).number)
+                    assertInstanceOf(GFramedBlock::class.java, block, "did not verify: $framed")
+                    assertEquals(GInt(number), (block as GFramedBlock).number)
                     assertEquals(
                         GEncoder.encode(command),
-                        GWordReader.parse(line).joinToString(" ") { GEncoder.encode(it) },
+                        GWordReader.parse(block).joinToString(" ") { GEncoder.encode(it) },
                         "command did not survive: $framed"
                     )
                 }
@@ -176,13 +176,13 @@ class GEncoderTest {
         @Test
         fun `parsing then encoding is the identity on bytes the encoder could have produced`() {
             for (gcode in listOf("N0 G28*19", "N1 G28*18", "N3 T0*57", "N7 G1 X10 F1800*57")) {
-                val line = GLiner.lines(gcode).first()
+                val block = GBlockReader.blocks(gcode).first()
 
-                assertInstanceOf(GPacketLine::class.java, line, "fixture is not a packet: $gcode")
-                val packet = line as GPacketLine
-                val command = GWordReader.parse(packet).single()
+                assertInstanceOf(GFramedBlock::class.java, block, "fixture is not framed: $gcode")
+                val framed = block as GFramedBlock
+                val command = GWordReader.parse(framed).single()
 
-                assertEquals(gcode, GEncoder.frame(packet.number.int, command))
+                assertEquals(gcode, GEncoder.frame(framed.number.int, command))
             }
         }
 
@@ -192,13 +192,13 @@ class GEncoderTest {
 
             for (i in 0 until good.indexOf('*')) {
                 val corrupted = good.substring(0, i) + corrupt(good[i]) + good.substring(i + 1)
-                val line = GLiner.lines(corrupted).first()
+                val block = GBlockReader.blocks(corrupted).first()
 
-                assert(line !is GPacketLine) { "corruption at $i survived verification: $corrupted" }
+                assert(block !is GFramedBlock) { "corruption at $i survived verification: $corrupted" }
             }
         }
 
-        /** Flips a character to another legal one, so the line stays lexically well formed. */
+        /** Flips a character to another legal one, so the block stays lexically well formed. */
         private fun corrupt(ch: Char): Char = when {
             ch in '0'..'8' -> ch + 1
             ch == '9' -> '0'
@@ -217,22 +217,22 @@ class GEncoderTest {
 
         @Test
         fun `a comment part renders through its comment`() {
-            assertEquals("G28 ; note", GEncoder.encode(GBlock(g28, GCommentPart(GTailComment(" note")))))
+            assertEquals("G28 ; note", GEncoder.encode(GBlockDraft(g28, GCommentPart(GTailComment(" note")))))
         }
 
         @Test
         fun `a trailing comment part sits after the checksum and is not covered by it`() {
-            assertEquals("N1 G28*18 ; home", GEncoder.frame(1, GBlock(g28, GCommentPart(GTailComment(" home")))))
+            assertEquals("N1 G28*18 ; home", GEncoder.frame(1, GBlockDraft(g28, GCommentPart(GTailComment(" home")))))
         }
 
         @Test
         fun `a block of nothing but a comment part is not framed`() {
-            assertEquals("; only", GEncoder.frame(1, GBlock(GCommentPart(GTailComment(" only")))))
+            assertEquals("; only", GEncoder.frame(1, GBlockDraft(GCommentPart(GTailComment(" only")))))
         }
 
         @Test
         fun `a comment part between two commands is covered by the checksum`() {
-            val block = GBlock(g28, GCommentPart(GInlineComment("x")), g90)
+            val block = GBlockDraft(g28, GCommentPart(GInlineComment("x")), g90)
 
             assertEquals("N1 G28 (x) G90*37", GEncoder.frame(1, block))
         }

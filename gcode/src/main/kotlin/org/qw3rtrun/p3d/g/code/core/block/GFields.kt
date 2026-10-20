@@ -12,9 +12,9 @@ import org.qw3rtrun.p3d.g.code.core.token.GWhitespace
  * command: its head.
  *
  * **Functions over tokens, not a parser object.** Nothing here has state, nothing here builds a
- * `GWord`, and that is the point: a decoder asks where a value is and what command a line opens
+ * `GWord`, and that is the point: a decoder asks where a value is and what command a block opens
  * with, and both are answerable from token positions alone. The class that used to own them,
- * `GCommandParser`, also assembled every field of a line into words and grouped them into commands
+ * `GCommandParser`, also assembled every field of a block into words and grouped them into commands
  * - a second, weaker reader of the same bytes, weaker because words are built without the command
  * number and so cannot know that `M117 Hello World` has one argument rather than ten fields. That
  * half had no production caller left once `MarlinCommands.decode` existed, and now lives in the
@@ -34,13 +34,13 @@ import org.qw3rtrun.p3d.g.code.core.token.GWhitespace
  *
  * **Tokens in, one word out** - the narrowest thing a decoder needs, and the reason it is here
  * rather than a copy inside the protocol layer: what a command word is, is this file's rule, and a
- * decoder disagreeing with it would accept heads no line can carry. Only the head is read; what a
+ * decoder disagreeing with it would accept heads no block can carry. Only the head is read; what a
  * command's *parameters* mean is the decoder's own business, because it is the first thing in the
  * stack that knows which command it holds.
  *
  * The word is **canonically spelled**: it carries `[id, number]` and nothing else, so `G1` and the
  * `G 1` spec 2.1 also allows produce the same word and a decoder can compare it against its own
- * head without knowing what whitespace the line happened to contain. [headEnd] says where the
+ * head without knowing what whitespace the block happened to contain. [headEnd] says where the
  * tokens it was read from end.
  *
  * `T` may head the command, because [tokens] are one command's - its first position is by
@@ -77,10 +77,10 @@ fun headWord(tokens: List<GToken>): GParameterWord<GNumber>? {
  * [word] as the key two heads are **matched** by: its letter folded to upper case.
  *
  * spec 2.2: NIST and RepRapFirmware are case-insensitive outside comments and strings, and Marlin
- * is too when `GCODE_CASE_INSENSITIVE` is compiled in - so `m104` is a line a host will be handed,
+ * is too when `GCODE_CASE_INSENSITIVE` is compiled in - so `m104` is a block a host will be handed,
  * and a decoder has to answer to it. **Reading is where the tolerance belongs**; spec 2.2's rule
  * for generators is the opposite one, always emit uppercase, and the DSL does. [headWord]
- * deliberately keeps the letter as the line spelled it, because that is provenance; this is the
+ * deliberately keeps the letter as the block spelled it, because that is provenance; this is the
  * form to compare, and the two are separate for exactly that reason.
  *
  * The **number is untouched**: its lexeme is part of its identity (spec 4.1, [GNumber]), so `M0105`
@@ -222,7 +222,7 @@ private fun digit(c: Char) = c >= '0' && c <= '9'
  * `line-number` and `checksum` specialisations of `word`, so the liner, the command head and the
  * decoders all reuse it - one way, from above, which is the direction the layering allows.
  *
- * This is the module's only copy of that rule. It was five: the liner pairing `N` with its number
+ * This is the module's only copy of that rule. It was five: the reader pairing `N` with its number
  * and `*` with its checksum, the command reader pairing any letter with its value and `G` with
  * `1`, and the Marlin decoders pairing a documented letter with what follows it. The rule decides
  * whether `N 1` is a line number and whether `X 10` is one field or two, so a spec correction had

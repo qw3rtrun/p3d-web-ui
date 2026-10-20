@@ -18,12 +18,12 @@ import org.qw3rtrun.p3d.g.code.core.token.GTailComment
 import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
-class GLinerTest {
+class GBlockReaderTest {
 
 
     @Test
     fun `empty tokens iterator has no elements and throws on next`() {
-        val iter = GLiner(emptyList<GToken>().iterator())
+        val iter = GBlockReader(emptyList<GToken>().iterator())
 
         assertFalse(iter.hasNext())
         assertFalse(iter.hasNext())
@@ -33,13 +33,13 @@ class GLinerTest {
     }
 
     @Test
-    fun `single simple line without trailing line break`() {
+    fun `single simple block without trailing line break`() {
         val input = "G1 X10 Y20"
-        val iter = GLiner(GTokenizer.parse(input).iterator())
+        val iter = GBlockReader(GTokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
-        val line = iter.next()
-        assertInstanceOf(GSimpleLine::class.java, line)
+        val block = iter.next()
+        assertInstanceOf(GPlainBlock::class.java, block)
         assertEquals(
             listOf(
                 GLetter('G'),
@@ -51,19 +51,19 @@ class GLinerTest {
                 GLetter('Y'),
                 GInt(20)
             ),
-            line.raw
+            block.raw
         )
         assertFalse(iter.hasNext())
     }
 
     @Test
-    fun `single simple line with line break`() {
+    fun `single simple block with line break`() {
         val input = "G1 X10\n"
-        val iter = GLiner(GTokenizer.parse(input).iterator())
+        val iter = GBlockReader(GTokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
-        val line = iter.next()
-        assertInstanceOf(GSimpleLine::class.java, line)
+        val block = iter.next()
+        assertInstanceOf(GPlainBlock::class.java, block)
         assertEquals(
             listOf(
                 GLetter('G'),
@@ -73,47 +73,47 @@ class GLinerTest {
                 GInt(10),
                 GLineBreak("\n")
             ),
-            line.raw
+            block.raw
         )
         assertFalse(iter.hasNext())
     }
 
     @Test
-    fun `multiple simple lines`() {
+    fun `multiple simple blocks`() {
         val input = "G28\nM104 S200\nG1 Z5\n"
-        val lines = GLiner(GTokenizer.parse(input).iterator()).asSequence().toList()
+        val blocks = GBlockReader(GTokenizer.parse(input).iterator()).asSequence().toList()
 
-        assertEquals(3, lines.size)
-        assertTrue(lines.all { it is GSimpleLine })
+        assertEquals(3, blocks.size)
+        assertTrue(blocks.all { it is GPlainBlock })
 
-        assertEquals(listOf(GLetter('G'), GInt(28), GLineBreak("\n")), lines[0].raw)
-        assertEquals(listOf(GLetter('M'), GInt(104), GSpace, GLetter('S'), GInt(200), GLineBreak("\n")), lines[1].raw)
-        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('Z'), GInt(5), GLineBreak("\n")), lines[2].raw)
+        assertEquals(listOf(GLetter('G'), GInt(28), GLineBreak("\n")), blocks[0].raw)
+        assertEquals(listOf(GLetter('M'), GInt(104), GSpace, GLetter('S'), GInt(200), GLineBreak("\n")), blocks[1].raw)
+        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('Z'), GInt(5), GLineBreak("\n")), blocks[2].raw)
     }
 
     @Test
-    fun `empty lines with line breaks`() {
+    fun `empty blocks with line breaks`() {
         val input = "\n\n"
-        val lines = GLiner(GTokenizer.parse(input).iterator()).asSequence().toList()
+        val blocks = GBlockReader(GTokenizer.parse(input).iterator()).asSequence().toList()
 
-        assertEquals(2, lines.size)
-        assertTrue(lines.all { it is GMeaninglessLine }) { "expected two empty lines, got $lines" }
-        assertEquals(listOf(GLineBreak("\n")), lines[0].raw)
-        assertEquals(listOf(GLineBreak("\n")), lines[1].raw)
+        assertEquals(2, blocks.size)
+        assertTrue(blocks.all { it is GMeaninglessBlock }) { "expected two empty blocks, got $blocks" }
+        assertEquals(listOf(GLineBreak("\n")), blocks[0].raw)
+        assertEquals(listOf(GLineBreak("\n")), blocks[1].raw)
     }
 
     @Test
-    fun `packet line with valid line number, checksum and trailing line break`() {
+    fun `framed block with valid line number, checksum and trailing line break`() {
         val input = "N100 G1 X10 *112\n"
-        val iter = GLiner(GTokenizer.parse(input).iterator())
+        val iter = GBlockReader(GTokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
-        val line = iter.next()
-        assertInstanceOf(GPacketLine::class.java, line)
-        val packet = line as GPacketLine
+        val block = iter.next()
+        assertInstanceOf(GFramedBlock::class.java, block)
+        val framed = block as GFramedBlock
 
-        assertEquals(GInt(100), packet.number)
-        assertEquals(GInt(112), packet.checksum)
+        assertEquals(GInt(100), framed.number)
+        assertEquals(GInt(112), framed.checksum)
         assertEquals(
             listOf(
                 GSpace,
@@ -122,7 +122,7 @@ class GLinerTest {
                 GLetter('X'), GInt(10),
                 GSpace
             ),
-            packet.body
+            framed.body
         )
         assertEquals(
             listOf(
@@ -135,23 +135,23 @@ class GLinerTest {
                 GChecksum, GInt(112),
                 GLineBreak("\n")
             ),
-            packet.raw
+            framed.raw
         )
         assertFalse(iter.hasNext())
     }
 
     @Test
-    fun `packet line without trailing line break`() {
+    fun `framed block without trailing line break`() {
         val input = "N100 G1 X10 *112"
-        val iter = GLiner(GTokenizer.parse(input).iterator())
+        val iter = GBlockReader(GTokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
-        val line = iter.next()
-        assertInstanceOf(GPacketLine::class.java, line)
-        val packet = line as GPacketLine
+        val block = iter.next()
+        assertInstanceOf(GFramedBlock::class.java, block)
+        val framed = block as GFramedBlock
 
-        assertEquals(GInt(100), packet.number)
-        assertEquals(GInt(112), packet.checksum)
+        assertEquals(GInt(100), framed.number)
+        assertEquals(GInt(112), framed.checksum)
         assertEquals(
             listOf(
                 GSpace,
@@ -160,7 +160,7 @@ class GLinerTest {
                 GLetter('X'), GInt(10),
                 GSpace
             ),
-            packet.body
+            framed.body
         )
         assertEquals(
             listOf(
@@ -172,59 +172,59 @@ class GLinerTest {
                 GSpace,
                 GChecksum, GInt(112)
             ),
-            packet.raw
+            framed.raw
         )
         assertFalse(iter.hasNext())
     }
 
     @Test
     fun `an N that is not followed by a number is a malformed line number`() {
-        val line = GLiner(GTokenizer.parse("N G1 X10 *45\n").iterator()).next()
+        val block = GBlockReader(GTokenizer.parse("N G1 X10 *45\n").iterator()).next()
 
-        assertInstanceOf(GMalformedLineNumber::class.java, line)
-        assertEquals("'N' is not followed by a line number", (line as GError).msg)
+        assertInstanceOf(GMalformedLineNumber::class.java, block)
+        assertEquals("'N' is not followed by a line number", (block as GError).msg)
     }
 
     @Test
     fun `a star that is followed by a non-integer is a malformed checksum`() {
-        val line = GLiner(GTokenizer.parse("N100 G1 X10 *10.5\n").iterator()).next()
+        val block = GBlockReader(GTokenizer.parse("N100 G1 X10 *10.5\n").iterator()).next()
 
-        assertInstanceOf(GMalformedChecksum::class.java, line)
-        assertEquals(GInt(100), (line as GMalformedChecksum).number)
-        assertEquals("'*' is not followed by a checksum value on line 100", line.msg)
+        assertInstanceOf(GMalformedChecksum::class.java, block)
+        assertEquals(GInt(100), (block as GMalformedChecksum).number)
+        assertEquals("'*' is not followed by a checksum value on line 100", block.msg)
     }
 
     @Test
     fun `a star followed by letters is a malformed checksum, not a missing one`() {
         // spec 8.1 (garbled value), not spec 7.3 (no value at all): the marker is on the wire, so
-        // the host's decision is a resend of this line (spec 8.5), not a framing complaint.
-        val line = GLiner(GTokenizer.parse("N100 G1 X10 *ABC\n").iterator()).next()
+        // the host's decision is a resend of this block (spec 8.5), not a framing complaint.
+        val block = GBlockReader(GTokenizer.parse("N100 G1 X10 *ABC\n").iterator()).next()
 
-        assertInstanceOf(GMalformedChecksum::class.java, line)
-        assertEquals(GInt(100), (line as GMalformedChecksum).number)
-        assertEquals("'*' is not followed by a checksum value on line 100", line.msg)
+        assertInstanceOf(GMalformedChecksum::class.java, block)
+        assertEquals(GInt(100), (block as GMalformedChecksum).number)
+        assertEquals("'*' is not followed by a checksum value on line 100", block.msg)
     }
 
     @Test
     fun `a checksum immediately after N is a malformed line number`() {
-        val line = GLiner(GTokenizer.parse("N*45 G1 X10\n").iterator()).next()
+        val block = GBlockReader(GTokenizer.parse("N*45 G1 X10\n").iterator()).next()
 
-        assertInstanceOf(GMalformedLineNumber::class.java, line)
+        assertInstanceOf(GMalformedLineNumber::class.java, block)
     }
 
     @Test
-    fun `packet line with tail comment`() {
+    fun `framed block with tail comment`() {
         val input = "N1 G28 *50 ;homing\n"
-        val iter = GLiner(GTokenizer.parse(input).iterator())
+        val iter = GBlockReader(GTokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
-        val line = iter.next()
-        assertInstanceOf(GPacketLine::class.java, line)
-        val packet = line as GPacketLine
+        val block = iter.next()
+        assertInstanceOf(GFramedBlock::class.java, block)
+        val framed = block as GFramedBlock
 
-        assertEquals(GInt(1), packet.number)
-        assertEquals(GInt(50), packet.checksum)
-        assertEquals(listOf(GSpace, GLetter('G'), GInt(28), GSpace), packet.body)
+        assertEquals(GInt(1), framed.number)
+        assertEquals(GInt(50), framed.checksum)
+        assertEquals(listOf(GSpace, GLetter('G'), GInt(28), GSpace), framed.body)
         assertEquals(
             listOf(
                 GLetter('N'), GInt(1),
@@ -236,20 +236,20 @@ class GLinerTest {
                 GTailComment("homing"),
                 GLineBreak("\n")
             ),
-            packet.raw
+            framed.raw
         )
     }
 
     @Test
-    fun `comment lines and inline comments are parsed as simple lines`() {
-        val input = "; full line comment\nG1 (feedrate) F1500\n"
-        val lines = GLiner(GTokenizer.parse(input).iterator()).asSequence().toList()
+    fun `comment blocks and inline comments are parsed as simple blocks`() {
+        val input = "; full block comment\nG1 (feedrate) F1500\n"
+        val blocks = GBlockReader(GTokenizer.parse(input).iterator()).asSequence().toList()
 
-        assertEquals(2, lines.size)
-        assertInstanceOf(GMeaninglessLine::class.java, lines[0])
-        assertEquals(listOf(GTailComment(" full line comment"), GLineBreak("\n")), lines[0].raw)
+        assertEquals(2, blocks.size)
+        assertInstanceOf(GMeaninglessBlock::class.java, blocks[0])
+        assertEquals(listOf(GTailComment(" full block comment"), GLineBreak("\n")), blocks[0].raw)
 
-        assertInstanceOf(GSimpleLine::class.java, lines[1])
+        assertInstanceOf(GPlainBlock::class.java, blocks[1])
         assertEquals(
             listOf(
                 GLetter('G'),
@@ -261,57 +261,57 @@ class GLinerTest {
                 GInt(1500),
                 GLineBreak("\n")
             ),
-            lines[1].raw
+            blocks[1].raw
         )
     }
 
     @Test
-    fun `mixed sequence of packet lines and simple lines`() {
+    fun `mixed sequence of framed blocks and simple blocks`() {
         val input = "N1 M110 N1*125\n; comment\nG28\nN2 G1 X10 *115\n"
-        val lines = GLiner(GTokenizer.parse(input).iterator()).asSequence().toList()
+        val blocks = GBlockReader(GTokenizer.parse(input).iterator()).asSequence().toList()
 
-        assertEquals(4, lines.size)
-        assertInstanceOf(GPacketLine::class.java, lines[0])
-        assertInstanceOf(GMeaninglessLine::class.java, lines[1])
-        assertInstanceOf(GSimpleLine::class.java, lines[2])
-        assertInstanceOf(GPacketLine::class.java, lines[3])
+        assertEquals(4, blocks.size)
+        assertInstanceOf(GFramedBlock::class.java, blocks[0])
+        assertInstanceOf(GMeaninglessBlock::class.java, blocks[1])
+        assertInstanceOf(GPlainBlock::class.java, blocks[2])
+        assertInstanceOf(GFramedBlock::class.java, blocks[3])
 
-        val firstPacket = lines[0] as GPacketLine
-        assertEquals(GInt(1), firstPacket.number)
-        assertEquals(GInt(125), firstPacket.checksum)
+        val firstFramed = blocks[0] as GFramedBlock
+        assertEquals(GInt(1), firstFramed.number)
+        assertEquals(GInt(125), firstFramed.checksum)
 
-        val secondPacket = lines[3] as GPacketLine
-        assertEquals(GInt(2), secondPacket.number)
-        assertEquals(GInt(115), secondPacket.checksum)
+        val secondFramed = blocks[3] as GFramedBlock
+        assertEquals(GInt(2), secondFramed.number)
+        assertEquals(GInt(115), secondFramed.checksum)
     }
 
     @Test
     fun `hasNext is idempotent and does not advance iterator`() {
         val input = "G1 X1\nG2 X2\n"
-        val iter = GLiner(GTokenizer.parse(input).iterator())
+        val iter = GBlockReader(GTokenizer.parse(input).iterator())
 
         assertTrue(iter.hasNext())
         assertTrue(iter.hasNext())
         assertTrue(iter.hasNext())
 
-        val line1 = iter.next()
-        assertInstanceOf(GSimpleLine::class.java, line1)
-        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('X'), GInt(1), GLineBreak("\n")), line1.raw)
+        val block1 = iter.next()
+        assertInstanceOf(GPlainBlock::class.java, block1)
+        assertEquals(listOf(GLetter('G'), GInt(1), GSpace, GLetter('X'), GInt(1), GLineBreak("\n")), block1.raw)
 
         assertTrue(iter.hasNext())
         assertTrue(iter.hasNext())
 
-        val line2 = iter.next()
-        assertInstanceOf(GSimpleLine::class.java, line2)
-        assertEquals(listOf(GLetter('G'), GInt(2), GSpace, GLetter('X'), GInt(2), GLineBreak("\n")), line2.raw)
+        val block2 = iter.next()
+        assertInstanceOf(GPlainBlock::class.java, block2)
+        assertEquals(listOf(GLetter('G'), GInt(2), GSpace, GLetter('X'), GInt(2), GLineBreak("\n")), block2.raw)
 
         assertFalse(iter.hasNext())
         assertFalse(iter.hasNext())
     }
 
     @Test
-    fun `next after the last line throws`() {
-        val iter = GLiner(GTokenizer.parse("G1 X1\n").toList().iterator())
+    fun `next after the last block throws`() {
+        val iter = GBlockReader(GTokenizer.parse("G1 X1\n").toList().iterator())
 
         iter.next()
 
@@ -320,66 +320,66 @@ class GLinerTest {
     }
 
     @Test
-    fun `a line of nothing but whitespace is one empty line`() {
-        val lines = GLiner(GTokenizer.parse("   \n").iterator()).asSequence().toList()
+    fun `a block of nothing but whitespace is one empty block`() {
+        val blocks = GBlockReader(GTokenizer.parse("   \n").iterator()).asSequence().toList()
 
-        assertEquals(1, lines.size)
-        assertInstanceOf(GMeaninglessLine::class.java, lines[0])
-        assertEquals(listOf(GSpace, GSpace, GSpace, GLineBreak("\n")), lines[0].raw)
+        assertEquals(1, blocks.size)
+        assertInstanceOf(GMeaninglessBlock::class.java, blocks[0])
+        assertEquals(listOf(GSpace, GSpace, GSpace, GLineBreak("\n")), blocks[0].raw)
     }
 
     @Test
-    fun `the payload of simple lines reproduces the input`() {
+    fun `the payload of simple blocks reproduces the input`() {
         val input = "G28\n; comment\nM104 S200\n\nG1 Z5"
-        val lines = GLiner(GTokenizer.parse(input).iterator()).asSequence().toList()
+        val blocks = GBlockReader(GTokenizer.parse(input).iterator()).asSequence().toList()
 
-        assertEquals(5, lines.size)
-        assertEquals(input, lines.joinToString("") { line -> line.raw.joinToString("") { it.rawText() } })
+        assertEquals(5, blocks.size)
+        assertEquals(input, blocks.joinToString("") { block -> block.raw.joinToString("") { it.rawText() } })
     }
 
     @Test
     fun `a line number without a checksum is a pairing error`() {
         // GCODE_spec.md section 7.3 requires both or neither.
-        val line = GLiner(GTokenizer.parse("N100 G1 X10\n").iterator()).next()
+        val block = GBlockReader(GTokenizer.parse("N100 G1 X10\n").iterator()).next()
 
-        assertInstanceOf(GMissingChecksum::class.java, line)
-        assertEquals(GInt(100), (line as GMissingChecksum).number)
-        assertEquals("line number 100 has no checksum", line.msg)
+        assertInstanceOf(GMissingChecksum::class.java, block)
+        assertEquals(GInt(100), (block as GMissingChecksum).number)
+        assertEquals("line number 100 has no checksum", block.msg)
     }
 
     @Test
     fun `a checksum without a line number is a pairing error`() {
-        val line = GLiner(GTokenizer.parse("G1 X10*45\n").iterator()).next()
+        val block = GBlockReader(GTokenizer.parse("G1 X10*45\n").iterator()).next()
 
-        assertInstanceOf(GMissingLineNumber::class.java, line)
-        assertEquals("checksum without a line number", (line as GError).msg)
+        assertInstanceOf(GMissingLineNumber::class.java, block)
+        assertEquals("checksum without a line number", (block as GError).msg)
     }
 
     @Test
-    fun `a star inside a tail comment does not make a packet`() {
-        val line = GLiner(GTokenizer.parse("N1 G28 ; 3*4\n").iterator()).next()
+    fun `a star inside a tail comment does not make a framed block`() {
+        val block = GBlockReader(GTokenizer.parse("N1 G28 ; 3*4\n").iterator()).next()
 
-        assertFalse(line is GPacketLine)
-        assertInstanceOf(GMissingChecksum::class.java, line)
+        assertFalse(block is GFramedBlock)
+        assertInstanceOf(GMissingChecksum::class.java, block)
     }
 
     @Test
-    fun `a star inside a quoted string does not make a packet`() {
-        val line = GLiner(GTokenizer.parse("N1 M117 \"a*b\"\n").iterator()).next()
+    fun `a star inside a quoted string does not make a framed block`() {
+        val block = GBlockReader(GTokenizer.parse("N1 M117 \"a*b\"\n").iterator()).next()
 
-        assertFalse(line is GPacketLine)
-        assertInstanceOf(GMissingChecksum::class.java, line)
+        assertFalse(block is GFramedBlock)
+        assertInstanceOf(GMissingChecksum::class.java, block)
     }
 
     @Test
-    fun `packet line with zero line number and zero checksum`() {
+    fun `framed block with zero line number and zero checksum`() {
         // Both zeros are real rather than chosen for looks: `N0 G1 X5 F3000` genuinely XORs to 0
         // (spec 8.2), so this is the case where a falsy checksum has to survive verification rather
         // than be read as "absent". The body is whatever makes that true.
-        val packet = GLiner(GTokenizer.parse("N0 G1 X5 F3000*0\n").iterator()).next() as GPacketLine
+        val framed = GBlockReader(GTokenizer.parse("N0 G1 X5 F3000*0\n").iterator()).next() as GFramedBlock
 
-        assertEquals(GInt(0), packet.number)
-        assertEquals(GInt(0), packet.checksum)
+        assertEquals(GInt(0), framed.number)
+        assertEquals(GInt(0), framed.checksum)
         assertEquals(
             listOf(
                 GSpace,
@@ -389,54 +389,54 @@ class GLinerTest {
                 GSpace,
                 GLetter('F'), GInt(3000)
             ),
-            packet.body
+            framed.body
         )
     }
 
     @Test
-    fun `packet line with the largest checksum an ASCII line can carry`() {
+    fun `framed block with the largest checksum an ASCII block can carry`() {
         // 127, not 255. Spec 8.2 gives the XOR result the range 0-255, but spec 1.1 keeps the wire
         // in 7-bit ASCII, so every covered byte is below 0x80 and so is their XOR. 255 is
-        // unreachable for any line this protocol can legally carry, and the fixture that used to
+        // unreachable for any block this protocol can legally carry, and the fixture that used to
         // claim it was asserting on a value no generator could produce.
-        val packet = GLiner(GTokenizer.parse("N999999 G1 E13*127\n").iterator()).next() as GPacketLine
+        val framed = GBlockReader(GTokenizer.parse("N999999 G1 E13*127\n").iterator()).next() as GFramedBlock
 
-        assertEquals(GInt(999999), packet.number)
-        assertEquals(GInt(127), packet.checksum)
+        assertEquals(GInt(999999), framed.number)
+        assertEquals(GInt(127), framed.checksum)
     }
 
     @Test
-    fun `consecutive packet lines`() {
-        val lines = GLiner(GTokenizer.parse("N1 G28*18\nN2 G28*17\nN3 T0*57\n").iterator())
+    fun `consecutive framed blocks`() {
+        val blocks = GBlockReader(GTokenizer.parse("N1 G28*18\nN2 G28*17\nN3 T0*57\n").iterator())
             .asSequence().toList()
 
-        assertEquals(3, lines.size)
-        assertTrue(lines.all { it is GPacketLine })
+        assertEquals(3, blocks.size)
+        assertTrue(blocks.all { it is GFramedBlock })
         assertEquals(
             listOf(GInt(1), GInt(2), GInt(3)),
-            lines.map { (it as GPacketLine).number }
+            blocks.map { (it as GFramedBlock).number }
         )
         assertEquals(
             listOf(GInt(18), GInt(17), GInt(57)),
-            lines.map { (it as GPacketLine).checksum }
+            blocks.map { (it as GFramedBlock).checksum }
         )
     }
 
     @Test
     fun `a negative line number is distinguishable from a missing one`() {
         // Was a characterisation point: both used to report GInt(-1). The sentinel is gone, so a
-        // real N-1 is a packet carrying -1 and a missing number is a different type entirely.
+        // real N-1 is a framed block carrying -1 and a missing number is a different type entirely.
         // Spec 7.1 - Marlin tolerates a sign after N, so N-1 is not itself an error.
-        val parsed = GLiner(GTokenizer.parse("N-1 G28*63\n").iterator()).next()
-        val mailformed = GLiner(GTokenizer.parse("N G28*12\n").iterator()).next()
+        val parsed = GBlockReader(GTokenizer.parse("N-1 G28*63\n").iterator()).next()
+        val mailformed = GBlockReader(GTokenizer.parse("N G28*12\n").iterator()).next()
 
-        assertInstanceOf(GPacketLine::class.java, parsed)
-        assertEquals(GInt(-1, "-1"), (parsed as GPacketLine).number)
+        assertInstanceOf(GFramedBlock::class.java, parsed)
+        assertEquals(GInt(-1, "-1"), (parsed as GFramedBlock).number)
         assertInstanceOf(GMalformedLineNumber::class.java, mailformed)
     }
 
     @Test
-    fun `line count matches the number of terminated lines`() {
+    fun `block count matches the number of terminated blocks`() {
         assertEquals(0, lineCount(""))
         assertEquals(1, lineCount("G28"))
         assertEquals(1, lineCount("G28\n"))
@@ -446,12 +446,12 @@ class GLinerTest {
     }
 
     private fun lineCount(gcode: String) =
-        GLiner(GTokenizer.parse(gcode).iterator()).asSequence().count()
+        GBlockReader(GTokenizer.parse(gcode).iterator()).asSequence().count()
 
-    private fun lines(gcode: String): List<GLine> =
-        GLiner(GTokenizer.parse(gcode).iterator()).asSequence().toList()
+    private fun blocks(gcode: String): List<GBlock> =
+        GBlockReader(GTokenizer.parse(gcode).iterator()).asSequence().toList()
 
-    private fun line(gcode: String): GLine = lines(gcode).single()
+    private fun block(gcode: String): GBlock = blocks(gcode).single()
 
     /**
      * The buffer boundaries a framer has to survive, per the `low-level-protocol-dev` framing rule.
@@ -470,24 +470,24 @@ class GLinerTest {
                 "G1 X1", "G1 X1\n", ";c", ";c\n", "(c", "\"a"
             ]
         )
-        fun `no input makes the liner throw`(gcode: String) {
+        fun `no input makes the reader throw`(gcode: String) {
             // assertDoesNotThrow, not a value assertion: the point is that every boundary is
             // classified rather than crashing. What each one classifies as is asserted elsewhere.
-            assertDoesNotThrow { lines(gcode) }
+            assertDoesNotThrow { blocks(gcode) }
         }
 
         @Test
         fun `a checksum marker as the last token does not throw`() {
             // The marker is present with nothing after it: spec 8.1 malformed, not spec 7.3
-            // missing. A truncated line and an unpaired line are different faults for a host.
-            assertInstanceOf(GMalformedChecksum::class.java, line("N1*"))
-            assertInstanceOf(GMalformedChecksum::class.java, line("N1 G1*"))
-            assertInstanceOf(GMalformedLineNumber::class.java, line("N*"))
+            // missing. A truncated block and an unpaired block are different faults for a host.
+            assertInstanceOf(GMalformedChecksum::class.java, block("N1*"))
+            assertInstanceOf(GMalformedChecksum::class.java, block("N1 G1*"))
+            assertInstanceOf(GMalformedLineNumber::class.java, block("N*"))
         }
 
         @Test
-        fun `a packet without a terminator keeps its whole raw tokens`() {
-            val packet = line("N1 G28*18 ;c") as GPacketLine
+        fun `a framed block without a terminator keeps its whole raw tokens`() {
+            val framed = block("N1 G28*18 ;c") as GFramedBlock
 
             assertEquals(
                 listOf(
@@ -498,13 +498,13 @@ class GLinerTest {
                     GSpace,
                     GTailComment("c")
                 ),
-                packet.raw
+                framed.raw
             )
         }
 
         @Test
-        fun `a packet with a terminator keeps its raw tokens including terminator`() {
-            val packet = line("N1 G28*18 ;c\n") as GPacketLine
+        fun `a framed block with a terminator keeps its raw tokens including terminator`() {
+            val framed = block("N1 G28*18 ;c\n") as GFramedBlock
 
             assertEquals(
                 listOf(
@@ -516,13 +516,13 @@ class GLinerTest {
                     GTailComment("c"),
                     GLineBreak("\n")
                 ),
-                packet.raw
+                framed.raw
             )
         }
 
         @Test
         fun `a CRLF terminator is in raw tokens too`() {
-            val packet = line("N1 G28*18\r\n") as GPacketLine
+            val framed = block("N1 G28*18\r\n") as GFramedBlock
 
             assertEquals(
                 listOf(
@@ -532,7 +532,7 @@ class GLinerTest {
                     GChecksum, GInt(18),
                     GLineBreak("\r\n")
                 ),
-                packet.raw
+                framed.raw
             )
         }
 
@@ -540,76 +540,76 @@ class GLinerTest {
         fun `a checksum marker in first position is a checksum without a line number`() {
             // spec 7.3: `*` without `N` is a pairing error wherever the marker sits - first
             // position included. The marker search used to skip index 0.
-            assertInstanceOf(GMissingLineNumber::class.java, line("*12"))
-            assertInstanceOf(GMissingLineNumber::class.java, line("*12\n"))
+            assertInstanceOf(GMissingLineNumber::class.java, block("*12"))
+            assertInstanceOf(GMissingLineNumber::class.java, block("*12\n"))
         }
 
         @Test
         fun `a lone checksum marker with no value is a checksum without a line number`() {
             // The pairing rule (spec 7.3) is tested before the field syntax (spec 8.1), so a `*`
             // with nothing after it reports the missing line number: a host cannot act on the
-            // checksum value of a line that is not framed in the first place.
-            assertInstanceOf(GMissingLineNumber::class.java, line("*"))
-            assertInstanceOf(GMissingLineNumber::class.java, line("*\n"))
+            // checksum value of a block that is not framed in the first place.
+            assertInstanceOf(GMissingLineNumber::class.java, block("*"))
+            assertInstanceOf(GMissingLineNumber::class.java, block("*\n"))
         }
 
         @Test
         fun `a lone N is a malformed line number, not a crash`() {
-            assertInstanceOf(GMalformedLineNumber::class.java, line("N"))
+            assertInstanceOf(GMalformedLineNumber::class.java, block("N"))
         }
     }
 
-    /** Spec section 5: a line of only whitespace and/or comments is a no-op. */
+    /** Spec section 5: a block of only whitespace and/or comments is a no-op. */
     @Nested
     inner class EmptyLines {
 
         @ParameterizedTest
         @ValueSource(strings = ["\n", "\r\n", "   \n", "\t\n", "; comment\n", "(comment)\n", "  ; c  \n"])
-        fun `a line with no command element is empty`(gcode: String) {
-            assertInstanceOf(GMeaninglessLine::class.java, line(gcode))
+        fun `a block with no command element is empty`(gcode: String) {
+            assertInstanceOf(GMeaninglessBlock::class.java, block(gcode))
         }
 
         @Test
-        fun `empty input produces no lines at all`() {
-            assertEquals(emptyList<GLine>(), lines(""))
+        fun `empty input produces no blocks at all`() {
+            assertEquals(emptyList<GBlock>(), blocks(""))
         }
 
         @Test
-        fun `an empty line keeps its tokens so the input is not lost`() {
-            assertEquals(listOf(GTailComment(" c"), GLineBreak("\n")), line("; c\n").raw)
+        fun `an empty block keeps its tokens so the input is not lost`() {
+            assertEquals(listOf(GTailComment(" c"), GLineBreak("\n")), block("; c\n").raw)
         }
 
         @Test
-        fun `a line with a command is not empty`() {
-            assertInstanceOf(GSimpleLine::class.java, line("G28\n"))
-            assertInstanceOf(GSimpleLine::class.java, line("  G28 ; c\n"))
+        fun `a block with a command is not empty`() {
+            assertInstanceOf(GPlainBlock::class.java, block("G28\n"))
+            assertInstanceOf(GPlainBlock::class.java, block("  G28 ; c\n"))
         }
 
         @Test
-        fun `an unknown token still counts as a meaningless line`() {
-            assertInstanceOf(GMeaninglessLine::class.java, line("?\n"))
+        fun `an unknown token still counts as a meaningless block`() {
+            assertInstanceOf(GMeaninglessBlock::class.java, block("?\n"))
         }
     }
 
     /**
      * Spec section 2.1 - leading whitespace is a separator; section 2.2 - the dialects are
-     * case-insensitive. Packet detection used to require `tokens[0] == GLetter('N')` exactly
+     * case-insensitive. Framing detection used to require `tokens[0] == GLetter('N')` exactly
      * (GCODE_TODO.md 1.8).
      */
     @Nested
-    inner class PacketDetection {
+    inner class FramingDetection {
 
         @ParameterizedTest
         @CsvSource(value = ["N1 G28*18|18", "n1 G28*50|50"], delimiter = '|')
-        fun `a packet is recognised whatever the case`(gcode: String, checksum: Int) {
+        fun `a framed block is recognised whatever the case`(gcode: String, checksum: Int) {
             // The two carry different checksums on purpose. Case-insensitivity is a *parsing* rule
             // (spec 2.2); the checksum is computed over the bytes as sent (spec 8.3), and 'n' and
             // 'N' differ by 0x20, so the same command under a lowercase marker is a different
             // 8-bit XOR. A single expected value here would only be provable by not checking one.
-            val packet = line(gcode) as GPacketLine
+            val framed = block(gcode) as GFramedBlock
 
-            assertEquals(GInt(1), packet.number)
-            assertEquals(GInt(checksum), packet.checksum)
+            assertEquals(GInt(1), framed.number)
+            assertEquals(GInt(checksum), framed.checksum)
         }
 
         @ParameterizedTest
@@ -617,10 +617,10 @@ class GLinerTest {
             value = [" N1 G28*18|18", "\tN1 G28*18|18", "   n1 G28*50|50", "\t N1 G28*18|18"],
             delimiter = '|',
             // Without this the CSV reader strips the very indentation these cases exist to carry,
-            // silently turning all four into the unindented line and proving nothing.
+            // silently turning all four into the unindented block and proving nothing.
             ignoreLeadingAndTrailingWhitespace = false
         )
-        fun `leading whitespace before N does not stop the line being a packet`(gcode: String, checksum: Int) {
+        fun `leading whitespace before N does not stop the block being framed`(gcode: String, checksum: Int) {
             // spec 2.1: space and tab are separators only, so the `N` is still the first *field*.
             //
             // The checksums say something sharper, and it is the reason these three uppercase cases
@@ -628,33 +628,33 @@ class GLinerTest {
             // covered range at the `N`, so **indentation is not checksummed**: one space, a tab or
             // a tab and a space all leave the answer at 18. Only the lowercase case moves, and it
             // moves because of the `n`, not because of the three spaces in front of it.
-            val packet = line(gcode) as GPacketLine
+            val framed = block(gcode) as GFramedBlock
 
-            assertEquals(GInt(1), packet.number)
-            assertEquals(GInt(checksum), packet.checksum)
+            assertEquals(GInt(1), framed.number)
+            assertEquals(GInt(checksum), framed.checksum)
         }
 
         @ParameterizedTest
         @ValueSource(strings = ["(c)N1 G28*18", "(c) N1 G28*18"])
-        fun `a leading comment before N does not stop the line being a packet`(gcode: String) {
+        fun `a leading comment before N does not stop the block being framed`(gcode: String) {
             // spec 6: a comment is not a field either, so it cannot displace the line number.
-            val packet = line(gcode) as GPacketLine
+            val framed = block(gcode) as GFramedBlock
 
-            assertEquals(GInt(1), packet.number)
-            assertEquals(GInt(18), packet.checksum)
+            assertEquals(GInt(1), framed.number)
+            assertEquals(GInt(18), framed.checksum)
         }
 
         @Test
         fun `the line number must be the first element`() {
             // spec 5: `N` is the first field. A trailing N is a parameter, not a line number.
-            assertInstanceOf(GMissingLineNumber::class.java, line("G1 N5*10\n"))
+            assertInstanceOf(GMissingLineNumber::class.java, block("G1 N5*10\n"))
         }
 
         @Test
-        fun `an N parameter later in the line is not the line number`() {
-            val packet = line("N1 M110 N7*123\n") as GPacketLine
+        fun `an N parameter later in the block is not the line number`() {
+            val framed = block("N1 M110 N7*123\n") as GFramedBlock
 
-            assertEquals(GInt(1), packet.number)
+            assertEquals(GInt(1), framed.number)
             assertEquals(
                 listOf(
                     GSpace,
@@ -662,7 +662,7 @@ class GLinerTest {
                     GSpace,
                     GLetter('N'), GInt(7)
                 ),
-                packet.body
+                framed.body
             )
         }
 
@@ -674,10 +674,10 @@ class GLinerTest {
             // 8.3, while a space *before* the `N` is not. That is the whole of the difference
             // between this case and the indented ones above, and it is why the covered range has
             // to start at the `N` rather than at the first byte or the first field.
-            val packet = line("N 1 G28*50\n") as GPacketLine
+            val framed = block("N 1 G28*50\n") as GFramedBlock
 
-            assertEquals(GInt(1), packet.number)
-            assertEquals(GInt(50), packet.checksum)
+            assertEquals(GInt(1), framed.number)
+            assertEquals(GInt(50), framed.checksum)
         }
     }
 
@@ -692,16 +692,16 @@ class GLinerTest {
         fun `whitespace between the marker and its value is allowed`() {
             // spec 2.1: whitespace is a separator, so the field assembles across it exactly as
             // `N 1` does. It still changes the bytes the checksum covers (spec 8.3).
-            val packet = line("N1 G28 * 50\n") as GPacketLine
+            val framed = block("N1 G28 * 50\n") as GFramedBlock
 
             // 50, not `N1 G28`'s 18: the space before the marker falls inside the covered range
             // and the space after it does not, exactly as spec 8.3 describes.
-            assertEquals(GInt(50), packet.checksum)
+            assertEquals(GInt(50), framed.checksum)
         }
 
         @Test
         fun `a spaced marker with no line number is still a pairing error`() {
-            assertInstanceOf(GMissingLineNumber::class.java, line("* 12"))
+            assertInstanceOf(GMissingLineNumber::class.java, block("* 12"))
         }
 
         @Test
@@ -710,42 +710,42 @@ class GLinerTest {
             // stays in the payload - where it is also part of the bytes the checksum covers
             // (spec 8.3). Marlin agrees: `get_serial_commands` uses `strrchr(command, '*')` and
             // XORs everything before it.
-            val packet = line("N1 G28*12*59\n") as GPacketLine
+            val framed = block("N1 G28*12*59\n") as GFramedBlock
 
-            assertEquals(GInt(1), packet.number)
+            assertEquals(GInt(1), framed.number)
             // 59 is the XOR of `N1 G28*12` - the earlier marker and its digits are ordinary covered
             // bytes, since the range ends at the *last* `*`.
-            assertEquals(GInt(59), packet.checksum)
+            assertEquals(GInt(59), framed.checksum)
             assertEquals(
                 listOf(
                     GSpace,
                     GLetter('G'), GInt(28),
                     GChecksum, GInt(12)
                 ),
-                packet.body
+                framed.body
             )
         }
     }
 
     /**
-     * Spec section 8: the checksum is not merely parsed, it is **checked**, and a [GPacketLine] is
-     * only ever built for a line that passed. These are the tests for that invariant - that the
-     * right bytes go into the calculator, that the right algorithm is chosen, and that a line which
-     * fails comes back as something a host can act on rather than as a packet.
+     * Spec section 8: the checksum is not merely parsed, it is **checked**, and a [GFramedBlock] is
+     * only ever built for a block that passed. These are the tests for that invariant - that the
+     * right bytes go into the calculator, that the right algorithm is chosen, and that a block which
+     * fails comes back as something a host can act on rather than as a framed.
      */
     @Nested
     inner class ChecksumVerification {
 
         @Test
-        fun `a packet line is a line whose checksum was verified`() {
-            // The invariant the type carries: there is no verify() to forget, because a GPacketLine
-            // cannot be constructed for a line that did not pass.
-            assertInstanceOf(GPacketLine::class.java, line("N1 G28*18"))
+        fun `a framed block is a block whose checksum was verified`() {
+            // The invariant the type carries: there is no verify() to forget, because a GFramedBlock
+            // cannot be constructed for a block that did not pass.
+            assertInstanceOf(GFramedBlock::class.java, block("N1 G28*18"))
         }
 
         @Test
-        fun `a well formed checksum that does not match the bytes is a failure, not a packet`() {
-            val failed = line("N1 G28*12") as GCheckSumFailedLine
+        fun `a well formed checksum that does not match the bytes is a failure, not a framed block`() {
+            val failed = block("N1 G28*12") as GCheckSumFailedBlock
 
             assertEquals(GInt(1), failed.number)
             assertEquals(18, failed.expected.int)
@@ -754,11 +754,11 @@ class GLinerTest {
         }
 
         @Test
-        fun `a failed line is ordered but not checksum controlled`() {
+        fun `a failed block is ordered but not checksum controlled`() {
             // spec 8.5 addresses a resend by line number, so the number has to be reachable. The
-            // line is still not trustworthy, so it deliberately does not answer GCheckSumControlled
-            // - a consumer matching on that interface is asking for lines it can act on.
-            val failed = line("N1 G28*12")
+            // block is still not trustworthy, so it deliberately does not answer GCheckSumControlled
+            // - a consumer matching on that interface is asking for blocks it can act on.
+            val failed = block("N1 G28*12")
 
             assertInstanceOf(GOrdered::class.java, failed)
             assertInstanceOf(GError::class.java, failed)
@@ -766,19 +766,19 @@ class GLinerTest {
         }
 
         @Test
-        fun `a failed line still reproduces its own bytes`() {
+        fun `a failed block still reproduces its own bytes`() {
             val gcode = "N1 G28*12 ;homing\n"
 
-            val failed = lines(gcode).single()
+            val failed = blocks(gcode).single()
 
-            assertInstanceOf(GCheckSumFailedLine::class.java, failed)
+            assertInstanceOf(GCheckSumFailedBlock::class.java, failed)
             assertEquals(gcode, failed.raw.joinToString("") { it.rawText() })
         }
 
         @Test
         fun `a single corrupted byte before the star is detected`() {
             // `N1 G27*18` is `N1 G28*18` with one byte changed: the checksum no longer describes it.
-            val failed = line("N1 G27*18") as GCheckSumFailedLine
+            val failed = block("N1 G27*18") as GCheckSumFailedBlock
 
             assertEquals(29, failed.expected.int)
             assertEquals(18, failed.received.int)
@@ -788,42 +788,42 @@ class GLinerTest {
         fun `the xor checksum does not detect a transposition, and the crc does`() {
             // Spec 8.2 says so outright, and it is the reason 8.4 calls CRC16 strictly stronger.
             // Asserted rather than left implied: `N1 G82` is `N1 G28` with two bytes swapped, so
-            // the commutative XOR cannot tell them apart and passes a line it should reject.
-            assertInstanceOf(GPacketLine::class.java, line("N1 G28*18"))
-            assertInstanceOf(GPacketLine::class.java, line("N1 G82*18"))
+            // the commutative XOR cannot tell them apart and passes a block it should reject.
+            assertInstanceOf(GFramedBlock::class.java, block("N1 G28*18"))
+            assertInstanceOf(GFramedBlock::class.java, block("N1 G82*18"))
 
             // The same swap under the 5-digit field: 14291 belongs to `N1 G28` alone.
-            assertInstanceOf(GPacketLine::class.java, line("N1 G28*14291"))
-            assertInstanceOf(GCheckSumFailedLine::class.java, line("N1 G82*14291"))
+            assertInstanceOf(GFramedBlock::class.java, block("N1 G28*14291"))
+            assertInstanceOf(GCheckSumFailedBlock::class.java, block("N1 G82*14291"))
         }
 
         @Test
         fun `five digits select the crc and it verifies`() {
             // Spec 8.4's worked vector, through the parser rather than the calculator.
-            val packet = line("N3 T0*06939") as GPacketLine
+            val framed = block("N3 T0*06939") as GFramedBlock
 
-            assertEquals(GInt(3), packet.number)
-            assertEquals(6939, packet.checksum.int)
+            assertEquals(GInt(3), framed.number)
+            assertEquals(6939, framed.checksum.int)
         }
 
         @Test
         fun `a zero padded crc is read as five digits and not as the number it parses to`() {
             // The trap the selector exists to avoid. `06939` has an `int` of 6939, which is four
-            // digits; dispatching on the value would pick the XOR checksum and reject the line.
+            // digits; dispatching on the value would pick the XOR checksum and reject the block.
             // A CRC is zero-padded by definition (spec 8.4), so this is the common case, not a
             // corner one.
-            val packet = line("N3 T0*06939") as GPacketLine
+            val framed = block("N3 T0*06939") as GFramedBlock
 
-            assertEquals("06939", packet.checksum.lexeme)
-            assertEquals(6939, packet.checksum.int)
+            assertEquals("06939", framed.checksum.lexeme)
+            assertEquals(6939, framed.checksum.int)
         }
 
         @Test
         fun `one to three digits select the xor checksum`() {
-            // The same line under both algorithms, to pin that the width alone decides.
-            assertInstanceOf(GPacketLine::class.java, line("N1 G28*18"))
-            assertInstanceOf(GPacketLine::class.java, line("N1 G28*14291"))
-            assertInstanceOf(GCheckSumFailedLine::class.java, line("N1 G28*57"))
+            // The same block under both algorithms, to pin that the width alone decides.
+            assertInstanceOf(GFramedBlock::class.java, block("N1 G28*18"))
+            assertInstanceOf(GFramedBlock::class.java, block("N1 G28*14291"))
+            assertInstanceOf(GCheckSumFailedBlock::class.java, block("N1 G28*57"))
         }
 
         @ParameterizedTest
@@ -833,23 +833,23 @@ class GLinerTest {
             // are not checksum fields at all. Nothing has been computed at the point this is
             // decided, which is exactly why it is not a mismatch - there is nothing to mismatch.
             // RepRapFirmware agrees: its validation switch rejects any other width outright.
-            assertInstanceOf(GMalformedChecksum::class.java, line(gcode))
+            assertInstanceOf(GMalformedChecksum::class.java, block(gcode))
         }
 
         @Test
         fun `a signed value is not an unsigned int and so is not a checksum field`() {
             // spec 8.1 spells the field `*<unsigned-int>`. `+18` would otherwise be three
             // characters carrying 18 and would verify, which no firmware would accept.
-            assertInstanceOf(GMalformedChecksum::class.java, line("N1 G28*+18"))
-            assertInstanceOf(GMalformedChecksum::class.java, line("N1 G28*-18"))
+            assertInstanceOf(GMalformedChecksum::class.java, block("N1 G28*+18"))
+            assertInstanceOf(GMalformedChecksum::class.java, block("N1 G28*-18"))
         }
 
         @Test
         fun `a three digit value above the xor range is a mismatch`() {
-            // spec 8.2 puts the XOR result in 0-255, so *300 cannot be any line's checksum. Both
+            // spec 8.2 puts the XOR result in 0-255, so *300 cannot be any block's checksum. Both
             // Marlin and RepRapFirmware compare the parsed number and report a checksum error, so
-            // this is a corrupt line to resend (spec 8.5) rather than a syntax complaint.
-            val failed = line("N1 G28*300") as GCheckSumFailedLine
+            // this is a corrupt block to resend (spec 8.5) rather than a syntax complaint.
+            val failed = block("N1 G28*300") as GCheckSumFailedBlock
 
             assertEquals(18, failed.expected.int)
             assertEquals(300, failed.received.int)
@@ -858,46 +858,46 @@ class GLinerTest {
         @Test
         fun `indentation is outside the covered range and the star field is its end`() {
             // spec 8.3, stated as one assertion: everything from the `N` to just before the last
-            // `*` is covered and nothing else is. The four lines below are the same covered bytes
+            // `*` is covered and nothing else is. The four blocks below are the same covered bytes
             // (`N1 G28`, XOR 18) wearing different context - leading space, leading tab, a leading
             // comment, and a trailing comment after the field.
-            assertInstanceOf(GPacketLine::class.java, line(" N1 G28*18"))
-            assertInstanceOf(GPacketLine::class.java, line("\tN1 G28*18"))
-            assertInstanceOf(GPacketLine::class.java, line("(c)N1 G28*18"))
-            assertInstanceOf(GPacketLine::class.java, line("N1 G28*18 ;homing"))
-            assertInstanceOf(GPacketLine::class.java, line("N1 G28*18\r\n"))
+            assertInstanceOf(GFramedBlock::class.java, block(" N1 G28*18"))
+            assertInstanceOf(GFramedBlock::class.java, block("\tN1 G28*18"))
+            assertInstanceOf(GFramedBlock::class.java, block("(c)N1 G28*18"))
+            assertInstanceOf(GFramedBlock::class.java, block("N1 G28*18 ;homing"))
+            assertInstanceOf(GFramedBlock::class.java, block("N1 G28*18\r\n"))
         }
 
         @Test
         fun `a syntax error is decided before any algorithm runs`() {
             // spec 7.3 then 8.1 then 8.2: pairing, then field syntax, then the bytes. A garbled
             // field never reaches a calculator, so it stays the fault it is.
-            assertInstanceOf(GMalformedChecksum::class.java, line("N1 G28*ABC"))
-            assertInstanceOf(GMissingLineNumber::class.java, line("*ABC"))
-            assertInstanceOf(GMissingChecksum::class.java, line("N1 G28"))
-            assertInstanceOf(GMalformedLineNumber::class.java, line("N G28*18"))
+            assertInstanceOf(GMalformedChecksum::class.java, block("N1 G28*ABC"))
+            assertInstanceOf(GMissingLineNumber::class.java, block("*ABC"))
+            assertInstanceOf(GMissingChecksum::class.java, block("N1 G28"))
+            assertInstanceOf(GMalformedLineNumber::class.java, block("N G28*18"))
         }
     }
 
     /**
-     * Every token the tokenizer produced must appear in exactly one line, so the liner is a pure
-     * regrouping of the stream. `GLine.raw` is the single way to ask a line for its bytes back,
-     * and it must hold for every line type - a `GPacketLine` decomposes its line, so it is the type
+     * Every token the tokenizer produced must appear in exactly one block, so the reader is a pure
+     * regrouping of the stream. `GBlock.raw` is the single way to ask a block for its bytes back,
+     * and it must hold for every block type - a `GFramedBlock` decomposes its block, so it is the type
      * that can silently lose the `N` field, the `*` field and the terminator (TODO 1.20).
      */
     @Nested
     inner class NothingIsLost {
 
-        private fun reassemble(line: GLine): String =
-            line.raw.joinToString("") { it.rawText() }
+        private fun reassemble(block: GBlock): String =
+            block.raw.joinToString("") { it.rawText() }
 
         @Test
-        fun `a packet line reproduces its own bytes through raw`() {
+        fun `a framed block reproduces its own bytes through raw`() {
             val gcode = "N1 G28*18\n"
 
-            val packet = lines(gcode).single() as GPacketLine
+            val framed = blocks(gcode).single() as GFramedBlock
 
-            assertEquals(gcode, packet.raw.joinToString("") { it.rawText() })
+            assertEquals(gcode, framed.raw.joinToString("") { it.rawText() })
         }
 
         @ParameterizedTest
@@ -909,13 +909,13 @@ class GLinerTest {
                 "  \n\t\nG1 X1\n",
                 "G1 X1\r\nG1 X2\r\n",
                 "N100 M110\nN101 M110 N100\n",
-                // a packet whose line number is not element 0: `payload` starts after the `N`
+                // a framed block whose line number is not element 0: `payload` starts after the `N`
                 // field, so whatever precedes it is carried by `whole` alone and must still print
                 " N1 G28*18\n\t(c) N2 G1 X10*83\n"
             ]
         )
-        fun `the lines together reproduce the input, terminators aside`(gcode: String) {
-            val actual = lines(gcode).joinToString("") { reassemble(it) }
+        fun `the blocks together reproduce the input, terminators aside`(gcode: String) {
+            val actual = blocks(gcode).joinToString("") { reassemble(it) }
 
             assertEquals(gcode, actual)
         }
@@ -925,25 +925,25 @@ class GLinerTest {
     inner class ReadPipeline {
 
         @Test
-        fun `lines reads a text into classified lines`() {
-            val classes = GLiner.lines("G28\nN1 G28*18\n").map { it::class }.toList()
+        fun `blocks reads a text into classified blocks`() {
+            val classes = GBlockReader.blocks("G28\nN1 G28*18\n").map { it::class }.toList()
 
-            assertEquals(listOf(GSimpleLine::class, GPacketLine::class), classes)
+            assertEquals(listOf(GPlainBlock::class, GFramedBlock::class), classes)
         }
 
         @Test
-        fun `lines is re-iterable`() {
-            val lines = GLiner.lines("G28\nN1 G28*18\n")
+        fun `blocks is re-iterable`() {
+            val blocks = GBlockReader.blocks("G28\nN1 G28*18\n")
 
-            assertEquals(lines.toList(), lines.toList())
+            assertEquals(blocks.toList(), blocks.toList())
         }
 
         @Test
-        fun `the line count survives the round trip`() {
+        fun `the block count survives the round trip`() {
             val program = listOf("; header", "G28", "G1 X1 F100", "", "G90")
-            val lines = GLiner(GTokenizer.parseLines(program.asSequence()).iterator())
+            val blocks = GBlockReader(GTokenizer.parseLines(program.asSequence()).iterator())
 
-            assertEquals(program.size, lines.asSequence().count())
+            assertEquals(program.size, blocks.asSequence().count())
         }
     }
 }

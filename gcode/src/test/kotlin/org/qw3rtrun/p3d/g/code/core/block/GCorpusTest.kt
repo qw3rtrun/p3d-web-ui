@@ -15,8 +15,8 @@ import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 import org.qw3rtrun.p3d.g.code.core.token.GUnknown
 
 /**
- * Corpus level tests over `src/test/resources/marlin.gcode` - 300+ lines of real Marlin flavoured
- * G-code. These guard the lexer and the liner against regressions on realistic input rather than on
+ * Corpus level tests over `src/test/resources/marlin.gcode` - 300+ blocks of real Marlin flavoured
+ * G-code. These guard the lexer and the reader against regressions on realistic input rather than on
  * hand-written snippets.
  *
  * The corpus is parsed exactly as it is checked out - LF or CRLF - so these tests also guard the
@@ -29,13 +29,13 @@ class GCorpusTest {
         "marlin.gcode fixture is missing from the test resources"
     }.readBytes().decodeToString()
 
-    private val lines: List<String> = corpus.lines().let {
+    private val blocks: List<String> = corpus.lines().let {
         if (it.last().isEmpty()) it.dropLast(1) else it
     }
 
     @Test
     fun `the corpus is big enough to be worth testing`() {
-        assertTrue(lines.size > 300) { "expected a corpus of 300+ lines, got ${lines.size}" }
+        assertTrue(blocks.size > 300) { "expected a corpus of 300+ blocks, got ${blocks.size}" }
     }
 
     @Test
@@ -47,11 +47,11 @@ class GCorpusTest {
     }
 
     @Test
-    fun `every line tokenizes into at least one token`() {
-        lines.filter { it.isNotEmpty() }.forEach { line ->
-            val tokens = GTokenizer.parse(line).toList()
+    fun `every block tokenizes into at least one token`() {
+        blocks.filter { it.isNotEmpty() }.forEach { block ->
+            val tokens = GTokenizer.parse(block).toList()
 
-            assertTrue(tokens.isNotEmpty()) { "line [$line] produced no tokens" }
+            assertTrue(tokens.isNotEmpty()) { "block [$block] produced no tokens" }
         }
     }
 
@@ -68,11 +68,11 @@ class GCorpusTest {
     }
 
     @Test
-    fun `the liner splits the corpus into one line per line break`() {
-        val parsed = GLiner.lines(corpus).toList()
+    fun `the reader splits the corpus into one block per line break`() {
+        val parsed = GBlockReader.blocks(corpus).toList()
 
-        assertEquals(lines.size, parsed.size)
-        assertTrue(parsed.all { it.raw.isNotEmpty() }) { "a parsed line has no tokens" }
+        assertEquals(blocks.size, parsed.size)
+        assertTrue(parsed.all { it.raw.isNotEmpty() }) { "a parsed block has no tokens" }
     }
 
     @Test
@@ -150,39 +150,39 @@ class GCorpusTest {
 
     @Test
     fun `the whole corpus round trips byte for byte including its terminators`() {
-        // The per-line test below strips terminators, so it cannot see a CR moving between a comment
+        // The per-block test below strips terminators, so it cannot see a CR moving between a comment
         // and its line break. This one parses the file exactly as checked out.
         assertEquals(corpus, GTokenizer.parse(corpus).joinToString("") { it.rawText() })
     }
 
     @Test
-    fun `each line round trips through the token stream`() {
-        val failing = lines.filter { line ->
-            runCatching { GTokenizer.parse(line).joinToString("") { it.rawText() } }.getOrNull() != line
+    fun `each block round trips through the token stream`() {
+        val failing = blocks.filter { block ->
+            runCatching { GTokenizer.parse(block).joinToString("") { it.rawText() } }.getOrNull() != block
         }
 
-        // No quarantine: number tokens carry their original lexeme, so every line of the corpus
+        // No quarantine: number tokens carry their original lexeme, so every block of the corpus
         // reproduces itself byte for byte.
         assertEquals(emptyList<String>(), failing)
     }
     @Test
-    fun `the liner classifies every corpus line and loses nothing`() {
-        val parsed = GLiner.lines(corpus).toList()
+    fun `the reader classifies every corpus block and loses nothing`() {
+        val parsed = GBlockReader.blocks(corpus).toList()
         val kinds = parsed.groupingBy { it::class.simpleName!! }.eachCount()
 
-        // The corpus is a file, not a serial capture: it has commands, blank/comment-only lines,
-        // and exactly two `N` lines with no checksum. GCODE_spec.md section 7.3 makes the last pair
-        // a structural error over a link; in a file it is benign, which is why the liner reports
-        // the structure rather than refusing the line. Pinned so the ratio cannot drift silently.
-        assertEquals(setOf("GSimpleLine", "GMeaninglessLine", "GMissingChecksum"), kinds.keys)
+        // The corpus is a file, not a serial capture: it has commands, blank/comment-only blocks,
+        // and exactly two `N` blocks with no checksum. GCODE_spec.md section 7.3 makes the last pair
+        // a structural error over a link; in a file it is benign, which is why the reader reports
+        // the structure rather than refusing the block. Pinned so the ratio cannot drift silently.
+        assertEquals(setOf("GPlainBlock", "GMeaninglessBlock", "GMissingChecksum"), kinds.keys)
         assertEquals(2, kinds["GMissingChecksum"])
-        assertEquals(lines.size, parsed.size)
-        assertTrue(parsed.none { it is GPacketLine }) { "the corpus has no checksummed lines" }
+        assertEquals(blocks.size, parsed.size)
+        assertTrue(parsed.none { it is GFramedBlock }) { "the corpus has no checksummed blocks" }
     }
 
     @Test
     fun `the two unchecksummed line numbers are the ones the fixture actually contains`() {
-        val parsed = GLiner.lines(corpus).toList()
+        val parsed = GBlockReader.blocks(corpus).toList()
 
         assertEquals(
             listOf("line number 100 has no checksum", "line number 101 has no checksum"),
@@ -191,9 +191,9 @@ class GCorpusTest {
     }
 
     /**
-     * The second corpus: `marlin-packets.gcode`, a host-to-firmware session with every line framed
+     * The second corpus: `marlin-framed.gcode`, a host-to-firmware session with every block framed
      * per GCODE_spec.md sections 7 and 8. The file corpus above deliberately has no checksummed
-     * lines at all - it is a sliced file, not a serial capture - which left sections 7 and 8 with no
+     * blocks at all - it is a sliced file, not a serial capture - which left sections 7 and 8 with no
      * realistic regression net once verification started happening.
      *
      * **Its checksums were computed outside this module**, from the spec, not by `XorCheckSum` or
@@ -201,80 +201,80 @@ class GCorpusTest {
      * construction and would go on agreeing with it through a shared bug.
      */
     @Nested
-    inner class PacketCorpus {
+    inner class FramedCorpus {
 
-        private val packets: String = requireNotNull(javaClass.getResourceAsStream("/marlin-packets.gcode")) {
-            "marlin-packets.gcode fixture is missing from the test resources"
+        private val framed: String = requireNotNull(javaClass.getResourceAsStream("/marlin-framed.gcode")) {
+            "marlin-framed.gcode fixture is missing from the test resources"
         }.readBytes().decodeToString()
 
-        private val packetLines: List<String> = packets.lines().let {
+        private val framedLines: List<String> = framed.lines().let {
             if (it.last().isEmpty()) it.dropLast(1) else it
         }
 
-        private fun parse(text: String): List<GLine> =
-            GLiner.lines(text).toList()
+        private fun parse(text: String): List<GBlock> =
+            GBlockReader.blocks(text).toList()
 
         @Test
-        fun `every line verifies`() {
-            val parsed = parse(packets)
-            val notPackets = parsed.filter { it !is GPacketLine }
+        fun `every block verifies`() {
+            val parsed = parse(framed)
+            val notFramed = parsed.filter { it !is GFramedBlock }
 
-            assertEquals(emptyList<GLine>(), notPackets) {
-                "these did not verify: " + notPackets.joinToString("; ") { line ->
-                    line.raw.joinToString("") { it.rawText() }.trim()
+            assertEquals(emptyList<GBlock>(), notFramed) {
+                "these did not verify: " + notFramed.joinToString("; ") { block ->
+                    block.raw.joinToString("") { it.rawText() }.trim()
                 }
             }
-            assertEquals(packetLines.size, parsed.size)
+            assertEquals(framedLines.size, parsed.size)
         }
 
         @Test
         fun `the corpus exercises both algorithms`() {
-            // Otherwise a CRC regression could hide behind 28 passing XOR lines.
-            val widths = parse(packets)
-                .filterIsInstance<GPacketLine>()
+            // Otherwise a CRC regression could hide behind 28 passing XOR blocks.
+            val widths = parse(framed)
+                .filterIsInstance<GFramedBlock>()
                 .groupingBy { it.checksum.lexeme.length }
                 .eachCount()
 
-            assertTrue(widths.keys.any { it in 1..3 }) { "no XOR-checksummed lines: $widths" }
-            assertEquals(6, widths[5]) { "expected 6 CRC lines, got $widths" }
+            assertTrue(widths.keys.any { it in 1..3 }) { "no XOR-checksummed blocks: $widths" }
+            assertEquals(6, widths[5]) { "expected 6 CRC blocks, got $widths" }
         }
 
         @Test
         fun `the line numbers are contiguous from zero`() {
-            val numbers = parse(packets).filterIsInstance<GPacketLine>().map { it.number.int }
+            val numbers = parse(framed).filterIsInstance<GFramedBlock>().map { it.number.int }
 
-            assertEquals((0 until packetLines.size).toList(), numbers)
+            assertEquals((0 until framedLines.size).toList(), numbers)
         }
 
         @Test
-        fun `the packet corpus round-trips byte for byte`() {
-            // A GPacketLine decomposes its line, so it is the type that can silently lose the `N`
+        fun `the framed corpus round-trips byte for byte`() {
+            // A GFramedBlock decomposes its block, so it is the type that can silently lose the `N`
             // field, the `*` field or the terminator.
-            val reassembled = parse(packets).joinToString("") { line ->
-                line.raw.joinToString("") { it.rawText() }
+            val reassembled = parse(framed).joinToString("") { block ->
+                block.raw.joinToString("") { it.rawText() }
             }
 
-            assertEquals(packets, reassembled)
+            assertEquals(framed, reassembled)
         }
 
         @Test
-        fun `corrupting any single byte of any line is caught`() {
+        fun `corrupting any single byte of any block is caught`() {
             // The property the whole of section 8 exists for, run over realistic traffic rather
-            // than one hand-written line: every byte of every covered range, one at a time.
-            for (line in packetLines) {
-                val star = line.lastIndexOf('*')
+            // than one hand-written block: every byte of every covered range, one at a time.
+            for (block in framedLines) {
+                val star = block.lastIndexOf('*')
                 for (i in 0 until star) {
-                    val corrupted = line.substring(0, i) + flip(line[i]) + line.substring(i + 1)
+                    val corrupted = block.substring(0, i) + flip(block[i]) + block.substring(i + 1)
                     val parsed = parse(corrupted).single()
 
-                    assertTrue(parsed !is GPacketLine) {
+                    assertTrue(parsed !is GFramedBlock) {
                         "corruption at index $i survived verification: $corrupted"
                     }
                 }
             }
         }
 
-        /** Changes a character to a different legal one, so the line stays lexically well formed. */
+        /** Changes a character to a different legal one, so the block stays lexically well formed. */
         private fun flip(ch: Char): Char = when {
             ch in '0'..'8' -> ch + 1
             ch == '9' -> '0'

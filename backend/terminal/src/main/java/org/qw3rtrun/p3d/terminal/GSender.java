@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.terminal;
 
 import org.qw3rtrun.p3d.g.code.core.GEncoder;
-import org.qw3rtrun.p3d.g.code.core.block.GBlock;
+import org.qw3rtrun.p3d.g.code.core.block.GBlockDraft;
 import org.qw3rtrun.p3d.g.code.core.block.GCommand;
 import org.qw3rtrun.p3d.g.code.dsl.GKt;
 import org.qw3rtrun.p3d.g.protocol.GRq;
@@ -16,7 +16,7 @@ import java.util.function.Consumer;
  *
  * <p>Deliberately thin, and deliberately separate from the builders: it holds no line number and no
  * window, because that is {@code GCodeReader}/{@code GSendWindow}'s job (todo 05) and duplicating it here would
- * give a caller two counters that could disagree. Send framed lines by passing
+ * give a caller two counters that could disagree. Send framed blocks by passing
  * {@code GEncoder.frame(...)} output to a window instead.
  *
  * <p>The named operations below exist to carry over the Java facade this replaces, so its callers can
@@ -30,12 +30,12 @@ public class GSender {
         this.out = Objects.requireNonNull(out, "out must not be null");
     }
 
-    public void send(GBlock block) {
-        out.accept(GEncoder.INSTANCE.encode(block));
+    public void send(GBlockDraft draft) {
+        out.accept(GEncoder.INSTANCE.encode(draft));
     }
 
     public void send(GCommand command) {
-        send(GKt.line(command));
+        send(GKt.block(command));
     }
 
     public void send(GRq<?> rq) {

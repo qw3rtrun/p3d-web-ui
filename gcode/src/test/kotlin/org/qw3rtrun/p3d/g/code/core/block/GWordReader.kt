@@ -8,10 +8,10 @@ import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GValue
 
 /**
- * The **command-agnostic** reading of a line: every field into a [org.qw3rtrun.p3d.g.code.core.block.GWord], the words grouped into
+ * The **command-agnostic** reading of a block: every field into a [org.qw3rtrun.p3d.g.code.core.block.GWord], the words grouped into
  * [org.qw3rtrun.p3d.g.code.core.block.GCommand]s. Test apparatus, and deliberately not production code.
  *
- * Production reads a line with `MarlinCommands.decode` (or one command class's `decode`), which is
+ * Production reads a block with `MarlinCommands.decode` (or one command class's `decode`), which is
  * the stronger reader for one reason: it knows the command number, so it can tell that
  * `M117 Hello World` carries one rest-of-line argument (spec 3.4a) rather than ten fields, and it
  * hands back a typed command with named properties instead of a list of letters. This cannot know
@@ -20,10 +20,10 @@ import org.qw3rtrun.p3d.g.code.core.token.GValue
  * It was `GCommandParser`, it had no production caller left, and it is here rather than deleted
  * because three contracts are measured with it and none of them can be measured with a decoder:
  *
- * - `GDslCorpusTest` asks whether the DSL can re-write **any** corpus line byte for byte. A decoder
+ * - `GDslCorpusTest` asks whether the DSL can re-write **any** corpus block byte for byte. A decoder
  *   answers only for the 295 commands Marlin documents, and normalises what it reads (`X+5` comes
  *   back `X5`), so the 303/279/24 contract cannot be expressed through one.
- * - `GCorpusDecompositionTest` snapshots how every line of two corpora decomposes, including lines
+ * - `GCorpusDecompositionTest` snapshots how every block of two corpora decomposes, including blocks
  *   no command class claims.
  * - `MarlinDocExamplesTest` is the *independent* coverage check: it finds parameter letters that no
  *   command class models. Read through the decoders it would only ever see letters the decoders
@@ -34,12 +34,12 @@ import org.qw3rtrun.p3d.g.code.core.token.GValue
 object GWordReader {
 
     /**
-     * The commands of [line], reading its body in wire order.
+     * The commands of [block], reading its body in wire order.
      *
-     * The *body*, not the whole line: for a framed line spec section 5 puts the `*` field last, so
+     * The *body*, not the whole block: for a framed block spec section 5 puts the `*` field last, so
      * what follows the marker is outside the frame - `N1 G28*18 G1 X5` is one command.
      */
-    fun parse(line: GLine): List<GCommand> = parse(words(line.body))
+    fun parse(block: GBlock): List<GCommand> = parse(words(block.body))
 
     /**
      * The fields of [tokens], in wire order (spec sections 2.1 and 3).
@@ -51,7 +51,7 @@ object GWordReader {
      * word and a lost `Y`.
      *
      * Everything that is not a field - separators, comments, the terminator, an unknown character -
-     * is simply dropped. It is already in `GLine.raw`, which is what reproduces the input.
+     * is simply dropped. It is already in `GBlock.raw`, which is what reproduces the input.
      */
     fun words(tokens: List<GToken>): List<GWord> {
         val words = ArrayList<GWord>()
@@ -65,7 +65,7 @@ object GWordReader {
 
             val j = tokens.valueIndex(i)
             if (j >= 0) {
-                // The word's raw is a slice of the line, so it spells what the line spelled without
+                // The word's raw is a slice of the block, so it spells what the block spelled without
                 // copying anything: identifier, the spaces it crossed, and the value. The cast is
                 // `valueIndex`'s guarantee: it returns an index only for a `GValue`.
                 words.add(GParameterWord(token, tokens[j] as GValue, tokens.subList(i, j + 1)))
@@ -114,10 +114,10 @@ object GWordReader {
      * spec 4: `N` (spec 7) and `*` (spec 8) are structural rather than parametric, so neither is a
      * command or a parameter of one.
      *
-     * They are outside a `GPacketLine`'s body, which is why this looked unnecessary at first -
-     * but a line that is *not* a well-formed packet keeps them. `N100 M110` is a `GMissingChecksum`
+     * They are outside a `GFramedBlock`'s body, which is why this looked unnecessary at first -
+     * but a block that is *not* a well-formed framed block keeps them. `N100 M110` is a `GMissingChecksum`
      * whose words are `[N100, M110]`, and without this the line number became a parameter of `M110`,
-     * which also re-emitted the line as `M110N100`.
+     * which also re-emitted the block as `M110N100`.
      *
      * **Only the first word can be the line number**, which is why [first] exists. An `N` anywhere
      * else is an ordinary parameter, and exactly one command needs it to be: `M110 N<n>` sets the
@@ -127,7 +127,7 @@ object GWordReader {
      * [05](https://github.com/qw3rtrun/p3d-web-ui/issues/7).
      *
      * The narrower rule is also the one the firmware uses: Marlin takes a line number only when `N`
-     * is the first character of the line (`queue.cpp`: `npos = (*command == 'N') ? command : nullptr`),
+     * is the first character of the block (`queue.cpp`: `npos = (*command == 'N') ? command : nullptr`),
      * and then looks for a *second* `N` precisely because `M110`'s argument is one.
      */
     private fun isStructural(word: GWord, first: Boolean): Boolean {

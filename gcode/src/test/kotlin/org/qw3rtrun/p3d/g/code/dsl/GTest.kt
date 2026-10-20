@@ -3,12 +3,12 @@ package org.qw3rtrun.p3d.g.code.dsl
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.GEncoder
-import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlockDraft
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
-import org.qw3rtrun.p3d.g.code.core.block.GPacketLine
+import org.qw3rtrun.p3d.g.code.core.block.GFramedBlock
 import org.qw3rtrun.p3d.g.code.core.token.*
 import org.qw3rtrun.p3d.g.code.core.block.GWordReader
 import java.math.BigDecimal
@@ -23,7 +23,7 @@ import java.math.BigDecimal
 class GTest {
 
     private fun enc(c: GCommand) = GEncoder.encode(c)
-    private fun enc(b: GBlock) = GEncoder.encode(b)
+    private fun enc(b: GBlockDraft) = GEncoder.encode(b)
 
     @Nested
     inner class Commands {
@@ -79,7 +79,7 @@ class GTest {
 
         @Test
         fun `T is a command and its parameter form is spelled out`() {
-            // spec 4.1 makes `T` a command letter; `isCommandLetter`'s note records 40 corpus lines
+            // spec 4.1 makes `T` a command letter; `isCommandLetter`'s note records 40 corpus blocks
             // using it as a *parameter* of a G command instead. A Kotlin name cannot return both,
             // so the command reading wins - matching the parser - and the parameter is spelled out.
             assertEquals("T0", enc(T(0)))
@@ -100,8 +100,8 @@ class GTest {
             // ...and the asymmetry is real rather than hidden: what the DSL writes as a D *command*,
             // the parser reads back as a parameter with no command at all. That is the spec's own
             // ambiguity, not a bug in either half.
-            val line = GLiner.lines("D3").first()
-            assertEquals(emptyList<GCommand>(), GWordReader.parse(line))
+            val block = GBlockReader.blocks("D3").first()
+            assertEquals(emptyList<GCommand>(), GWordReader.parse(block))
         }
 
         @Test
@@ -144,23 +144,23 @@ class GTest {
     }
 
     @Nested
-    inner class Lines {
+    inner class Blocks {
 
         @Test
-        fun `a command becomes a line`() {
-            assertEquals("G28", enc(G(28).line()))
+        fun `a command becomes a block`() {
+            assertEquals("G28", enc(G(28).block()))
         }
 
         @Test
         fun `a trailing comment`() {
-            // spec 6, and 125 of the corpus's 303 non-blank lines carry one. Without this the DSL
+            // spec 6, and 125 of the corpus's 303 non-blank blocks carry one. Without this the DSL
             // cannot express 41% of real G-code.
             assertEquals("G1 X10 ; move", enc(G(1, X(10)) comment " move"))
         }
 
         @Test
-        fun `a comment-only line`() {
-            assertEquals("; LAYER:42", enc(commentLine(" LAYER:42")))
+        fun `a comment-only block`() {
+            assertEquals("; LAYER:42", enc(commentBlock(" LAYER:42")))
         }
 
         @Test
@@ -175,7 +175,7 @@ class GTest {
         }
 
         @Test
-        fun `several commands on one line`() {
+        fun `several commands on one block`() {
             // spec 4.3 calls this non-portable and says generators should not emit it - but it is
             // valid and the corpus contains three, so the DSL has to be able to say it.
             assertEquals("G53 G0 X0 Y0 Z0", enc(block(G(53), G(0, X(0), Y(0), Z(0)))))
@@ -186,15 +186,15 @@ class GTest {
     inner class Framing {
 
         @Test
-        fun `a line frames into a packet`() {
-            assertEquals("N3 T0*57", GEncoder.frame(3, T(0).line()))
-            assertEquals("N1 G28*14291", GEncoder.frame(1, G(28).line(), Crc16CheckSum()))
+        fun `a block frames into a framed block`() {
+            assertEquals("N3 T0*57", GEncoder.frame(3, T(0).block()))
+            assertEquals("N1 G28*14291", GEncoder.frame(1, G(28).block(), Crc16CheckSum()))
         }
 
         @Test
         fun `a trailing comment sits after the checksum and is not covered by it`() {
             // spec 5 puts the `*` field last before any comment; spec 8.3 excludes what follows it.
-            // So this line's checksum is the one `N1 G28` alone produces.
+            // So this block's checksum is the one `N1 G28` alone produces.
             assertEquals("N1 G28*18 ; homing", GEncoder.frame(1, G(28) comment " homing"))
         }
 
@@ -209,21 +209,21 @@ class GTest {
         }
 
         @Test
-        fun `everything the DSL frames parses back as a verified packet`() {
+        fun `everything the DSL frames parses back as a verified framed block`() {
             val blocks = listOf(
-                G(28).line(),
-                G(1, X("10.5"), F(1800)).line(),
-                G(28, X, Y).line(),
-                M(117, S(text("Hello"))).line(),
+                G(28).block(),
+                G(1, X("10.5"), F(1800)).block(),
+                G(28, X, Y).block(),
+                M(117, S(text("Hello"))).block(),
                 G(1, X(10)) comment " move"
             )
             val tokenizer = GTokenizer
 
             for (i in blocks.indices) {
                 val framed = GEncoder.frame(i + 1, blocks[i])
-                val line = GLiner.lines(framed).first()
+                val block = GBlockReader.blocks(framed).first()
 
-                assertInstanceOf(GPacketLine::class.java, line) { "did not verify: $framed" }
+                assertInstanceOf(GFramedBlock::class.java, block) { "did not verify: $framed" }
             }
         }
     }

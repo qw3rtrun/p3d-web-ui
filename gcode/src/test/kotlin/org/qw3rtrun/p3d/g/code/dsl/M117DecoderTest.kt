@@ -2,7 +2,7 @@ package org.qw3rtrun.p3d.g.code.dsl
 
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.block.GUnnamedStr
@@ -18,8 +18,8 @@ import org.qw3rtrun.p3d.g.marlin.command.SetLCDMessage
 class M117DecoderTest {
 
 
-    fun line(str: String) = GLiner.lines(str).first().body
-    fun decode(gcode: String) = MarlinCommands.decode(line(gcode))
+    fun body(str: String) = GBlockReader.blocks(str).first().body
+    fun decode(gcode: String) = MarlinCommands.decode(body(gcode))
     fun crc(gcode: String) = XorCheckSum().let { it.add(gcode); it.get() }
     fun pack(gcode: String) = "${gcode}*${crc(gcode).rawText()}"
 

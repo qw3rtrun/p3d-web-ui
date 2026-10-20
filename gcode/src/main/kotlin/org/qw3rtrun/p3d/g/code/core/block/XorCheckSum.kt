@@ -3,11 +3,11 @@ package org.qw3rtrun.p3d.g.code.core.block
 import org.qw3rtrun.p3d.g.code.core.token.GInt
 
 /**
- * A streaming checksum over the bytes of one line (GCODE_spec.md section 8): characters in, one at a
+ * A streaming checksum over the bytes of one block (GCODE_spec.md section 8): characters in, one at a
  * time, integer state, the value out at the end. No buffering and no second pass, so the same code
  * runs over a growing serial buffer and over a whole file.
  *
- * One instance carries the state of one line, so a fresh one is needed per line.
+ * One instance carries the state of one block, so a fresh one is needed per block.
  * `checkSumCalculatorFor` picks the implementation a received field's width calls for; a sender picks
  * one when it frames with `GEncoder.frame`.
  *
@@ -51,9 +51,9 @@ interface CheckSumCalculator {
 
     /**
      * Every character of [str], in order - spec 8.3 covers the bytes as transmitted, so this is how
-     * a caller that has built the line as text feeds it in.
+     * a caller that has built the block as text feeds it in.
      *
-     * An index loop rather than `forEach`: this runs for every byte of every line, and a stdlib
+     * An index loop rather than `forEach`: this runs for every byte of every block, and a stdlib
      * inline extension is one more thing a port has to recognise for no gain.
      *
      * ```
@@ -80,7 +80,7 @@ interface CheckSumCalculator {
  * ```
  * val xor = XorCheckSum()
  * xor.add("N1 G28")
- * xor.get()   // GInt(18), so the line is framed as "N1 G28*18"
+ * xor.get()   // GInt(18), so the block is framed as "N1 G28*18"
  * ```
  */
 class XorCheckSum : CheckSumCalculator {

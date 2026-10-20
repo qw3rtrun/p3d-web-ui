@@ -9,12 +9,12 @@ import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
 
 /**
- * The host's side of GCODE_spec.md section 8.5: number and frame outgoing lines, keep the ones that
+ * The host's side of GCODE_spec.md section 8.5: number and frame outgoing blocks, keep the ones that
  * have not been acknowledged, and replay them when the firmware asks.
  *
  * **The window exists because `ok` does not mean "done".** Motion commands are buffered and the
- * acknowledgement covers *queuing*, so a host that waited for each `ok` before sending the next line
- * would stall the planner between every move. It therefore keeps a few lines outstanding - Marlin's
+ * acknowledgement covers *queuing*, so a host that waited for each `ok` before sending the next block
+ * would stall the planner between every move. It therefore keeps a few blocks outstanding - Marlin's
  * `BUFSIZE`, 4 by default - and that is precisely the set it must be able to resend.
  *
  * **No I/O, on purpose.** This numbers, frames and remembers; it never writes to a port or reads a
@@ -24,7 +24,7 @@ import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
  *
  * It holds the **exact bytes** it emitted rather than the commands behind them: section 8.3 makes a
  * checksum a property of the bytes, so a replay that re-encoded could differ from what was
- * checksummed the first time. The outstanding lines are kept oldest first, as two parallel lists of
+ * checksummed the first time. The outstanding blocks are kept oldest first, as two parallel lists of
  * numbers and texts.
  *
  * ```
@@ -34,9 +34,9 @@ import org.qw3rtrun.p3d.g.code.core.block.GParameterWord
  * window.acknowledge()                            // true - after `ok`
  * ```
  *
- * @property capacity how many lines may be outstanding at once; Marlin's `BUFSIZE` is 4
- * @property next the number the next line will carry
- * @property inFlight how many lines are sent and not yet acknowledged
+ * @property capacity how many blocks may be outstanding at once; Marlin's `BUFSIZE` is 4
+ * @property next the number the next block will carry
+ * @property inFlight how many blocks are sent and not yet acknowledged
  */
 class GSendWindow(
     val capacity: Int = 4,
@@ -54,7 +54,7 @@ class GSendWindow(
         get() = outstandingNumber.size
 
     /**
-     * Frames [command] as the next numbered line and records it, or returns **null** when the window
+     * Frames [command] as the next numbered block and records it, or returns **null** when the window
      * is full - which is the caller's signal to wait for an `ok` rather than an error.
      *
      * A refused send consumes no line number. It has to be that way round: a gap in the sequence is
@@ -68,7 +68,7 @@ class GSendWindow(
      * ```
      *
      * @param command the command to number, frame and hold
-     * @return the framed line to transmit, or null when the window is full
+     * @return the framed block to transmit, or null when the window is full
      */
     fun send(command: GCommand): String? {
         if (inFlight >= capacity) return null
@@ -81,7 +81,7 @@ class GSendWindow(
     }
 
     /**
-     * Records one `ok`: the oldest outstanding line is done and its slot is free. Returns false when
+     * Records one `ok`: the oldest outstanding block is done and its slot is free. Returns false when
      * there was nothing outstanding, which is a stray acknowledgement rather than a fault.
      *
      * ```
@@ -89,7 +89,7 @@ class GSendWindow(
      * window.acknowledge()   // false - nothing was sent
      * ```
      *
-     * @return true when a line was released, false for a stray `ok`
+     * @return true when a block was released, false for a stray `ok`
      */
     fun acknowledge(): Boolean {
         if (outstandingNumber.isEmpty()) return false
@@ -113,17 +113,17 @@ class GSendWindow(
     fun canResendFrom(number: Int): Boolean = indexOf(number) >= 0
 
     /**
-     * Spec 8.5 step 5: the lines from [number] onwards, in wire order, as they were originally sent.
+     * Spec 8.5 step 5: the blocks from [number] onwards, in wire order, as they were originally sent.
      *
      * The window rewinds to [number], so everything replayed counts as outstanding again - it has
      * not been acknowledged, and a second failure must be able to ask for it again. Numbering
-     * continues **after** the replayed lines, not from the rewind point: those lines keep the numbers
+     * continues **after** the replayed blocks, not from the rewind point: those blocks keep the numbers
      * they were sent with.
      *
      * Returns an empty list when [number] is no longer held. In a well-behaved session that cannot
-     * happen - `Resend: n` always has `n` one past a line the firmware accepted, and a host cannot
-     * have seen an `ok` for a line that was never accepted, so `n` is never older than the oldest
-     * outstanding line. A peer that asks anyway has lost sync further than a replay can repair, and
+     * happen - `Resend: n` always has `n` one past a block the firmware accepted, and a host cannot
+     * have seen an `ok` for a block that was never accepted, so `n` is never older than the oldest
+     * outstanding block. A peer that asks anyway has lost sync further than a replay can repair, and
      * the answer is a fresh [reset], not a partial replay. Reported as a value rather than thrown,
      * because it is a statement about the session and not a bug in the caller.
      *
@@ -137,7 +137,7 @@ class GSendWindow(
      * ```
      *
      * @param number the line number from the firmware's `Resend:` request
-     * @return the lines to retransmit, byte for byte as first sent, or empty when [number] is not held
+     * @return the blocks to retransmit, byte for byte as first sent, or empty when [number] is not held
      */
     fun resendFrom(number: Int): List<String> {
         val from = indexOf(number)
@@ -157,11 +157,11 @@ class GSendWindow(
      * Spec 7.2: emit `M110 N<to>` and renumber from there, which is how a host resynchronises when
      * the sequence is beyond repair.
      *
-     * The `M110` line is itself numbered - with the number that was next - and a reader accepts it
+     * The `M110` block is itself numbered - with the number that was next - and a reader accepts it
      * whatever that number is, because spec 7.2 exempts `M110` from the continuity check. That
      * exemption is the whole reason a reset works at all.
      *
-     * Everything outstanding is abandoned: after the counter moves, the numbers those lines carried
+     * Everything outstanding is abandoned: after the counter moves, the numbers those blocks carried
      * no longer mean anything, so there is nothing left to resend.
      *
      * ```
@@ -169,8 +169,8 @@ class GSendWindow(
      * window.reset(0)   // "N1 M110 N0*124", and next is 1 again
      * ```
      *
-     * @param to the value the counter is set to; the next line sent carries `to + 1`
-     * @return the framed `M110` line to transmit
+     * @param to the value the counter is set to; the next block sent carries `to + 1`
+     * @return the framed `M110` block to transmit
      */
     fun reset(to: Int): String? {
         val m110 = GCommand(

@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
@@ -30,7 +30,7 @@ import org.qw3rtrun.p3d.g.protocol.GRq
 import java.math.BigDecimal
 
 /**
- * Decoding **real lines** into typed commands: the reading half of `:gcode`, exercised the way a
+ * Decoding **real blocks** into typed commands: the reading half of `:gcode`, exercised the way a
  * host meets it - text off the wire, through the tokenizer, into a command class.
  *
  * Three tests cover parts of this already and none covers it from here:
@@ -38,14 +38,14 @@ import java.math.BigDecimal
  * - `MarlinCommandsTest` is *generated from the same data as the classes it tests*, so it can only
  *   prove that encoding and decoding agree with each other - a letter extracted wrongly would be
  *   wrong on both sides and it would still pass. Every input it uses also comes out of `GEncoder`,
- *   so no line it decodes is spelled in a way the encoder would not have chosen.
+ *   so no block it decodes is spelled in a way the encoder would not have chosen.
  * - `MarlinRQTest` states the per-class contract by hand, on `M105` alone.
  * - `MarlinDocExamplesTest` checks *coverage* - that every letter in a Marlin doc example is
  *   modelled somewhere - not what a decoded command holds.
  *
  * So what is written here is the input shapes the wire carries and the encoder cannot produce: a
  * space inside a field, a non-canonical number, a lowercase letter, comments between parameters, a
- * framed line, a flag standing where a value was documented, two commands on one line. Every case
+ * framed block, a flag standing where a value was documented, two commands on one block. Every case
  * is one a printer, a slicer or a host actually sends.
  *
  * Where the reading is *lossy* that is pinned here too, under [Limits], with the reason. Those are
@@ -54,12 +54,12 @@ import java.math.BigDecimal
 class MarlinDecoderTest {
 
 
-    /** What a host does with a line it is about to interpret: tokens in, one typed command out. */
-    private fun decode(line: String): GRq<*>? = MarlinCommands.decode(GTokenizer.parse(line).toList())
+    /** What a host does with a block it is about to interpret: tokens in, one typed command out. */
+    private fun decode(block: String): GRq<*>? = MarlinCommands.decode(GTokenizer.parse(block).toList())
 
-    /** The same through the liner, which is what strips `N…` and `*…` (spec 7 and 8). */
-    private fun decodeLine(line: String): GRq<*>? =
-        MarlinCommands.decode(GLiner.lines(line).first().body)
+    /** The same through the reader, which is what strips `N…` and `*…` (spec 7 and 8). */
+    private fun decodeLine(block: String): GRq<*>? =
+        MarlinCommands.decode(GBlockReader.blocks(block).first().body)
 
     private fun encode(rq: GRq<*>) = GEncoder.encode(rq.encode())
 
@@ -79,7 +79,7 @@ class MarlinDecoderTest {
             val move = decode("G1 X10.50 Y-3 F1500") as LinearMoveG1
 
             // Scale is part of a BigDecimal's identity, and that is the point: `10.50` was sent,
-            // so `10.50` is what a re-emitted line has to say - the checksum moves with it.
+            // so `10.50` is what a re-emitted block has to say - the checksum moves with it.
             assertEquals(BigDecimal("10.50"), move.pos)
             assertNotEquals(BigDecimal("10.5"), move.pos)
             assertEquals(BigDecimal("-3"), move.y)
@@ -157,7 +157,7 @@ class MarlinDecoderTest {
 
         @Test
         fun `a comment is not a parameter`() {
-            // 41% of the corpus's non-blank lines carry one, in both of spec 6's spellings.
+            // 41% of the corpus's non-blank blocks carry one, in both of spec 6's spellings.
             assertEquals(SetHotendTemperature(temp = BigDecimal("200")), decode("M104 S200 ; heat"))
             assertEquals(
                 LinearMoveG1(pos = BigDecimal("10"), rate = BigDecimal("1500")),
@@ -173,7 +173,7 @@ class MarlinDecoderTest {
 
         @Test
         fun `the first spelling of a letter wins`() {
-            // A line carrying one letter twice is malformed; quietly preferring the second would
+            // A block carrying one letter twice is malformed; quietly preferring the second would
             // hide that, and which one a firmware takes is not something to guess at.
             assertEquals(SetHotendTemperature(temp = BigDecimal("200")), decode("M104 S200 S210"))
         }
@@ -191,8 +191,8 @@ class MarlinDecoderTest {
     inner class Framing {
 
         @Test
-        fun `a framed line decodes from its body`() {
-            // The liner removes `N1 ` and `*57`; the decoder is handed the body between them
+        fun `a framed block decodes from its body`() {
+            // The reader removes `N1 ` and `*57`; the decoder is handed the body between them
             // (spec 7, 8). Decoders never see the framing and never have to skip it.
             assertEquals(
                 SetHotendTemperature(temp = BigDecimal("200")),
@@ -202,8 +202,8 @@ class MarlinDecoderTest {
 
         @Test
         fun `the framing is not something a decoder strips itself`() {
-            // Handed the whole line, the registry finds `N` at the head - not a command letter -
-            // and answers null. Going through the liner is the reading path, not a convenience.
+            // Handed the whole block, the registry finds `N` at the head - not a command letter -
+            // and answers null. Going through the reader is the reading path, not a convenience.
             assertNull(decode(framed("M104 S200")))
         }
 
@@ -217,12 +217,12 @@ class MarlinDecoderTest {
         @Test
         fun `M110's argument is a line number in second position`() {
             // The one command whose parameter is an `N`: spec 7.1 makes only the *first* field of
-            // a line a line number, which is why the parser cannot skip every `N` it meets.
+            // a block a line number, which is why the parser cannot skip every `N` it meets.
             assertEquals(SetGetLineNumber(line = 7), decode("M110 N7"))
         }
 
         @Test
-        fun `a line that commands nothing decodes to nothing`() {
+        fun `a block that commands nothing decodes to nothing`() {
             assertNull(decodeLine("; only a comment"))
             assertNull(decodeLine("   "))
             assertNull(MarlinCommands.decode(emptyList()))
@@ -247,9 +247,9 @@ class MarlinDecoderTest {
         }
 
         @Test
-        fun `T heads a command at the start of a line and is a parameter after one`() {
+        fun `T heads a command at the start of a block and is a parameter after one`() {
             // spec 4.1 and 4.2 both claim `T`. It heads a command only where none has started,
-            // which is exactly the position a line opens in...
+            // which is exactly the position a block opens in...
             assertEquals(SelectOrReportToolT0(feedrate = BigDecimal("1000")), decode("T0 F1000"))
             // ...and is an ordinary parameter elsewhere, which is what the corpus's 40 other uses
             // of it are.
@@ -259,7 +259,7 @@ class MarlinDecoderTest {
         @Test
         fun `an ambiguous head resolves to the first class that claims it`() {
             // Marlin documents six G29 pages, one per bed-leveling system, and which one a printer
-            // means depends on how its firmware was compiled - nothing in the line can say. The
+            // means depends on how its firmware was compiled - nothing in the block can say. The
             // registry keeps the first and says so; build with the variant you mean.
             assertTrue(MarlinCommands.ambiguousCodes.contains("G29"))
             assertInstanceOf(BedLeveling3Point::class.java, decode("G29"))
@@ -290,7 +290,7 @@ class MarlinDecoderTest {
     inner class RoundTrip {
 
         /**
-         * Lines as a printer would receive them, re-emitted byte for byte.
+         * Blocks as a printer would receive them, re-emitted byte for byte.
          *
          * Each is already canonical - one space between fields, the digits the encoder would
          * choose - so a difference here is a decoder that dropped or moved something, not the
@@ -317,10 +317,10 @@ class MarlinDecoderTest {
                 "T0 F1000",
             ]
         )
-        fun `a real line decodes and re-emits unchanged`(line: String) {
-            val decoded = decode(line)
-            assertNotNull(decoded) { "no command class decoded $line" }
-            assertEquals(line, encode(decoded!!))
+        fun `a real block decodes and re-emits unchanged`(block: String) {
+            val decoded = decode(block)
+            assertNotNull(decoded) { "no command class decoded $block" }
+            assertEquals(block, encode(decoded!!))
         }
 
         @ParameterizedTest
@@ -333,10 +333,10 @@ class MarlinDecoderTest {
                 "M550 My Printer",
             ]
         )
-        fun `what a line decodes to decodes again the same`(line: String) {
+        fun `what a block decodes to decodes again the same`(block: String) {
             // Idempotence, which is what a host relies on when it re-reads its own output: after
             // the first pass, decode-encode-decode must not drift.
-            val once = decode(line)!!
+            val once = decode(block)!!
             assertEquals(once, decode(encode(once)))
         }
     }
@@ -353,7 +353,7 @@ class MarlinDecoderTest {
             // A command class holds a BigDecimal, not the lexeme it was read from, so a sender's
             // digits survive only where they are significant: `10.50` keeps its scale, `+5`, `.5`
             // and `1.` do not keep their spelling. Reproducing *bytes* is the token layer's job
-            // (`GLine.raw`), not this one's.
+            // (`GBlock.raw`), not this one's.
             assertEquals("G1 X5 Y0.5 Z1", encode(decode("G1 X+5 Y.5 Z1.")!!))
         }
 
@@ -376,10 +376,10 @@ class MarlinDecoderTest {
         }
 
         @Test
-        fun `the registry reads the first command on a line and no more`() {
+        fun `the registry reads the first command on a block and no more`() {
             // `G53 G0 X0` is two commands (spec 5): `G53` is a modal prefix and `X0` belongs to
             // the `G0`. The registry decodes from one head, so a caller that needs both splits the
-            // line with `GWordReader` first - a reader that does not need the command number.
+            // block with `GWordReader` first - a reader that does not need the command number.
             assertInstanceOf(MoveInMachineCoordinates::class.java, decode("G53 G0 X0"))
         }
     }

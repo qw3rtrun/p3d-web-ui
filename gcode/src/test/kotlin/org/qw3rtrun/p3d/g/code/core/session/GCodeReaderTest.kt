@@ -3,28 +3,28 @@ package org.qw3rtrun.p3d.g.code.core.session
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.block.GLine
-import org.qw3rtrun.p3d.g.code.core.block.GLiner
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 
 /**
  * The session layer: GCODE_spec.md section 7.2 (continuity and `M110`) and section 8.5 (what a host
- * answers a bad line with).
+ * answers a bad block with).
  *
  * This is the first stateful piece of the module - everything below it is a pure function from bytes
- * to tokens to lines - so most of these tests are about a *sequence*, not a line.
+ * to tokens to blocks - so most of these tests are about a *sequence*, not a block.
  */
 class GCodeReaderTest {
 
 
-    private fun lines(gcode: String): List<GLine> =
-        GLiner.lines(gcode).toList()
+    private fun blocks(gcode: String): List<GBlock> =
+        GBlockReader.blocks(gcode).toList()
 
-    private fun line(gcode: String): GLine = lines(gcode).single()
+    private fun block(gcode: String): GBlock = blocks(gcode).single()
 
-    /** Reads [gcode] line by line and returns what the reader concluded about each. */
+    /** Reads [gcode] block by block and returns what the reader concluded about each. */
     private fun readAll(reader: GCodeReader, gcode: String): List<GReceipt> =
-        lines(gcode).map { reader.read(it) }
+        blocks(gcode).map { reader.read(it) }
 
     @Nested
     inner class Continuity {
@@ -40,19 +40,19 @@ class GCodeReaderTest {
         }
 
         @Test
-        fun `the counter starts at zero so the first line is one`() {
-            // Marlin initialises last_N to 0, so a session's first transmitted line is N1 - which is
+        fun `the counter starts at zero so the first block is one`() {
+            // Marlin initialises last_N to 0, so a session's first transmitted block is N1 - which is
             // also why a session conventionally opens with `M110 N0` to make that explicit.
             assertEquals(0, GCodeReader().lastLine)
-            assertInstanceOf(GAccepted::class.java, GCodeReader().read(line("N1 G28*18")))
+            assertInstanceOf(GAccepted::class.java, GCodeReader().read(block("N1 G28*18")))
         }
 
         @Test
-        fun `a gap is rejected and names the last good line`() {
+        fun `a gap is rejected and names the last good block`() {
             val reader = GCodeReader()
-            reader.read(line("N1 G28*18"))
+            reader.read(block("N1 G28*18"))
 
-            val rejected = reader.read(line("N3 T0*57")) as GOutOfSequence
+            val rejected = reader.read(block("N3 T0*57")) as GOutOfSequence
 
             assertEquals(3, rejected.number)
             assertEquals(1, rejected.lastLine)
@@ -61,27 +61,27 @@ class GCodeReaderTest {
         }
 
         @Test
-        fun `a rejected line does not move the counter`() {
+        fun `a rejected block does not move the counter`() {
             val reader = GCodeReader()
-            reader.read(line("N1 G28*18"))
-            reader.read(line("N3 T0*57"))
+            reader.read(block("N1 G28*18"))
+            reader.read(block("N3 T0*57"))
 
             assertEquals(1, reader.lastLine)
             // ...so the host's resend of N2 is then accepted normally.
-            assertInstanceOf(GAccepted::class.java, reader.read(line("N2 G28*17")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("N2 G28*17")))
             assertEquals(2, reader.lastLine)
         }
 
         @Test
-        fun `a repeat of the last line is discarded without an error`() {
+        fun `a repeat of the last block is discarded without an error`() {
             // spec 7.2, and the reason is the resend protocol's own race: the host had already
             // retransmitted when the Resend arrived. Answering with another resend would not
-            // converge, so the line is dropped silently.
+            // converge, so the block is dropped silently.
             val reader = GCodeReader()
-            reader.read(line("N1 G28*18"))
-            reader.read(line("N2 G28*17"))
+            reader.read(block("N1 G28*18"))
+            reader.read(block("N2 G28*17"))
 
-            val duplicate = reader.read(line("N2 G28*17")) as GDuplicate
+            val duplicate = reader.read(block("N2 G28*17")) as GDuplicate
 
             assertEquals(2, duplicate.number)
             assertEquals(2, duplicate.lastLine)
@@ -89,12 +89,12 @@ class GCodeReaderTest {
         }
 
         @Test
-        fun `the line before last is discarded too`() {
+        fun `the block before last is discarded too`() {
             // Marlin's window is WITHIN(gcode_N, last_N - 1, last_N) - two wide, not one.
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\nN2 G28*17\n")
 
-            assertInstanceOf(GDuplicate::class.java, reader.read(line("N1 G28*18")))
+            assertInstanceOf(GDuplicate::class.java, reader.read(block("N1 G28*18")))
             assertEquals(2, reader.lastLine)
         }
 
@@ -104,7 +104,7 @@ class GCodeReaderTest {
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\nN2 G28*17\nN3 T0*57\n")
 
-            assertInstanceOf(GOutOfSequence::class.java, reader.read(line("N1 G28*18")))
+            assertInstanceOf(GOutOfSequence::class.java, reader.read(block("N1 G28*18")))
         }
     }
 
@@ -113,21 +113,21 @@ class GCodeReaderTest {
 
         @Test
         fun `M110 sets the counter to its argument and not to its own line number`() {
-            // spec 7.2 and Marlin's queue.cpp: for an M110 line the *second* N is taken as the new
+            // spec 7.2 and Marlin's queue.cpp: for an M110 block the *second* N is taken as the new
             // counter value. `N1 M110 N7` therefore leaves the counter at 7, not at 1.
             val reader = GCodeReader()
 
-            reader.read(line("N1 M110 N7*123"))
+            reader.read(block("N1 M110 N7*123"))
 
             assertEquals(7, reader.lastLine)
         }
 
         @Test
-        fun `the line after a reset continues from the new value`() {
+        fun `the block after a reset continues from the new value`() {
             val reader = GCodeReader()
-            reader.read(line("N1 M110 N7*123"))
+            reader.read(block("N1 M110 N7*123"))
 
-            assertInstanceOf(GAccepted::class.java, reader.read(line("N8 G28*27")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("N8 G28*27")))
             assertEquals(8, reader.lastLine)
         }
 
@@ -138,7 +138,7 @@ class GCodeReaderTest {
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\n")
 
-            assertInstanceOf(GAccepted::class.java, reader.read(line("N99 M110 N0*77")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("N99 M110 N0*77")))
             assertEquals(0, reader.lastLine)
         }
 
@@ -147,7 +147,7 @@ class GCodeReaderTest {
             // Marlin falls back to the first N when there is no second one.
             val reader = GCodeReader()
 
-            reader.read(line("N42 M110*21"))
+            reader.read(block("N42 M110*21"))
 
             assertEquals(42, reader.lastLine)
         }
@@ -164,8 +164,8 @@ class GCodeReaderTest {
 
         @Test
         fun `M110 inside a comment is not an M110`() {
-            // Marlin decides a line is an M110 with `strstr(command, "M110")` over the raw buffer,
-            // which does not know where the comment starts. On this line it would find the text,
+            // Marlin decides a block is an M110 with `strstr(command, "M110")` over the raw buffer,
+            // which does not know where the comment starts. On this block it would find the text,
             // skip the continuity check, take the `N0` in the comment as the second N, and reset the
             // counter to 0 - all from a comment. Reading the parsed commands instead is a deliberate
             // divergence: that behaviour follows from scanning text rather than from any rule in
@@ -173,7 +173,7 @@ class GCodeReaderTest {
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\n")
 
-            val receipt = reader.read(line("N2 G28*17 ; M110 N0"))
+            val receipt = reader.read(block("N2 G28*17 ; M110 N0"))
 
             assertInstanceOf(GAccepted::class.java, receipt)
             assertEquals(2, reader.lastLine)
@@ -187,13 +187,13 @@ class GCodeReaderTest {
             // `M110 N0` - so a status message resynchronised the session. Marlin does the same
             // for its own worse reason (`strstr(command, "M110")` over the raw buffer).
             //
-            // The reset value is now read off the line's *head*, and that head is `M117`: the
+            // The reset value is now read off the block's *head*, and that head is `M117`: the
             // rest of the line is its message, whatever the message spells. The old test asked
             // to be flipped once this became readable, and this is that flip.
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\n")
 
-            reader.read(line("N2 M117 M110 N0*37"))
+            reader.read(block("N2 M117 M110 N0*37"))
 
             assertEquals(2, reader.lastLine)
         }
@@ -203,10 +203,10 @@ class GCodeReaderTest {
     inner class LinesThatConsumeNoNumber {
 
         @Test
-        fun `blank and comment-only lines are accepted and consume nothing`() {
-            // spec 5: "a line number is only consumed by a line that is actually transmitted".
+        fun `blank and comment-only blocks are accepted and consume nothing`() {
+            // spec 5: "a line number is only consumed by a block that is actually transmitted".
             val reader = GCodeReader()
-            reader.read(line("N1 G28*18"))
+            reader.read(block("N1 G28*18"))
 
             val receipts = readAll(reader, "\n   \n; just a comment\n(and another)\n")
 
@@ -219,7 +219,7 @@ class GCodeReaderTest {
             // spec 7.2: line numbers are optional and conventionally absent in files.
             val reader = GCodeReader(GNumbering.OPTIONAL)
 
-            val receipt = reader.read(line("G28"))
+            val receipt = reader.read(block("G28"))
 
             assertInstanceOf(GAccepted::class.java, receipt)
             assertNull((receipt as GAccepted).number)
@@ -230,18 +230,18 @@ class GCodeReaderTest {
         fun `an unnumbered command line is refused in the required mode`() {
             val reader = GCodeReader(GNumbering.REQUIRED)
 
-            val rejected = reader.read(line("G28")) as GUnnumbered
+            val rejected = reader.read(block("G28")) as GUnnumbered
 
             assertEquals("Error:No Line Number with checksum, Last Line: 0", rejected.msg)
             assertEquals(1, rejected.resend)
         }
 
         @Test
-        fun `a blank line is accepted even in the required mode`() {
-            // It is not a transmitted line, so there is nothing to number.
+        fun `a blank block is accepted even in the required mode`() {
+            // It is not a transmitted block, so there is nothing to number.
             val reader = GCodeReader(GNumbering.REQUIRED)
 
-            assertInstanceOf(GAccepted::class.java, reader.read(line("; comment\n")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("; comment\n")))
         }
     }
 
@@ -252,7 +252,7 @@ class GCodeReaderTest {
         fun `a failed checksum is a resend request`() {
             val reader = GCodeReader()
 
-            val rejected = reader.read(line("N1 G28*12")) as GCorrupted
+            val rejected = reader.read(block("N1 G28*12")) as GCorrupted
 
             assertEquals(18, rejected.expected)
             assertEquals(12, rejected.received)
@@ -264,20 +264,20 @@ class GCodeReaderTest {
         @Test
         fun `the checksum is judged before the line number`() {
             // Both faults at once: N9 is out of sequence *and* its checksum is wrong. spec 8.5 puts
-            // the checksum first - RepRapFirmware validates it at buffer-fill time, before the line
+            // the checksum first - RepRapFirmware validates it at buffer-fill time, before the block
             // number is looked at anywhere - and this module follows the spec rather than Marlin,
             // which checks the number first. Both reject and both ask for the same resend, so the
             // only thing riding on it is which message the host sees.
             val reader = GCodeReader()
 
-            assertInstanceOf(GCorrupted::class.java, reader.read(line("N9 G28*12")))
+            assertInstanceOf(GCorrupted::class.java, reader.read(block("N9 G28*12")))
         }
 
         @Test
         fun `a line number without a checksum is refused`() {
             val reader = GCodeReader()
 
-            val rejected = reader.read(line("N1 G28")) as GUnchecksummed
+            val rejected = reader.read(block("N1 G28")) as GUnchecksummed
 
             assertEquals("Error:No Checksum with line number, Last Line: 0", rejected.msg)
         }
@@ -286,7 +286,7 @@ class GCodeReaderTest {
         fun `a checksum without a line number is refused`() {
             val reader = GCodeReader()
 
-            val rejected = reader.read(line("G28*21")) as GUnnumbered
+            val rejected = reader.read(block("G28*21")) as GUnnumbered
 
             assertEquals("Error:No Line Number with checksum, Last Line: 0", rejected.msg)
         }
@@ -295,12 +295,12 @@ class GCodeReaderTest {
         fun `a garbled field is refused as malformed rather than as a mismatch`() {
             val reader = GCodeReader()
 
-            assertInstanceOf(GMalformed::class.java, reader.read(line("N1 G28*ABC")))
-            assertInstanceOf(GMalformed::class.java, reader.read(line("N G28*18")))
+            assertInstanceOf(GMalformed::class.java, reader.read(block("N1 G28*ABC")))
+            assertInstanceOf(GMalformed::class.java, reader.read(block("N G28*18")))
         }
 
         @Test
-        fun `no bad line moves the counter`() {
+        fun `no bad block moves the counter`() {
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\n")
 
@@ -314,17 +314,17 @@ class GCodeReaderTest {
     inner class TheResendLoop {
 
         @Test
-        fun `a lost line is recovered by rewinding to the requested number`() {
+        fun `a lost block is recovered by rewinding to the requested number`() {
             // spec 8.5 end to end: N2 is lost, N3 arrives, the reader asks for 2, the host rewinds
             // and resends 2 and 3, and the session carries on.
             val reader = GCodeReader()
-            assertInstanceOf(GAccepted::class.java, reader.read(line("N1 G28*18")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("N1 G28*18")))
 
-            val rejected = reader.read(line("N3 T0*57")) as GRejected
+            val rejected = reader.read(block("N3 T0*57")) as GRejected
             assertEquals(2, rejected.resend)
 
-            assertInstanceOf(GAccepted::class.java, reader.read(line("N2 G28*17")))
-            assertInstanceOf(GAccepted::class.java, reader.read(line("N3 T0*57")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("N2 G28*17")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("N3 T0*57")))
             assertEquals(3, reader.lastLine)
         }
 
@@ -336,9 +336,9 @@ class GCodeReaderTest {
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\n")
 
-            assertInstanceOf(GAccepted::class.java, reader.read(line("N2 G28*17")))
-            assertInstanceOf(GDuplicate::class.java, reader.read(line("N2 G28*17")))
-            assertInstanceOf(GAccepted::class.java, reader.read(line("N3 T0*57")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("N2 G28*17")))
+            assertInstanceOf(GDuplicate::class.java, reader.read(block("N2 G28*17")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("N3 T0*57")))
         }
     }
 
@@ -351,13 +351,13 @@ class GCodeReaderTest {
         @Test
         fun `a signed line number behaves as Marlin makes it behave`() {
             // spec 7.1: "Marlin's parser skips `N` followed by any run of `-` and digits", so `N-1`
-            // is a line number of -1 rather than a syntax error, and the liner parses it as a packet.
-            // Marlin then finds -1 != last_N + 1, falls into WITHIN(-1, -1, 0), and drops the line
+            // is a line number of -1 rather than a syntax error, and the reader parses it as a framed block.
+            // Marlin then finds -1 != last_N + 1, falls into WITHIN(-1, -1, 0), and drops the block
             // in silence. This reader reaches the same verdict by the same route, which is worth an
             // assertion precisely because it looks like an accident.
             val reader = GCodeReader()
 
-            val receipt = reader.read(line("N-1 G28*63"))
+            val receipt = reader.read(block("N-1 G28*63"))
 
             assertInstanceOf(GDuplicate::class.java, receipt)
             assertEquals(0, reader.lastLine)
@@ -366,12 +366,12 @@ class GCodeReaderTest {
         @Test
         fun `a fractional line number is not one`() {
             // spec 7.1: RS274/NGC allows `N` followed by a period and a second integer. This module
-            // does not - the liner wants a GInt and a decimal is not one - so the line is refused as
+            // does not - the reader wants a GInt and a decimal is not one - so the block is refused as
             // malformed rather than silently truncated to its integer part. Characterisation: if
             // RS274 line numbers are ever wanted they belong with todo 09's other RS274 gaps.
             val reader = GCodeReader()
 
-            assertInstanceOf(GMalformed::class.java, reader.read(line("N1.5 G28*30")))
+            assertInstanceOf(GMalformed::class.java, reader.read(block("N1.5 G28*30")))
             assertEquals(0, reader.lastLine)
         }
     }
@@ -385,7 +385,7 @@ class GCodeReaderTest {
             // That is the whole point of putting the session in the portable core - the transport
             // layer drives it, it does not drive the transport.
             val reader = GCodeReader()
-            val iterator = GLiner(GTokenizer.parse("N1 G28*18\nN2 G28*17\n").iterator())
+            val iterator = GBlockReader(GTokenizer.parse("N1 G28*18\nN2 G28*17\n").iterator())
 
             var count = 0
             while (iterator.hasNext()) {
@@ -402,7 +402,7 @@ class GCodeReaderTest {
             val first = GCodeReader()
             val second = GCodeReader()
 
-            first.read(line("N1 G28*18"))
+            first.read(block("N1 G28*18"))
 
             assertEquals(1, first.lastLine)
             assertEquals(0, second.lastLine)
@@ -412,7 +412,7 @@ class GCodeReaderTest {
         fun `a reader can be started at a given line number`() {
             val reader = GCodeReader(first = 40)
 
-            assertInstanceOf(GAccepted::class.java, reader.read(line("N41 G28*38")))
+            assertInstanceOf(GAccepted::class.java, reader.read(block("N41 G28*38")))
         }
     }
 }

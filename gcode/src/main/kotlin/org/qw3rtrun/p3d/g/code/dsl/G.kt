@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.code.dsl
 
-import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlockDraft
 import org.qw3rtrun.p3d.g.code.core.block.GBlockPart
 import org.qw3rtrun.p3d.g.code.core.block.GCommand
 import org.qw3rtrun.p3d.g.code.core.block.GWord
@@ -16,7 +16,7 @@ import org.qw3rtrun.p3d.g.code.core.token.*
  * Concretely that means it has to reach past commands and parameters to the things a naive builder
  * forgets: comments (41% of the corpus's non-blank lines carry one), flags, subcodes, non-canonical
  * lexemes like `G01` and `X10.50`, lowercase letters, strings, expressions, and more than one
- * command on a line.
+ * command in a block.
  *
  * ```
  * G(1, X("10.5"), F(1800)) comment " move"     // G1 X10.5 F1800 ; move
@@ -24,7 +24,7 @@ import org.qw3rtrun.p3d.g.code.core.token.*
  * G("29.1", P(1))                               // G29.1 P1
  * M(117, S(text("Hello")))                      // M117 S"Hello"
  * block(G(53), G(0, X(0)))                      // G53 G0 X0
- * commentLine(" LAYER:42")                      // ; LAYER:42
+ * commentBlock(" LAYER:42")                      // ; LAYER:42
  * ```
  *
  * **Builders return values.** Nothing here emits, so a command can be built, inspected and asserted
@@ -39,7 +39,7 @@ import org.qw3rtrun.p3d.g.code.core.token.*
  * host-side convenience over it, and a port re-implements the core and writes its own facade.
  *
  * The file has two halves: the **command** builders of spec 4 - [G], [M], [T] and the general
- * [command] - and the **line** builders of spec 5 - [block], [line], [comment] and [commentLine].
+ * [command] - and the **block** builders of spec 5 - [block], [comment] and [commentBlock].
  * Parameter words live in `GWords.kt`.
  */
 
@@ -163,8 +163,8 @@ fun command(letter: Char, number: Int, vararg params: GWord): GCommand =
  *   DSL cannot build a command that will not read back. `G-1` and `G29.` are not commands, and
  *   finding that out at the call site beats discovering it when a printer answers
  *   `echo:Unknown command`.
- * - A parameter is `*` (spec 8). It is never a parameter - it is the line's checksum field, and
- *   `GEncoder.frame` is what puts one there. A block carrying its own `*` would be checksummed twice.
+ * - A parameter is `*` (spec 8). It is never a parameter - it is the block's checksum field, and
+ *   `GEncoder.frame` is what puts one there. A draft carrying its own `*` would be checksummed twice.
  *
  * `N` is deliberately *not* refused, even though it is structural too. Spec 7.1 makes only the
  * **first field of a line** a line number, so an `N` inside a command is an ordinary parameter - and
@@ -189,35 +189,35 @@ fun command(letter: Char, lexeme: String, vararg params: GWord): GCommand {
     }
     for (param in params) {
         require(param.id != GChecksum) {
-            "spec 8: `*` is the line's checksum field, not a parameter - use GEncoder.frame"
+            "spec 8: `*` is the block's checksum field, not a parameter - use GEncoder.frame"
         }
     }
     return GCommand(identifier(letter), number(lexeme), params.toList())
 }
 
 /**
- * A line made of [parts] in order: commands and comments, as spec 5 allows.
+ * A block made of [parts] in order: commands and comments, as spec 5 allows.
  *
  * ```
  * GEncoder.encode(block(G(53), G(0, X(0))))   // "G53 G0 X0"
  * ```
  *
  * @param parts the commands and comments, in wire order
- * @return the line, unframed
+ * @return the block, unframed
  */
-fun block(vararg parts: GBlockPart): GBlock = GBlock(parts.toList())
+fun block(vararg parts: GBlockPart): GBlockDraft = GBlockDraft(parts.toList())
 
 /**
- * This command as a line of its own - the common case.
+ * This command as a block of its own - the common case.
  *
  * ```
- * GEncoder.encode(G(28).line())   // "G28"
+ * GEncoder.encode(G(28).block())   // "G28"
  * ```
  *
  * @receiver the command
- * @return a line holding only this command
+ * @return a block holding only this command
  */
-fun GCommand.line(): GBlock = GBlock(listOf(this))
+fun GCommand.block(): GBlockDraft = GBlockDraft(listOf(this))
 
 /**
  * This command with a trailing `;` comment. A leading space in [text] is the caller's to include.
@@ -228,32 +228,32 @@ fun GCommand.line(): GBlock = GBlock(listOf(this))
  *
  * @receiver the command
  * @param text the comment's text, after the `;`
- * @return a line of the command and the comment
+ * @return a block of the command and the comment
  */
-infix fun GCommand.comment(text: String): GBlock = GBlock(listOf(this, tailComment(text)))
+infix fun GCommand.comment(text: String): GBlockDraft = GBlockDraft(listOf(this, tailComment(text)))
 
 /**
- * This line with a trailing `;` comment appended.
+ * This block with a trailing `;` comment appended.
  *
  * ```
  * GEncoder.encode(block(G(53), G(0, X(0))) comment " machine")   // "G53 G0 X0 ; machine"
  * ```
  *
- * @receiver the line
+ * @receiver the block
  * @param text the comment's text, after the `;`
- * @return a new line with the comment as its last part
+ * @return a new block with the comment as its last part
  */
-infix fun GBlock.comment(text: String): GBlock = GBlock(parts + tailComment(text))
+infix fun GBlockDraft.comment(text: String): GBlockDraft = GBlockDraft(parts + tailComment(text))
 
 /**
- * A line that is nothing but a `;` comment - spec 5 calls it a no-op.
+ * A block that is nothing but a `;` comment - spec 5 calls it a no-op.
  *
  * ```
- * GEncoder.encode(commentLine(" LAYER:42"))   // "; LAYER:42"
+ * GEncoder.encode(commentBlock(" LAYER:42"))   // "; LAYER:42"
  * ```
  *
  * @param text the comment's text, after the `;`
- * @return a line holding only the comment
+ * @return a block holding only the comment
  */
-fun commentLine(text: String): GBlock = GBlock(listOf(tailComment(text)))
+fun commentBlock(text: String): GBlockDraft = GBlockDraft(listOf(tailComment(text)))
 

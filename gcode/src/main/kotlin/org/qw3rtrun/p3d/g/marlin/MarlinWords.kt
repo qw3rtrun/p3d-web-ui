@@ -44,7 +44,7 @@ import java.math.BigDecimal
  * parameter modelled as a flag.
  *
  * The pairing is spec 2.1's, which is `valueIndex`'s and not a fourth copy of it here. **The first
- * spelling of the letter wins**, value or not: a line carrying `X` and then `X10` is malformed, and
+ * spelling of the letter wins**, value or not: a block carrying `X` and then `X10` is malformed, and
  * quietly preferring the second would hide it.
  *
  * ```
@@ -210,7 +210,7 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
  *
  * Where it **ends** is spec 3.4a: the rest of the line, except that a `;` still starts a comment,
  * so the string cannot contain one. The tokens run out at the end of the body, which for a framed
- * line is the `*` marker - spec 8.3 already puts the checksum field outside it.
+ * block is the `*` marker - spec 8.3 already puts the checksum field outside it.
  *
  * A `( )` comment is **not** an end, even though the lexer made a token of it: spec 3.4a names only
  * `;`, and Marlin reads parentheses as comments only in a CNC build (`PAREN_COMMENTS`). So
@@ -222,7 +222,7 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
  * is the whole point and is kept exactly. Nothing left is reported as null, like every other absent
  * parameter here.
  *
- * The string is rebuilt from there to the end of the line in the bytes it was written in:
+ * The string is rebuilt from there to the end of the block in the bytes it was written in:
  * `rawText()` per token is what makes `M117 done: 10.50 (ok)` come back with its digits and its
  * parentheses intact. [letters] match case-insensitively, through `GIdentifier.isLetter`'s own ASCII
  * folding (spec 2.2), so `M118 p1 x` reads `p1` as the parameter.
@@ -258,7 +258,7 @@ internal fun List<GToken>.stringArg(vararg letters: Char): String? {
  *
  * A decoder for one of the 22 commands reads its letters from this and its string from the whole,
  * because a letter inside the string is text and not a parameter: `M118 Hello World P1` carries the
- * message `Hello World P1` and no `P`. Scanning the whole line for `P` instead would find that one,
+ * message `Hello World P1` and no `P`. Scanning the whole block for `P` instead would find that one,
  * which is how a message comes back having quietly set a parameter the sender never wrote.
  *
  * The bare string begins past the run of `<letter><value>` fields spelling one of [letters], and

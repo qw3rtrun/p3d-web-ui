@@ -11,12 +11,12 @@ import org.qw3rtrun.p3d.g.code.core.token.GValue
 /**
  * A field: an identifier and, usually, the value behind it (GCODE_spec.md section 3).
  *
- * Words belong to the **command** layer, not the line layer. A line is classified from its tokens -
+ * Words belong to the **command** layer, not the block layer. A block is classified from its tokens -
  * where `N` is and where the last `*` is - and nothing above that needs a word until someone asks
- * what the line *commands*. The **writing** direction is where they are produced now: the DSL and
- * `GRq.encode()` build them, and `GEncoder` consumes them. Reading a line back into words - the
+ * what the block *commands*. The **writing** direction is where they are produced now: the DSL and
+ * `GRq.encode()` build them, and `GEncoder` consumes them. Reading a block back into words - the
  * command-agnostic decomposition the old `GCommandParser` did - is measurement apparatus and lives
- * with the corpus tests; a host that wants to know what a line commands asks a decoder, which knows
+ * with the corpus tests; a host that wants to know what a block commands asks a decoder, which knows
  * the command number and can therefore read what words cannot (spec 3.4a).
  *
  * ```
@@ -25,7 +25,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GValue
  *
  * @property id the field's identifier
  * @property raw the tokens this word was read from, spelling included: `X  10` is one word holding
- *   two spaces. Provenance, not identity, and not what round-trips a line - `GLine.raw` is. A word
+ *   two spaces. Provenance, not identity, and not what round-trips a block - `GBlock.raw` is. A word
  *   built by the DSL carries the canonical `[id, value]`; one read from `G 1` carries the space as
  *   well.
  */
@@ -78,7 +78,7 @@ data class GFlagWord(
  * A field with no identifier in front of it: spec 3.4a's bare rest-of-line string, as in
  * `M117 Hello World`, where the text *is* the argument.
  *
- * Only a decoder builds one, because only a decoder knows the command number that says a line has
+ * Only a decoder builds one, because only a decoder knows the command number that says a block has
  * such an argument at all (see `GRqDecoder`); the token layer lexes `Hello World` letter by letter
  * and the command parser never assembles one.
  *
@@ -107,23 +107,24 @@ data class GUnnamedStr(
 }
 
 /**
- * Something that can stand in a [GBlock]: a [GCommand] or a [GCommentPart]. Sealed, and both
+ * Something that can stand in a [GBlockDraft]: a [GCommand] or a [GCommentPart]. Sealed, and both
  * variants live in this package - a comment *token* is wrapped rather than implementing this, so
  * the token layer does not depend on the block layer.
  *
- * This is the *build* direction. A parsed line carries the exact tokens it was read from,
- * whitespace included; a block being built carries only what the author chose, and the encoder
- * decides the bytes. Keeping them apart is what lets `GEncoder` emit one canonical spelling instead
- * of having to guess which of a parsed line's spaces were meaningful.
+ * This is the *build* direction, and the reason the two types are spelled apart: a [GBlock] was
+ * read and carries the exact tokens it was read from, whitespace included; a [GBlockDraft] is
+ * being built and carries only what the author chose, leaving the bytes to the encoder. Keeping
+ * them apart is what lets `GEncoder` emit one canonical spelling instead of having to guess which
+ * of a parsed block's spaces were meaningful.
  *
  * ```
- * GEncoder.encode(GBlock(GCommand(GLetter('G'), GInt(28)), GCommentPart(GTailComment(" note"))))   // "G28 ; note"
+ * GEncoder.encode(GBlockDraft(GCommand(GLetter('G'), GInt(28)), GCommentPart(GTailComment(" note"))))   // "G28 ; note"
  * ```
  */
 sealed interface GBlockPart
 
 /**
- * A comment standing in a [GBlock]: spec section 6's comment, as a part of a line being built.
+ * A comment standing in a [GBlockDraft]: spec section 6's comment, as a part of a block being built.
  *
  * A wrapper rather than the token itself, so that the token layer does not have to know what a
  * block is. `GComment` is a lexer token and stays one; being "something that can go in a block" is
@@ -133,8 +134,8 @@ sealed interface GBlockPart
  *
  * ```
  * val g28 = GCommand(GLetter('G'), GInt(28))
- * GEncoder.encode(GBlock(g28, GCommentPart(GTailComment(" note"))))    // "G28 ; note"
- * GEncoder.frame(1, GBlock(g28, GCommentPart(GTailComment(" home"))))  // "N1 G28*18 ; home"
+ * GEncoder.encode(GBlockDraft(g28, GCommentPart(GTailComment(" note"))))    // "G28 ; note"
+ * GEncoder.frame(1, GBlockDraft(g28, GCommentPart(GTailComment(" home"))))  // "N1 G28*18 ; home"
  * ```
  *
  * @property comment the comment token to emit
@@ -142,7 +143,7 @@ sealed interface GBlockPart
 data class GCommentPart(val comment: GComment) : GBlockPart
 
 /**
- * A line being built: spec section 5's "line (block)", as a value the encoder can render.
+ * A block being built: spec section 5's "line (block)", as a value the encoder can render.
  *
  * Ordered, and general enough for every shape section 5 allows - a command, a command with a
  * trailing comment, a comment on its own, several commands, or a comment between two of them. What
@@ -150,14 +151,14 @@ data class GCommentPart(val comment: GComment) : GBlockPart
  * `GEncoder.frame`, and a block that carried them could be framed twice.
  *
  * ```
- * val block = GBlock(GCommand(GLetter('G'), GInt(28)), GCommentPart(GTailComment(" note")))
+ * val block = GBlockDraft(GCommand(GLetter('G'), GInt(28)), GCommentPart(GTailComment(" note")))
  * GEncoder.encode(block)       // "G28 ; note"
  * GEncoder.frame(1, block)     // "N1 G28*18 ; note"
  * ```
  *
  * @property parts the commands and comments, in wire order
  */
-data class GBlock(val parts: List<GBlockPart>) {
+data class GBlockDraft(val parts: List<GBlockPart>) {
     constructor(vararg parts: GBlockPart) : this(parts.toList())
 
     /**
@@ -166,7 +167,7 @@ data class GBlock(val parts: List<GBlockPart>) {
      * ```
      * val g28 = GCommand(GLetter('G'), GInt(28))
      * val m105 = GCommand(GLetter('M'), GInt(105))
-     * GBlock(g28, GCommentPart(GTailComment("x")), m105).commands()   // [g28, m105]
+     * GBlockDraft(g28, GCommentPart(GTailComment("x")), m105).commands()   // [g28, m105]
      * ```
      *
      * @return every [GCommand] among [parts], in order

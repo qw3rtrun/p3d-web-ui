@@ -1,5 +1,6 @@
 package org.qw3rtrun.p3d.g.marlin
 
+import org.qw3rtrun.p3d.g.code.core.block.valueIndex
 import org.qw3rtrun.p3d.g.code.core.token.GFloat
 import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
 import org.qw3rtrun.p3d.g.code.core.token.GInt
@@ -10,7 +11,6 @@ import org.qw3rtrun.p3d.g.code.core.token.GTailComment
 import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GValue
 import org.qw3rtrun.p3d.g.code.core.token.GWhitespace
-import org.qw3rtrun.p3d.g.code.core.token.valueIndex
 import java.math.BigDecimal
 
 /**

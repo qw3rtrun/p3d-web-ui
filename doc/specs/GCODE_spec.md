@@ -747,14 +747,20 @@ build if anything under `core/token` names `core/block`. The state machine itsel
 `GTokenizerIterator`, is `internal` and its six scanners are private: which characters `number()`
 consumes is how this lexer is built, not what it promises.
 
-`GTokens.kt` holds the one reading rule that is lexical rather than structural:
-`valueIndex(tokens, idIndex)`, [§2.1](#21-whitespace)'s pairing of an identifier with the value
-behind it. Only `GWhitespace` is crossed — a comment, another identifier or a line break ends the
-field — and only a `GValue` pairs, so `N 1` → 2, `X  10` → 3, `X\t10` → 2, `X"a"` and `X{a}` → 1,
-while `N*`, `X Y`, `X (c) 10`, `X;c`, `X\n10` and `X?` → -1 (all pinned by `GTokensTest`). It is the
-module's only copy of the rule, and the layers above reuse it rather than restate it: the liner pairs
-`N` and `*` with it, `GFields.kt` finds a command head with it, and the Marlin decoders read their
-parameters with it.
+This layer offers tokens and nothing else. The pairing rule that reads a *field* off them —
+`valueIndex` — is stated over token kinds alone but answers a field question, and lives one layer up
+in `block/GFields.kt` (see
+[B.3](#b3-line-model--blockglineskt-blockglinerkt-blockgcommandskt-blockgfieldskt)).
+
+A host that builds tokens rather than lexing them has one conversion per kind: `asGInt()` on `Int`,
+`Short`, `Byte` and `String`, `asGFloat()` on `BigDecimal`, `String` and `Int`, `asGLetter()` on
+`Char` and a one-character `String`, and `asGQuotedString()`, `asGUnquotedString()`,
+`asGTailComment()`, `asGInlineComment()`, `asGRawExpression()`, `asGLineBreak()` and `asGUnknown()`
+on `String`. Each keeps the lexeme it was handed, so `"057".asGInt()` re-prints as `057`, and the
+two that cannot be total — a `String` that is not one letter, a `String` that is not a number —
+throw, because the argument is the caller's own literal and not input off the wire. They are
+extension functions, the one DSL shape the portable core admits: each is a constructor call a port
+spells as a plain function.
 
 Deviations from this spec, as currently written (all verified by running the module):
 
@@ -857,8 +863,14 @@ short line does not throw — `N*` yields `GMalformedLineNumber`, not `IllegalAr
 carries what the layer still owes a reader, as functions over tokens rather than a parser object:
 `headWord()` / `headEnd()` / `headKey()` read the one field that is a command. [§2.3](#23-grammar-ebnf)
 makes `command-word` a specialisation of `word`, so the head is found with the same pairing rule as
-every other field — `valueIndex()`, which lives one layer down in `token/GTokens.kt` (see
-[B.2](#b2-tokenizer--tokengtokenizerkt-tokengtokenskt)) because it is stated over token kinds alone. A command number is accepted only as
+every other field — `valueIndex()`, at the foot of the same file. Only `GWhitespace` is crossed — a
+comment, another identifier or a line break ends the field — and only a `GValue` pairs, so `N 1` →
+2, `X  10` → 3, `X\t10` → 2, `X"a"` and `X{a}` → 1, while `N*`, `X Y`, `X (c) 10`, `X;c`, `X\n10`
+and `X?` → -1 (all pinned by `GFieldsTest`). It is the module's only copy of the rule and the
+readers above reuse it rather than restate it: the liner pairs `N` and `*` with it, `headWord()`
+finds a command head with it, and the Marlin decoders read their parameters with it. The rule is
+stated over token kinds alone, which is why it sat in `token/` until it moved beside the field
+reader it serves. A command number is accepted only as
 `<unsigned-int>[.<unsigned-int>]` ([§4.1](#41-command-letters)) by `isCommandNumber()`, which the DSL
 shares, so `G29.1` is one command word carrying `GFloat("29.1")` — the subcode stays on the number,
 which is what re-emits `29.1` rather than `29` and `.1`. `isCommandLetter()` accepts `G`, `M` and a

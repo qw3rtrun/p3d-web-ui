@@ -7,12 +7,12 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertDoesNotThrow
+import org.junit.jupiter.api.assertThrows
 import java.math.BigDecimal
 
 /**
  * Unit tests for the token model itself - `rawText()` fidelity, the sealed hierarchy membership that
- * the parser layer relies on, and the `toToken()` conversions.
+ * the parser layer relies on, and the `asG…()` conversions.
  *
  * See GCODE_spec.md section 2 (lexical structure) and Appendix B.1 for the spec-to-type mapping.
  */
@@ -381,101 +381,101 @@ class GTokensTest {
 
         @Test
         fun `int converts to an int token`() {
-            assertEquals(GInt(42), 42.toToken())
+            assertEquals(GInt(42), 42.asGInt())
+        }
+
+        @Test
+        fun `short converts to an int token`() {
+            assertEquals(GInt(42), (42.toShort()).asGInt())
+        }
+
+        @Test
+        fun `byte converts to an int token`() {
+            assertEquals(GInt(42), (42.toByte()).asGInt())
+        }
+
+        @Test
+        fun `string converts to an int token keeping its lexeme`() {
+            assertEquals(GInt(57, "057"), "057".asGInt())
+            assertEquals("057", "057".asGInt().rawText())
         }
 
         @Test
         fun `big decimal converts to a float token keeping its scale`() {
-            assertEquals(GFloat(BigDecimal("2.50")), BigDecimal("2.50").toToken())
-            assertEquals("2.50", BigDecimal("2.50").toToken().rawText())
+            assertEquals(GFloat(BigDecimal("2.50")), BigDecimal("2.50").asGFloat())
+            assertEquals("2.50", BigDecimal("2.50").asGFloat().rawText())
+        }
+
+        @Test
+        fun `string converts to a float token keeping its scale`() {
+            assertEquals(GFloat("2.50"), "2.50".asGFloat())
+            assertEquals("2.50", "2.50".asGFloat().rawText())
+        }
+
+        @Test
+        fun `int converts to a float token`() {
+            assertEquals(GFloat(3), 3.asGFloat())
+            assertEquals("3", 3.asGFloat().rawText())
         }
 
         @Test
         fun `char converts to a letter token`() {
-            assertEquals(GLetter('X'), 'X'.toToken())
+            assertEquals(GLetter('X'), 'X'.asGLetter())
+        }
+
+        @Test
+        fun `string converts to a letter token`() {
+            assertEquals(GLetter('X'), "X".asGLetter())
+            assertThrows<IllegalArgumentException> { "XY".asGLetter() }
+            assertThrows<IllegalArgumentException> { "1".asGLetter() }
         }
 
         @Test
         fun `string converts to a quoted string token`() {
-            assertEquals(GQuotedString("hi"), "hi".toToken())
-            assertEquals("\"hi\"", "hi".toToken().rawText())
-        }
-    }
-
-    @Nested
-    inner class Pairing {
-
-        private fun pairedAt(gcode: String): Int = GTokenizer.parse(gcode).toList().valueIndex(0)
-
-        @Nested
-        inner class Pairs {
-
-            @Test
-            fun `a value directly behind its identifier is paired`() {
-                assertEquals(1, pairedAt("N1"))
-            }
-
-            @Test
-            fun `one space between identifier and value is crossed`() {
-                assertEquals(2, pairedAt("N 1"))
-            }
-
-            @Test
-            fun `several spaces are crossed`() {
-                assertEquals(3, pairedAt("X  10"))
-            }
-
-            @Test
-            fun `a tab is crossed`() {
-                assertEquals(2, pairedAt("X\t10"))
-            }
-
-            @Test
-            fun `a quoted string is a value`() {
-                assertEquals(1, pairedAt("X\"a\""))
-            }
-
-            @Test
-            fun `an expression is a value`() {
-                assertEquals(1, pairedAt("X{a}"))
-            }
+            assertEquals(GQuotedString("hi"), "hi".asGQuotedString())
+            assertEquals("\"hi\"", "hi".asGQuotedString().rawText())
         }
 
-        @Nested
-        inner class DoesNotPair {
+        @Test
+        fun `string converts to an unquoted string token`() {
+            assertEquals(GUnquotedString("Hello World"), "Hello World".asGUnquotedString())
+            assertEquals("Hello World", "Hello World".asGUnquotedString().rawText())
+        }
 
-            @Test
-            fun `another identifier ends the field`() {
-                assertEquals(-1, pairedAt("N*"))
-                assertEquals(-1, pairedAt("X Y"))
-            }
+        @Test
+        fun `string converts to a tail comment token`() {
+            assertEquals(GTailComment(" move"), " move".asGTailComment())
+            assertEquals("; move", " move".asGTailComment().rawText())
+            assertEquals(GTailComment(" custom", "//"), " custom".asGTailComment("//"))
+            assertEquals("// custom", " custom".asGTailComment("//").rawText())
+        }
 
-            @Test
-            fun `an inline comment ends the field`() {
-                assertEquals(-1, pairedAt("X (c) 10"))
-            }
+        @Test
+        fun `string converts to an inline comment token`() {
+            assertEquals(GInlineComment("hi"), "hi".asGInlineComment())
+            assertEquals("(hi)", "hi".asGInlineComment().rawText())
+            assertEquals(GInlineComment("hi", "[", "]"), "hi".asGInlineComment("[", "]"))
+            assertEquals("[hi]", "hi".asGInlineComment("[", "]").rawText())
+        }
 
-            @Test
-            fun `a tail comment ends the field`() {
-                assertEquals(-1, pairedAt("X;c"))
-            }
+        @Test
+        fun `string converts to a raw expression token`() {
+            assertEquals(GRawExpression("{bed[0]}"), "{bed[0]}".asGRawExpression())
+            assertEquals("{bed[0]}", "{bed[0]}".asGRawExpression().rawText())
+        }
 
-            @Test
-            fun `a line break is not whitespace`() {
-                assertEquals(-1, pairedAt("X\n10"))
-            }
+        @Test
+        fun `string converts to a line break token`() {
+            assertEquals(GLineBreak("\n"), "\n".asGLineBreak())
+            assertEquals("\r\n", "\r\n".asGLineBreak().rawText())
+        }
 
-            @Test
-            fun `an unknown token is not a value`() {
-                assertEquals(-1, pairedAt("X?"))
-            }
-
-            @Test
-            fun `an identifier at the last index carries nothing and does not throw`() {
-                val tokens = GTokenizer.parse("G1 X").toList()
-
-                assertEquals(-1, assertDoesNotThrow<Int> { tokens.valueIndex(tokens.size - 1) })
-            }
+        @Test
+        fun `string and char convert to unknown tokens`() {
+            assertEquals(GUnknown("?"), "?".asGUnknown())
+            assertEquals("?", "?".asGUnknown().rawText())
+            assertEquals(GUnknown('?'), '?'.asGUnknown())
+            assertEquals("?", '?'.asGUnknown().rawText())
         }
     }
 }

@@ -4,8 +4,8 @@ import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.token.GNumber
 import org.qw3rtrun.p3d.g.code.core.token.GToken
+import org.qw3rtrun.p3d.g.code.core.token.GValue
 import org.qw3rtrun.p3d.g.code.core.token.GWhitespace
-import org.qw3rtrun.p3d.g.code.core.token.valueIndex
 
 /**
  * Reading a field off tokens - GCODE_spec.md sections 2.1, 3 and 4 - and the one field that is a
@@ -22,9 +22,11 @@ import org.qw3rtrun.p3d.g.code.core.token.valueIndex
  *
  * spec 2.3 makes `command-word`, `line-number` and `checksum` *specialisations* of `word` -
  * lexically ordinary fields whose letters are given structural meaning - so the head is found with
- * the same pairing rule every other field is: `valueIndex`, in `core.token`'s `GTokens.kt`. The
- * rule is lexical and reused one way, from this layer down to that one; it does not need to share a
- * file with the head to stay the same rule, only to have a single copy, and it has one.
+ * the same pairing rule every other field is: [valueIndex], at the foot of this file. It is read
+ * over token kinds alone, which is why it once sat in the token layer, but the question it answers
+ * - which token a field's identifier carries as its value - is a *field* question, and a field is
+ * what this layer is for. The layer below never asks it; the layers above reuse this copy rather
+ * than restate it.
  */
 
 /**
@@ -206,3 +208,43 @@ private fun headNumIndex(tokens: List<GToken>, idIndex: Int): Int {
 }
 
 private fun digit(c: Char) = c >= '0' && c <= '9'
+
+/**
+ * The index of the value paired with the identifier at [idIndex], or -1 when it carries none.
+ *
+ * spec 2.1: whitespace may separate an identifier from its value, so `N 1`, `* 12` and `X  10`
+ * each assemble across it. **Only whitespace is crossed** - a comment between the two ends the
+ * field, and so does another identifier, which is what makes `N*` a bare `N` rather than an `N`
+ * carrying a `*`. A line break is a separator but not whitespace, so it ends the field too.
+ *
+ * It lives beside the head reader because it is the field layer's rule, even though it is stated
+ * over token kinds (`GWhitespace`, `GValue`) and nothing else. spec 2.3 makes `command-word`,
+ * `line-number` and `checksum` specialisations of `word`, so the liner, the command head and the
+ * decoders all reuse it - one way, from above, which is the direction the layering allows.
+ *
+ * This is the module's only copy of that rule. It was five: the liner pairing `N` with its number
+ * and `*` with its checksum, the command reader pairing any letter with its value and `G` with
+ * `1`, and the Marlin decoders pairing a documented letter with what follows it. The rule decides
+ * whether `N 1` is a line number and whether `X 10` is one field or two, so a spec correction had
+ * to reach all five and would have reached three.
+ *
+ * [idIndex] is not checked: a caller that has found an identifier passes its index, and one that
+ * passes anything else gets the token behind it, which is the same question asked of a different
+ * position rather than an error.
+ *
+ * ```
+ * GTokenizer.parse("N 1").toList().valueIndex(0)        // 2
+ * GTokenizer.parse("N*").toList().valueIndex(0)         // -1
+ * GTokenizer.parse("X (c) 10").toList().valueIndex(0)   // -1 - a comment ends the field
+ * ```
+ *
+ * @receiver the tokens to read
+ * @param idIndex the index of the identifier whose value is wanted
+ * @return the index of its value token, or -1 when it has none
+ */
+fun List<GToken>.valueIndex(idIndex: Int): Int {
+    var i = idIndex + 1
+    while (i < size && this[i] is GWhitespace) i++
+    if (i < size && this[i] is GValue) return i
+    return -1
+}

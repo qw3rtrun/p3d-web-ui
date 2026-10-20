@@ -66,13 +66,13 @@ gcode/src/main/kotlin/.../code/core/**      portable core — kotlin.* imports O
     GTokens.kt          token model, rawText() round-trip contract
     GTokenizer.kt       the lexer (an object): parse() overloads - tokens only.
                         GTokenizerIterator, the state machine, is internal - scanners private
-    GPairing.kt         valueIndex: the spec 2.1 pairing rule (identifier, whitespace, value)
   block/                lines, commands, checksums. May name token/ and itself, nothing else
     GLiner.kt           tokens -> classified lines (framing, checksum verification);
                         GLiner.lines(text) = the whole read pipeline
     GLines.kt           GLine hierarchy and the structural errors - tokens only
     GCommands.kt        GWord, GBlock, GBlockPart (GCommand | GCommentPart), GCommand
-    GFields.kt          the command head: headWord/headEnd/headKey, isCommandLetter/Number
+    GFields.kt          the command head: headWord/headEnd/headKey, isCommandLetter/Number,
+                        and valueIndex: the spec 2.1 pairing rule (identifier, ws, value)
     CheckSums.kt        checkSumCalculatorFor: the digit count picks the algorithm
     XorCheckSum.kt      streaming XOR checksum
     Crc16CheckSum.kt    streaming CRC-16/XMODEM

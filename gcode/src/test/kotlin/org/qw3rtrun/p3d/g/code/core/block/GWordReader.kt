@@ -6,7 +6,6 @@ import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.token.GNumber
 import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GValue
-import org.qw3rtrun.p3d.g.code.core.token.valueIndex
 
 /**
  * The **command-agnostic** reading of a line: every field into a [org.qw3rtrun.p3d.g.code.core.block.GWord], the words grouped into

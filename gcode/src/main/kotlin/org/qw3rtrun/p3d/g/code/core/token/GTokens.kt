@@ -425,86 +425,208 @@ data class GRawExpression(override val text: String) : GExpression {
  * This integer as a number token, in its canonical rendering.
  *
  * ```
- * 5.toToken()   // GInt(5)
+ * 5.asGInt()   // GInt(5)
  * ```
  *
  * @receiver the value
  * @return a [GInt] whose lexeme is the canonical decimal
  */
-fun Int.toToken() = GInt(this)
+fun Int.asGInt() = GInt(this)
+
+/**
+ * This short integer as a number token, in its canonical rendering.
+ *
+ * ```
+ * (5.toShort()).asGInt()   // GInt(5)
+ * ```
+ *
+ * @receiver the value
+ * @return a [GInt] whose lexeme is the canonical decimal
+ */
+fun Short.asGInt() = GInt(this.toInt())
+
+/**
+ * This byte as a number token, in its canonical rendering.
+ *
+ * ```
+ * (5.toByte()).asGInt()   // GInt(5)
+ * ```
+ *
+ * @receiver the value
+ * @return a [GInt] whose lexeme is the canonical decimal
+ */
+fun Byte.asGInt() = GInt(this.toInt())
+
+/**
+ * This string as an integer number token, parsing its value and keeping its lexeme.
+ *
+ * ```
+ * "057".asGInt()   // GInt(57, "057")
+ * ```
+ *
+ * @receiver the integer string
+ * @return a [GInt] carrying the parsed value and original lexeme
+ */
+fun String.asGInt() = GInt(this.toInt(), this)
 
 /**
  * This decimal as a number token, rendered through `BigDecimal.toString()`.
  *
  * ```
- * BigDecimal("1.5").toToken()   // GFloat(BigDecimal("1.5"), "1.5")
+ * BigDecimal("1.5").asGFloat()   // GFloat(BigDecimal("1.5"), "1.5")
  * ```
  *
  * @receiver the value
  * @return a [GFloat] carrying the value and its string form
  */
-fun BigDecimal.toToken() = GFloat(this)
+fun BigDecimal.asGFloat() = GFloat(this)
+
+/**
+ * This text as a decimal number token, keeping its exact characters.
+ *
+ * ```
+ * "1.50".asGFloat()   // GFloat(BigDecimal("1.50"), "1.50")
+ * ```
+ *
+ * @receiver the decimal string
+ * @return a [GFloat]
+ */
+fun String.asGFloat() = GFloat(this)
+
+/**
+ * This integer as a decimal number token.
+ *
+ * ```
+ * 3.asGFloat()   // GFloat(3)
+ * ```
+ *
+ * @receiver the integral value
+ * @return a [GFloat]
+ */
+fun Int.asGFloat() = GFloat(this)
 
 /**
  * This character as a letter identifier. Nothing checks that it is a letter.
  *
  * ```
- * 'X'.toToken()   // GLetter('X')
+ * 'X'.asGLetter()   // GLetter('X')
  * ```
  *
  * @receiver the letter
  * @return a [GLetter]
  */
-fun Char.toToken() = GLetter(this)
+fun Char.asGLetter() = GLetter(this)
+
+/**
+ * This single-character string as a letter identifier.
+ *
+ * ```
+ * "X".asGLetter()   // GLetter('X')
+ * ```
+ *
+ * @receiver the letter text
+ * @return a [GLetter]
+ * @throws IllegalArgumentException if the string is not a single letter
+ */
+fun String.asGLetter() =
+    if (this.length == 1 && this[0].isLetter()) GLetter(this[0]) else throw IllegalArgumentException("'$this' is not a letter")
 
 /**
  * This text as a quoted string value.
  *
  * ```
- * "hi".toToken()   // GQuotedString("hi"), which renders as "\"hi\""
+ * "hi".asGQuotedString()   // GQuotedString("hi"), which renders as "\"hi\""
  * ```
  *
  * @receiver the decoded text
  * @return a [GQuotedString]
  */
-fun String.toToken() = GQuotedString(this)
+fun String.asGQuotedString() = GQuotedString(this)
 
 /**
- * The index of the value paired with the identifier at [idIndex], or -1 when it carries none.
- *
- * spec 2.1: whitespace may separate an identifier from its value, so `N 1`, `* 12` and `X  10`
- * each assemble across it. **Only whitespace is crossed** - a comment between the two ends the
- * field, and so does another identifier, which is what makes `N*` a bare `N` rather than an `N`
- * carrying a `*`. A line break is a separator but not whitespace, so it ends the field too.
- *
- * It lives in the token layer because the rule is purely lexical: it is stated over token kinds
- * (`GWhitespace`, `GValue`) and nothing else. spec 2.3 makes `command-word`, `line-number` and
- * `checksum` specialisations of `word`, so the liner, the command head and the decoders all reuse
- * it - one way, from above, which is the direction the layering allows.
- *
- * This is the module's only copy of that rule. It was five: the liner pairing `N` with its number
- * and `*` with its checksum, the command reader pairing any letter with its value and `G` with
- * `1`, and the Marlin decoders pairing a documented letter with what follows it. The rule decides
- * whether `N 1` is a line number and whether `X 10` is one field or two, so a spec correction had
- * to reach all five and would have reached three.
- *
- * [idIndex] is not checked: a caller that has found an identifier passes its index, and one that
- * passes anything else gets the token behind it, which is the same question asked of a different
- * position rather than an error.
+ * This text as an unquoted rest-of-line string value.
  *
  * ```
- * GTokenizer.parse("N 1").toList().valueIndex(0)        // 2
- * GTokenizer.parse("N*").toList().valueIndex(0)         // -1
- * GTokenizer.parse("X (c) 10").toList().valueIndex(0)   // -1 - a comment ends the field
+ * "Hello World".asGUnquotedString()   // GUnquotedString("Hello World")
  * ```
  *
- * @receiver the tokens to read
- * @param idIndex the index of the identifier whose value is wanted
- * @return the index of its value token, or -1 when it has none
+ * @receiver the text
+ * @return a [GUnquotedString]
  */
-fun List<GToken>.valueIndex(idIndex: Int): Int {
-    var i = idIndex + 1
-    while (i < size && this[i] is GWhitespace) i++
-    if (i < size && this[i] is GValue) return i
-    return -1
-}
+fun String.asGUnquotedString() = GUnquotedString(this)
+
+/**
+ * This text as a tail comment.
+ *
+ * ```
+ * " move".asGTailComment()   // GTailComment(" move")
+ * ```
+ *
+ * @receiver the comment text without the leading marker
+ * @param key the comment opening marker
+ * @return a [GTailComment]
+ */
+fun String.asGTailComment(key: String = ";") = GTailComment(this, key)
+
+/**
+ * This text as an inline comment.
+ *
+ * ```
+ * "hi".asGInlineComment()   // GInlineComment("hi")
+ * ```
+ *
+ * @receiver the comment text without delimiters
+ * @param start the opening delimiter
+ * @param end the closing delimiter
+ * @return a [GInlineComment]
+ */
+fun String.asGInlineComment(start: String = "(", end: String = ")") = GInlineComment(this, start, end)
+
+/**
+ * This text as a raw expression value.
+ *
+ * ```
+ * "{bed[0]}".asGRawExpression()   // GRawExpression("{bed[0]}")
+ * ```
+ *
+ * @receiver the expression as written
+ * @return a [GRawExpression]
+ */
+fun String.asGRawExpression() = GRawExpression(this)
+
+/**
+ * This text as a line break separator.
+ *
+ * ```
+ * "\n".asGLineBreak()   // GLineBreak("\n")
+ * ```
+ *
+ * @receiver the line terminator characters
+ * @return a [GLineBreak]
+ */
+fun String.asGLineBreak() = GLineBreak(this)
+
+/**
+ * This text as an unknown token.
+ *
+ * ```
+ * "?".asGUnknown()   // GUnknown("?")
+ * ```
+ *
+ * @receiver the offending characters
+ * @return a [GUnknown]
+ */
+fun String.asGUnknown() = GUnknown(this)
+
+/**
+ * This character as an unknown token.
+ *
+ * ```
+ * '?'.asGUnknown()   // GUnknown("?")
+ * ```
+ *
+ * @receiver the offending character
+ * @return a [GUnknown]
+ */
+fun Char.asGUnknown() = GUnknown(this)
+

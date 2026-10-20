@@ -56,6 +56,8 @@ the host's own I/O layer.
 - `Int`, `Long`, `Char`, `Byte`, `Boolean`; `and or xor inv shl shr ushr`; `+ - * / %`
 - `String` by index: `length`, `get`, `substring`, explicit character comparison
 - local `var`, explicit `null` checks, nullable types for "absent"
+- extension-function DSLs over std-library or in-module types: each is a constructor or a plain
+  call a port spells as a function (`"057".asGInt()`, `tokens.valueIndex(i)`)
 
 ### Do not use in the core
 
@@ -72,7 +74,7 @@ the host's own I/O layer.
 | `String.trim()`, `equals(ignoreCase = true)`, `uppercase()` | explicit ASCII comparison and folding | locale- and Unicode-dependent; a Turkish locale changes `i`/`I` |
 | exceptions for malformed input | a variant carrying the offending bytes | see *Errors are values* |
 | reflection, annotations, Lombok, Jackson, Spring | plain constructors and plain functions | none of it exists in a port |
-| operator overloading, delegated properties, `inline`/`reified` generics, extension-function DSLs, deep generic hierarchies | plain functions and concrete types | the further from a C-shaped program, the more the port is a rewrite |
+| operator overloading, delegated properties, `inline`/`reified` generics, deep generic hierarchies | plain functions and concrete types | the further from a C-shaped program, the more the port is a rewrite |
 
 Generics: one type parameter, no variance annotations, no bounds beyond a single interface. If you
 need more, you probably want a sealed variant set instead.

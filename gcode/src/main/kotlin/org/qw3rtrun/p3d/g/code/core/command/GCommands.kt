@@ -20,7 +20,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GValue
  * the command number and can therefore read what words cannot (spec 3.4a).
  *
  * ```
- * GParameterWord(GLetter('X'), GInt(10)).isLetter('x')   // true
+ * GParameterWord(GLetter('X'), GInt(10)).isChar('x')   // true
  * ```
  *
  * @property id the field's identifier
@@ -35,16 +35,17 @@ sealed interface GWord {
     val raw: List<GToken>
 
     /**
-     * Whether this word's identifier is the letter [l], case-insensitively - `GIdentifier.isLetter`.
+     * Whether this word's identifier is the single character [l], case-insensitively -
+     * `GIdentifier.isChar`.
      *
      * ```
-     * GParameterWord(GLetter('X'), GInt(10)).isLetter('x')   // true
+     * GParameterWord(GLetter('X'), GInt(10)).isChar('x')   // true
      * ```
      *
      * @param l the letter to compare against, in either case
      * @return true when [id] is that letter
      */
-    fun isLetter(l: Char): Boolean = id.isLetter(l)
+    fun isChar(l: Char): Boolean = id.isChar(l)
 }
 
 /**

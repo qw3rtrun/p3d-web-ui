@@ -84,7 +84,7 @@ fun headWord(tokens: List<GToken>): GParameterWord<GNumber>? {
  * is still not `M105`. Case is a property of the writing, digits are not.
  *
  * The fold is explicit ASCII, not `uppercaseChar()`: spec 1.1's wire format is 7-bit, and a
- * locale-dependent or Unicode-wide fold is the bug `GIdentifier.isLetter` documents.
+ * locale-dependent or Unicode-wide fold is the bug `GIdentifier.isChar` documents.
  *
  * ```
  * headKey(GParameterWord(GLetter('m'), GInt(104)))   // GParameterWord(GLetter('M'), GInt(104))

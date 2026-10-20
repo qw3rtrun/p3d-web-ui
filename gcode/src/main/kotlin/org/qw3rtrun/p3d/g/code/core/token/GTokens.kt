@@ -65,8 +65,8 @@ sealed interface GIdentifier : GToken {
     override fun rawText() = name
 
     /**
-     * Whether this identifier is the single letter [l], compared case-insensitively - spec 2.2: the
-     * dialects are case-insensitive.
+     * Whether this identifier is the single character [l], compared case-insensitively - spec 2.2:
+     * the dialects are case-insensitive.
      *
      * Explicit ASCII folding rather than `lowercase()`/`uppercase()`, which were wrong three ways:
      * locale-dependent (a Turkish locale changes `i`/`I`), Unicode-wide - U+212A KELVIN SIGN
@@ -76,18 +76,20 @@ sealed interface GIdentifier : GToken {
      * Anything else is compared unchanged - including a Unicode letter that happens to lowercase to
      * an ASCII one - and therefore compares unequal to every ASCII identifier.
      *
-     * The name is wider than it says: `GChecksum.isLetter('*')` is true, because `*` folds to
-     * itself. Preserved deliberately; renaming is queued as hygiene (todo 07).
+     * **Character, not letter.** `GChecksum.isChar('*')` is true - `*` folds to itself - and
+     * `GEmptyId.isChar(c)` is false for every `c`, an empty name being no character at all. It was
+     * called `isLetter` while only `GLetter` mattered to its callers, which read as a promise that
+     * the identifier was a letter; the name now says what the comparison actually does (todo 07).
      *
      * ```
-     * GLetter('x').isLetter('X')   // true
-     * GChecksum.isLetter('*')      // true
+     * GLetter('x').isChar('X')   // true
+     * GChecksum.isChar('*')      // true
      * ```
      *
      * @param l the character to compare against, in either case
      * @return true when this identifier is exactly one character that folds to the same as [l]
      */
-    fun isLetter(l: Char): Boolean = name.length == 1 && asciiFold(name[0]) == asciiFold(l)
+    fun isChar(l: Char): Boolean = name.length == 1 && asciiFold(name[0]) == asciiFold(l)
 }
 
 private fun asciiFold(c: Char): Char = if (c >= 'a' && c <= 'z') (c.code - 32).toChar() else c
@@ -115,7 +117,7 @@ data class GUnknown(val str: String) : GToken {
  *
  * ```
  * GLetter('G').rawText()        // "G"
- * GLetter('x').isLetter('X')    // true
+ * GLetter('x').isChar('X')    // true
  * ```
  *
  * @property letter the letter as written

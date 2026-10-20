@@ -156,13 +156,13 @@ class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 
     private fun resetValue(block: GOrdered): Int? {
         val body = block.body
         val head = headWord(body) ?: return null
-        if (!head.id.isLetter('M')) return null
+        if (!head.id.isChar('M')) return null
         if (head.value.lexeme != "110") return null
 
         var i = headEnd(body)
         while (i < body.size) {
             val token = body[i]
-            if (token is GIdentifier && token.isLetter('N')) {
+            if (token is GIdentifier && token.isChar('N')) {
                 val j = body.valueIndex(i)
                 val value = if (j < 0) null else body[j]
                 if (value is GInt) return value.int

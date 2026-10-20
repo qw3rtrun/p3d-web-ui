@@ -37,23 +37,23 @@ class GTokensTest {
         }
 
         @Test
-        fun `isLetter folds case in both directions`() {
+        fun `isChar folds case in both directions`() {
             // spec 2.2: the dialects are case-insensitive.
-            assertTrue(GLetter('G').isLetter('G'))
-            assertTrue(GLetter('G').isLetter('g'))
-            assertTrue(GLetter('g').isLetter('G'))
-            assertTrue(GLetter('g').isLetter('g'))
-            assertFalse(GLetter('G').isLetter('M'))
+            assertTrue(GLetter('G').isChar('G'))
+            assertTrue(GLetter('G').isChar('g'))
+            assertTrue(GLetter('g').isChar('G'))
+            assertTrue(GLetter('g').isChar('g'))
+            assertFalse(GLetter('G').isChar('M'))
         }
 
         @Test
-        fun `isLetter does not match a non-ASCII character`() {
+        fun `isChar does not match a non-ASCII character`() {
             // spec 1.1: the wire format is 7-bit ASCII. U+212A KELVIN SIGN lowercases to 'k' and
             // U+0130 LATIN CAPITAL I WITH DOT ABOVE lowercases to 'i', so folding an identifier
             // through lowercase()/uppercase() let both match an ASCII letter.
-            assertFalse(GLetter('k').isLetter('\u212A'))
-            assertFalse(GLetter('K').isLetter('\u212A'))
-            assertFalse(GLetter('i').isLetter('\u0130'))
+            assertFalse(GLetter('k').isChar('\u212A'))
+            assertFalse(GLetter('K').isChar('\u212A'))
+            assertFalse(GLetter('i').isChar('\u0130'))
         }
 
         @Test

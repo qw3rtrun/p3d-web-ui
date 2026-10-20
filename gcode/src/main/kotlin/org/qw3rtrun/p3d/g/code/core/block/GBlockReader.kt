@@ -119,7 +119,7 @@ class GBlockReader(private val source: Iterator<GToken>) : Iterator<GBlock> {
         var lineNumber: GInt? = null
         var numberIndex = -1
         val head = tokens[headIndex]
-        if (head is GIdentifier && head.isLetter('N')) {
+        if (head is GIdentifier && head.isChar('N')) {
             numberIndex = tokens.valueIndex(headIndex)
             val value = if (numberIndex < 0) null else tokens[numberIndex]
             if (value !is GInt) return GMalformedLineNumber(tokens)

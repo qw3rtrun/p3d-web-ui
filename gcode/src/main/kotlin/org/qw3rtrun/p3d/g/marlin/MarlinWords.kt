@@ -61,7 +61,7 @@ internal fun List<GToken>.valueOf(letter: Char): GValue? {
     var i = 0
     while (i < size) {
         val token = this[i]
-        if (token is GIdentifier && token.isLetter(letter)) {
+        if (token is GIdentifier && token.isChar(letter)) {
             val j = valueIndex(i)
             return if (j < 0) null else this[j] as GValue
         }
@@ -87,7 +87,7 @@ internal fun List<GToken>.valueOf(letter: Char): GValue? {
  * @return true when any identifier spells the letter
  */
 internal fun List<GToken>.hasWord(letter: Char): Boolean =
-    any { it is GIdentifier && it.isLetter(letter) }
+    any { it is GIdentifier && it.isChar(letter) }
 
 /**
  * An integer parameter. `X1.0` where an int was documented takes the integral part rather than
@@ -224,7 +224,7 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
  *
  * The string is rebuilt from there to the end of the block in the bytes it was written in:
  * `rawText()` per token is what makes `M117 done: 10.50 (ok)` come back with its digits and its
- * parentheses intact. [letters] match case-insensitively, through `GIdentifier.isLetter`'s own ASCII
+ * parentheses intact. [letters] match case-insensitively, through `GIdentifier.isChar`'s own ASCII
  * folding (spec 2.2), so `M118 p1 x` reads `p1` as the parameter.
  *
  * ```
@@ -298,7 +298,7 @@ private fun List<GToken>.stringArgStart(letters: CharArray): Int {
 private fun GIdentifier.isOneOf(letters: CharArray): Boolean {
     var i = 0
     while (i < letters.size) {
-        if (isLetter(letters[i])) return true
+        if (isChar(letters[i])) return true
         i++
     }
     return false

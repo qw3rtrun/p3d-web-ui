@@ -80,7 +80,7 @@ class GWordReaderTest {
         fun `whitespace around a word does not change the command`(gcode: String) {
             val cmd = commands(gcode).single()
 
-            assertTrue(cmd.head.isLetter('G')) { "expected a G command in '$gcode', got $cmd" }
+            assertTrue(cmd.head.isChar('G')) { "expected a G command in '$gcode', got $cmd" }
             assertEquals(GInt(1), cmd.head.value)
             assertEquals(listOf(GParameterWord(GLetter('X'), GInt(10))), cmd.params.map { strip(it) })
         }

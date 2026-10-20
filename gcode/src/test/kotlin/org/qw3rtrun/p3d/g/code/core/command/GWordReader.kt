@@ -136,7 +136,7 @@ object GWordReader {
         val id = word.id
         if (id == GChecksum) return true
         if (!first) return false
-        return id is GLetter && id.isLetter('N')
+        return id is GLetter && id.isChar('N')
     }
 
     /**

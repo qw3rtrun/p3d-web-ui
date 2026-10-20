@@ -48,6 +48,10 @@ class LockMachine : GRq<LockMachine> {
 
     companion object : GRqDecoder<LockMachine> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(510).head
         }

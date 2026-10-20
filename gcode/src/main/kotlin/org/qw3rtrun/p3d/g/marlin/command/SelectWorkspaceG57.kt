@@ -48,6 +48,10 @@ class SelectWorkspaceG57 : GRq<SelectWorkspaceG57> {
 
     companion object : GRqDecoder<SelectWorkspaceG57> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return G(57).head
         }

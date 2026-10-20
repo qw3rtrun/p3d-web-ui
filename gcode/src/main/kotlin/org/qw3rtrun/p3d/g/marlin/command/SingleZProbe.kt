@@ -3,8 +3,8 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.command.GCommand
 import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.command.GWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.dsl.G
 import org.qw3rtrun.p3d.g.code.dsl.word
 import org.qw3rtrun.p3d.g.marlin.boolOf
@@ -58,6 +58,10 @@ data class SingleZProbe(
     }
 
     companion object : GRqDecoder<SingleZProbe> {
+
+        override val letters: Set<Char> = setOf('C', 'E', 'X', 'Y')
+
+        override val bareString: Boolean = false
 
         override fun head(): GParameterWord<*> {
             return G(30).head

@@ -48,6 +48,10 @@ class ReportGCodeMacros : GRq<ReportGCodeMacros> {
 
     companion object : GRqDecoder<ReportGCodeMacros> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(820).head
         }

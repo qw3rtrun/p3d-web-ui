@@ -48,6 +48,10 @@ class RestoreFlashFromSD : GRq<RestoreFlashFromSD> {
 
     companion object : GRqDecoder<RestoreFlashFromSD> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(994).head
         }

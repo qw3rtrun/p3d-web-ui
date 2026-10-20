@@ -48,6 +48,10 @@ class ReportPrintTime : GRq<ReportPrintTime> {
 
     companion object : GRqDecoder<ReportPrintTime> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(31).head
         }

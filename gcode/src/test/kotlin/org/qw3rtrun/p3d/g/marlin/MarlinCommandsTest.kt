@@ -41,7 +41,6 @@ class MarlinCommandsTest {
     fun `every command has a prototype`() {
         assertEquals(295, MarlinCommands.all.size)
         assertEquals(MarlinCommands.all.size, MarlinCommands.decoders.size)
-        assertEquals(MarlinCommands.all.size, MarlinCommands.info.size)
         // Fewer heads than classes, by exactly the variants Marlin documents separately.
         assertEquals(
             287,

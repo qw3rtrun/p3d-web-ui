@@ -48,6 +48,10 @@ class InitSDCard : GRq<InitSDCard> {
 
     companion object : GRqDecoder<InitSDCard> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(21).head
         }

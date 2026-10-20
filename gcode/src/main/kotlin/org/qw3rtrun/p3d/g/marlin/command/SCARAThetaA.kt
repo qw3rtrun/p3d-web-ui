@@ -48,6 +48,10 @@ class SCARAThetaA : GRq<SCARAThetaA> {
 
     companion object : GRqDecoder<SCARAThetaA> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(360).head
         }

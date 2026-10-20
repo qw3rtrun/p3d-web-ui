@@ -56,6 +56,53 @@ interface GRq<T : GRq<T>> {
 interface GRqDecoder<out T : GRq<out T>> {
 
     /**
+     * Every parameter letter this command has a property for, upper case.
+     *
+     * The honest measure of what the class models, and the one a coverage check can be run
+     * against: `MarlinDocExamplesTest` reads it to find letters Marlin's own documentation uses
+     * and no class accepts. It is declared rather than derived because nothing below reflection
+     * can see a data class's properties, and reflection is not in this module's language.
+     *
+     * It lives here, next to [decodeParams], because the two have to agree: a letter in this set
+     * that `decodeParams` ignores is a coverage claim the class does not honour. It used to live
+     * in a third list in `MarlinCommands`, index-aligned with the decoders by hand.
+     *
+     * ```
+     * ReportHotendTemperature.letters   // [R, T]
+     * ```
+     */
+    val letters: Set<Char>
+
+    /**
+     * Whether this command takes a bare rest-of-line string - spec 3.4a, as in `M117 Hello World`.
+     *
+     * ```
+     * SetLCDMessage.bareString   // true
+     * AutoHome.bareString        // false
+     * ```
+     */
+    val bareString: Boolean
+
+    /**
+     * The command code as written: `G28`, `M104`, `G38.2`.
+     *
+     * [head]'s own text, so it cannot disagree with what the decoder answers to - the string it
+     * replaced was typed out beside each entry of a hand-kept table and survived a class rename
+     * without complaint.
+     *
+     * ```
+     * AutoHome.code   // "G28"
+     * ```
+     */
+    val code: String
+        get() {
+            val word = head()
+            val out = StringBuilder()
+            for (token in word.raw) out.append(token.rawText())
+            return out.toString()
+        }
+
+    /**
      * The command word this decoder answers to, canonically spelled: `G1`, `M104`, `G38.2`.
      *
      * ```

@@ -48,6 +48,10 @@ class SCARAPsiC : GRq<SCARAPsiC> {
 
     companion object : GRqDecoder<SCARAPsiC> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(364).head
         }

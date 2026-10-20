@@ -48,6 +48,10 @@ class ScanI2CBus : GRq<ScanI2CBus> {
 
     companion object : GRqDecoder<ScanI2CBus> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(265).head
         }

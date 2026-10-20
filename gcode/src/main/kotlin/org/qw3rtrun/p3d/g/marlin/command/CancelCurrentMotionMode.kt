@@ -48,6 +48,10 @@ class CancelCurrentMotionMode : GRq<CancelCurrentMotionMode> {
 
     companion object : GRqDecoder<CancelCurrentMotionMode> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return G(80).head
         }

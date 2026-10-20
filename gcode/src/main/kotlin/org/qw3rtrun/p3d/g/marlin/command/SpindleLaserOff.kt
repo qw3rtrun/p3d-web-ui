@@ -48,6 +48,10 @@ class SpindleLaserOff : GRq<SpindleLaserOff> {
 
     companion object : GRqDecoder<SpindleLaserOff> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(5).head
         }

@@ -48,6 +48,10 @@ class RestoreSettings : GRq<RestoreSettings> {
 
     companion object : GRqDecoder<RestoreSettings> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(501).head
         }

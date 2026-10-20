@@ -48,6 +48,10 @@ class HomeOffsetsHere : GRq<HomeOffsetsHere> {
 
     companion object : GRqDecoder<HomeOffsetsHere> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(428).head
         }

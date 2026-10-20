@@ -48,6 +48,10 @@ class FirmwareUpdate : GRq<FirmwareUpdate> {
 
     companion object : GRqDecoder<FirmwareUpdate> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(997).head
         }

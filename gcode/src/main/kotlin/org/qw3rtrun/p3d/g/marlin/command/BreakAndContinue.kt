@@ -48,6 +48,10 @@ class BreakAndContinue : GRq<BreakAndContinue> {
 
     companion object : GRqDecoder<BreakAndContinue> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(108).head
         }

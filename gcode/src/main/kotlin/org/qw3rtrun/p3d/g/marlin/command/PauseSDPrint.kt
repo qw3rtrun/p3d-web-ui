@@ -48,6 +48,10 @@ class PauseSDPrint : GRq<PauseSDPrint> {
 
     companion object : GRqDecoder<PauseSDPrint> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(25).head
         }

@@ -48,6 +48,10 @@ class AbsolutePositioning : GRq<AbsolutePositioning> {
 
     companion object : GRqDecoder<AbsolutePositioning> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return G(90).head
         }

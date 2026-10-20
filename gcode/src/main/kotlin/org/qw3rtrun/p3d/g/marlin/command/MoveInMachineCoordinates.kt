@@ -48,6 +48,10 @@ class MoveInMachineCoordinates : GRq<MoveInMachineCoordinates> {
 
     companion object : GRqDecoder<MoveInMachineCoordinates> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return G(53).head
         }

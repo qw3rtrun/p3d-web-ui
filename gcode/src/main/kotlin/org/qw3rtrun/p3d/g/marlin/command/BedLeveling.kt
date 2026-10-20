@@ -48,6 +48,10 @@ class BedLeveling : GRq<BedLeveling> {
 
     companion object : GRqDecoder<BedLeveling> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return G(29).head
         }

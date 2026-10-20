@@ -48,6 +48,10 @@ class Quickstop : GRq<Quickstop> {
 
     companion object : GRqDecoder<Quickstop> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(410).head
         }

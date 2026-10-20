@@ -48,6 +48,10 @@ class FactoryReset : GRq<FactoryReset> {
 
     companion object : GRqDecoder<FactoryReset> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(502).head
         }

@@ -3,8 +3,8 @@ package org.qw3rtrun.p3d.g.marlin.command
 import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.command.GCommand
 import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
-import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.command.GWord
+import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.dsl.M
 import org.qw3rtrun.p3d.g.code.dsl.word
 import org.qw3rtrun.p3d.g.marlin.decimalOf
@@ -60,6 +60,10 @@ data class BacklashCompensation(
     }
 
     companion object : GRqDecoder<BacklashCompensation> {
+
+        override val letters: Set<Char> = setOf('F', 'S', 'X', 'Y', 'Z')
+
+        override val bareString: Boolean = false
 
         override fun head(): GParameterWord<*> {
             return M(425).head

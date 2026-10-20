@@ -211,10 +211,10 @@ def imports_for(letter, text):
     """
     candidates = [
         (r"\bGEncoder\b", "org.qw3rtrun.p3d.g.code.core.GEncoder"),
-        (r"\bGCommand\b", "org.qw3rtrun.p3d.g.code.core.token.GCommand"),
-        (r"\bGParameterWord\b", "org.qw3rtrun.p3d.g.code.core.token.GParameterWord"),
+        (r"\bGCommand\b", "org.qw3rtrun.p3d.g.code.core.command.GCommand"),
+        (r"\bGParameterWord\b", "org.qw3rtrun.p3d.g.code.core.command.GParameterWord"),
         (r"\bGToken\b", "org.qw3rtrun.p3d.g.code.core.token.GToken"),
-        (r"\bGWord\b", "org.qw3rtrun.p3d.g.code.core.token.GWord"),
+        (r"\bGWord\b", "org.qw3rtrun.p3d.g.code.core.command.GWord"),
         (None, "org.qw3rtrun.p3d.g.code.dsl.%s" % letter),
         (None, "org.qw3rtrun.p3d.g.protocol.GRq"),
         (None, "org.qw3rtrun.p3d.g.protocol.GRqDecoder"),
@@ -403,6 +403,17 @@ def gen_class(c, name, src):
     # companion - the same split GRS/GRSDecoder already uses. `%s.decode(tokens)` is the call site.
     out.append("    companion object : GRqDecoder<%s> {" % name)
     out.append("")
+    # The letters and the rest-of-line flag describe the command *type* too, and they have to
+    # agree with decodeParams just below them. They used to be a third list in MarlinCommands,
+    # index-aligned with the decoders by hand.
+    letters = "".join(sorted({f["letter"] for f in fields if f["letter"]}))
+    out.append("        override val letters: Set<Char> = %s"
+               % ("setOf(" + ", ".join("'%s'" % ch for ch in letters) + ")"
+                  if letters else "emptySet()"))
+    out.append("")
+    out.append("        override val bareString: Boolean = %s"
+               % ("true" if c["bareString"] else "false"))
+    out.append("")
     out.append("        override fun head(): GParameterWord<*> {")
     out.append("            return %s.head" % head_call)
     out.append("        }")
@@ -516,14 +527,16 @@ def main():
         "/**",
         " * Every Marlin command this module knows how to write, and the lookup that reads one back.",
         " *",
-        " * Three views of the same %d commands - [all], [info] and [decoders] - all built in `G`"
-        % len(commands),
-        " * then `M` then `T` order and all **index-aligned**, so `all[i]`, `info[i]` and",
-        " * `decoders[i]` are the same command. Callers that need to pair a class with its metadata",
-        " * or its decoder may rely on that. The %d command classes themselves are one file each"
-        % len(commands),
-        " * under `command/`, named after the class they hold, and are star-imported here rather",
-        " * than named %d times." % len(commands),
+        " * **One list, and the rest derived from it.** [decoders] is the registry - every",
+        " * command's companion object, in `G` then `M` then `T` order - and [all] is what each",
+        " * of them reads from no tokens at all, which is the bare instance of that command.",
+        " * There were three hand-kept lists here, index-aligned by convention, and a caller that",
+        " * wanted a command's metadata and its decoder indexed into two of them and trusted the",
+        " * alignment. What a command accepts is now on the decoder itself: `letters`,",
+        " * `bareString` and `code`.",
+        " *",
+        " * The %d command classes are one file each under `command/`, named after the class they" % len(commands),
+        " * hold, and are star-imported here rather than named once each.",
         " *",
         " * [decode] is a map lookup by command head, not %d comparisons, and **a head can be"
         % len(commands),
@@ -541,27 +554,18 @@ def main():
         " *",
     ] + provenance + [
         " *",
-        " * @property all one bare instance per command - every parameter absent. This is the",
-        " *   enumeration of what the module can *write*: a bare instance encodes to exactly its",
-        " *   code, which is the claim the generated cover checks class by class. Reading is",
-        " *   [decoders]' job; nothing here needs an instance to decode against any more, because",
-        " *   `head()` and `decodeParams()` moved to each class's companion.",
-        " * @property decoders the reading half: every command's companion object, which is its",
-        " *   [GRqDecoder]. A bare class name here *is* the companion - `LinearMoveG0`, not",
-        " *   `LinearMoveG0()`.",
-        " * @property info the same commands as metadata, for callers and tests that need to ask",
-        " *   what a command accepts without building one.",
+        " * @property decoders the reading half, and the list everything else is read off: every",
+        " *   command's companion object, which is its [GRqDecoder]. A bare class name here *is*",
+        " *   the companion - `LinearMoveG0`, not `LinearMoveG0()`.",
+        " * @property all one bare instance per command - every parameter absent - which is what",
+        " *   each decoder reads from no tokens, and the enumeration of what the module can",
+        " *   *write*: a bare instance encodes to exactly its code, which is the claim the",
+        " *   generated cover checks class by class. Derived, so it cannot fall out of step with",
+        " *   [decoders] the way a second hand-kept list could.",
         " * @property ambiguousCodes the codes more than one class claims, whose [decode] is",
         " *   therefore approximate",
         " */",
         "object MarlinCommands {",
-        "",
-        "    val all: List<GRq<*>> = listOf(",
-    ]
-    for i, c in enumerate(commands):
-        registry.append("        %s()," % names[i])
-    registry += [
-        "    )",
         "",
         "    val decoders: List<GRqDecoder<*>> = listOf(",
     ]
@@ -570,39 +574,7 @@ def main():
     registry += [
         "    )",
         "",
-        "    /**",
-        "     * What one command class models: its code, its name, and the letters it accepts.",
-        "     *",
-        "     * ```",
-        "     * MarlinCommands.info.first { it.code == \"M105\" }.letters   // [R, T]",
-        "     * ```",
-        "     *",
-        "     * @property code the command's code, subcode included: `G38.2`",
-        "     * @property className the class that models it, under `command/`",
-        "     * @property letters every parameter letter the class has a property for, which is the",
-        "     *   honest measure of coverage against Marlin's own docs",
-        "     * @property bareString whether the command takes a bare rest-of-line string (spec 3.4a)",
-        "     */",
-        "    data class Info(",
-        "        val code: String,",
-        "        val className: String,",
-        "        val letters: Set<Char>,",
-        "        val bareString: Boolean,",
-        "    )",
-        "",
-        "    val info: List<Info> = listOf(",
-    ]
-    for i, c in enumerate(commands):
-        # `None` is the rest-of-line string's letter, because it has none; the `bareString`
-        # flag in the same Info is what says the command takes one.
-        letters = "".join(sorted({f["letter"] for f in all_fields[i] if f["letter"]}))
-        letter_set = ("setOf(" + ", ".join("'%s'" % ch for ch in letters) + ")"
-                      if letters else "emptySet()")
-        registry.append('        Info("%s", "%s", %s, %s),'
-                        % (c["code"], names[i], letter_set,
-                           "true" if c["bareString"] else "false"))
-    registry += [
-        "    )",
+        "    val all: List<GRq<*>> = decoders.map { it.decodeParams(emptyList()) }",
         "",
         "    private val byHead: Map<GParameterWord<*>, GRqDecoder<*>> =",
         "        decoders.groupBy { headKey(it.head()) }",
@@ -804,11 +776,11 @@ def main():
     registry_header = [
         "package org.qw3rtrun.p3d.g.marlin",
         "",
-        "import org.qw3rtrun.p3d.g.code.core.token.GParameterWord",
+        "import org.qw3rtrun.p3d.g.code.core.command.GParameterWord",
         "import org.qw3rtrun.p3d.g.code.core.token.GToken",
-        "import org.qw3rtrun.p3d.g.code.core.token.headEnd",
-        "import org.qw3rtrun.p3d.g.code.core.token.headKey",
-        "import org.qw3rtrun.p3d.g.code.core.token.headWord",
+        "import org.qw3rtrun.p3d.g.code.core.command.headEnd",
+        "import org.qw3rtrun.p3d.g.code.core.command.headKey",
+        "import org.qw3rtrun.p3d.g.code.core.command.headWord",
         "import org.qw3rtrun.p3d.g.marlin.command.*",
         "import org.qw3rtrun.p3d.g.protocol.GRq",
         "import org.qw3rtrun.p3d.g.protocol.GRqDecoder",
@@ -833,10 +805,10 @@ def main():
         "import org.junit.jupiter.api.Assertions.assertTrue",
         "import org.junit.jupiter.api.Test",
         "import org.qw3rtrun.p3d.g.code.core.GEncoder",
-        "import org.qw3rtrun.p3d.g.code.core.token.GCommand",
+        "import org.qw3rtrun.p3d.g.code.core.command.GCommand",
         "import org.qw3rtrun.p3d.g.code.core.token.GToken",
         "import org.qw3rtrun.p3d.g.code.core.token.GTokenizer",
-        "import org.qw3rtrun.p3d.g.code.core.token.headEnd",
+        "import org.qw3rtrun.p3d.g.code.core.command.headEnd",
         "import org.qw3rtrun.p3d.g.code.dsl.M",
         "import org.qw3rtrun.p3d.g.marlin.command.*",
         "import java.math.BigDecimal",
@@ -866,7 +838,6 @@ def main():
         "    fun `every command has a prototype`() {",
         "        assertEquals(%d, MarlinCommands.all.size)" % len(commands),
         "        assertEquals(MarlinCommands.all.size, MarlinCommands.decoders.size)",
-        "        assertEquals(MarlinCommands.all.size, MarlinCommands.info.size)",
         "        // Fewer heads than classes, by exactly the variants Marlin documents separately.",
         "        assertEquals(",
         "            %d," % len({c["code"] for c in commands}),

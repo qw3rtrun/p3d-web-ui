@@ -48,6 +48,10 @@ class CoolantControlsM9 : GRq<CoolantControlsM9> {
 
     companion object : GRqDecoder<CoolantControlsM9> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(9).head
         }

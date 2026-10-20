@@ -48,6 +48,10 @@ class Recover : GRq<Recover> {
 
     companion object : GRqDecoder<Recover> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return G(11).head
         }

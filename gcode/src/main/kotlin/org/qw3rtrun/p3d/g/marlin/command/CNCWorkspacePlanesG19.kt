@@ -48,6 +48,10 @@ class CNCWorkspacePlanesG19 : GRq<CNCWorkspacePlanesG19> {
 
     companion object : GRqDecoder<CNCWorkspacePlanesG19> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return G(19).head
         }

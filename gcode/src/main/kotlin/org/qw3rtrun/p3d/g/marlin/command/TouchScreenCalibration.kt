@@ -48,6 +48,10 @@ class TouchScreenCalibration : GRq<TouchScreenCalibration> {
 
     companion object : GRqDecoder<TouchScreenCalibration> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(995).head
         }

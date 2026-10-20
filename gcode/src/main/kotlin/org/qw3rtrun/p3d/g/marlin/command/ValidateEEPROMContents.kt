@@ -48,6 +48,10 @@ class ValidateEEPROMContents : GRq<ValidateEEPROMContents> {
 
     companion object : GRqDecoder<ValidateEEPROMContents> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(504).head
         }

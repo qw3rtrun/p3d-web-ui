@@ -48,6 +48,10 @@ class MillimeterUnits : GRq<MillimeterUnits> {
 
     companion object : GRqDecoder<MillimeterUnits> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return G(21).head
         }

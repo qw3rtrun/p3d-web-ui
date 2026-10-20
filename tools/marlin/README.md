@@ -57,11 +57,16 @@ that the extracted letters match what Marlin's own authors write.
   optional, and `M105` and `M105 T0` are different commands, so an unset parameter must not reach
   the wire. Flags are `Boolean = false` rather than nullable, because absent and false are the same
   thing for a letter that carries no value.
-- **The reading half is a `companion object : GRQDecoder<T>`.** `head()` and `decodeParams()`
-  describe the command *type*, not one command, so they sit on the companion and a call site reads
+- **The reading half is a `companion object : GRqDecoder<T>`, and it carries the metadata too.**
+  `head()`, `decodeParams()`, `letters` and `bareString` describe the command *type*, not one
+  command, so they sit on the companion and a call site reads
   `ReportHotendTemperature.decode(cmd)` with no instance. `MarlinCommands.decoders` lists the 295
-  companions and `byHead` is built from that; `MarlinCommands.all` stays as the bare-instance
-  enumeration the tests sweep. `all`, `info` and `decoders` are index-aligned.
+  companions and is the **only** list the generator emits: `byHead` is built from it, and
+  `MarlinCommands.all` - the bare-instance enumeration the tests sweep - is
+  `decoders.map { it.decodeParams(emptyList()) }`, which is what each decoder reads from no tokens
+  at all. There used to be three lists here (`all`, `info`, `decoders`), index-aligned by
+  convention, with `info` repeating each command's letters as a fourth copy of data the class
+  already held and its class name as a string that survived renames.
 - **The 93 parameterless classes keep a hand-rolled `equals`/`hashCode`.** They are `class X`, not
   `object`, because `X()` call sites exist in the facade and in hand-written tests, and their
   companion's `decodeParams` therefore has to return `X()` rather than `this`. The `hashCode`

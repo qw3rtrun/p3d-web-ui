@@ -48,6 +48,10 @@ class VacuumBlowerControlM11 : GRq<VacuumBlowerControlM11> {
 
     companion object : GRqDecoder<VacuumBlowerControlM11> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(11).head
         }

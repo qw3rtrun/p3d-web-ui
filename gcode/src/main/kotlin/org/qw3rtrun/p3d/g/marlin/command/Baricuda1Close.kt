@@ -48,6 +48,10 @@ class Baricuda1Close : GRq<Baricuda1Close> {
 
     companion object : GRqDecoder<Baricuda1Close> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(127).head
         }

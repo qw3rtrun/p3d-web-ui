@@ -125,7 +125,7 @@ class MarlinDocExamplesTest {
                 val code = codeOf(cmd) ?: continue
                 if (code in restOfLineArgument || code in undocumentedCodes) continue
 
-                val known = MarlinCommands.info.filter { it.code == code }
+                val known = MarlinCommands.decoders.filter { it.code == code }
                 if (known.isEmpty()) {
                     missing.add("$block  ->  no command class for $code")
                     continue
@@ -155,7 +155,7 @@ class MarlinDocExamplesTest {
     fun `every example resolves to a command class`() {
         val unresolved = examples
             .filter { codeOf(it) !in undocumentedCodes }
-            .filter { block -> MarlinCommands.info.none { it.code == codeOf(block) } }
+            .filter { block -> MarlinCommands.decoders.none { it.code == codeOf(block) } }
 
         assertEquals(emptyList<String>(), unresolved)
     }
@@ -189,12 +189,9 @@ class MarlinDocExamplesTest {
                 val code = codeOf(cmd) ?: continue
                 if (code in restOfLineArgument || code in undocumentedCodes) continue
 
-                // `info` and `decoders` are index-aligned, so the metadata picks the variants and
-                // the same indices give their decoders. Decoding is on the companion now, so the
-                // instances in `all` have nothing to answer with.
-                val variants = MarlinCommands.info.indices
-                    .filter { MarlinCommands.info[it].code == code }
-                    .map { MarlinCommands.decoders[it] }
+                // A decoder answers for its own code, so the variants are a filter rather than
+                // two lists indexed in step.
+                val variants = MarlinCommands.decoders.filter { it.code == code }
                 if (variants.isEmpty()) continue
 
                 val undocumented = undocumentedUpstream[code] ?: emptySet()

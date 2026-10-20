@@ -48,6 +48,10 @@ class FilamentWidthSensorOff : GRq<FilamentWidthSensorOff> {
 
     companion object : GRqDecoder<FilamentWidthSensorOff> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(406).head
         }

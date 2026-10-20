@@ -48,6 +48,10 @@ class PrintJobStats : GRq<PrintJobStats> {
 
     companion object : GRqDecoder<PrintJobStats> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(78).head
         }

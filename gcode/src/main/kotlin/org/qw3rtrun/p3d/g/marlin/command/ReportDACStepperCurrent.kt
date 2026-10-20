@@ -48,6 +48,10 @@ class ReportDACStepperCurrent : GRq<ReportDACStepperCurrent> {
 
     companion object : GRqDecoder<ReportDACStepperCurrent> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(909).head
         }

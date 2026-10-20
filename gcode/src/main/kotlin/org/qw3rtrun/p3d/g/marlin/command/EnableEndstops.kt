@@ -48,6 +48,10 @@ class EnableEndstops : GRq<EnableEndstops> {
 
     companion object : GRqDecoder<EnableEndstops> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(120).head
         }

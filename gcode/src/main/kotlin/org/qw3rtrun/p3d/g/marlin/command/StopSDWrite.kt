@@ -48,6 +48,10 @@ class StopSDWrite : GRq<StopSDWrite> {
 
     companion object : GRqDecoder<StopSDWrite> {
 
+        override val letters: Set<Char> = emptySet()
+
+        override val bareString: Boolean = false
+
         override fun head(): GParameterWord<*> {
             return M(29).head
         }

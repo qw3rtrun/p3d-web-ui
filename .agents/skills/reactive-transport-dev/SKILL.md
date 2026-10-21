@@ -262,10 +262,44 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   a `:gcode` type in its public signature. It compiles only because `:backend:api` declares `:gcode`
   itself; a consumer that does not would fail. The fix is `api` rather than `implementation`, which
   needs the `java-library` plugin in `p3d.java-conventions`.
-- **`HostTerminal.onResend` and `onWait` are empty** with `// TODO Unsupported yet`. A `Resend:`
-  from the printer is how it asks for a line back after a checksum failure; ignoring it means the
-  print is already wrong and the host does not know. `:gcode`'s `GSendWindow` holds the replay
-  buffer this needs.
+- **The host does not number its outbound lines, so the whole resend loop is missing.**
+  `CommandProcessor.onNext` writes `gCode + "\n"` - no `N`, no `*` - and `onWait` is still an empty
+  `// TODO Unsupported yet`. `onResend` now logs the request it cannot answer instead of dropping
+  it, which is the honest half of the gap and not a fix. Four things are needed and none is here:
+  numbering and checksumming outbound blocks, acknowledging them, replaying on `Resend:`, and
+  `M110` counter resets. What was established while scoping it, so it is not re-derived:
+
+  - **Numbering has to happen in `CommandProcessor.onNext` and nowhere earlier.** `PublisherQueue`
+    reorders by `Priority`, so a number assigned upstream of it reaches the wire out of sequence,
+    which is the one thing Marlin rejects outright.
+  - **`:gcode`'s `GSendWindow` is the machine and must not be rebuilt here** - it has the framing,
+    the replay buffer, `acknowledge`/`canResendFrom`/`resendFrom`/`reset` and its own tests. The
+    transport cannot reach it: `send` takes a `GCommand`, the pipeline carries `String` from
+    `GSender` onwards, and there is **no text-to-`GCommand` path in `:gcode`'s main source set** -
+    `GWordReader` lives in `gcode/src/test` and `GCommandParser` was retired there on purpose. The
+    recommended fix is a `GSendWindow.send(payload: String)` in `:gcode` that frames already-rendered
+    bytes, with `send(GCommand)` delegating through `GEncoder.encode`. Making the pipeline carry
+    `GCommand` instead is the alternative and is worse: `GSender.send(GBlockDraft)` has no
+    counterpart on `GSendWindow`, and every raw-text sender dies with it - `GCodeCorpusProbe`'s
+    corpus replay, `TerminalRecoveryProbe`'s hand-fed `N3 M105*1`, and any operator console.
+  - **Two counters, one gate.** `sentWithoutAck` is the printer's planner occupancy and `onBusy`
+    zeroes it; `GSendWindow.inFlight` is what the host must still be able to replay and a `busy:`
+    must *not* clear it, because those are exactly the bytes a later `Resend:` asks for. They are
+    different quantities and diverge at `onBusy`, so neither replaces the other - but there must
+    still be one gate, which means `canProcess()` gains a third term, `capacity - windowInFlight -
+    requestedFromGCode`, so `send` can never refuse a command already pulled. A `send` returning
+    null with a command in hand is a silent drop, which is the failure this module exists to stop.
+  - **`resendFrom(n)` re-occupies planner slots too**, so `sentWithoutAck.inc(replay.size())` has to
+    move in the same step, through the existing `Requested`.
+  - **`GSendWindow` is portable Kotlin with no atomics and is not thread-safe.** `send` runs on the
+    producer thread inside the `wip` drain loop; `acknowledge` and `resendFrom` would be called from
+    the netty inbound thread. They have to be queued and applied inside `processRequest()`, not
+    inline.
+  - **The `ok` that follows `Error:` / `Resend:` must not `acknowledge()`.** Marlin answers a
+    rejected block with `Error:`, `Resend: n`, then `ok`; that `ok` frees a planner slot but
+    acknowledges no block, and letting it reach `acknowledge()` would discard the very block the
+    rewind just made outstanding again. Confirmed on the simulator - see the trace in
+    `TerminalRecoveryProbe`'s notes.
 - **`CommandProcessor.onComplete` has `subscriber.onComplete()` commented out**, so upstream
   completion is swallowed. Deliberate or not, it is undocumented.
 - **`PublisherQueue` uses a `PriorityQueue` with partial synchronisation** - `request0` is

@@ -128,8 +128,38 @@ public class HostTerminal {
         emit(busy);
     }
 
+    /**
+     * The printer wants a line back, and this host has none to give it.
+     *
+     * <p>{@code Resend: n} is spec 8.5 step 5: the firmware rejected a numbered block - a bad
+     * checksum, or a gap in the sequence - and discards everything that follows until it sees
+     * {@code n} again. Answering it means replaying the exact bytes of block {@code n} and of every
+     * block sent after it.
+     *
+     * <p><strong>This host cannot, because it does not number what it sends.</strong>
+     * {@link CommandProcessor#onNext} writes the G-code text as it arrived - no {@code N} field, no
+     * {@code *} checksum - so Marlin's sequence and checksum checks never apply to it and a normal
+     * session never provokes a resend. One that does arrive is about a numbered line a caller
+     * hand-fed through the queue, and the host has not kept it.
+     *
+     * <p>Closing the gap means numbering, checksumming, acknowledging and replaying outbound
+     * blocks. {@code :gcode}'s {@code GSendWindow} is exactly that machine and must not be built a
+     * second time here - but the transport cannot reach it as things stand: {@code GSendWindow.send}
+     * takes a {@code GCommand}, this pipeline carries {@code String} from {@code GSender} onwards,
+     * and {@code :gcode}'s main source set has no text-to-command path to bridge the two. The
+     * numbering itself has to happen here and nowhere earlier, because {@link PublisherQueue}
+     * reorders by {@link org.qw3rtrun.p3d.terminal.msg.Priority} and a number assigned upstream of
+     * it would reach the wire out of sequence. The skill's debt list carries the rest.
+     *
+     * <p>Logged and not ignored. There is no recovery to attempt - a host that cannot replay the
+     * block cannot repair the sequence either - but this is the moment a print stops being what the
+     * caller asked for, and it should not pass in silence. Nothing is published: a {@code Resend:}
+     * is protocol traffic the transport owns, and once the replay loop exists it will say nothing a
+     * subscriber needs, exactly like an advanced {@code ok}.
+     */
     void onResend(int lineNumber) {
-        // TODO Unsupported yet
+        log.warn("IN: Resend: {} - the printer asked for a line back; this host does not number what"
+                + " it sends and cannot replay it, so the session is out of sync from here", lineNumber);
     }
 
     void onWait() {

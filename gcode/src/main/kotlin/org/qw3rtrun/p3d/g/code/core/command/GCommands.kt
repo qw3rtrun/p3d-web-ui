@@ -1,7 +1,6 @@
 package org.qw3rtrun.p3d.g.code.core.command
 
 import org.qw3rtrun.p3d.g.code.core.token.GComment
-import org.qw3rtrun.p3d.g.code.core.token.GEmptyId
 import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
 import org.qw3rtrun.p3d.g.code.core.token.GNumber
 import org.qw3rtrun.p3d.g.code.core.token.GString
@@ -9,7 +8,8 @@ import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GValue
 
 /**
- * A field: an identifier and, usually, the value behind it (GCODE_spec.md section 3).
+ * A field of a command (GCODE_spec.md section 3): usually an identifier and the value behind it,
+ * and in one case a value with no identifier at all.
  *
  * Words are **this** layer's vocabulary, not the block layer's. A block is classified from its tokens -
  * where `N` is and where the last `*` is - and nothing above that needs a word until someone asks
@@ -19,20 +19,43 @@ import org.qw3rtrun.p3d.g.code.core.token.GValue
  * with the corpus tests; a host that wants to know what a block commands asks a decoder, which knows
  * the command number and can therefore read what words cannot (spec 3.4a).
  *
+ * **A word is named or it is not**, and the split is this interface's whole job. Almost every field
+ * has an identifier - [GNamedWord] - and spec 3.4a's bare rest-of-line string has none, so it is a
+ * [GUnnamedStr] and carries no `id` to read. The alternative, kept here for a while, was an empty
+ * identifier token that every unnamed word pointed at so the encoder could write a name
+ * unconditionally; that put a token no lexer ever produces into `core.token`, where it existed only
+ * to satisfy this layer's interface, and let `isChar` be asked of a word that has no character.
+ *
  * ```
  * GParameterWord(GLetter('X'), GInt(10)).isChar('x')   // true
  * ```
  *
- * @property id the field's identifier
  * @property raw the tokens this word was read from, spelling included: `X  10` is one word holding
  *   two spaces. Provenance, not identity, and not what round-trips a block - `GBlock.raw` is. A word
  *   built by the DSL carries the canonical `[id, value]`; one read from `G 1` carries the space as
  *   well.
  */
 sealed interface GWord {
-    val id: GIdentifier
 
     val raw: List<GToken>
+}
+
+/**
+ * A field that carries an identifier: every word but spec 3.4a's bare string.
+ *
+ * What a caller narrows to when it wants to ask *which* field this is - the letter, or the `*` of a
+ * checksum field. A [GUnnamedStr] cannot answer that question and is not this type, so the
+ * narrowing is the question rather than a null check after it.
+ *
+ * ```
+ * GFlagWord(GLetter('X')).isChar('x')   // true
+ * ```
+ *
+ * @property id the field's identifier
+ */
+sealed interface GNamedWord : GWord {
+
+    val id: GIdentifier
 
     /**
      * Whether this word's identifier is the single character [l], case-insensitively -
@@ -42,8 +65,8 @@ sealed interface GWord {
      * GParameterWord(GLetter('X'), GInt(10)).isChar('x')   // true
      * ```
      *
-     * @param l the letter to compare against, in either case
-     * @return true when [id] is that letter
+     * @param l the character to compare against, in either case
+     * @return true when [id] is that character
      */
     fun isChar(l: Char): Boolean = id.isChar(l)
 }
@@ -61,7 +84,7 @@ data class GParameterWord<V : GValue>(
     override val id: GIdentifier,
     val value: V,
     override val raw: List<GToken> = listOf(id, value),
-) : GWord
+) : GNamedWord
 
 /**
  * A field with no value after it: the `X` of `G28 X Y`, or a `*` with nothing usable behind it.
@@ -73,7 +96,7 @@ data class GParameterWord<V : GValue>(
 data class GFlagWord(
     override val id: GIdentifier,
     override val raw: List<GToken> = listOf(id),
-) : GWord
+) : GNamedWord
 
 /**
  * A field with no identifier in front of it: spec 3.4a's bare rest-of-line string, as in
@@ -83,11 +106,12 @@ data class GFlagWord(
  * such an argument at all (see `GRqDecoder`); the token layer lexes `Hello World` letter by letter
  * and the command parser never assembles one.
  *
- * [id] is [GEmptyId] so that a `GWord` always has one and `GEncoder` can write it
- * unconditionally - it renders as nothing. That is the compromise: the honest shape splits `GWord` into a named half
- * and an unnamed one and lets `GEmptyId` disappear, which touches the DSL's parameter check, the
- * parser's structural test, the encoder and every generated `encode()`. Not worth it for one
- * unnamed word type; revisit when there is a second.
+ * It carries **no identifier**, and that is the point: there is nothing to put there. It used to
+ * answer `GEmptyId`, a token the lexer never produces, so that `GWord` could promise an `id` and
+ * the encoder could write one unconditionally - which bought a single line in `appendWord` and cost
+ * a type in `core.token` whose only reason to exist was this interface, plus an `isChar` that could
+ * be asked of a word with no character and always answered false. The encoder already matches on
+ * the word kind, so it writes the identifier in the two branches that have one.
  *
  * This replaced a `GUnnamedWord<V : GValue>` interface whose type parameter appeared nowhere in
  * its body and which had this as its only implementation.
@@ -102,10 +126,7 @@ data class GFlagWord(
 data class GUnnamedStr(
     val str: GString,
     override val raw: List<GToken> = listOf(str),
-) : GWord {
-    override val id: GIdentifier
-        get() = GEmptyId
-}
+) : GWord
 
 /**
  * Something that can stand in a [GBlockDraft]: a [GCommand] or a [GCommentPart]. Sealed, and both

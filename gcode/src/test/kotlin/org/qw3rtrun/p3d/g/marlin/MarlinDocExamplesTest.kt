@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.command.GCommand
+import org.qw3rtrun.p3d.g.code.core.command.GNamedWord
+import org.qw3rtrun.p3d.g.code.core.command.GWord
 import org.qw3rtrun.p3d.g.code.core.command.GWordReader
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.token.GSpace
@@ -46,9 +48,19 @@ class MarlinDocExamplesTest {
      * command is what made this test blame G53 for parameters it never had.
      */
     private fun codeOf(cmd: GCommand): String? {
-        val letter = (cmd.head.id as? GLetter)?.letter?.uppercaseChar() ?: return null
+        val letter = cmd.head.letterOrNull() ?: return null
         return letter + cmd.head.value.lexeme
     }
+
+    /**
+     * The letter this word carries, upper case, or null when it carries none.
+     *
+     * A `GUnnamedStr` - spec 3.4a's bare rest-of-line string - is not a [GNamedWord] and has no
+     * letter to report, so every caller here skips it, which is what they all meant when they
+     * asked whether the identifier was a `GLetter`.
+     */
+    private fun GWord.letterOrNull(): Char? =
+        ((this as? GNamedWord)?.id as? GLetter)?.letter?.uppercaseChar()
 
     /**
      * A parsed command's parameters back as tokens - what a decoder is handed.
@@ -137,7 +149,7 @@ class MarlinDocExamplesTest {
                     (undocumentedUpstream[code] ?: emptySet())
 
                 for (word in cmd.params) {
-                    val letter = (word.id as? GLetter)?.letter?.uppercaseChar() ?: continue
+                    val letter = word.letterOrNull() ?: continue
                     if (letter !in modelled) {
                         missing.add(
                             "$block  ->  $code has no property for '$letter' " +
@@ -196,13 +208,13 @@ class MarlinDocExamplesTest {
 
                 val undocumented = undocumentedUpstream[code] ?: emptySet()
                 val wanted = cmd.params
-                    .mapNotNull { (it.id as? GLetter)?.letter?.uppercaseChar() }
+                    .mapNotNull { it.letterOrNull() }
                     .filter { it !in undocumented }
                 if (wanted.isEmpty()) continue
 
                 val bestKept = variants.maxOf { decoder ->
                     val kept = decoder.decodeParams(paramTokens(cmd)).encode().params
-                        .mapNotNull { (it.id as? GLetter)?.letter?.uppercaseChar() }
+                        .mapNotNull { it.letterOrNull() }
                         .toSet()
                     wanted.count { it in kept }
                 }

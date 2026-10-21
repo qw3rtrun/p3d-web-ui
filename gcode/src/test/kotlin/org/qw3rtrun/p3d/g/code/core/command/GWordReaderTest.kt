@@ -9,6 +9,8 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.qw3rtrun.p3d.g.code.core.block.GBlock
 import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
+import org.qw3rtrun.p3d.g.code.core.command.GUnnamedStr
+import org.qw3rtrun.p3d.g.code.core.command.GWord
 import org.qw3rtrun.p3d.g.code.core.token.GChecksum
 import org.qw3rtrun.p3d.g.code.core.token.GFloat
 import org.qw3rtrun.p3d.g.code.core.token.GInt
@@ -86,8 +88,12 @@ class GWordReaderTest {
         }
 
         /** Compares words by identity and value, ignoring the raw tokens whitespace changes. */
-        private fun strip(w: GWord): GWord =
-            if (w is GParameterWord<*>) GParameterWord(w.id, w.value) else GFlagWord(w.id)
+        private fun strip(w: GWord): GWord = when (w) {
+            is GParameterWord<*> -> GParameterWord(w.id, w.value)
+            is GFlagWord -> GFlagWord(w.id)
+            // Nothing to strip: an unnamed string's raw is the string itself.
+            is GUnnamedStr -> w
+        }
     }
 
     @Nested

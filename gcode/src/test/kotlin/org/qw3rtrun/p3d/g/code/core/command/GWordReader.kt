@@ -10,7 +10,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GValue
 
 /**
- * The **command-agnostic** reading of a block: every field into a [GWord], the words grouped into
+ * The **command-agnostic** reading of a block: every field into a [GNamedWord], the words grouped into
  * [GCommand]s. Test apparatus, and deliberately not production code.
  *
  * Production reads a block with `MarlinCommands.decode` (or one command class's `decode`), which is
@@ -55,8 +55,8 @@ object GWordReader {
      * Everything that is not a field - separators, comments, the terminator, an unknown character -
      * is simply dropped. It is already in `GBlock.raw`, which is what reproduces the input.
      */
-    fun words(tokens: List<GToken>): List<GWord> {
-        val words = ArrayList<GWord>()
+    fun words(tokens: List<GToken>): List<GNamedWord> {
+        val words = ArrayList<GNamedWord>()
         var i = 0
         while (i < tokens.size) {
             val token = tokens[i]
@@ -82,7 +82,7 @@ object GWordReader {
         return words
     }
 
-    fun parse(words: List<GWord>): List<GCommand> {
+    fun parse(words: List<GNamedWord>): List<GCommand> {
         val commands = ArrayList<GCommand>()
         var head: GParameterWord<GNumber>? = null
         var params = ArrayList<GWord>()
@@ -132,7 +132,7 @@ object GWordReader {
      * is the first character of the block (`queue.cpp`: `npos = (*command == 'N') ? command : nullptr`),
      * and then looks for a *second* `N` precisely because `M110`'s argument is one.
      */
-    private fun isStructural(word: GWord, first: Boolean): Boolean {
+    private fun isStructural(word: GNamedWord, first: Boolean): Boolean {
         val id = word.id
         if (id == GChecksum) return true
         if (!first) return false
@@ -143,7 +143,7 @@ object GWordReader {
      * [word] as a command word, or null when it is not one. [first] is true while no command has
      * started yet, which is the only position a `T` may head one.
      */
-    private fun commandHead(word: GWord, first: Boolean): GParameterWord<GNumber>? {
+    private fun commandHead(word: GNamedWord, first: Boolean): GParameterWord<GNumber>? {
         // spec 4.3: only A-Z are identifiers. `*` is a GChecksum, structural, never a command.
         val id = word.id
         if (id !is GLetter) return null

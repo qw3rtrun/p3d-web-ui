@@ -905,13 +905,22 @@ block layer never asks what a block *commands*.
 
 | Spec concept | Type |
 |---|---|
-| A field ([§3](#3-value-types)) | `GWord`: a `GParameterWord` (identifier + value), a `GFlagWord` (identifier alone, [§3.2](#32-flag-value-less-parameters)), or a `GUnnamedStr` (value alone — [§3.4](#34-string-values)a's bare string, whose `id` is the empty `GEmptyId` so that every word has one) |
+| A field ([§3](#3-value-types)) | `GWord`, split on whether it has an identifier: a `GNamedWord` is a `GParameterWord` (identifier + value) or a `GFlagWord` (identifier alone, [§3.2](#32-flag-value-less-parameters)); a `GUnnamedStr` is value alone — [§3.4](#34-string-values)a's bare string — and carries no `id` to read |
 | One command + its parameters ([§4](#4-identifiers-field-letters)) | `GCommand(head: GParameterWord<GNumber>, params: List<GWord>)` |
 | A block being built ([§5](#5-line-block-structure)), for `GEncoder` | `GBlockDraft(parts: List<GBlockPart>)` — a `GBlockPart` is sealed and is either a `GCommand` or a `GCommentPart(comment: GComment)`. A comment *token* is wrapped rather than being a block part itself, so `core/token` names nothing in this layer |
 
 A word carries `raw`, the tokens it was read from, spelling included — provenance, not identity.
 What round-trips a block is `GBlock.raw` one layer down, so a word built by the DSL may carry the
 canonical `[id, value]` while one read from `G 1` carries the space as well, and neither is wrong.
+
+**A word is named or it is not**, and only a `GNamedWord` has an `id`. [§3.4](#34-string-values)a's
+bare rest-of-line string has no identifier in front of it, so `GUnnamedStr` carries none and a
+caller that wants a letter narrows to `GNamedWord` first. It used to answer an empty-name
+identifier token, `GEmptyId`, so that `GWord` could promise an `id` and the encoder could write one
+unconditionally — which put a token the lexer never produces into `core/token`, where it existed
+only to satisfy an interface two layers up, and let "is this the letter X?" be asked of a word with
+no letter. The encoder already matches on the word kind, so it writes the identifier in the two
+branches that have one.
 
 **Reading a block into commands is a decoder's job, not a second pass of the block layer's.**
 `GHead.kt` carries what reading still owes, as functions over tokens rather than a parser object:

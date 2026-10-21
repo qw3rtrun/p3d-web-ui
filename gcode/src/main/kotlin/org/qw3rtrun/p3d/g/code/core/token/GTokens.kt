@@ -76,10 +76,9 @@ sealed interface GIdentifier : GToken {
      * Anything else is compared unchanged - including a Unicode letter that happens to lowercase to
      * an ASCII one - and therefore compares unequal to every ASCII identifier.
      *
-     * **Character, not letter.** `GChecksum.isChar('*')` is true - `*` folds to itself - and
-     * `GEmptyId.isChar(c)` is false for every `c`, an empty name being no character at all. It was
-     * called `isLetter` while only `GLetter` mattered to its callers, which read as a promise that
-     * the identifier was a letter; the name now says what the comparison actually does (todo 07).
+     * **Character, not letter.** `GChecksum.isChar('*')` is true - `*` folds to itself - which is
+     * why the name is not `isLetter`: it was called that while only `GLetter` mattered to its
+     * callers, and it read as a promise that the identifier was a letter (todo 07).
      *
      * ```
      * GLetter('x').isChar('X')   // true
@@ -125,20 +124,6 @@ data class GUnknown(val str: String) : GToken {
 data class GLetter(val letter: Char) : GIdentifier {
     override val name: String
         get() = letter.toString()
-}
-
-/**
- * The identifier of a field that has none: the bare rest-of-line string of spec 3.4a, as in
- * `M117 Hello World`. It renders as nothing, so a `GUnnamedStr` can carry an identifier like every
- * other word and still reach the wire as only its text.
- *
- * ```
- * GEmptyId.rawText()   // ""
- * ```
- */
-object GEmptyId : GIdentifier {
-    override val name: String
-        get() = ""
 }
 
 /**

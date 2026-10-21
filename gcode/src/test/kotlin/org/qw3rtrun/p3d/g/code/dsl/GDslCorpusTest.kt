@@ -2,17 +2,18 @@ package org.qw3rtrun.p3d.g.code.dsl
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.GEncoder
+import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.command.GBlockDraft
 import org.qw3rtrun.p3d.g.code.core.command.GBlockPart
 import org.qw3rtrun.p3d.g.code.core.command.GFlagWord
-import org.qw3rtrun.p3d.g.code.core.block.GBlock
+import org.qw3rtrun.p3d.g.code.core.command.GNamedWord
 import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.command.GUnnamedStr
 import org.qw3rtrun.p3d.g.code.core.command.GWord
-import org.qw3rtrun.p3d.g.code.core.token.*
 import org.qw3rtrun.p3d.g.code.core.command.GWordReader
+import org.qw3rtrun.p3d.g.code.core.token.*
 
 /**
  * The rule, as a number: **any valid G-code can be written with the DSL**.
@@ -54,15 +55,15 @@ class GDslCorpusTest {
             if (id !is GLetter) return null
             val params = ArrayList<GWord>()
             for (p in cmd.params) {
+                // A bare rest-of-line string is not something this rewrite can reach: the reader
+                // never builds one (it would need the command number), and it carries no letter to
+                // rewrite from - which is now the type saying so rather than a guard on an empty id.
+                if (p !is GNamedWord) return null
                 val pid = p.id
                 if (pid !is GLetter) return null
                 params.add(
                     when (p) {
                         is GFlagWord -> flag(pid.letter)
-                        // A bare rest-of-line string is not something this rewrite can reach: the
-                        // parser never builds one (it would need the command number), and the
-                        // `pid !is GLetter` guard above has already returned for its empty id.
-                        is GUnnamedStr -> return null
                         is GParameterWord<*> -> when (val v = p.value) {
                             is GNumber -> word(pid.letter, v.lexeme)
                             is GQuotedString -> word(pid.letter, text(v.string))

@@ -50,7 +50,7 @@ object GEncoder {
      * Within a word there is no separator: the identifier is followed immediately by its value, so
      * a value's lexeme is what reaches the wire (`X10.50` stays `X10.50`, see `GNumber`).
      *
-     * A [GUnnamedStr] has no identifier to write - `GEmptyId` renders as nothing - and its value is
+     * A [GUnnamedStr] has no identifier to write - it is not a `GNamedWord` - and its value is
      * spec 3.4a's bare rest-of-line string, so it reaches the wire undelimited and, being the rest
      * of the line, only ever last. Nothing here enforces that position: a command carrying one is
      * built by the command that documents it, and the single space before each field is what
@@ -185,11 +185,14 @@ object GEncoder {
         frame(number, GBlockDraft(listOf(command)), checksum)
 
     private fun appendWord(out: StringBuilder, word: GWord) {
-        out.append(word.id.rawText())
         when (word) {
-            is GParameterWord<*> -> out.append(word.value.rawText())
+            is GParameterWord<*> -> {
+                out.append(word.id.rawText())
+                out.append(word.value.rawText())
+            }
+
+            is GFlagWord -> out.append(word.id.rawText())
             is GUnnamedStr -> out.append(word.str.rawText())
-            is GFlagWord -> {}
         }
     }
 }

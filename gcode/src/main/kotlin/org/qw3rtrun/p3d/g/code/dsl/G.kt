@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.g.code.dsl
 import org.qw3rtrun.p3d.g.code.core.command.GBlockDraft
 import org.qw3rtrun.p3d.g.code.core.command.GBlockPart
 import org.qw3rtrun.p3d.g.code.core.command.GCommand
+import org.qw3rtrun.p3d.g.code.core.command.GNamedWord
 import org.qw3rtrun.p3d.g.code.core.command.GWord
 import org.qw3rtrun.p3d.g.code.core.command.isCommandNumber
 import org.qw3rtrun.p3d.g.code.core.token.*
@@ -188,7 +189,7 @@ fun command(letter: Char, lexeme: String, vararg params: GWord): GCommand {
         "spec 4.1: a command number is an unsigned integer with an optional subcode, got '$lexeme'"
     }
     for (param in params) {
-        require(param.id != GChecksum) {
+        require(param !is GNamedWord || param.id != GChecksum) {
             "spec 8: `*` is the block's checksum field, not a parameter - use GEncoder.frame"
         }
     }

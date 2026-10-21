@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.g.marlin.event
 
 import org.qw3rtrun.p3d.g.protocol.BusyRs
 import org.qw3rtrun.p3d.g.protocol.GEventRs
+import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
@@ -94,20 +95,25 @@ data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
 /**
  * `echo:busy: <reason>` - Marlin's keepalive, saying it is working and not hung.
  *
- * **The Marlin spelling of a base-protocol reply.** `BusyRs` in `protocol/` is the canonical one and
- * reads the bare `busy: processing` the RepRap protocol describes; Marlin writes the same notice
- * through its echo channel, because `host_keepalive()` goes out with `SERIAL_ECHO_MSG`, so the
- * prefix is there and `BusyRs` never fires against it. A live probe found this: on a real printer,
- * `echo:busy: processing` was arriving as undifferentiated [EchoMessage] text and a host watching
- * for a typed busy reply saw nothing at all while the machine homed.
+ * **Both a [BusyRs] and an [EchoRs], because it is both.** What it reports is the base protocol's
+ * busy notice; how it arrives is Marlin's echo channel, since `host_keepalive()` goes out with
+ * `SERIAL_ECHO_MSG`. A host that wants to know the machine is busy matches `BusyRs<*>` and is
+ * answered whichever firmware is on the other end; one routing or re-emitting echo traffic matches
+ * `EchoRs<*>` and gets this too. Neither view has to know the other exists.
  *
- * The two are kept apart rather than merged. `BusyRs` is what the protocol says and other firmwares
- * send; this is what Marlin sends, and it round-trips to its own spelling rather than re-encoding to
- * a line Marlin does not write. [reason] is the same string on both, so the constants to compare it
- * against are [BusyRs.PROCESSING], [BusyRs.PAUSED_FOR_USER] and [BusyRs.PAUSED_FOR_INPUT].
+ * `SimpleBusyRs` is the bare `busy: processing` the RepRap protocol describes and is left exactly
+ * as it is - it is what other firmwares send - so the two spellings stay separate values that each
+ * round-trip to their own form rather than one re-encoding to a line its printer never writes.
+ * [reason] is the same string on both, and the constants to compare it against are
+ * [BusyRs.PROCESSING], [BusyRs.PAUSED_FOR_USER] and [BusyRs.PAUSED_FOR_INPUT], which live on the
+ * interface for that reason.
  *
- * The reason has to start with a non-blank, exactly as in `BusyRs`: a bare `echo:busy:` carries
- * nothing to act on, and `echo:busy` with no colon at all is ordinary prose - both stay
+ * A live probe found the gap: on a real printer `echo:busy: processing` was arriving as
+ * undifferentiated [EchoMessage] text, so a host watching for a typed busy reply saw nothing at all
+ * while the machine homed.
+ *
+ * The reason has to start with a non-blank, exactly as in [SimpleBusyRs]: a bare `echo:busy:`
+ * carries nothing to act on, and `echo:busy` with no colon at all is ordinary prose - both stay
  * [EchoMessage].
  *
  * ```
@@ -118,7 +124,7 @@ data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
  *
  * @property reason the reason, as the machine wrote it
  */
-data class BusyNotice(val reason: String) : EchoRs<BusyNotice> {
+data class BusyNotice(override val reason: String) : BusyRs<BusyNotice>, EchoRs<BusyNotice> {
 
     override fun encode(): String = EchoMessage.PREFIX + BUSY + ": " + reason
 

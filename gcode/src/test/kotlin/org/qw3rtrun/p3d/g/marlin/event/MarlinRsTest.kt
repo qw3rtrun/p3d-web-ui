@@ -10,7 +10,9 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
+import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
 import org.qw3rtrun.p3d.g.protocol.BusyRs
+import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
 import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.OkRs
 import org.qw3rtrun.p3d.g.protocol.SimpleOkRs
@@ -373,11 +375,35 @@ class MarlinRsTest {
         }
 
         @Test
-        fun `the canonical BusyRs is left alone and still reads the bare line`() {
+        fun `the canonical variant is left alone and still reads the bare line`() {
             // The two spellings stay apart: this one is the protocol's and other firmwares send it.
-            assertEquals(BusyRs("processing"), BusyRs.decode("busy: processing"))
+            assertEquals(SimpleBusyRs("processing"), SimpleBusyRs.decode("busy: processing"))
             assertNull(BusyNotice.decode("busy: processing"))
-            assertNull(BusyRs.decode("echo:busy: processing"))
+            assertNull(SimpleBusyRs.decode("echo:busy: processing"))
+        }
+
+        @Test
+        fun `both spellings are one type to a host that only wants to know it is busy`() {
+            // The point of the BusyRs interface: a host asks "busy, and why?" without knowing
+            // which firmware it is talking to, or which channel carried the notice.
+            val bare: GRs<*>? = BaseRsDecoder.decode("busy: processing")
+            val marlin: GRs<*>? = MarlinRsDecoder.decode("echo:busy: processing")
+
+            for (busy in listOf(bare, marlin)) {
+                assertTrue(busy is BusyRs<*>) { "not a BusyRs: $busy" }
+                assertEquals(BusyRs.PROCESSING, (busy as BusyRs<*>).reason)
+            }
+
+            // Marlin's is an echo line as well - the two views are of one value, not two.
+            assertTrue(marlin is EchoRs<*>) { "not an EchoRs: $marlin" }
+            assertEquals(BusyNotice(BusyRs.PROCESSING), marlin)
+            assertEquals(SimpleBusyRs(BusyRs.PROCESSING), bare)
+        }
+
+        @Test
+        fun `each variant round-trips to its own spelling, not the other's`() {
+            assertEquals("busy: processing", SimpleBusyRs("processing").encode())
+            assertEquals("echo:busy: processing", BusyNotice("processing").encode())
         }
 
         @ParameterizedTest

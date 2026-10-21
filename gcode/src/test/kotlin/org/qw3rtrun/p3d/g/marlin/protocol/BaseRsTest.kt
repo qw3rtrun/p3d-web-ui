@@ -12,6 +12,7 @@ import org.qw3rtrun.p3d.g.protocol.ActionRs
 import org.qw3rtrun.p3d.g.protocol.AdvancedOkRs
 import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
 import org.qw3rtrun.p3d.g.protocol.BusyRs
+import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
 import org.qw3rtrun.p3d.g.protocol.CommentRsDecoder
 import org.qw3rtrun.p3d.g.protocol.DebugRs
 import org.qw3rtrun.p3d.g.protocol.ErrorPrefix
@@ -122,32 +123,32 @@ class BaseRsTest {
         @ParameterizedTest
         @ValueSource(strings = ["busy: processing", "busy:processing", "BUSY: processing", "busy: processing\n"])
         fun `the documented spellings decode to the same reason`(line: String) {
-            assertEquals(BusyRs(BusyRs.PROCESSING), BusyRs.decode(line))
+            assertEquals(SimpleBusyRs(BusyRs.PROCESSING), SimpleBusyRs.decode(line))
         }
 
         @Test
         fun `a multi-word reason keeps its spaces`() {
-            assertEquals(BusyRs("paused for user"), BusyRs.decode("busy: paused for user"))
-            assertEquals(BusyRs.PAUSED_FOR_USER, BusyRs.decode("busy: paused for user")?.reason)
+            assertEquals(SimpleBusyRs("paused for user"), SimpleBusyRs.decode("busy: paused for user"))
+            assertEquals(BusyRs.PAUSED_FOR_USER, SimpleBusyRs.decode("busy: paused for user")?.reason)
         }
 
         @Test
         fun `a reason this code has never seen still decodes`() {
             // The spec says "possible reasons are", not "the reasons are". An unknown reason must
             // not turn the line into one that does not decode at all.
-            assertEquals(BusyRs("waiting for probe"), BusyRs.decode("busy: waiting for probe"))
+            assertEquals(SimpleBusyRs("waiting for probe"), SimpleBusyRs.decode("busy: waiting for probe"))
         }
 
         @ParameterizedTest
         @ValueSource(strings = ["busy:", "busy: ", "busy", "busybody: x"])
         fun `a busy line with no reason does not decode`(line: String) {
-            assertNull(BusyRs.decode(line), "should not decode: $line")
+            assertNull(SimpleBusyRs.decode(line), "should not decode: $line")
         }
 
         @Test
         fun `every documented reason round-trips`() {
             for (reason in listOf(BusyRs.PROCESSING, BusyRs.PAUSED_FOR_USER, BusyRs.PAUSED_FOR_INPUT)) {
-                assertEquals(BusyRs(reason), BusyRs.decode(BusyRs(reason).encode()))
+                assertEquals(SimpleBusyRs(reason), SimpleBusyRs.decode(SimpleBusyRs(reason).encode()))
             }
         }
     }
@@ -263,8 +264,8 @@ class BaseRsTest {
                     ErrorRs(ErrorPrefix.ERROR, "checksum mismatch, Last Line: 66555"),
             "!! hardware fault" to ErrorRs(ErrorPrefix.BANGS, "hardware fault"),
             "wait" to WaitRs,
-            "busy: processing" to BusyRs("processing"),
-            "busy: paused for user" to BusyRs("paused for user"),
+            "busy: processing" to SimpleBusyRs("processing"),
+            "busy: paused for user" to SimpleBusyRs("paused for user"),
             "start" to StartRs,
             "//action:pause" to ActionRs("pause"),
             "// some debugging" to DebugRs("some debugging"),

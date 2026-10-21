@@ -9,7 +9,7 @@ package org.qw3rtrun.p3d.g.protocol
  * Resend: 66556                             ResendRs
  * Error:checksum mismatch, Last Line: 66555  ErrorRs
  * wait                                      WaitRs
- * busy: processing                          BusyRs
+ * busy: processing                          SimpleBusyRs
  * start                                     StartRs
  * //action:pause                            ActionRs
  * // anything else                          DebugRs
@@ -40,7 +40,7 @@ object BaseRsDecoder : GRsDecoder<GRs<*>> {
         WaitRs,
         ResendRs,
         ErrorRs,
-        BusyRs,
+        SimpleBusyRs,
         CommentRsDecoder,
         StartRs,
     )

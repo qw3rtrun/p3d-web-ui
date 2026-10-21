@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import java.util.regex.Pattern
 
 /**
  * `rs` / `Resend` - a line was not received intact and the machine wants it again.
@@ -38,23 +37,40 @@ data class ResendRs(val lineNumber: Int) : GProtoRs<ResendRs> {
 
     companion object : GRsDecoder<ResendRs> {
 
-        private val RESEND_PATTERN = Pattern.compile(
-            "^(?>rs|resend)[ \t]*:?[ \t]*(?>n[ \t]*:?[ \t]*)?([0-9]+)$",
-            Pattern.CASE_INSENSITIVE
-        )
+        override fun match(line: String): Boolean = scan(line) != null
 
-        override fun match(line: String): Boolean {
-            val matcher = RESEND_PATTERN.matcher(line.trim())
-            if (!matcher.matches()) return false
-            return matcher.group(1).toIntOrNull() != null
-        }
+        override fun decodeParams(line: String): ResendRs =
+            requireNotNull(scan(line)) { "not a resend request: $line" }
 
-        override fun decodeParams(line: String): ResendRs {
-            val matcher = RESEND_PATTERN.matcher(line.trim())
-            require(matcher.matches()) { "not a resend request: $line" }
-            val lineNumber = matcher.group(1).toIntOrNull()
-            require(lineNumber != null) { "resend line number does not fit an Int: $line" }
-            return ResendRs(lineNumber)
+        /**
+         * `rs` or `resend`, then the line number, or null when the line is not a resend request.
+         *
+         * Everything between is optional and Marlin writes it every way: `rs:1`, `Resend: 1`,
+         * `resend: N1`, `rs n : 1`. The `:` after the keyword and the whole `N` marker may each be
+         * absent, which is why this is a walk rather than a split - and the keyword is matched
+         * longest-first, since `resend` starts with no prefix of `rs`.
+         *
+         * A number too wide for an `Int` is absence, not a throw.
+         */
+        private fun scan(line: String): ResendRs? {
+            val text = line.trim()
+            var i = when {
+                text.startsWithAscii("resend") -> 6
+                text.startsWithAscii("rs") -> 2
+                else -> return null
+            }
+
+            i = text.blanksEnd(i)
+            if (i < text.length && text[i] == ':') i = text.blanksEnd(i + 1)
+
+            if (i < text.length && (text[i] == 'n' || text[i] == 'N')) {
+                i = text.blanksEnd(i + 1)
+                if (i < text.length && text[i] == ':') i = text.blanksEnd(i + 1)
+            }
+
+            val end = text.digitsEnd(i)
+            if (end == i || end != text.length) return null
+            return ResendRs(text.substring(i, end).toIntOrNull() ?: return null)
         }
     }
 }

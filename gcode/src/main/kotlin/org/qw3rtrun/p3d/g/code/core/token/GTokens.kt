@@ -91,7 +91,23 @@ sealed interface GIdentifier : GToken {
     fun isChar(l: Char): Boolean = name.length == 1 && asciiFold(name[0]) == asciiFold(l)
 }
 
-private fun asciiFold(c: Char): Char = if (c >= 'a' && c <= 'z') (c.code - 32).toChar() else c
+/**
+ * [c] folded to upper case, ASCII only - spec 1.1's wire format is 7-bit, so `a`-`z` are the only
+ * characters that fold and everything else is returned unchanged.
+ *
+ * `internal` rather than private because the reply decoders compare firmware text with the same
+ * rule, and one copy of it is the point: `lowercase()`/`uppercase()` are locale-dependent and
+ * Unicode-wide, which is how U+212A KELVIN SIGN once matched `GLetter('k')`.
+ *
+ * ```
+ * asciiFold('x')   // 'X'
+ * asciiFold('*')   // '*'
+ * ```
+ *
+ * @param c the character to fold
+ * @return the upper-case ASCII letter, or [c] unchanged
+ */
+internal fun asciiFold(c: Char): Char = if (c >= 'a' && c <= 'z') (c.code - 32).toChar() else c
 
 /**
  * Input that is not lexically valid - errors are values (spec 9): a stray character, a bare sign, a

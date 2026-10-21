@@ -1,9 +1,11 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
 import org.qw3rtrun.p3d.g.protocol.GEventRs
-import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.GRs
-import java.util.regex.Pattern
+import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.blanksEnd
+import org.qw3rtrun.p3d.g.protocol.digitsEnd
+import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
  * `M27`'s answer: either the machine is printing from its card, or it is not.
@@ -39,23 +41,38 @@ data class SdPrinting(val position: Long, val size: Long) : SdStatusRs<SdPrintin
 
     companion object : GRsDecoder<SdPrinting> {
 
-        private val PATTERN = Pattern.compile(
-            "^SD printing byte[ \t]*([0-9]+)[ \t]*/[ \t]*([0-9]+)$",
-            Pattern.CASE_INSENSITIVE
-        )
+        private const val PREFIX = "SD printing byte"
 
-        override fun match(line: String): Boolean {
-            val matcher = PATTERN.matcher(line.trim())
-            if (!matcher.matches()) return false
-            return matcher.group(1).toLongOrNull() != null && matcher.group(2).toLongOrNull() != null
-        }
+        override fun match(line: String): Boolean = scan(line) != null
 
-        override fun decodeParams(line: String): SdPrinting {
-            val matcher = PATTERN.matcher(line.trim())
-            require(matcher.matches()) { "not an SD status line: $line" }
-            val position = matcher.group(1).toLongOrNull()
-            val size = matcher.group(2).toLongOrNull()
-            require(position != null && size != null) { "SD byte counts do not fit a Long: $line" }
+        override fun decodeParams(line: String): SdPrinting =
+            requireNotNull(scan(line)) { "not an SD status line: $line" }
+
+        /**
+         * `SD printing byte <position>/<size>`, or null when the line is not one.
+         *
+         * Some builds write no space after `byte` and some write one, so the blanks are optional
+         * in all three positions - which is what the pattern this replaced said with `[ 	]*`. A
+         * count too wide for a `Long` is *absence*, not a throw: a host reads what the printer
+         * sent and does not get to crash over it.
+         */
+        private fun scan(line: String): SdPrinting? {
+            val text = line.trim()
+            if (!text.startsWithAscii(PREFIX)) return null
+
+            var i = text.blanksEnd(PREFIX.length)
+            val positionEnd = text.digitsEnd(i)
+            if (positionEnd == i) return null
+            val position = text.substring(i, positionEnd).toLongOrNull() ?: return null
+
+            i = text.blanksEnd(positionEnd)
+            if (i >= text.length || text[i] != '/') return null
+
+            i = text.blanksEnd(i + 1)
+            val sizeEnd = text.digitsEnd(i)
+            if (sizeEnd == i || sizeEnd != text.length) return null
+            val size = text.substring(i, sizeEnd).toLongOrNull() ?: return null
+
             return SdPrinting(position, size)
         }
     }

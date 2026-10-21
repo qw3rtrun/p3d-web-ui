@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import java.util.regex.Pattern
 
 /**
  * `busy: <reason>` - the machine cannot take commands from the serial interface right now.
@@ -43,17 +42,31 @@ data class BusyRs(val reason: String) : GProtoRs<BusyRs> {
 
         const val PAUSED_FOR_INPUT = "paused for input"
 
-        private val BUSY_PATTERN = Pattern.compile(
-            "^busy[ \t]*:[ \t]*(\\S.*)$",
-            Pattern.CASE_INSENSITIVE
-        )
+        private const val PREFIX = "busy"
 
-        override fun match(line: String): Boolean = BUSY_PATTERN.matcher(line.trim()).matches()
+        override fun match(line: String): Boolean = scan(line) != null
 
-        override fun decodeParams(line: String): BusyRs {
-            val matcher = BUSY_PATTERN.matcher(line.trim())
-            require(matcher.matches()) { "not a busy reply: $line" }
-            return BusyRs(matcher.group(1))
+        override fun decodeParams(line: String): BusyRs =
+            requireNotNull(scan(line)) { "not a busy reply: $line" }
+
+        /**
+         * `busy: <reason>`, or null when the line is not one.
+         *
+         * The reason must not be empty - `busy:` alone says nothing a host can act on, and the
+         * pattern this replaced required a non-blank first character for the same reason. It runs
+         * to the end of the line and is taken verbatim, blanks inside included: `processing`,
+         * `paused for user`, and whatever a fork invents next.
+         */
+        private fun scan(line: String): BusyRs? {
+            val text = line.trim()
+            if (!text.startsWithAscii(PREFIX)) return null
+
+            var i = text.blanksEnd(PREFIX.length)
+            if (i >= text.length || text[i] != ':') return null
+            i = text.blanksEnd(i + 1)
+            if (i >= text.length) return null
+
+            return BusyRs(text.substring(i))
         }
     }
 }

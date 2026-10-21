@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import java.util.regex.Pattern
 
 /**
  * The three prefixes an error reply is written with, and the lexeme each one writes:
@@ -60,9 +59,26 @@ data class ErrorRs(val prefix: ErrorPrefix, val message: String) : GProtoRs<Erro
 
     val lastLine: Int?
         get() {
-            val matcher = LAST_LINE_PATTERN.matcher(message)
-            if (!matcher.find()) return null
-            return matcher.group(1).toIntOrNull()
+            // A search, not a match: Marlin writes the counter at the end of a message whose front
+            // half differs per error ("checksum mismatch, Last Line: 7"), so the scan walks to the
+            // first `last line` and reads the number behind it.
+            var at = 0
+            while (at + LAST_LINE.length <= message.length) {
+                if (!message.startsWithAscii(LAST_LINE, at)) {
+                    at++
+                    continue
+                }
+                var i = message.blanksEnd(at + LAST_LINE.length)
+                // The `:` is required, as it was in the pattern this replaced: `Last Line 7` with
+                // no colon is not Marlin's wording and is not read as the counter.
+                if (i < message.length && message[i] == ':') {
+                    i = message.blanksEnd(i + 1)
+                    val end = message.digitsEnd(i)
+                    if (end > i) return message.substring(i, end).toIntOrNull()
+                }
+                at++
+            }
+            return null
         }
 
     override fun encode(): String = when (prefix) {
@@ -72,10 +88,7 @@ data class ErrorRs(val prefix: ErrorPrefix, val message: String) : GProtoRs<Erro
 
     companion object : GRsDecoder<ErrorRs> {
 
-        private val LAST_LINE_PATTERN = Pattern.compile(
-            "last line[ \t]*:[ \t]*([0-9]+)",
-            Pattern.CASE_INSENSITIVE
-        )
+        private const val LAST_LINE = "last line"
 
         override fun match(line: String): Boolean = prefixOf(line.trim()) != null
 
@@ -87,7 +100,7 @@ data class ErrorRs(val prefix: ErrorPrefix, val message: String) : GProtoRs<Erro
         }
 
         private fun prefixOf(trimmed: String): ErrorPrefix? = ErrorPrefix.entries.firstOrNull {
-            trimmed.startsWith(it.lexeme, ignoreCase = true)
+            trimmed.startsWithAscii(it.lexeme)
         }
     }
 }

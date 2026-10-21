@@ -26,7 +26,7 @@ most expensive mistake available to you. Decide before you write anything:
 |---|---|---|
 | `code/core/**` — tokens, tokenizer, block reader, checksums, encoder, session | **`low-level-protocol-dev`** | Portable subset. *Write C, not idiomatic Kotlin* — the section below applies in full. |
 | `code/dsl/**` — `G.kt`, `GWords.kt`, `GSender` | **`gcode-dsl-dev`** | Full Kotlin. The section below **does not apply**; that skill's inversion table replaces it. |
-| `marlin/**`, `decoder/**`, `event/**` | `low-level-protocol-dev` | Domain edge: the core's rules, relaxed only where its layering table says so. |
+| `marlin/**`, `protocol/**` | `low-level-protocol-dev` | Domain edge: the core's rules, relaxed only where its layering table says so. |
 
 **Invoke the matching skill and do not work from memory of it.** `low-level-protocol-dev` carries
 the layering rule, the allowed Kotlin subset, the patterns (one-field lookahead, explicit state

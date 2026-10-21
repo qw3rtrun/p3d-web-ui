@@ -27,7 +27,7 @@ verbosity here, it is the only way the behaviour is reviewable against a spec.
 |---|---|---|
 | **Portable core** | `gcode/src/main/kotlin/.../code/core/**` — tokens, tokenizer, block reader, checksums, encoders | Kotlin stdlib basics only (see the allow-list). No JVM library, no third-party, no other module |
 | **Writing facade** | `gcode/src/main/kotlin/.../code/dsl/**` — `G.kt`, `GWords.kt`, `GSender` | The core. **Not governed by this skill** — see below |
-| **Domain edge** | `gcode/.../decoder/**`, `gcode/.../event/**` | The core, plus `:backend:core` message types |
+| **Domain edge** | `gcode/.../marlin/**` (commands, `event/`), `gcode/.../protocol/**` (the base-protocol replies) | The core, plus `:backend:core` message types |
 | **Transport / app** | `:backend:terminal` (Netty), `:backend:api` (WebFlux), `:app` | Anything. Reactor, Spring, coroutines all live here |
 
 **`code/dsl` is not this skill's territory, and several rules below invert there.** It is the
@@ -241,22 +241,22 @@ Then check by hand:
 
 Live examples of what this skill rules out, so nobody copies them as precedent:
 
-- `decoder/OkDecoder.kt`, `TemperatureReportedDecoder.kt`, `FirmwareReportDecoder.kt` —
-  `java.util.regex`; these are the *edge*, but the same lines are what a port has to reimplement, and
-  the regexes are unreviewable against
-  [spec §9](../../../doc/specs/GCODE_spec.md#9-error-handling). Note
-  `CapabilityReportDecoder.kt` is **not** a regex user — it is a prefix guard plus `split(":")`; the
-  four-file version of this list was wrong and sent one reviewer looking for a pattern that is not
-  there.
-- `decoder/**` — `java.util.Optional` on all eight decoders *and* on the `GEventDecoder` fun
-  interface, which extends `java.util.function.Function` / `Predicate`, so the JVM types are in the
-  supertype list rather than just the return position.
-- `decoder/CapabilityReportDecoder.kt` — `org.apache.commons.lang3.StringUtils` for `isNotBlank`
-  (`:21`) and `isNumeric` (`:29`), both a two-line loop. This is the **only** `StringUtils` user;
-  `FirmwareReportDecoder.kt` and `WaitReceivedDecoder.kt` are clean.
-- `decoder/**` — `ignoreCase = true` at 8 sites in 5 files, plus `.trim()` in `OkDecoder.kt:12` and
-  `FirmwareReportDecoder.kt:22`. Locale-dependent, and trimming the Unicode whitespace set rather
-  than the four characters [§2.1](../../../doc/specs/GCODE_spec.md#21-whitespace) defines.
+- **`java.util.regex` in seven reply decoders** — `marlin/event/`: `EchoRs.kt`, `EndstopRs.kt`,
+  `FirmwareInfoRs.kt`, `PositionRs.kt`, `TemperatureRs.kt`; `protocol/`: `CommentRs.kt`,
+  `OkRs.kt`. These are the *edge*, but the pattern **is** the specification of what the decoder
+  accepts, and a condensed one is not reviewable against
+  [spec §9](../../../doc/specs/GCODE_spec.md#9-error-handling). Five of them use `(?>...)` atomic
+  groups, which exist in Java and PCRE and in neither Rust's `regex` crate nor C — a port cannot
+  translate those, only re-derive them. Four others (`SdStatusRs`, `ResendRs`, `BusyRs`,
+  `ErrorRs`) have been converted to explicit scans over `protocol/GRsScan.kt`'s primitives; that
+  file is the worked example, and `TemperatureRs`'s multi-branch field scan is the one left that
+  is real work rather than transcription.
+- **`ignoreCase = true` at 11 sites in 8 files**, and `.trim()` at 32 sites in 13.
+  Locale-dependent — a Turkish locale changes `i`/`I` — and `trim()` strips the whole Unicode
+  space category rather than the characters
+  [§2.1](../../../doc/specs/GCODE_spec.md#21-whitespace) defines. `GRsScan.kt`'s
+  `startsWithAscii` is what to reach for instead; it folds through the token layer's `asciiFold`,
+  which is the module's one copy of that rule.
 - `code/core/token/GTokens.kt`, `GTokenizer.kt` — `java.math.BigDecimal` is the core's only external
   type, and it is in the hot path.
 - `:gcode` depends on `:backend:core` for event types, so the module as a whole is not extractable

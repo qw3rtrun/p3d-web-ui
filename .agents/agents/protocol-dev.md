@@ -7,8 +7,9 @@ description: >-
   parses or emits wire bytes, and anything picked up from the :gcode issue queue. Examples: "fix the tail
   comment CR", "add CRC16", "wire up the command parser", "why does this line round-trip wrong",
   "implement queue issue 04", "review this tokenizer change against the spec". Handles the
-  command-building DSL under code/dsl too, on that layer's own inverted rules. Do NOT use for
-  Spring, WebFlux, Reactor, UI, or build config — that is application work, not protocol work.
+  command-building DSL under code/dsl too, on that layer's own inverted rules. Do NOT use for the
+  Reactor pipelines, send window or socket handling in :backend:terminal — that is terminal-dev —
+  and not for Spring, WebFlux, UI or build config, which is application work.
 tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell, Skill, WebSearch, WebFetch
 model: opus
 ---

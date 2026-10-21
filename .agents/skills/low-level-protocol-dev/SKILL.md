@@ -28,7 +28,8 @@ verbosity here, it is the only way the behaviour is reviewable against a spec.
 | **Portable core** | `gcode/src/main/kotlin/.../code/core/**` — tokens, tokenizer, block reader, checksums, encoders | Kotlin stdlib basics only (see the allow-list). No JVM library, no third-party, no other module |
 | **Writing facade** | `gcode/src/main/kotlin/.../code/dsl/**` — `G.kt`, `GWords.kt`, `GSender` | The core. **Not governed by this skill** — see below |
 | **Domain edge** | `gcode/.../marlin/**` (commands, `event/`), `gcode/.../protocol/**` (the base-protocol replies) | The core, plus `:backend:core` message types |
-| **Transport / app** | `:backend:terminal` (Netty), `:backend:api` (WebFlux), `:app` | Anything. Reactor, Spring, coroutines all live here |
+| **Transport** | `:backend:terminal` (Reactor, reactor-netty) | Anything on the JVM — but governed by `reactive-transport-dev`, not by this skill |
+| **App** | `:backend:api` (WebFlux), `:app` | Anything. Reactor, Spring, coroutines all live here |
 
 **`code/dsl` is not this skill's territory, and several rules below invert there.** It is the
 host-side facade for *writing* G-code, it is never ported, and full Kotlin — infix and extension

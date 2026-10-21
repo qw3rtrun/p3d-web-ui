@@ -93,7 +93,8 @@ gcode/                     the G-code protocol module — TWO standards, see bel
   code/dsl/**              the writing facade: G.kt, GWords.kt, GSender
   marlin/**                domain edge: commands, events, decoders
 backend/core/              shared domain types (Kotlin + Java, Spring BOM)
-backend/terminal/          serial/TCP transport — GFlux, HostTerminal, TerminalManager (Reactor)
+backend/terminal/          serial/TCP transport — GFlux, HostTerminal, TerminalManager (Reactor).
+                           Owned by terminal-dev under the reactive-transport-dev skill
 backend/api/               controllers, websocket, PrinterReactor (Reactor, WebFlux)
 backend/machine-mng/       machine management
 app/                       Spring Boot app: WebFlux, Thymeleaf, Spring Modulith, actuator

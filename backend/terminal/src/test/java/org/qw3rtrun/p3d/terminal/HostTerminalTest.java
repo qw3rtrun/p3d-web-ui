@@ -3,11 +3,13 @@ package org.qw3rtrun.p3d.terminal;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.g.marlin.event.BusyNotice;
 import org.qw3rtrun.p3d.g.marlin.event.OkTemperatureRs;
+import org.qw3rtrun.p3d.g.protocol.ErrorRs;
 import org.qw3rtrun.p3d.g.protocol.GRs;
 import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Signal;
 import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 
@@ -18,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * Protocol-level tests: a {@code Sinks} wire in place of a socket, no sleeps, no printer.
@@ -38,12 +41,21 @@ class HostTerminalTest {
     /** Every {@code request(n)} the send window made of the G-code source. */
     private final List<Long> pulled = new ArrayList<>();
 
+    /** Whatever terminated the reply bus, which in a healthy session is nothing. */
+    private final AtomicReference<Signal<GRs<?>>> busEnd = new AtomicReference<>();
+
     private HostTerminal terminal;
 
     private void listen() {
         terminal = new HostTerminal(wire::asFlux, out -> Flux.from(out).then());
-        terminal.messageFlux().subscribe(published::add);
+        subscribeToBus();
         terminal.start(Flux.never()).subscribe();
+    }
+
+    private void subscribeToBus() {
+        terminal.messageFlux().subscribe(published::add,
+                t -> busEnd.set(Signal.error(t)),
+                () -> busEnd.set(Signal.complete()));
     }
 
     /**
@@ -60,8 +72,33 @@ class HostTerminalTest {
             captured.set(out);
             return Mono.empty();
         });
-        terminal.messageFlux().subscribe(published::add);
+        subscribeToBus();
         Flux<String> gcode = Flux.range(1, 100).map(i -> "G1 X" + i).doOnRequest(pulled::add);
+        terminal.start(gcode).subscribe();
+        return captured.get();
+    }
+
+    /**
+     * The same outbound side, with the printer answering from inside the emission of {@code line}.
+     *
+     * <p>That is the ordering the send window actually lives in - the acknowledgement of one
+     * command arrives on the netty inbound thread while the producer thread is still writing the
+     * next - and the one a single-threaded test otherwise never reaches.
+     */
+    private Publisher<String> sendWindowAcking(String line, String reply) {
+        var captured = new AtomicReference<Publisher<String>>();
+        terminal = new HostTerminal(wire::asFlux, out -> {
+            captured.set(out);
+            return Mono.empty();
+        });
+        subscribeToBus();
+        Flux<String> gcode = Flux.range(1, 100).map(i -> "G1 X" + i)
+                .doOnRequest(pulled::add)
+                .doOnNext(g -> {
+                    if (g.equals(line)) {
+                        receive(reply);
+                    }
+                });
         terminal.start(gcode).subscribe();
         return captured.get();
     }
@@ -213,5 +250,151 @@ class HostTerminalTest {
                 .then(() -> assertEquals(List.of(1L, 3L), pulled))
                 .thenCancel()
                 .verify(TIMEOUT);
+    }
+
+    /**
+     * More acknowledgements than sends must not buy room the printer does not have.
+     *
+     * <p>A {@code busy:} says nothing is in flight that will ever be acknowledged, so the in-flight
+     * count goes to zero - and then the {@code ok} for the command sent just before the stall
+     * arrives anyway. On a {@code volatile int} with a bare {@code --} that lands on {@code -1},
+     * and {@code blockQueue - (-1)} is a window one command wider than the printer's buffer, for
+     * the rest of the session. The counter clamps at zero instead, so what follows the stale
+     * acknowledgement is one command and not two.
+     *
+     * <p>Deterministic, and it fails on the old code: the assertion is the demand the window placed
+     * on the source, {@code [1, 1]} against the old {@code [1, 2]}.
+     */
+    @Test
+    void anAcknowledgementWithNothingInFlightDoesNotWidenTheWindow() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(10)
+                .expectNext("G1 X1\n")
+                .then(() -> receive("busy: paused for user"))
+                .then(() -> receive("ok"))
+                .expectNext("G1 X2\n")
+                .then(() -> assertEquals(List.of(1L, 1L), pulled))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * An {@code ok} that lands mid-emission is credit for a command already counted, not a free
+     * slot on top of it.
+     *
+     * <p>The printer answers {@code ok N1 P15 B3} while the host is inside the emission of
+     * {@code G1 X1} - before {@link HostTerminal.CommandProcessor#onNext} has counted that command
+     * as in flight. The window it reports is three blocks, and three commands is what should go
+     * out. The old code decremented an in-flight count of zero to {@code -1} and then pulled
+     * {@code 3 - (-1) - 1 = 3} more on top of the one being written: four commands into a
+     * three-block buffer, which Marlin answers by dropping the overflow without saying so.
+     *
+     * <p>This is also the only deterministic reading of the drain loop's deferred work: the
+     * acknowledgement's own {@code processRequest} is re-entrant, so it leaves a mark and the pull
+     * it asked for happens on the next turn of the loop that was already running - {@code [1, 2]}
+     * rather than the old {@code [1, 3]}.
+     */
+    @Test
+    void anAcknowledgementArrivingMidEmissionIsCreditAndNotExtraRoom() {
+        var out = sendWindowAcking("G1 X1", "ok N1 P15 B3");
+
+        StepVerifier.create(out, 0)
+                .thenRequest(10)
+                .expectNext("G1 X1\n", "G1 X2\n", "G1 X3\n")
+                .then(() -> assertEquals(List.of(1L, 2L), pulled))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * A printer error is a reply, not the end of the conversation.
+     *
+     * <p>Verbatim from a corpus sweep against the simulator - the printer recovers on its own and
+     * keeps answering:
+     *
+     * <pre>
+     * &gt;&gt; N3 M105*1
+     * &lt;&lt; Error:checksum mismatch, Last Line: 2
+     * &lt;&lt; Resend: 3
+     * &lt;&lt; ok
+     * </pre>
+     *
+     * <p>This used to go to {@code tryEmitError}, which terminates the replay sink behind
+     * {@link HostTerminal#messageFlux()} - so the first mistyped checksum of a print killed the
+     * host's whole reply stream while the printer carried on, and the temperature report at the end
+     * of this sequence reached nobody.
+     */
+    @Test
+    void aPrinterErrorIsPublishedAsAValueAndTheBusKeepsRunning() {
+        listen();
+
+        receive("Error:checksum mismatch, Last Line: 2");
+        receive("Resend: 3");
+        receive("ok");
+        receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0");
+
+        assertEquals(List.of("Error:checksum mismatch, Last Line: 2",
+                "T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0"), publishedLines());
+        assertInstanceOf(ErrorRs.class, published.getFirst());
+        assertNull(busEnd.get(), "the reply bus terminated");
+    }
+
+    /** The error's own words survive the trip, because the host and not the decoder judges them. */
+    @Test
+    void anErrorCarriesTheMachinesOwnWordsAndItsLineNumber() {
+        listen();
+
+        receive("Error:Line Number is not Last Line Number+1, Last Line: 7");
+
+        var error = assertInstanceOf(ErrorRs.class, published.getFirst());
+        assertEquals("Line Number is not Last Line Number+1, Last Line: 7", error.getMessage());
+        assertEquals(7, error.getLastLine().intValue());
+    }
+
+    /**
+     * A subscriber that arrives after an error gets a live flux, not an immediate {@code onError}.
+     *
+     * <p>The damage of terminating the sink was not only to the subscriber that was there - the
+     * terminal state is permanent, so every later {@code messageFlux()} was dead on subscribe too,
+     * which is what a reconnecting UI does.
+     */
+    @Test
+    void aSubscriberArrivingAfterAnErrorStillGetsReplies() {
+        listen();
+        receive("Error:checksum mismatch, Last Line: 2");
+
+        StepVerifier.create(terminal.messageFlux())
+                .expectNextMatches(ErrorRs.class::isInstance)
+                .then(() -> receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0"))
+                .expectNextCount(1)
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * The inbound side going away is still terminal, and is the only thing that is.
+     *
+     * <p>Reserving {@code onError} for transport death is the other half of publishing printer
+     * errors as values: a subscriber has to be able to tell "the printer complained" from "the
+     * socket is gone", and after this change the signal is what says which.
+     */
+    @Test
+    void theInboundFluxFailingIsStillTerminal() {
+        listen();
+
+        wire.tryEmitError(new IllegalStateException("socket closed"));
+
+        assertInstanceOf(IllegalStateException.class, busEnd.get().getThrowable());
+    }
+
+    @Test
+    void theInboundFluxCompletingIsStillTerminal() {
+        listen();
+
+        wire.tryEmitComplete();
+
+        assertEquals(Signal.complete(), busEnd.get());
     }
 }

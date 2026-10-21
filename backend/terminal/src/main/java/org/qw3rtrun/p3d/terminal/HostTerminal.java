@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
 import org.qw3rtrun.p3d.g.protocol.AdvancedOkRs;
 import org.qw3rtrun.p3d.g.protocol.BusyRs;
-import org.qw3rtrun.p3d.g.protocol.ErrorRs;
 import org.qw3rtrun.p3d.g.protocol.GRs;
 import org.qw3rtrun.p3d.g.protocol.OkRs;
 import org.qw3rtrun.p3d.g.protocol.ResendRs;
@@ -24,6 +23,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.publisher.SynchronousSink;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -69,9 +69,14 @@ public class HostTerminal {
      *
      * <p>Not every received line reaches here. The ones that drive the protocol and say nothing a
      * subscriber did not already learn from the send window are consumed: a bare and an advanced
-     * {@code ok}, {@code wait}, and {@code Resend}. An error terminates this flux. Everything else
-     * is published - except a line no decoder claimed, which is dropped with a {@code #traffic}
-     * debug line, because {@code GRs} has no value for "unread" and the raw text has no consumer.
+     * {@code ok}, {@code wait}, and {@code Resend}. Everything else is published - except a line no
+     * decoder claimed, which is dropped with a {@code #traffic} debug line, because {@code GRs} has
+     * no value for "unread" and the raw text has no consumer.
+     *
+     * <p><strong>This flux terminates when the connection does, and at no other time.</strong> An
+     * {@code onError} here means the inbound side died - the socket, or the decoder - and not that
+     * the printer reported a fault. A printer fault is an {@code ErrorRs} value like any other
+     * reply; see {@link ReplaySubscriber#onNext}.
      */
     public Flux<GRs<?>> messageFlux() {
         return replays.asFlux();
@@ -119,7 +124,7 @@ public class HostTerminal {
      * was never told the printer had stalled.
      */
     void onBusy(BusyRs<?> busy) {
-        outSide.sentWithoutAck = 0;
+        outSide.clearInFlight();
         emit(busy);
     }
 
@@ -145,6 +150,14 @@ public class HostTerminal {
         }
     }
 
+    /**
+     * Kills the bus, which is reserved for the transport dying.
+     *
+     * <p>One caller: {@link ReplaySubscriber#onError}. A fault the <em>printer</em> reported is a
+     * value and goes through {@link #emit} - putting it here terminated the sink and every
+     * subscriber of {@link #messageFlux()} with it, over a checksum the printer itself recovered
+     * from on the next line.
+     */
     private void emitError(Throwable t) {
         Sinks.EmitResult result = replays.tryEmitError(t);
         if (result.isFailure()) {
@@ -197,7 +210,18 @@ public class HostTerminal {
         Subscriber<? super String> subscriber;
         private final Requested subscriptionRequested = new Requested();
         private final Requested requestedFromGCode = new Requested();
-        private volatile int sentWithoutAck = 0;
+        /**
+         * Commands written to the printer that it has not acknowledged yet.
+         *
+         * <p>A {@link Requested} and not a counter of its own. It is not demand, but it is the same
+         * discipline - a non-negative saturating count, incremented on one thread and decremented
+         * on another - and the rule this module works to is that the accounting is <em>one</em>
+         * mechanism rather than half of one. It was a {@code volatile int} with {@code += 1} in
+         * {@link #onNext}, {@code --} in {@link #handleBackpressure} and {@code = 0} in
+         * {@link HostTerminal#onBusy}: {@code volatile} publishes a write, it does not make a
+         * read-modify-write atomic, and the first two of those run on different threads.
+         */
+        private final Requested sentWithoutAck = new Requested();
         /**
          * The printer's own buffer counts, as the last advanced {@code ok} reported them.
          *
@@ -207,16 +231,25 @@ public class HostTerminal {
          *
          * <p>Starts at one block, which is the window a printer that reports no counts at all gets:
          * one command out, and nothing more until it is acknowledged.
+         *
+         * <p>{@code volatile} because it is written from the inbound thread and read by
+         * {@link #canProcess()} on whichever thread is draining. A reference write is atomic on its
+         * own, so a snapshot is all the window needs and no lock is involved.
          */
-        private AdvancedOkRs backpressure = new AdvancedOkRs(1, 1, null);
-        private final Supplier<String> report = () -> format("(s=%s, r=%s w=%d b=%s)", subscriptionRequested, requestedFromGCode, sentWithoutAck, backpressure);
+        private volatile AdvancedOkRs backpressure = new AdvancedOkRs(1, 1, null);
+        /**
+         * The drain guard: zero when no thread is in {@link #processRequest()}, and otherwise the
+         * number of calls that still have to be accounted for.
+         */
+        private final AtomicInteger wip = new AtomicInteger();
+        private final Supplier<String> report = () -> format("(s=%s, r=%s w=%s b=%s)", subscriptionRequested, requestedFromGCode, sentWithoutAck, backpressure);
 
         public CommandProcessor(Publisher<String> gCode) {
             this.gcode = gCode;
         }
 
         public void handleBackpressure(OkRs<?> ok) {
-            sentWithoutAck--;
+            sentWithoutAck.dec();
             if (ok instanceof AdvancedOkRs advanced) {
                 backpressure = advanced;
             }
@@ -224,17 +257,50 @@ public class HostTerminal {
             outSide.processRequest();
         }
 
-        long canProcess() {
-            return min(subscriptionRequested.get(), backpressure.getBlockQueue() - sentWithoutAck - requestedFromGCode.get());
+        /** Nothing is in flight that the printer will acknowledge, so the window is all of it. */
+        void clearInFlight() {
+            sentWithoutAck.reset();
         }
 
+        long canProcess() {
+            return min(subscriptionRequested.get(),
+                    backpressure.getBlockQueue() - sentWithoutAck.get() - requestedFromGCode.get());
+        }
+
+        /**
+         * Moves as much of the subscriber's demand upstream as the printer currently has room for.
+         *
+         * <p>A drain loop, and the only place the three counters are moved against each other.
+         * Atomic counters make each one safe on its own; they do not make
+         * {@code canProcess() -> inc/dec -> request(n)} one step, and that sequence has to be one
+         * step or two threads - a {@code request(n)} from the subscriber and an {@code ok} off the
+         * netty loop - can each read the same room and each claim it, asking the source for twice
+         * what the printer can hold.
+         *
+         * <p>So {@code wip} serialises the section the Reactive Streams way rather than a lock: the
+         * first caller in runs the loop, a caller that arrives while it is running leaves a mark
+         * and returns, and the thread inside goes round again to pick the mark up. That also keeps
+         * re-entrancy honest - {@link #onNext} calls this from inside {@code subscription.request},
+         * and the nested call now defers to the loop already on the stack instead of interleaving
+         * with it.
+         */
         void processRequest() {
-            long canProcess = canProcess();
-            if (canProcess > 0) {
-                requestedFromGCode.inc(canProcess);
-                subscriptionRequested.dec(canProcess);
-                log.info("Process request {} of {} but {}", canProcess, subscriptionRequested, report.get());
-                subscription.request(canProcess);
+            if (wip.getAndIncrement() != 0) {
+                return;
+            }
+            int missed = 1;
+            for (; ; ) {
+                long canProcess = canProcess();
+                if (canProcess > 0) {
+                    requestedFromGCode.inc(canProcess);
+                    subscriptionRequested.dec(canProcess);
+                    log.info("Process request {} of {} but {}", canProcess, subscriptionRequested, report.get());
+                    subscription.request(canProcess);
+                }
+                missed = wip.addAndGet(-missed);
+                if (missed == 0) {
+                    return;
+                }
             }
         }
 
@@ -268,7 +334,7 @@ public class HostTerminal {
 
         @Override
         public void onNext(String gCode) {
-            sentWithoutAck += 1;
+            sentWithoutAck.inc();
             requestedFromGCode.dec();
             log.info("GCode Next {} {}", gCode, report.get());
             TRAFFIC_LOGGER.debug("-> {}", gCode);
@@ -318,6 +384,28 @@ public class HostTerminal {
          * <p>The arms are not a partition and have to be read as a sequence: {@code OkTemperatureRs}
          * is an {@link OkRs} first and a temperature report second, which is the acknowledgement
          * the window is waiting for.
+         *
+         * <p><strong>{@code ErrorRs} has no arm, deliberately.</strong> It falls to the default and
+         * is published as a value, because on a Marlin an error is routine protocol traffic and the
+         * printer carries on afterwards:
+         *
+         * <pre>
+         * &gt;&gt; N3 M105*1
+         * &lt;&lt; Error:checksum mismatch, Last Line: 2
+         * &lt;&lt; Resend: 3
+         * &lt;&lt; ok
+         * </pre>
+         *
+         * <p>This used to call {@code tryEmitError}, which terminates the {@code Sinks.Many}
+         * behind {@link HostTerminal#messageFlux()} - so one mistyped checksum killed the reply bus
+         * for the rest of the session, for every current and future subscriber, while the printer
+         * went on answering normally. A terminal signal on that flux now means one thing only: the
+         * inbound side is gone, which is {@link #onError} and {@link #onComplete} below.
+         *
+         * <p>Which errors are fatal is not decided here. {@code :gcode} keeps the machine's own
+         * words as text on purpose - the spec sorts errors into recoverable, non-fatal and
+         * shut-the-machine-down on prose it only gives as examples - and that is a decision for the
+         * host, which can now see every error it needs to make it.
          */
         @Override
         public void onNext(GRs<?> reply) {
@@ -327,7 +415,6 @@ public class HostTerminal {
                 case BusyRs<?> busy -> onBusy(busy);
                 case WaitRs _ -> onWait();
                 case ResendRs resend -> onResend(resend.getLineNumber());
-                case ErrorRs error -> emitError(new MachineError(error.getMessage()));
                 default -> emit(reply);
             }
         }

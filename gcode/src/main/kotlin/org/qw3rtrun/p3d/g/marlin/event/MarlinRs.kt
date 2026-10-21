@@ -11,6 +11,7 @@ import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
  * ok                                    SimpleOKRs      (base)
  * Resend: 66556                         ResendRs        (base)
  * busy: processing                      BusyRs          (base)
+ * echo:busy: processing                 BusyNotice      - Marlin's own spelling of it
  * ok T:210.00 /210.00 B:60.00 /60.00    OkTemperatureRs
  * X:0.00 Y:0.00 Z:0.00 Count X:0        PositionRs
  * x_min: open                           EndstopStateRs

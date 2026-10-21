@@ -44,8 +44,8 @@ class OkDecoderTest {
     @ParameterizedTest
     @ValueSource(
         strings = [
-            "OK B3 P15 n100",
-            "Ok P15 b3 N100\n"
+            "OK n100 B3 P15",
+            "Ok N100 P15 b3\n"
         ]
     )
     fun matchAdvancedOkWithNumber(line: String) {
@@ -61,7 +61,7 @@ class OkDecoderTest {
         strings = [
             "ok P9999999999 B1",
             "ok P2147483648 B1",
-            "ok B1 P2 N9999999999",
+            "ok N9999999999 B1 P2",
             "ok P B1",
             "ok P-1 B1",
             "ok P+1 B1"
@@ -83,9 +83,33 @@ class OkDecoderTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = ["ok N2 P15 B3", "ok N3 P15 B3", "ok N4 P15 B3"])
+    fun `the acknowledgement a real Marlin sends for a numbered line decodes`(line: String) {
+        // Captured from MarlinSim (bugfix-2.1.x) answering N2 M114*37, N3 M114*36 and N4 M31*21.
+        // Marlin's ok_to_send() echoes the `N` off the command it is acknowledging *before* ` P`
+        // and ` B`; this decoder read it last, and encode() wrote it last to match, so the type
+        // round-tripped with itself and matched nothing a printer sends. Every ack of a numbered
+        // line fell through every decoder - the whole point of line numbering, unreadable.
+        //
+        // Pinned to the captured bytes and not to encode(), because agreeing with ourselves is
+        // exactly what hid it.
+        val report = decoder.decode(line)
+        Assertions.assertNotNull(report) { "did not decode: $line" }
+        Assertions.assertEquals(15, (report as AdvancedOkRs).planner)
+        Assertions.assertEquals(3, report.blockQueue)
+        Assertions.assertEquals(line.substring(4, 5).toInt(), report.lineNumber)
+    }
+
+    @Test
+    fun `encode writes the line number first, the way Marlin does`() {
+        Assertions.assertEquals("ok N2 P15 B3", AdvancedOkRs(15, 3, 2).encode())
+        Assertions.assertEquals("ok P15 B3", AdvancedOkRs(15, 3).encode())
+    }
+
     @Test
     fun `values at exactly Int MAX_VALUE still decode`() {
-        val report = decoder.decode("ok P2147483647 B2147483647 N2147483647")
+        val report = decoder.decode("ok N2147483647 P2147483647 B2147483647")
         Assertions.assertTrue(report != null)
         Assertions.assertEquals(
             AdvancedOkRs(Int.MAX_VALUE, Int.MAX_VALUE, Int.MAX_VALUE),

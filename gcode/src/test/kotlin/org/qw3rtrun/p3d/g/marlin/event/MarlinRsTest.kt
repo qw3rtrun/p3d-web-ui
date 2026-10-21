@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
+import org.qw3rtrun.p3d.g.protocol.BusyRs
 import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.OkRs
 import org.qw3rtrun.p3d.g.protocol.SimpleOkRs
@@ -358,8 +359,38 @@ class MarlinRsTest {
         }
 
         @Test
-        fun `both round-trip`() {
-            for (echo in listOf(EchoMessage("SD card ok"), UnknownCommand("M9999"))) {
+        fun `Marlin's busy keepalive is split out from ordinary echo`() {
+            // Captured from MarlinSim while homing: host_keepalive() goes out through
+            // SERIAL_ECHO_MSG, so the notice arrives with the echo prefix and the canonical
+            // BusyRs - which reads the bare `busy: processing` the RepRap protocol describes -
+            // never fires. It used to land as undifferentiated EchoMessage text.
+            assertEquals(BusyNotice("processing"), EchoRsDecoder.decode("echo:busy: processing"))
+            assertEquals(BusyNotice("paused for user"), EchoRsDecoder.decode("echo:busy: paused for user"))
+            // Three-way partition: nothing is claimed by two.
+            assertNull(EchoMessage.decode("echo:busy: processing"))
+            assertNull(UnknownCommand.decode("echo:busy: processing"))
+            assertNull(BusyNotice.decode("echo:SD card ok"))
+        }
+
+        @Test
+        fun `the canonical BusyRs is left alone and still reads the bare line`() {
+            // The two spellings stay apart: this one is the protocol's and other firmwares send it.
+            assertEquals(BusyRs("processing"), BusyRs.decode("busy: processing"))
+            assertNull(BusyNotice.decode("busy: processing"))
+            assertNull(BusyRs.decode("echo:busy: processing"))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = ["echo:busy", "echo:busy:", "echo:busy:   ", "echo:busybody"])
+        fun `a busy echo without a reason stays ordinary prose`(line: String) {
+            assertNull(BusyNotice.decode(line), "should not decode: $line")
+            assertNotNull(EchoRsDecoder.decode(line))
+        }
+
+        @Test
+        fun `all three round-trip`() {
+            for (echo in listOf(EchoMessage("SD card ok"), UnknownCommand("M9999"),
+                                BusyNotice("processing"))) {
                 assertEquals(echo, EchoRsDecoder.decode(echo.encode()))
             }
         }

@@ -19,6 +19,11 @@ import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
  * FIRMWARE_NAME:Marlin ...              FirmwareInfoRs
  * Cap:EEPROM:1                          CapabilityRs
  * echo:Unknown command: "M9999"         UnknownCommand
+ * echo:M104 Invalid extruder 5          InvalidExtruder
+ * echo:DEBUG:INFO,ERRORS                DebugLevelRs    - M111
+ * echo:Cold extrudes are enabled ...    ColdExtrusionRs - M302
+ * echo: cold extrusion prevented        ColdExtrusionPrevented
+ * Current file: (no file)               SdCurrentFile   - M27 C
  * ```
  *
  * The decoders partition the reply space - a test pins that no line is claimed by two - so [decode]

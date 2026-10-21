@@ -96,16 +96,66 @@ object SdNotPrinting : SdStatusRs<SdNotPrinting>, GRsDecoder<SdNotPrinting> {
 }
 
 /**
- * Either answer to `M27`.
+ * `Current file: <name>` - `M27 C`'s answer, naming the file the card is positioned on.
+ *
+ * `M27` says how far through the machine is; `M27 C` says what it is reading. The firmware writes
+ * `(no file)` when there is none selected, and [file] is null for that rather than the literal
+ * text, so a caller branches on absence instead of comparing against a sentinel string.
+ *
+ * Captured live from MarlinSim (bugfix-2.1.x) with an empty card, which is the `(no file)` half;
+ * the named half is the same line with a filename in place of that text.
+ *
+ * ```
+ * SdCurrentFile.decode("Current file: (no file)")      // SdCurrentFile(null)
+ * SdCurrentFile.decode("Current file: jingle.gco")     // SdCurrentFile("jingle.gco")
+ * SdCurrentFile(null).encode()                         // "Current file: (no file)"
+ * ```
+ *
+ * @property file the file the card is positioned on, or null when there is none
+ */
+data class SdCurrentFile(val file: String?) : SdStatusRs<SdCurrentFile> {
+
+    override fun encode(): String = PREFIX + (file ?: NO_FILE)
+
+    companion object : GRsDecoder<SdCurrentFile> {
+
+        private const val PREFIX = "Current file: "
+
+        private const val NO_FILE = "(no file)"
+
+        override fun match(line: String): Boolean = scan(line) != null
+
+        override fun decodeParams(line: String): SdCurrentFile =
+            requireNotNull(scan(line)) { "not a current-file reply: $line" }
+
+        /** The filename behind the prefix, or null when the line is not this reply. */
+        private fun scan(line: String): SdCurrentFile? {
+            val text = line.trim()
+            if (!text.startsWithAscii(PREFIX)) return null
+
+            val name = text.substring(PREFIX.length).trim()
+            if (name.isEmpty()) return null
+            return SdCurrentFile(if (name == NO_FILE) null else name)
+        }
+    }
+}
+
+/**
+ * Any of `M27`'s answers: how far through, not printing at all, or which file.
  *
  * ```
  * SdStatusRsDecoder.decode("SD printing byte 1234/56789")   // SdPrinting(1234, 56789)
+ * SdStatusRsDecoder.decode("Current file: (no file)")       // SdCurrentFile(null)
  * ```
  */
 object SdStatusRsDecoder : GRsDecoder<SdStatusRs<*>> {
 
-    override fun match(line: String): Boolean = SdPrinting.match(line) || SdNotPrinting.match(line)
+    override fun match(line: String): Boolean =
+        SdPrinting.match(line) || SdNotPrinting.match(line) || SdCurrentFile.match(line)
 
-    override fun decodeParams(line: String): SdStatusRs<*> =
-        if (SdPrinting.match(line)) SdPrinting.decodeParams(line) else SdNotPrinting
+    override fun decodeParams(line: String): SdStatusRs<*> = when {
+        SdPrinting.match(line) -> SdPrinting.decodeParams(line)
+        SdCurrentFile.match(line) -> SdCurrentFile.decodeParams(line)
+        else -> SdNotPrinting
+    }
 }

@@ -261,6 +261,17 @@ class MarlinRsTest {
     inner class SdStatus {
 
         @Test
+        fun `M27 C names the file the card is positioned on`() {
+            // Captured from MarlinSim with an empty card: the firmware writes the words
+            // "(no file)", and absence is modelled as null rather than that sentinel text.
+            assertEquals(SdCurrentFile(null), SdStatusRsDecoder.decode("Current file: (no file)"))
+            assertEquals(SdCurrentFile("jingle.gco"), SdStatusRsDecoder.decode("Current file: jingle.gco"))
+            assertEquals("Current file: (no file)", SdCurrentFile(null).encode())
+            assertEquals("Current file: jingle.gco", SdCurrentFile("jingle.gco").encode())
+            assertNull(SdStatusRsDecoder.decode("Current file:"))
+        }
+
+        @Test
         fun `M27's two answers decode`() {
             assertEquals(SdPrinting(1234, 56789), SdStatusRsDecoder.decode("SD printing byte 1234/56789"))
             assertEquals(SdNotPrinting, SdStatusRsDecoder.decode("Not SD printing"))
@@ -414,9 +425,108 @@ class MarlinRsTest {
         }
 
         @Test
-        fun `all three round-trip`() {
+        fun `M111's debug level decodes, flags and all`() {
+            // Captured from MarlinSim: S0, S8, S38 and S247 in that order.
+            assertEquals(DebugLevelRs(emptySet()), EchoRsDecoder.decode("echo:DEBUG:off"))
+            assertEquals(DebugLevelRs(setOf("DRYRUN")), EchoRsDecoder.decode("echo:DEBUG:DRYRUN"))
+            assertEquals(DebugLevelRs(setOf("INFO", "ERRORS")),
+                EchoRsDecoder.decode("echo:DEBUG:INFO,ERRORS"))
+            assertEquals(
+                DebugLevelRs(setOf("ECHO", "INFO", "ERRORS", "COMMUNICATION")),
+                EchoRsDecoder.decode("echo:DEBUG:ECHO,INFO,ERRORS,COMMUNICATION")
+            )
+        }
+
+        @Test
+        fun `no debug flags is off, and round-trips as off`() {
+            // `echo:DEBUG:` with nothing after it is not a report; `off` is how the firmware
+            // spells no flags, and an empty set has to encode back to that word.
+            assertEquals("echo:DEBUG:off", DebugLevelRs(emptySet()).encode())
+            assertNull(DebugLevelRs.decode("echo:DEBUG:"))
+            assertNull(DebugLevelRs.decode("echo:DEBUG:   "))
+        }
+
+        @Test
+        fun `M302's cold extrusion report decodes both states and the threshold`() {
+            // Captured from MarlinSim after M302 P0, M302 P1 and M302 S0.
+            assertEquals(ColdExtrusionRs(false, 170),
+                EchoRsDecoder.decode("echo:Cold extrudes are disabled (min temp 170C)"))
+            assertEquals(ColdExtrusionRs(true, 170),
+                EchoRsDecoder.decode("echo:Cold extrudes are enabled (min temp 170C)"))
+            assertEquals(ColdExtrusionRs(true, 0),
+                EchoRsDecoder.decode("echo:Cold extrudes are enabled (min temp 0C)"))
+        }
+
+        @Test
+        fun `a refused cold extrude is its own notice`() {
+            // The command was acknowledged with an ok and then did nothing - an echo a host must
+            // not treat as prose, for the same reason as UnknownCommand.
+            //
+            // Note the blank after the colon, which the M302 report does not have: the two
+            // messages reach the line through different calls in the firmware. The first live
+            // sweep read this as prose because the decoder did not cross it.
+            assertEquals(ColdExtrusionPrevented, EchoRsDecoder.decode("echo: cold extrusion prevented"))
+            assertEquals(ColdExtrusionPrevented, EchoRsDecoder.decode("echo:cold extrusion prevented"))
+            assertNull(EchoMessage.decode("echo: cold extrusion prevented"))
+        }
+
+        @Test
+        fun `a command naming a tool the machine lacks is its own notice`() {
+            // Captured from MarlinSim: M104 T5 S100 and M104 T1 S205 on a one-extruder machine.
+            assertEquals(InvalidExtruder("M104", 5), EchoRsDecoder.decode("echo:M104 Invalid extruder 5"))
+            assertEquals(InvalidExtruder("M104", 1), EchoRsDecoder.decode("echo:M104 Invalid extruder 1"))
+            assertEquals("echo:M104 Invalid extruder 5", InvalidExtruder("M104", 5).encode())
+            assertNull(EchoMessage.decode("echo:M104 Invalid extruder 5"))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = [
+            "echo: Invalid extruder 5",
+            "echo:M104 Invalid extruder",
+            "echo:M104 Invalid extruder x",
+            "echo:M104 Invalid extruder 5 maybe",
+        ])
+        fun `an invalid-extruder line that is malformed decodes to absence`(line: String) {
+            assertNull(InvalidExtruder.decode(line), "should not decode: $line")
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = [
+            "echo:Cold extrudes are enabled",
+            "echo:Cold extrudes are sideways (min temp 170C)",
+            "echo:Cold extrudes are enabled (min temp C)",
+            "echo:Cold extrudes are enabled (min temp 170C) and then some",
+        ])
+        fun `a cold extrusion line that is not the report decodes to absence`(line: String) {
+            assertNull(ColdExtrusionRs.decode(line), "should not decode: $line")
+        }
+
+        @Test
+        fun `the echo specialisations still partition the prefix`() {
+            val claimed = listOf(
+                "echo:Unknown command: \"M9999\"",
+                "echo:M104 Invalid extruder 5",
+                "echo: cold extrusion prevented",
+                "echo:busy: processing",
+                "echo:DEBUG:INFO,ERRORS",
+                "echo:Cold extrudes are enabled (min temp 170C)",
+                "echo:cold extrusion prevented",
+            )
+            for (line in claimed) {
+                assertNull(EchoMessage.decode(line)) { "EchoMessage should not claim: $line" }
+                assertNotNull(EchoRsDecoder.decode(line)) { "nothing claimed: $line" }
+            }
+            // and ordinary prose is still ordinary prose
+            assertEquals(EchoMessage("Print time: 0s"), EchoRsDecoder.decode("echo:Print time: 0s"))
+        }
+
+        @Test
+        fun `all of them round-trip`() {
             for (echo in listOf(EchoMessage("SD card ok"), UnknownCommand("M9999"),
-                                BusyNotice("processing"))) {
+                                BusyNotice("processing"), DebugLevelRs(emptySet()),
+                                DebugLevelRs(setOf("INFO", "ERRORS")), ColdExtrusionRs(true, 170),
+                                ColdExtrusionRs(false, 0), ColdExtrusionPrevented,
+                                InvalidExtruder("M104", 5))) {
                 assertEquals(echo, EchoRsDecoder.decode(echo.encode()))
             }
         }

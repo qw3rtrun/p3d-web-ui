@@ -6,6 +6,7 @@ import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
+import org.qw3rtrun.p3d.g.protocol.digitsEnd
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 import java.util.regex.Pattern
 
@@ -29,8 +30,10 @@ interface EchoRs<D : EchoRs<D>> : GEventRs<D>
 /**
  * `echo:<text>` - a line of prose from the firmware.
  *
- * Deliberately matches neither [UnknownCommand] nor [BusyNotice], so the three partition the prefix
- * between them and no line is claimed by two, the way `DebugRs` and `ActionRs` partition `//`.
+ * Deliberately matches none of the specialisations - [UnknownCommand], [InvalidExtruder],
+ * [BusyNotice], [DebugLevelRs], [ColdExtrusionRs], [ColdExtrusionPrevented] - so they partition
+ * the prefix between them and no line is claimed by two, the way `DebugRs` and `ActionRs`
+ * partition `//`.
  *
  * ```
  * EchoMessage.decode("echo:busy")   // EchoMessage("busy")
@@ -48,7 +51,11 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
         override fun match(line: String): Boolean =
             line.trim().startsWithAscii(PREFIX) &&
                 !UnknownCommand.match(line) &&
-                !BusyNotice.match(line)
+                !BusyNotice.match(line) &&
+                !DebugLevelRs.match(line) &&
+                !ColdExtrusionRs.match(line) &&
+                !ColdExtrusionPrevented.match(line) &&
+                !InvalidExtruder.match(line)
 
         override fun decodeParams(line: String): EchoMessage {
             require(match(line)) { "not an echo line: $line" }
@@ -88,6 +95,66 @@ data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
             val matcher = PATTERN.matcher(line.trim())
             require(matcher.matches()) { "not an unknown-command line: $line" }
             return UnknownCommand(matcher.group(1))
+        }
+    }
+}
+
+/**
+ * `echo:<command> Invalid extruder <n>` - the command named a tool the machine does not have.
+ *
+ * The second of the two `echo:` lines a host must not ignore, beside [UnknownCommand] and for the
+ * same reason: the command was accepted by the wire protocol, acknowledged with an `ok`, and then
+ * did nothing. `M104 T5 S100` on a one-extruder machine sets no temperature and reports success.
+ *
+ * [command] is the code the firmware quoted back, which is the one that was rejected - `M104` for
+ * `M104 T5 S100`. It is kept as written rather than parsed into a `GCommand`: this is the
+ * firmware's own echo of what it read, and a host matching on it wants the text it sent.
+ *
+ * Captured live from MarlinSim (bugfix-2.1.x): `M104 T5 S100` answers
+ * `echo:M104 Invalid extruder 5`, and `M104 T1 S205` answers the same with `1`.
+ *
+ * ```
+ * InvalidExtruder.decode("echo:M104 Invalid extruder 5")   // InvalidExtruder("M104", 5)
+ * InvalidExtruder("M104", 5).encode()                      // "echo:M104 Invalid extruder 5"
+ * ```
+ *
+ * @property command the command the firmware quoted, as it wrote it
+ * @property index the extruder the command asked for
+ */
+data class InvalidExtruder(val command: String, val index: Int) : EchoRs<InvalidExtruder> {
+
+    override fun encode(): String = EchoMessage.PREFIX + command + BODY + index
+
+    companion object : GRsDecoder<InvalidExtruder> {
+
+        private const val BODY = " Invalid extruder "
+
+        override fun match(line: String): Boolean = scan(line) != null
+
+        override fun decodeParams(line: String): InvalidExtruder =
+            requireNotNull(scan(line)) { "not an invalid-extruder line: $line" }
+
+        /**
+         * The command and the extruder index, or null when the line is not one of these.
+         *
+         * The command is whatever sits between `echo:` and ` Invalid extruder `, so a firmware
+         * that quotes more than the code still decodes; what is pinned is the message and the
+         * number behind it, which is the part a host reads.
+         */
+        private fun scan(line: String): InvalidExtruder? {
+            val text = line.trim()
+            if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
+
+            val from = text.blanksEnd(EchoMessage.PREFIX.length)
+            var at = from
+            while (at < text.length && !text.startsWithAscii(BODY, at)) at++
+            if (at >= text.length || at == from) return null
+
+            val digits = at + BODY.length
+            val end = text.digitsEnd(digits)
+            if (end == digits || end != text.length) return null
+
+            return InvalidExtruder(text.substring(from, at), text.substring(digits, end).toIntOrNull() ?: return null)
         }
     }
 }
@@ -171,11 +238,21 @@ data class BusyNotice(override val reason: String) : BusyRs<BusyNotice>, EchoRs<
 object EchoRsDecoder : GRsDecoder<EchoRs<*>> {
 
     override fun match(line: String): Boolean =
-        UnknownCommand.match(line) || BusyNotice.match(line) || EchoMessage.match(line)
+        UnknownCommand.match(line) ||
+            InvalidExtruder.match(line) ||
+            BusyNotice.match(line) ||
+            DebugLevelRs.match(line) ||
+            ColdExtrusionRs.match(line) ||
+            ColdExtrusionPrevented.match(line) ||
+            EchoMessage.match(line)
 
     override fun decodeParams(line: String): EchoRs<*> = when {
         UnknownCommand.match(line) -> UnknownCommand.decodeParams(line)
+        InvalidExtruder.match(line) -> InvalidExtruder.decodeParams(line)
         BusyNotice.match(line) -> BusyNotice.decodeParams(line)
+        DebugLevelRs.match(line) -> DebugLevelRs.decodeParams(line)
+        ColdExtrusionRs.match(line) -> ColdExtrusionRs.decodeParams(line)
+        ColdExtrusionPrevented.match(line) -> ColdExtrusionPrevented
         else -> EchoMessage.decodeParams(line)
     }
 }

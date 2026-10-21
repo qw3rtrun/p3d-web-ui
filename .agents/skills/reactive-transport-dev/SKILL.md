@@ -45,28 +45,31 @@ here can break it.
 one-way in `build.gradle` and must stay that way: the core's whole claim is that it ports to JS/TS,
 C and Rust, and nothing that imports Reactor ports anywhere.
 
-## IMPORTANT - do not grow a second reply model
+## IMPORTANT - one reply model, and it lives in `:gcode`
 
-`msg/Replay.java` parses firmware replies into `Replay.Ok/Error/Busy/Wait/Resend/Message`.
-`:gcode`'s `protocol/` and `marlin/event/` packages parse the *same lines* into
-`OkRs/ErrorRs/BusyRs/WaitRs/ResendRs/...`, with a corpus and ~170 tests behind them.
+A firmware reply is decoded **once**, by `MarlinRsDecoder`, in `ReplyFlux`. From there the transport
+routes typed `GRs` values and never looks at the text again. `messageFlux()` is `Flux<GRs<?>>` for
+the same reason.
 
-**Two parsers for one wire format is the standing defect of this module.** It is not a style
-complaint - the copies have already diverged:
+**Do not add a transport-local reply type.** If a line needs reading that `GRs` cannot express, the
+change belongs in `:gcode`'s `protocol/` or `marlin/event/`, where the corpus and ~170 tests are -
+not here.
 
-- `Replay.Ok.ADVANCED_PATTERN` reads `ok P15 B3 N100`, with the line number **last**. Marlin writes
-  it **first** (`ok N2 P15 B3`), which a live probe against MarlinSim confirmed and `:gcode`'s
-  `AdvancedOkRs` was fixed for. The copy here still has the bug, and `HostTerminalTest`'s
-  `anAdvancedOkIsWindowCreditAndNotAReply` pins the wrong form.
-- `Replay.parse` claims `busy:` only. Marlin sends `echo:busy: processing`, which `:gcode` models
-  as `BusyNotice`. Here it falls through to `Message`, so `onBusy` never fires and the send window
-  never learns the printer is stalling.
-- `Replay.lineNumber` calls `Integer.parseInt` on wire text and throws on anything malformed, in a
-  parser whose input arrives from a serial link. `:gcode`'s rule is the opposite: errors are values.
+This module ran a second parser (`terminal.msg.Replay`) until it was deleted, and the cost is worth
+remembering, because every item was invisible until something was measured against a real printer:
 
-So: **do not add a case to `Replay`.** When a reply needs reading, the work is to delete that copy
-and decode through `MarlinRsDecoder`, keeping `Replay` only if a transport-local shape is genuinely
-needed that `GRs` cannot express. Record it if you cannot do it in the change you are making.
+- its advanced-`ok` pattern read `ok P15 B3 N100`, line number **last**, while Marlin writes it
+  **first**. `HostTerminalTest` pinned the wrong form, so the suite agreed with the bug.
+- it claimed bare `busy:` only, so Marlin's `echo:busy: processing` fell through to a plain message
+  and `onBusy` never fired - the send window was never told the printer had stalled.
+- it parsed line numbers with `Integer.parseInt`, throwing on malformed input arriving off a serial
+  link, where `:gcode`'s rule is that errors are values.
+- `PrinterReactor` one layer up was decoding the same line a *second* time with `MarlinRsDecoder`,
+  so every reply was read by two parsers that disagreed.
+
+Route on the **family interfaces** - `OkRs<?>`, `BusyRs<?>` - rather than on concrete classes. That
+is what they are for: `SimpleBusyRs` and `BusyNotice` are one notice in two spellings, and a reply
+type added to `:gcode` under an existing interface then arrives here already routed.
 
 ## Reactive Streams rules this module must obey
 
@@ -177,7 +180,8 @@ failure, so count them out of the XML the way `protocol-dev` does.
 
 ## Review checklist
 
-- [ ] no new case in `msg/Replay` - decoding goes through `:gcode`'s `MarlinRsDecoder`
+- [ ] no transport-local reply type - decoding goes through `:gcode`'s `MarlinRsDecoder`, and
+      routing matches the family interfaces rather than concrete classes
 - [ ] `:gcode` still does not depend on `:backend:terminal`
 - [ ] every `tryEmit*` result is handled
 - [ ] no signal after `onComplete` / `onError`; terminal state is checked on every path
@@ -193,8 +197,18 @@ failure, so count them out of the XML the way `protocol-dev` does.
 
 Live examples of what this skill rules out, so nobody copies them as precedent:
 
-- **`msg/Replay.java` is a second reply parser**, diverged from `:gcode`'s - see above for the three
-  concrete differences. This is the first thing to fix.
+- **`HostTerminal.onBusy` frees the slot but does not pull.** It zeroes `sentWithoutAck` and then
+  nothing moves until the next `request(n)` or `ok` arrives; `processRequest()` is not called. The
+  tests work around it with an explicit `thenRequest`. Adding the call is a flow-control change
+  against hardware and wants a probe behind it.
+- **`messageFlux()` no longer carries lines no decoder claims** - the boot banner, an `M503` dump, a
+  calibration report. They are dropped with a `#traffic` debug line, which is what the layer above
+  did with them anyway. A terminal or console view needs a separate `Flux<String>` of received
+  lines off `ReplyFlux`, not a nullable field on a value type.
+- **`:backend:terminal` declares `implementation project(':gcode')`** while `messageFlux()` now has
+  a `:gcode` type in its public signature. It compiles only because `:backend:api` declares `:gcode`
+  itself; a consumer that does not would fail. The fix is `api` rather than `implementation`, which
+  needs the `java-library` plugin in `p3d.java-conventions`.
 - **`HostTerminal.onResend` and `onWait` are empty** with `// TODO Unsupported yet`. A `Resend:`
   from the printer is how it asks for a line back after a checksum failure; ignoring it means the
   print is already wrong and the host does not know. `:gcode`'s `GSendWindow` holds the replay

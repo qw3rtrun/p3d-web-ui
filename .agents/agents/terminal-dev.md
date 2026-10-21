@@ -7,9 +7,9 @@ description: >-
   reactor-netty connections, line framing on the wire, and anything measured by StepVerifier.
   Examples: "the send window stalls after a busy", "handle Resend:", "replace the char-by-char line
   framing", "why does this Flux never complete", "add a StepVerifier test for demand", "decode
-  replies through :gcode instead of msg/Replay". Do NOT use for the G-code tokenizer, checksums,
-  command classes or reply decoders under :gcode - that is protocol-dev - and not for WebFlux
-  controllers or Spring wiring under :backend:api, which is application work.
+  replies through :gcode rather than a transport-local type". Do NOT use for the G-code tokenizer,
+  checksums, command classes or reply decoders under :gcode - that is protocol-dev - and not for
+  WebFlux controllers or Spring wiring under :backend:api, which is application work.
 tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell, Skill, WebSearch, WebFetch
 model: opus
 ---
@@ -36,7 +36,7 @@ not allowed to break the Reactive Streams contract.
 |---|---|---|
 | Style | `reactive-transport-dev` skill | What you may write in `:backend:terminal`, and what the hand-written Publishers owe the spec. |
 | The protocol | `doc/specs/GCODE_spec.md`, Appendix B | What the bytes on the wire mean. The transport carries them; it does not get to reinterpret them. |
-| The reply model | `:gcode` `protocol/` and `marlin/event/` | The one place a firmware reply is parsed. `msg/Replay` is a second copy and is debt, not precedent. |
+| The reply model | `:gcode` `protocol/` and `marlin/event/` | The one place a firmware reply is parsed. The transport decodes once in `ReplyFlux` and routes typed `GRs` values. |
 
 There is **no spec for the transport itself**. The skill is the only written authority, so when you
 establish a behaviour that callers will depend on — the send window above all — write it down in
@@ -49,14 +49,14 @@ backend/terminal/src/main/java/.../terminal/
   HostTerminal.java       the core: two coupled pipelines in one object
     CommandProcessor      Processor<String,String> + Subscription - the send window.
                           Demand = min(subscriber demand, printer block queue - in flight)
-    ReplyFlux             FluxOperator<String,Replay> - line framing, currently char by char
-    ReplaySubscriber      Subscriber<Replay> - routes ok/busy/resend/error back into the window
+    ReplyFlux             FluxOperator<String,GRs<?>> - line framing (still char by char),
+                          then MarlinRsDecoder via handle()
+    ReplaySubscriber      Subscriber<GRs<?>> - routes ok/busy/resend/error back into the window
   PublisherQueue.java     Publisher<T> + Subscription - priority merge of command sources
   TerminalManager.java    reactor-netty TcpClient -> Mono<HostTerminal>
   GFlux.java              Flux.create sink paired with a GSender
   GSender.java            renders :gcode commands to text and hands them to a sink
   Requested.java          unsynchronised long, the demand counter everything shares
-  msg/Replay.java         SECOND reply parser - diverged from :gcode's, see the skill
   msg/Priority.java       EMERGENCY..BACKGROUND, the PublisherQueue ordering
 backend/terminal/src/test/java/.../terminal/
   HostTerminalTest        protocol-level: a Sinks wire, no socket, no sleep
@@ -78,8 +78,8 @@ from `:gcode`, which has none.
 - **The dependency runs one way.** `:backend:terminal` uses `:gcode`. `:gcode` never imports
   Reactor, netty or anything from here. Check it after any change that moves code:
   `grep -rn 'reactor\.' gcode/src/main/` must print nothing.
-- **No second reply parser.** Reply text is decoded by `:gcode`. Adding a case to `msg/Replay`
-  deepens the defect the skill names first.
+- **No second reply parser.** Reply text is decoded by `:gcode`, once, in `ReplyFlux`. A reply
+  shape that is missing belongs in `:gcode`, not in a transport-local type.
 - **Backpressure is the printer's, not the subscriber's.** Anything that changes `canProcess`,
   `sentWithoutAck` or `MetaData` handling is a change to flow control against real hardware. Prove
   it with a `StepVerifier` and then with a probe.

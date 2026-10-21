@@ -2,15 +2,12 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.core.msg.*;
-import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
 import org.qw3rtrun.p3d.g.protocol.GRq;
-import org.qw3rtrun.p3d.g.protocol.GRs;
 import org.qw3rtrun.p3d.terminal.GSender;
 import org.qw3rtrun.p3d.terminal.HostTerminal;
 import org.qw3rtrun.p3d.terminal.PublisherQueue;
 import org.qw3rtrun.p3d.terminal.TerminalManager;
 import org.qw3rtrun.p3d.terminal.msg.Priority;
-import org.qw3rtrun.p3d.terminal.msg.Replay;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
@@ -127,34 +124,25 @@ public class PrinterReactor {
         commandQueue.addPublisher(Priority.REGULAR, Mono.just(gcode));
     }
 
+    /**
+     * The replies from the printer, invoked on {@link PrinterState}.
+     *
+     * <p>No decoding here any more. {@link HostTerminal} hands over {@code GRs} values that
+     * {@code MarlinRsDecoder} already read off the wire, so the line is parsed exactly once. This
+     * used to take raw text from a {@code Replay.Message} and run {@code MarlinRsDecoder} over it -
+     * which meant two parsers saw every line, the transport's own and this one, and they did not
+     * agree about {@code ok N2 P15 B3} or {@code echo:busy:}.
+     *
+     * <p>A line no decoder claims never arrives. That is the normal case and not an error - the
+     * {@code M503} settings dump, the boot banner, every calibration report - and the transport
+     * logs it on its traffic logger where the bytes are.
+     */
     private Mono<Void> gEvent() {
         log.info("gEvent()");
         return terminal.messageFlux()
                 .publishOn(executor)
-                .map(Replay.Message::raw)
-                .map(this::decode)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
                 .doOnNext(this::invoke)
                 .then();
-    }
-
-    /**
-     * The reply a line says it is, or empty when nothing here knows the line.
-     *
-     * <p>Empty is the normal case, not an error: most of what a printer says is still outside the
-     * tier-1 set of todo 12 - the {@code M503} settings dump, the boot banner, every calibration
-     * report. The line is logged and dropped. The decoder this replaces ended in a catch-all that
-     * wrapped every such line in an {@code UnknownEvent}, which no invoker handled, so it was
-     * logged as "No invoker for" one layer further down; this says the same thing at the point
-     * where it is actually known.
-     */
-    private Optional<GRs<?>> decode(String line) {
-        GRs<?> reply = MarlinRsDecoder.INSTANCE.decode(line);
-        if (reply == null) {
-            log.debug("unrecognised reply: {}", line);
-        }
-        return Optional.ofNullable(reply);
     }
 
     private Mono<Void> gCode() {

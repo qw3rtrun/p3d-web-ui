@@ -2,10 +2,8 @@ package org.qw3rtrun.p3d.terminal;
 
 import org.qw3rtrun.p3d.core.model.ConnectionDetails;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
-import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
 import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
 import org.qw3rtrun.p3d.terminal.msg.Priority;
-import org.qw3rtrun.p3d.terminal.msg.Replay;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -54,10 +52,9 @@ public final class EmulatorTemperatureProbe {
         var g = new GSender(sink);
 
         var reported = new CountDownLatch(1);
+        // Already decoded: HostTerminal reads the line once, through MarlinRsDecoder, and hands
+        // over the typed reply. This used to take raw text and decode it a second time.
         Disposable replies = terminal.messageFlux()
-                .map(Replay.Message::raw)
-                .map(MarlinRsDecoder.INSTANCE::decode)
-                .filter(Objects::nonNull)
                 .doOnNext(rs -> System.out.println("decoded " + rs))
                 .subscribe(rs -> {
                     if (rs instanceof TemperatureRs<?> temp) {

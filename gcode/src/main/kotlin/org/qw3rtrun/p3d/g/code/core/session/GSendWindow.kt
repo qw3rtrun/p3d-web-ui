@@ -27,9 +27,15 @@ import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
  * checksummed the first time. The outstanding blocks are kept oldest first, as two parallel lists of
  * numbers and texts.
  *
+ * **Bytes are also how a block gets in.** [send] takes either a `GCommand` or the text of one, and
+ * the typed form is the text form applied to `GEncoder.encode(command)`: a sender that rendered its
+ * block before queueing it - which is what a sender that numbers blocks last must do - can hand that
+ * text straight over instead of parsing it back into a command.
+ *
  * ```
  * val window = GSendWindow()
  * window.send(GCommand(GLetter('G'), GInt(28)))   // "N1 G28*18"
+ * window.send("G90")                              // "N2 G90*18" - the same path, from text
  * window.resendFrom(1)                            // ["N1 G28*18"] - after `Resend: 1`
  * window.acknowledge()                            // true - after `ok`
  * ```
@@ -70,10 +76,36 @@ class GSendWindow(
      * @param command the command to number, frame and hold
      * @return the framed block to transmit, or null when the window is full
      */
-    fun send(command: GCommand): String? {
+    fun send(command: GCommand): String? = send(GEncoder.encode(command))
+
+    /**
+     * The same, for a block a caller has **already rendered to text**: number it, frame it, hold it.
+     *
+     * This is the entry point a transport uses. A line number may only be assigned at the moment of
+     * writing - anything that reorders blocks after numbering them produces a gap, and a gap is what
+     * the firmware rejects - so by the time a sender reaches this window it is typically holding a
+     * `String` and no longer a `GCommand`. Handing that string back through a parser to recover the
+     * command would be a second reader of bytes this module already reads, and spec 8.3 does not need
+     * one: framing is defined over the bytes, not over what they mean.
+     *
+     * [payload] is framed exactly as given and is never inspected; `GEncoder.frame` documents what
+     * that leaves the caller responsible for. [send] over a `GCommand` is this function applied to
+     * `GEncoder.encode(command)`, so both produce the same bytes and both are recorded the same way -
+     * there is one framer and one place a sent block is remembered.
+     *
+     * ```
+     * val window = GSendWindow()
+     * window.send("G28")   // "N1 G28*18"
+     * window.resendFrom(1) // ["N1 G28*18"]
+     * ```
+     *
+     * @param payload the block's bytes, as they are to be transmitted, without an `N` or a `*`
+     * @return the framed block to transmit, or null when the window is full
+     */
+    fun send(payload: String): String? {
         if (inFlight >= capacity) return null
 
-        val text = GEncoder.frame(next, command, calculator())
+        val text = GEncoder.frame(next, payload, calculator())
         outstandingNumber.add(next)
         outstandingText.add(text)
         next++

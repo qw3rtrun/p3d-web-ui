@@ -3,7 +3,9 @@ package org.qw3rtrun.p3d.g.code.core.session
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
+import org.qw3rtrun.p3d.g.code.core.block.GFramedBlock
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
 import org.qw3rtrun.p3d.g.code.core.command.GCommand
 import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
@@ -264,6 +266,96 @@ class GSendWindowTest {
 
             assertInstanceOf(GAccepted::class.java, reader.read(block))
             assertEquals(0, reader.lastLine)
+        }
+    }
+
+    /**
+     * The text entry point: a sender that has already rendered its block hands over the bytes.
+     *
+     * A line number may only be assigned at the moment of writing, so a transport that reorders
+     * blocks after rendering them reaches this window holding a `String`. These pin that the text
+     * path is the same path - same numbering, same window, same bytes - rather than a parallel one.
+     */
+    @Nested
+    inner class TextPayloads {
+
+        @Test
+        fun `a rendered block is numbered framed and held like any other`() {
+            val window = GSendWindow()
+
+            assertEquals("N1 G28*18", window.send("G28"))
+            assertEquals("N2 G90*18", window.send("G90"))
+            assertEquals(listOf("N1 G28*18", "N2 G90*18"), window.resendFrom(1))
+        }
+
+        @Test
+        fun `the typed and text paths produce the same bytes`() {
+            // spec 8.3 is defined over bytes, so send(command) is send(the command's bytes). If
+            // these two ever diverge there are two framers again.
+            val commands = listOf(
+                g28,
+                t0,
+                cmd('G', 1, GParameterWord(GLetter('X'), GFloat("10.50")), GParameterWord(GLetter('F'), GInt(1800))),
+                cmd('M', 117, GParameterWord(GLetter('S'), GQuotedString("Hello World!")))
+            )
+
+            for (command in commands) {
+                val typed = GSendWindow(first = 7)
+                val text = GSendWindow(first = 7)
+
+                assertEquals(typed.send(command), text.send(GEncoder.encode(command)))
+            }
+        }
+
+        @Test
+        fun `text and commands share one number sequence and one window`() {
+            val window = GSendWindow()
+
+            assertEquals("N1 G28*18", window.send(g28))
+            assertEquals("N2 G28*17", window.send("G28"))
+            assertEquals(2, window.inFlight)
+            assertTrue(window.canResendFrom(1))
+            assertTrue(window.canResendFrom(2))
+        }
+
+        @Test
+        fun `a full window refuses text too and consumes no number`() {
+            val window = GSendWindow(capacity = 1)
+            window.send("G28")
+
+            assertNull(window.send("G90"))
+            assertEquals(2, window.next)
+
+            window.acknowledge()
+            assertEquals("N2 G90*18", window.send("G90"))
+        }
+
+        @Test
+        fun `a replayed text block is the bytes first sent`() {
+            val window = GSendWindow()
+            window.send("G28")
+            window.send("G1 X10 F1800")
+
+            assertEquals(listOf("N1 G28*18", "N2 G1 X10 F1800*60"), window.resendFrom(1))
+        }
+
+        @Test
+        fun `what the window emits from text parses back as a verified framed block`() {
+            val window = GSendWindow(capacity = 8)
+
+            for (payload in listOf("G28", "T0", "G1 X10.50 F1800", "M117 S\"Hello World!\"", "G90")) {
+                val framed = requireNotNull(window.send(payload))
+                val block = GBlockReader.blocks(framed).first()
+
+                assertInstanceOf(GFramedBlock::class.java, block, "did not verify: $framed")
+            }
+        }
+
+        @Test
+        fun `a crc window frames text with the crc too`() {
+            val window = GSendWindow(calculator = ::Crc16CheckSum)
+
+            assertEquals("N1 G28*14291", window.send("G28"))
         }
     }
 }

@@ -694,9 +694,10 @@ checksums and the field-pairing rule; `core/command`
 ([B.4](#b4-command-model--commandgcommandskt-commandgheadkt)) is words, commands, drafts and the
 command head. Each may name itself and everything below it, and nothing above: `GLayeringTest`
 scans the source text of all three and fails the build on the first name pointing the wrong way,
-KDoc links included. `GEncoder` and `core/session` sit above all three and are allowed to span —
-the encoder writes a command's words and frames a block around them in one pass, because
-[§8.3](#83-what-the-checksum-covers)'s checksum covers the bytes as transmitted.
+KDoc links included. `GEncoder` and `core/session`
+([B.5](#b5-framing-and-the-send-window--gencoderkt-sessiongsendwindowkt)) sit above all three and
+are allowed to span — the encoder writes a command's words and frames a block around them in one
+pass, because [§8.3](#83-what-the-checksum-covers)'s checksum covers the bytes as transmitted.
 
 **One word per thing.** [§5](#5-line-block-structure) calls the unit a "line (block)"; the module
 calls it a **block**, everywhere, in one spelling. It used to carry three names for it — a parsed
@@ -979,6 +980,56 @@ Head matching on that layer is [§2.2](#22-case)-tolerant in the reading directi
 to upper case, so `m104 s200` and `M104 S200` decode to the same command. The **number** keeps its
 lexeme, so `M0105` still does not resolve, and the writing direction is unchanged - the DSL emits
 uppercase, which is what [§2.2](#22-case) asks generators to do.
+
+### B.5 Framing and the send window — `GEncoder.kt`, `session/GSendWindow.kt`
+
+The writing direction, and the two files that sit **above** the three layers of B.1–B.4 rather than
+inside them. [§8.3](#83-what-the-checksum-covers) is why they are allowed to span: the checksum
+covers the bytes as transmitted, so the thing that writes a command's words and the thing that frames
+a block around them cannot be separated without one of them guessing at the other's whitespace.
+
+| Spec concept | Entry point |
+|---|---|
+| A command as bytes ([§4](#4-identifiers-field-letters)) | `GEncoder.encode(command: GCommand): String` |
+| A block as bytes ([§5](#5-line-block-structure)) | `GEncoder.encode(draft: GBlockDraft): String` |
+| Framing ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GEncoder.frame(number: Int, payload: String, checksum: CheckSumCalculator)` — **the primitive**; the `GCommand` and `GBlockDraft` overloads render their bytes and delegate to it |
+| The host's window ([§8.5](#85-failure-handling-and-the-resend-protocol)) | `GSendWindow.send(payload: String)` / `send(command: GCommand)`, `acknowledge()`, `canResendFrom()`, `resendFrom()`, `reset()` |
+
+**Framing is defined over bytes, so the entry point takes bytes.** A sender that assigns the line
+number at the moment of writing — which [§7.2](#72-semantics) forces on anything that reorders blocks
+after rendering them, since a gap in the sequence is exactly what the firmware rejects — holds a
+`String` by the time it frames. Handing that string back through a parser to recover a `GCommand`
+would be a second reader of text the module already reads, and [§8.3](#83-what-the-checksum-covers)
+needs no such thing. `send(command)` is therefore `send(GEncoder.encode(command))`: one framer, one
+place a sent block is recorded.
+
+**The payload is transmitted verbatim and is never inspected**, which is [§8.3](#83-what-the-checksum-covers)
+read literally — nothing normalised first. That is not an exception to the module's errors-as-values
+rule, because nothing is being *read*: the function's postcondition is a byte identity and it holds
+for every input. A caller who wants the block checked runs the result back through
+`GBlockReader.blocks(...)` and asks whether it is a `GFramedBlock`.
+
+Consequences, all verified by running:
+
+* a payload that already carries a `*` is framed correctly — `frame(1, "G28*12")` is
+  `N1 G28*12*59`, which this module's reader verifies as a `GFramedBlock` with checksum 59, agreeing
+  with [§8.3](#83-what-the-checksum-covers)'s last-`*`-wins rule;
+* a payload that already carries an `N` is framed in front of it — `frame(1, "N5 G28")` is
+  `N1 N5 G28*73`, verified, and the reader takes 1 as the line number while `N5` becomes an ordinary
+  parameter word;
+* an empty payload is framed like any other — `frame(1, "")` is `N1 *95`, verified: a numbered block
+  commanding nothing, not an error. The space after the number is always written and is always
+  covered;
+* **a payload must not open a comment it does not close.** `frame(1, "G28 ; c")` is `N1 G28 ; c*74`,
+  which reads back as `GMissingChecksum`, because the checksum field lands inside the comment. A
+  trailing comment belongs *after* the `*` ([§5](#5-line-block-structure)) and only the
+  `GBlockDraft` overload can place it there, because only it can see where the payload ends;
+* **a payload must be one line.** `frame(1, "G28\nG90")` reads back as two blocks,
+  `GMissingChecksum` and `GMissingLineNumber` — [§7.3](#73-pairing-rule)'s pairing broken in both
+  directions at once.
+
+The last two are the price of not parsing, and are stated here rather than fixed: the caller holding
+rendered text knows what it rendered.
 
 ---
 

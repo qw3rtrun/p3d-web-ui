@@ -1,6 +1,6 @@
-package org.qw3rtrun.p3d.mng.service;
+package org.qw3rtrun.p3d.management.service;
 
-import org.qw3rtrun.p3d.mng.model.PrinterEntity;
+import org.qw3rtrun.p3d.management.model.PrinterEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.UUID;

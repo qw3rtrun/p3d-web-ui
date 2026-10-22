@@ -1,0 +1,10 @@
+Submodel Boundaries
+1) api - the common API contains data classes, records, interfaces shared by all submodels.
+    All submodels depend on this API, but should not depend on any other submodel.
+2) core - the core submodel contains the business logic. uses DDD patterns around PrinterAggregate - the core of the application.
+    Represents the current state of the printer. All events, commands, changes go through this aggregate.
+    All communication with other submodels happens through modulith events
+3) printer-management - the submodel that manages printers. Creates printers (names, connection information, types, capabilities, firmware versions).
+    The static data about printers, but not live-data during communications with printers
+4) frontend - the submodel that manages tree parts: rests/ws server APIs, thymeleaf templates for server rendering, vue.js frontend.
+5) app - assembly of the frontend and backend parts. Only. The app ships as a single jar.

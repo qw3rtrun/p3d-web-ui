@@ -15,4 +15,4 @@
 @org.springframework.modulith.ApplicationModule(
         displayName = "Machine management",
         allowedDependencies = {})
-package org.qw3rtrun.p3d.mng;
+package org.qw3rtrun.p3d.management;

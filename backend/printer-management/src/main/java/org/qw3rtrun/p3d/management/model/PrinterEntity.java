@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.mng.model;
+package org.qw3rtrun.p3d.management.model;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;

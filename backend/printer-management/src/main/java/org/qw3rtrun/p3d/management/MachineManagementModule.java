@@ -1,11 +1,11 @@
-package org.qw3rtrun.p3d.mng;
+package org.qw3rtrun.p3d.management;
 
 import org.qw3rtrun.p3d.core.bus.CommandQueryService;
 import org.qw3rtrun.p3d.core.model.Descriptor;
 import org.qw3rtrun.p3d.core.service.MachineManagementService;
-import org.qw3rtrun.p3d.mng.service.MachineEventBus;
-import org.qw3rtrun.p3d.mng.service.MachineManagementImpl;
-import org.qw3rtrun.p3d.mng.service.PrinterRepository;
+import org.qw3rtrun.p3d.management.service.MachineEventBus;
+import org.qw3rtrun.p3d.management.service.MachineManagementImpl;
+import org.qw3rtrun.p3d.management.service.PrinterRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

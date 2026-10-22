@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.mng.service;
+package org.qw3rtrun.p3d.management.service;
 
 import lombok.RequiredArgsConstructor;
 import org.qw3rtrun.p3d.core.msg.ManagementEvent;

@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.mng;
+package org.qw3rtrun.p3d.management;
 
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;

@@ -20,7 +20,7 @@ dependencyManagement {
 dependencies {
     implementation project(':backend:core')
     implementation project(':backend:api')
-    implementation project(':backend:machine-mng')
+    implementation project(':backend:printer-management')
     implementation project(':frontend:web-ui')
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'

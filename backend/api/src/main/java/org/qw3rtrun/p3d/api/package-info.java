@@ -8,7 +8,7 @@
  * {@code StandaloneApp} - plus two libraries outside the module model entirely, {@code :gcode} and
  * {@code :backend:terminal}. It reaches the persistence side only through
  * {@code MachineManagementService}, an interface in {@code core}, and never through
- * {@code org.qw3rtrun.p3d.mng}.
+ * {@code org.qw3rtrun.p3d.management}.
  *
  * <p>That invariant is worth having declared because the obvious shortcut is to import
  * {@code PrinterEntity} the first time this module needs a column that {@code Descriptor} does not

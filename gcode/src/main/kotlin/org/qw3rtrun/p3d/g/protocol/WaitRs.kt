@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import org.qw3rtrun.p3d.api.msg.WaitReceivedEvent
 
 /**
  * `wait` - the machine's command buffers are empty and it is waiting for the next line.
@@ -15,7 +14,7 @@ import org.qw3rtrun.p3d.api.msg.WaitReceivedEvent
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-object WaitRs : GProtoRs<WaitRs>, GRsDecoder<WaitRs>, WaitReceivedEvent {
+object WaitRs : GProtoRs<WaitRs>, GRsDecoder<WaitRs> {
 
     override fun encode(): String = "wait"
 

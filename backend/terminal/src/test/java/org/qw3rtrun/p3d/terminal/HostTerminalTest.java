@@ -1,11 +1,11 @@
 package org.qw3rtrun.p3d.terminal;
 
 import org.junit.jupiter.api.Test;
-import org.qw3rtrun.p3d.g.marlin.event.BusyNotice;
-import org.qw3rtrun.p3d.g.marlin.event.OkTemperatureRs;
-import org.qw3rtrun.p3d.g.protocol.ErrorRs;
-import org.qw3rtrun.p3d.g.protocol.GRs;
-import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs;
+import org.qw3rtrun.p3d.api.msg.BusyReport;
+import org.qw3rtrun.p3d.api.msg.ErrorReport;
+import org.qw3rtrun.p3d.api.msg.GEvent;
+import org.qw3rtrun.p3d.api.msg.TemperatureReport;
+import org.qw3rtrun.p3d.api.msg.TemperatureReported;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -36,13 +36,13 @@ class HostTerminalTest {
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
 
     private final Sinks.Many<String> wire = Sinks.many().multicast().onBackpressureBuffer();
-    private final List<GRs<?>> published = new ArrayList<>();
+    private final List<GEvent> published = new ArrayList<>();
 
     /** Every {@code request(n)} the send window made of the G-code source. */
     private final List<Long> pulled = new ArrayList<>();
 
     /** Whatever terminated the reply bus, which in a healthy session is nothing. */
-    private final AtomicReference<Signal<GRs<?>>> busEnd = new AtomicReference<>();
+    private final AtomicReference<Signal<GEvent>> busEnd = new AtomicReference<>();
 
     private HostTerminal terminal;
 
@@ -119,8 +119,8 @@ class HostTerminalTest {
         wire.tryEmitNext(line + "\n");
     }
 
-    private List<String> publishedLines() {
-        return published.stream().map(GRs::encode).toList();
+    private TemperatureReported firstTemperature() {
+        return assertInstanceOf(TemperatureReported.class, published.getFirst());
     }
 
     /**
@@ -134,8 +134,9 @@ class HostTerminalTest {
 
         receive("ok T:45.26 /45.00 B:25.00 /0.00 @:3 B@:0");
 
-        assertEquals(List.of("ok T:45.26 /45.00 B:25.00 /0.00 @:3 B@:0"), publishedLines());
-        assertInstanceOf(OkTemperatureRs.class, published.getFirst());
+        assertEquals(1, published.size());
+        assertEquals(new TemperatureReport(45.26, 45.00, 3), firstTemperature().hotend());
+        assertEquals(new TemperatureReport(25.00, 0.00, 0), firstTemperature().bed());
     }
 
     @Test
@@ -171,7 +172,8 @@ class HostTerminalTest {
 
         receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0");
 
-        assertEquals(List.of("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0"), publishedLines());
+        assertEquals(new TemperatureReport(24.31, 0.00, 0), firstTemperature().hotend());
+        assertEquals(new TemperatureReport(23.87, 0.00, 0), firstTemperature().bed());
     }
 
     /**
@@ -220,7 +222,7 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
 
         assertEquals(List.of(1L, 1L), pulled);
-        assertInstanceOf(BusyNotice.class, published.getFirst());
+        assertEquals(new BusyReport("processing"), published.getFirst());
     }
 
     /** The RepRap spelling does the same thing, through the same {@code BusyRs} interface. */
@@ -237,7 +239,7 @@ class HostTerminalTest {
                 .thenCancel()
                 .verify(TIMEOUT);
 
-        assertInstanceOf(SimpleBusyRs.class, published.getFirst());
+        assertEquals(new BusyReport("paused for user"), published.getFirst());
     }
 
     /**
@@ -347,9 +349,9 @@ class HostTerminalTest {
         receive("ok");
         receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0");
 
-        assertEquals(List.of("Error:checksum mismatch, Last Line: 2",
-                "T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0"), publishedLines());
-        assertInstanceOf(ErrorRs.class, published.getFirst());
+        assertEquals(2, published.size());
+        assertEquals(new ErrorReport("checksum mismatch, Last Line: 2", 2), published.getFirst());
+        assertInstanceOf(TemperatureReported.class, published.get(1));
         assertNull(busEnd.get(), "the reply bus terminated");
     }
 
@@ -360,9 +362,9 @@ class HostTerminalTest {
 
         receive("Error:Line Number is not Last Line Number+1, Last Line: 7");
 
-        var error = assertInstanceOf(ErrorRs.class, published.getFirst());
-        assertEquals("Line Number is not Last Line Number+1, Last Line: 7", error.getMessage());
-        assertEquals(7, error.getLastLine().intValue());
+        var error = assertInstanceOf(ErrorReport.class, published.getFirst());
+        assertEquals("Line Number is not Last Line Number+1, Last Line: 7", error.message());
+        assertEquals(7, error.lastLine().intValue());
     }
 
     /**
@@ -378,7 +380,7 @@ class HostTerminalTest {
         receive("Error:checksum mismatch, Last Line: 2");
 
         StepVerifier.create(terminal.messageFlux())
-                .expectNextMatches(ErrorRs.class::isInstance)
+                .expectNextMatches(ErrorReport.class::isInstance)
                 .then(() -> receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0"))
                 .expectNextCount(1)
                 .thenCancel()

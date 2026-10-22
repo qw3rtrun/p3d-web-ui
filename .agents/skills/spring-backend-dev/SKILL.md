@@ -32,16 +32,22 @@ and say so** rather than applying this skill's rules to them.
 | **printer-management** | `:backend:printer-management` | `org.qw3rtrun.p3d.management` | `api`, Spring Data JPA, Liquibase |
 | **frontend** | `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | `api`, WebFlux, Thymeleaf, the Vue build |
 | **app** | `:app` | `org.qw3rtrun.p3d` | everything. Assembly only |
-| *library* | `:gcode` | `org.qw3rtrun.p3d.g` | the Kotlin stdlib and `api` (`low-level-protocol-dev`) |
+| *library* | `:gcode` | `org.qw3rtrun.p3d.g` | the Kotlin stdlib. **Nothing else** (`low-level-protocol-dev`) |
 | *library* | `:backend:terminal` | `org.qw3rtrun.p3d.terminal` | `:gcode`, `api`, Reactor (`reactive-transport-dev`) |
 
 The five submodels and their rules are `doc/sub_boundaries.txt`; this table is how they are
 realised. **Rule 1 is that every submodel depends on `api` and on no other submodel**, and
 `allowedDependencies` on each module declaration is where that is enforced.
 
-`api` must stay free of WebFlux, JPA, Reactor and Spring itself, for a harder reason than taste:
-`:gcode` depends on it for the event interfaces its reply types implement, and `:gcode` has to stay
-portable to JS, C and Rust. A framework dependency in `api` reaches the protocol core.
+`api` must stay free of WebFlux, JPA, Reactor and Spring itself. It is the vocabulary both the web
+side and the persistence side are written in, and a framework dragged in through it reaches both.
+
+**`api` and `:gcode` do not know about each other, in either direction.** The protocol models what
+the wire can say; `api` models what the application decided to care about; `:backend:terminal`
+converts, in `ReplyEvents`. They were one model until the protocol's `GRs` stopped extending `api`'s
+`GEvent` - which had made the one module that depends on nothing depend on the application's
+vocabulary. If a new reply needs to reach the host, the change is an event in `api` and an arm in
+the bridge, never an `api` interface implemented inside `:gcode`.
 
 **`api` is the only place a type crosses submodels.** A `PrinterEntity` must not leave
 `printer-management`, and the aggregate must not leave `core`.

@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.terminal;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.qw3rtrun.p3d.api.msg.GEvent;
 import org.qw3rtrun.p3d.g.code.core.session.GSendWindow;
 import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
 import org.qw3rtrun.p3d.g.protocol.AdvancedOkRs;
@@ -47,7 +48,7 @@ public class HostTerminal {
     private final Supplier<Flux<String>> inbound;
     private final Function<Publisher<String>, Mono<Void>> outbound;
 
-    private Sinks.Many<GRs<?>> replays = Sinks.unsafe().many().replay().latest();
+    private Sinks.Many<GEvent> replays = Sinks.unsafe().many().replay().latest();
 
     private CommandProcessor outSide;
     private ReplaySubscriber inSide;
@@ -86,7 +87,7 @@ public class HostTerminal {
      * the printer reported a fault. A printer fault is an {@code ErrorRs} value like any other
      * reply; see {@link ReplaySubscriber#onNext}.
      */
-    public Flux<GRs<?>> messageFlux() {
+    public Flux<GEvent> messageFlux() {
         return replays.asFlux();
     }
 
@@ -118,7 +119,7 @@ public class HostTerminal {
         if (ok instanceof SimpleOkRs || ok instanceof AdvancedOkRs) {
             return;
         }
-        emit(ok);
+        emit(ReplyEvents.of(ok));
     }
 
     /**
@@ -133,7 +134,7 @@ public class HostTerminal {
      */
     void onBusy(BusyRs<?> busy) {
         outSide.clearInFlight();
-        emit(busy);
+        emit(ReplyEvents.of(busy));
     }
 
     /**
@@ -164,7 +165,7 @@ public class HostTerminal {
      * not {@code OK} - a dropped reply here is a temperature reading that never reaches the UI, so
      * it is worth a line in the log rather than nothing at all.
      */
-    private void emit(GRs<?> reply) {
+    private void emit(GEvent reply) {
         Sinks.EmitResult result = replays.tryEmitNext(reply);
         if (result.isFailure()) {
             log.warn("IN: reply dropped ({}): {}", result, reply);
@@ -696,7 +697,7 @@ public class HostTerminal {
                 case BusyRs<?> busy -> onBusy(busy);
                 case WaitRs _ -> onWait();
                 case ResendRs resend -> onResend(resend.getLineNumber());
-                default -> emit(reply);
+                default -> emit(ReplyEvents.of(reply));
             }
         }
 

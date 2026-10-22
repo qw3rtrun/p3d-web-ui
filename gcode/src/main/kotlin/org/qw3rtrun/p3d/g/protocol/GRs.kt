@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import org.qw3rtrun.p3d.api.msg.GEvent
 
 /**
  * A reply the machine sends to the host: one line of the reply stream, typed, and an event for the
@@ -13,7 +12,7 @@ import org.qw3rtrun.p3d.api.msg.GEvent
  * ResendRs(123).encode()   // "Resend: 123"
  * ```
  */
-interface GRs<T : GRs<T>> : GEvent {
+interface GRs<T : GRs<T>> {
 
     /**
      * This reply as the line a machine would send, without a terminator. Where the protocol allows

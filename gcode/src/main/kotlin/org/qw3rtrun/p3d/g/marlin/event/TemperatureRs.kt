@@ -1,7 +1,5 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.api.msg.TemperatureReport
-import org.qw3rtrun.p3d.api.msg.TemperatureReportedEvent
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.OkRs
@@ -71,7 +69,7 @@ data class HeaterReading(
  *   answers to: it is exactly `this is OkRs<*>`.
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-interface TemperatureRs<D : TemperatureRs<D>> : GEventRs<D>, TemperatureReportedEvent {
+interface TemperatureRs<D : TemperatureRs<D>> : GEventRs<D> {
 
     val hotend: HeaterReading?
     val bed: HeaterReading?
@@ -84,10 +82,6 @@ interface TemperatureRs<D : TemperatureRs<D>> : GEventRs<D>, TemperatureReported
     val hotends: Map<Int, HeaterReading>
 
     val ok: Boolean get() = this is OkRs<*>
-
-    override fun hotend(): TemperatureReport? = hotend?.let(TemperatureFields::toReport)
-
-    override fun bed(): TemperatureReport? = bed?.let(TemperatureFields::toReport)
 
     override fun encode(): String = TemperatureFields.encode(this)
 }
@@ -253,25 +247,6 @@ internal object TemperatureFields {
          */
         fun toOk() = OkTemperatureRs(hotend, bed, chamber, probe, cooler, board, redundant, hotends)
     }
-
-    /**
-     * [reading] as the `:backend:core` event type, whose target and power are not nullable: an
-     * absent target reads as 0.0 and an absent power as 0.
-     *
-     * ```
-     * TemperatureFields.toReport(HeaterReading(BigDecimal("1.5")))
-     * // TemperatureReport[current=1.5, target=0.0, power=0]
-     * ```
-     *
-     * @param reading one sensor's reading
-     * @return the same reading as a `TemperatureReport`
-     */
-    fun toReport(reading: HeaterReading): TemperatureReport =
-        TemperatureReport(
-            reading.current.toDouble(),
-            reading.target?.toDouble() ?: 0.0,
-            reading.power ?: 0,
-        )
 
     /**
      * [rs] as the line a printer would send. The fields go in Marlin's own order, from

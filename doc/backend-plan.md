@@ -283,6 +283,53 @@ stub.
 
 ---
 
+## Two models, and the bridge between them
+
+A correction to the realignment above, taken after it landed:
+**`:gcode` must not depend on any backend module, `api` must not depend on `:gcode`, and
+`:backend:terminal` is the bridge that converts between them.**
+
+What it was. `GRs` - the root of every decoded reply - extended `api`'s `GEvent`; `OkRs` extended
+`OKReceivedEvent`; `WaitRs` extended `WaitReceivedEvent`; `TemperatureRs` implemented
+`TemperatureReportedEvent` and carried `hotend()`/`bed()` methods that existed for no reason except
+to satisfy it; `FirmwareInfoRs` and `CapabilityRs` the same. Five files, seven borrowed types, and a
+`implementation project(':backend:api')` in `gcode/build.gradle`.
+
+What that cost: the one module whose entire claim is that it depends on nothing depended on the
+application's vocabulary, so every change to what the host cares about reached into the protocol -
+and the protocol's class hierarchy became something the application's dispatch had to know about.
+`PrinterReactor.findInvoker` walks a supertype graph *because* `OkTemperatureRs` reached
+`TemperatureReportedEvent` two interfaces out.
+
+What it is now:
+
+| | models | because |
+|---|---|---|
+| `:gcode` `GRs` | what the wire can say: seven sensor kinds, a map of hotends, nullable targets, `BigDecimal` | it is what a printer sends, and the module ports to JS, C and Rust |
+| `api` `GEvent` | what the application cares about: one hotend, one bed, no nulls, `double` | it is the host's vocabulary, and it changes when the product does |
+
+`:backend:terminal` routes `GRs` internally - the send window still matches `OkRs`, `BusyRs`,
+`ResendRs` - and publishes `api` events: `messageFlux()` is `Flux<GEvent>`, and `ReplyEvents` is the
+conversion. A reply no arm there claims becomes an `UnknownReply` rather than vanishing, so the
+application's model looking small is visible instead of looking complete.
+
+`api` gained the five types it had been borrowing implementations of: `TemperatureReported`,
+`ErrorReportEvent`/`ErrorReport`, `MachineBusyEvent`/`BusyReport`, `UnknownReply`.
+
+**It fixed a live bug nobody had noticed.** `static/js/component/printer.js` switches on
+`payload.type === "TemperatureReported"` and reads `payload.event.hotend.target`. That has matched
+nothing since the `marlin/decoder` classes were deleted - what the stream actually carried was
+`OkTemperatureRs` - so every temperature fell through the `if` and the page stopped updating. The
+application naming its own events is what makes the name stable, and `EventStreamContractTest` now
+pins the JSON the browser reads, because that contract is with code the build does not compile.
+
+Verified by running: 995 tests green, `:gcode`'s compile classpath is `kotlin-stdlib` and
+`commons-lang3` and nothing else, and the assembled app boots and round-trips a printer. The live
+SSE check against a real printer did **not** run - the simulator on `localhost:8099` was down - so
+the JSON shape is pinned by test rather than observed on the wire.
+
+---
+
 ### B1 — the aggregate leaves the web module {#b1}
 
 **Goal.** `PrinterState`, `TemperatureControl`, `FirmwareInfo` and `CapabilitiesInfo` move into a

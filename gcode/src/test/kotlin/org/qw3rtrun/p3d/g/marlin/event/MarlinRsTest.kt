@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.qw3rtrun.p3d.api.msg.OKReceivedEvent
 import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
 import org.qw3rtrun.p3d.g.protocol.BusyRs
 import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
@@ -65,17 +64,15 @@ class MarlinRsTest {
         @Test
         fun `only the ok-prefixed report is an acknowledgement`() {
             // The whole reason these are two classes. A host that frees a slot in its send window
-            // per OKReceivedEvent must not free one for an M155 auto-report the printer sent
-            // unbidden - it would run ahead of a queue slot the printer never granted.
+            // per OkRs must not free one for an M155 auto-report the printer sent unbidden - it
+            // would run ahead of a queue slot the printer never granted.
             val acked = TemperatureRsDecoder.decode("ok T:210.00 /210.00 @:127")!!
             val unbidden = TemperatureRsDecoder.decode("T:210.00 /210.00 @:127")!!
 
             assertTrue(acked is OkRs<*>)
-            assertTrue(acked is OKReceivedEvent)
             assertTrue(acked.ok)
 
             assertFalse(unbidden is OkRs<*>)
-            assertFalse(unbidden is OKReceivedEvent)
             assertFalse(unbidden.ok)
 
             // Same payload, different type - that is the only difference between them.
@@ -134,12 +131,18 @@ class MarlinRsTest {
         }
 
         @Test
-        fun `the core event view is filled in`() {
+        fun `every field of a full report is read`() {
+            // This module's own model, and all of it: current, target and power per sensor. What a
+            // host does with it is the host's business - the conversion to the application's
+            // narrower view (one hotend, one bed, no nulls) lives in :backend:terminal, which is
+            // the only layer that knows both models.
             val report = TemperatureRsDecoder.decode("ok T:210.00 /205.00 B:60.00 /55.00 @:127 B@:80")!!
-            assertEquals(210.0, report.hotend()!!.current())
-            assertEquals(205.0, report.hotend()!!.target())
-            assertEquals(127, report.hotend()!!.power())
-            assertEquals(55.0, report.bed()!!.target())
+            assertEquals(dec("210.00"), report.hotend?.current)
+            assertEquals(dec("205.00"), report.hotend?.target)
+            assertEquals(127, report.hotend?.power)
+            assertEquals(dec("60.00"), report.bed?.current)
+            assertEquals(dec("55.00"), report.bed?.target)
+            assertEquals(80, report.bed?.power)
         }
 
         @Test
@@ -331,7 +334,7 @@ class MarlinRsTest {
         @ParameterizedTest
         @ValueSource(strings = ["Cap:EEPROM:1", "Cap:AUTOREPORT_TEMP:1", "Cap:AUTOREPORT_POS:1", "Cap: SDCARD:1"])
         fun `a capability line decodes as enabled`(line: String) {
-            assertEquals(true, CapabilityRs.decode(line)?.enabled())
+            assertEquals(true, CapabilityRs.decode(line)?.enabled)
         }
 
         @Test

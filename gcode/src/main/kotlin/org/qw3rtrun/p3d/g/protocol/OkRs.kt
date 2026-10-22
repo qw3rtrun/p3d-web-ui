@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import org.qw3rtrun.p3d.api.msg.OKReceivedEvent
 import java.util.regex.Pattern
 
 /**
@@ -15,7 +14,7 @@ import java.util.regex.Pattern
  * OkRsDecoder.decode("ok P15 B3")   // AdvancedOkRs(15, 3)
  * ```
  */
-interface OkRs<D : OkRs<D>> : GProtoRs<D>, OKReceivedEvent
+interface OkRs<D : OkRs<D>> : GProtoRs<D>
 
 /**
  * A bare `ok`. Carries nothing, so it is a single object that is also its own decoder; the match is

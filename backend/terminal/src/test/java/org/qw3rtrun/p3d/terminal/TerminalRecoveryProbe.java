@@ -1,9 +1,9 @@
 package org.qw3rtrun.p3d.terminal;
 
-import org.qw3rtrun.p3d.g.marlin.event.BusyNotice;
-import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
-import org.qw3rtrun.p3d.g.protocol.ErrorRs;
-import org.qw3rtrun.p3d.g.protocol.GRs;
+import org.qw3rtrun.p3d.api.msg.BusyReport;
+import org.qw3rtrun.p3d.api.msg.ErrorReport;
+import org.qw3rtrun.p3d.api.msg.GEvent;
+import org.qw3rtrun.p3d.api.msg.TemperatureReported;
 import org.qw3rtrun.p3d.terminal.msg.Priority;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
@@ -41,7 +41,8 @@ import java.util.function.Consumer;
  *       and it is the half that cannot be tested without a peer that rejects something.</li>
  *   <li><strong>{@code echo:busy:} reaches the send window.</strong> {@code G28} takes seconds and
  *       Marlin fills the wait with it. Before the fix only the bare {@code busy:} was recognised,
- *       so the window was never told the machine had stalled.</li>
+ *       so the window was never told the machine had stalled. Both spellings arrive here as one
+ *       {@link BusyReport}, which is what the bridge in {@code ReplyEvents} is for.</li>
  * </ul>
  *
  * <p>It builds its own connection rather than going through {@link TerminalManager}, because
@@ -77,7 +78,7 @@ public final class TerminalRecoveryProbe {
         var queue = new PublisherQueue<String, Priority>();
         Consumer<String> sink = gcode -> queue.addPublisher(Priority.REGULAR, Mono.just(gcode));
 
-        List<GRs<?>> seen = new CopyOnWriteArrayList<>();
+        List<GEvent> seen = new CopyOnWriteArrayList<>();
         List<String> busEnded = new CopyOnWriteArrayList<>();
 
         Disposable replies = terminal.messageFlux().subscribe(
@@ -146,12 +147,12 @@ public final class TerminalRecoveryProbe {
         return after.stream().anyMatch(b -> after.stream().filter(b::equals).count() > 1);
     }
 
-    private static void report(List<GRs<?>> seen, List<String> busEnded,
+    private static void report(List<GEvent> seen, List<String> busEnded,
                                int before, int after, int errors, int writtenBefore) {
         System.out.println();
         System.out.println("=== what reached messageFlux() ===");
         for (var rs : seen) {
-            System.out.printf("  %-18s %s%n", rs.getClass().getSimpleName(), rs.encode());
+            System.out.printf("  %-20s %s%n", rs.getClass().getSimpleName(), rs);
         }
 
         System.out.println();
@@ -160,7 +161,7 @@ public final class TerminalRecoveryProbe {
             System.out.printf("  %s", block);
         }
 
-        var busies = seen.stream().filter(BusyNotice.class::isInstance).count();
+        var busies = seen.stream().filter(BusyReport.class::isInstance).count();
         var replayed = replayed(writtenBefore);
 
         System.out.println();
@@ -182,12 +183,12 @@ public final class TerminalRecoveryProbe {
         return block.startsWith("N") && block.lastIndexOf('*') > 0;
     }
 
-    private static int countTemperatures(List<GRs<?>> seen) {
-        return (int) seen.stream().filter(TemperatureRs.class::isInstance).count();
+    private static int countTemperatures(List<GEvent> seen) {
+        return (int) seen.stream().filter(TemperatureReported.class::isInstance).count();
     }
 
-    private static int countErrors(List<GRs<?>> seen) {
-        return (int) seen.stream().filter(ErrorRs.class::isInstance).count();
+    private static int countErrors(List<GEvent> seen) {
+        return (int) seen.stream().filter(ErrorReport.class::isInstance).count();
     }
 
     private static void settle(Duration d) throws InterruptedException {

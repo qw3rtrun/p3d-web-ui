@@ -108,8 +108,8 @@ exception for a retransmission. `canProcess()` is zero while a replay is waiting
 
 ### `messageFlux()` terminates when the connection does, and at no other time
 
-A firmware error is a **value**. `ErrorRs` goes down the flux like any other `GRs`, because on a
-Marlin an error is routine protocol traffic that the printer recovers from by itself:
+A firmware error is a **value**. It goes down the flux as an `ErrorReport` like any other event,
+because on a Marlin an error is routine protocol traffic that the printer recovers from by itself:
 
 ```
 >> N3 M105*1
@@ -132,7 +132,7 @@ purpose, and the host is the layer that judges them.
 | Layer | Where | May depend on |
 |---|---|---|
 | **Portable core** | `:gcode` `code/core/**` | nothing but the Kotlin stdlib - see `low-level-protocol-dev` |
-| **Protocol edge** | `:gcode` `marlin/**`, `protocol/**` | the core, `:backend:core` message types |
+| **Protocol edge** | `:gcode` `marlin/**`, `protocol/**` | the core, and nothing else - no backend module |
 | **Transport** | `:backend:terminal` - this skill | the two above, Reactor, reactor-netty, Lombok, SLF4J |
 | **Application** | `:backend:api`, `:app` | anything |
 
@@ -140,15 +140,32 @@ purpose, and the host is the layer that judges them.
 one-way in `build.gradle` and must stay that way: the core's whole claim is that it ports to JS/TS,
 C and Rust, and nothing that imports Reactor ports anywhere.
 
-## IMPORTANT - one reply model, and it lives in `:gcode`
+## IMPORTANT - one parser, two models, and this module is the bridge
 
 A firmware reply is decoded **once**, by `MarlinRsDecoder`, in `ReplyFlux`. From there the transport
-routes typed `GRs` values and never looks at the text again. `messageFlux()` is `Flux<GRs<?>>` for
-the same reason.
+routes typed `GRs` values and never looks at the text again.
 
 **Do not add a transport-local reply type.** If a line needs reading that `GRs` cannot express, the
 change belongs in `:gcode`'s `protocol/` or `marlin/event/`, where the corpus and ~170 tests are -
 not here.
+
+**But `GRs` is not what leaves this module.** `messageFlux()` is `Flux<GEvent>` - the `api`
+submodel's event model - and `ReplyEvents` converts. The two models are separate on purpose:
+
+| | models | because |
+|---|---|---|
+| `:gcode` `GRs` | what the wire can say: seven sensor kinds, a map of hotends, nullable targets, `BigDecimal` | it is what a printer sends, and the module must port to JS, C and Rust |
+| `api` `GEvent` | what the application decided to care about: one hotend, one bed, no nulls, `double` | it is the host's vocabulary, and it changes when the product does |
+
+They used to be one: `GRs extended GEvent`, `OkRs extended OKReceivedEvent`, and `TemperatureRs`
+carried `hotend()`/`bed()` methods that existed only to satisfy an interface two modules away. That
+made `:gcode` - whose whole claim is that it depends on nothing - depend on the application's
+vocabulary, and every change to what the host cares about reached into the protocol.
+
+So: **route on `GRs` inside, publish `GEvent` outside.** The send window still matches `OkRs<?>`,
+`BusyRs<?>` and `ResendRs`; what those say to a subscriber is decided by `ReplyEvents`, and a reply
+no arm there claims becomes an `UnknownReply` rather than vanishing - seeing one is the signal that
+a reply has earned a typed event.
 
 This module ran a second parser (`terminal.msg.Replay`) until it was deleted, and the cost is worth
 remembering, because every item was invisible until something was measured against a real printer:

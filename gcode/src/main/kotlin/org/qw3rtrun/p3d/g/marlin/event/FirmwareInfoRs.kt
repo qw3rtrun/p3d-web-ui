@@ -1,7 +1,5 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.api.msg.CapabilityReportEvent
-import org.qw3rtrun.p3d.api.msg.FirmwareInfoReportEvent
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.GRs
@@ -31,12 +29,12 @@ import java.util.regex.Pattern
  * @property keyValues every field, keyed by its name, in the order the line wrote them
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<FirmwareInfoRs>, FirmwareInfoReportEvent {
+data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<FirmwareInfoRs> {
 
     override fun encode(): String =
         keyValues.entries.joinToString(" ") { (key, value) -> "$key:$value" }
 
-    override fun fullReportString(): String = encode()
+    fun fullReportString(): String = encode()
 
     /**
      * The machine's UUID, or null when it sends none or sends one that is not a UUID. Spec 9: a
@@ -48,7 +46,7 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
      *
      * @return the parsed `UUID` field, or null
      */
-    override fun uuid(): UUID? = keyValues["UUID"]?.let {
+    fun uuid(): UUID? = keyValues["UUID"]?.let {
         try {
             UUID.fromString(it)
         } catch (e: IllegalArgumentException) {
@@ -56,13 +54,13 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
         }
     }
 
-    override fun firmwareName(): String? = keyValues["FIRMWARE_NAME"]
+    fun firmwareName(): String? = keyValues["FIRMWARE_NAME"]
 
-    override fun srcCodeUrl(): String? = keyValues["SOURCE_CODE_URL"]
+    fun srcCodeUrl(): String? = keyValues["SOURCE_CODE_URL"]
 
-    override fun protocolVersion(): String? = keyValues["PROTOCOL_VERSION"]
+    fun protocolVersion(): String? = keyValues["PROTOCOL_VERSION"]
 
-    override fun machineType(): String? = keyValues["MACHINE_TYPE"]
+    fun machineType(): String? = keyValues["MACHINE_TYPE"]
 
     /**
      * The extruder count, or 0 when it is absent or unreadable.
@@ -73,7 +71,7 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
      *
      * @return the `EXTRUDER_COUNT` field as an integer, or 0
      */
-    override fun extruderCount(): Int = keyValues["EXTRUDER_COUNT"]?.trim()?.toIntOrNull() ?: 0
+    fun extruderCount(): Int = keyValues["EXTRUDER_COUNT"]?.trim()?.toIntOrNull() ?: 0
 
     companion object : GRsDecoder<FirmwareInfoRs> {
 
@@ -131,15 +129,9 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
  * @property capability the feature's name, as the firmware wrote it
  * @property enabled whether the feature is compiled in and on
  */
-data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<CapabilityRs>, CapabilityReportEvent {
+data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<CapabilityRs> {
 
     override fun encode(): String = "Cap:$capability:" + if (enabled) "1" else "0"
-
-    override fun fullReportString(): String = encode()
-
-    override fun capability(): String = capability
-
-    override fun enabled(): Boolean = enabled
 
     companion object : GRsDecoder<CapabilityRs> {
 

@@ -20,12 +20,12 @@ dependencyManagement {
 dependencies {
     // The `frontend` submodel: REST and SSE, the Thymeleaf controllers, and the Vue build below.
     implementation project(':backend:api')
-    implementation project(':backend:core')
-    implementation project(':gcode')
 
-    // The REST surface binds Kotlin data classes (marlin.command.*) as @RequestBody; Jackson cannot
-    // construct one without this module. Moved here with the controllers that need it.
-    implementation 'com.fasterxml.jackson.module:jackson-module-kotlin'
+    // :backend:core is deliberately absent. The controllers reach the printer runtime through
+    // PrinterControl, an interface in :backend:api - rule 1 of doc/sub_boundaries.txt. :gcode is
+    // absent for the same reason: the request bodies are the application's own command records now,
+    // not Marlin's generated classes, so nothing here binds a Kotlin data class and the
+    // jackson-module-kotlin that needed is gone with them.
 
     // Only for the @ApplicationModule in package-info.java - see backend/api/build.gradle.
     compileOnly 'org.springframework.modulith:spring-modulith-api'

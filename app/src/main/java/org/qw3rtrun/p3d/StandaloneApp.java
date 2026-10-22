@@ -8,10 +8,14 @@ import org.springframework.modulith.Modulithic;
  * The assembly: every backend module and the web UI in one process.
  *
  * <p>Also the place the <strong>module structure</strong> is declared, because this is the only
- * module that sees all of them. {@link Modulithic} names the system and marks {@code api} as
- * shared - it is the vocabulary every other module is written in, so it is depended on by all of
- * them by design rather than by accident, and the dependency checks should not report that as a
- * finding.
+ * module that sees all of them.
+ *
+ * <p>{@code api} used to be marked {@code sharedModules} here, which exempts a module from the
+ * dependency checks entirely. That is the wrong tool for a shared vocabulary whose packages are not
+ * all equally shared: it is what let {@code core} call {@code printer-management}'s service, and
+ * {@code frontend} reach into {@code core}, without the verification being able to say so. The
+ * exemption is gone; {@code api} exports four named interfaces instead, and every module lists the
+ * ones it uses.
  *
  * <p>What counts as an application module is the set of direct sub-packages of this one, which here
  * means {@code api}, {@code core}, {@code management} and {@code frontend}. Two more packages sit below it and
@@ -21,7 +25,7 @@ import org.springframework.modulith.Modulithic;
  * annotation - and {@code ApplicationModulesTest} excludes them explicitly. They are consumed the
  * way any third-party dependency is.
  */
-@Modulithic(systemName = "p3d", sharedModules = "api")
+@Modulithic(systemName = "p3d")
 @SpringBootApplication
 public class StandaloneApp {
 

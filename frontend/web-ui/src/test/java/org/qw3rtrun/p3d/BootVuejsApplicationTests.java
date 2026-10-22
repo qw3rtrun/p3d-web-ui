@@ -1,9 +1,15 @@
 package org.qw3rtrun.p3d;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.control.PrinterControl;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.msg.ConnectCmd;
+import org.qw3rtrun.p3d.api.msg.EventMessage;
+import org.qw3rtrun.p3d.api.msg.PrinterCommand;
+import org.qw3rtrun.p3d.api.msg.TemperatureReport;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
+import org.reactivestreams.Publisher;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -15,7 +21,7 @@ import java.util.stream.Stream;
 class BootVuejsApplicationTests {
 
     /**
-     * The collaborator this module does not contain.
+     * The collaborators this module does not contain.
      *
      * <p>The frontend submodel holds controllers; the thing that answers them lives in
      * {@code printer-management}, which it does not depend on and must not. So booting this module
@@ -27,12 +33,41 @@ class BootVuejsApplicationTests {
      * empty one instead of failing - the same bean, shipped. A4 deleted it, and this is what it was
      * actually for.
      *
-     * <p>It throws rather than returning empties on purpose. Nothing in this test should call it,
-     * and if something starts to, the failure should say so rather than look like a farm with no
-     * printers in it.
+     * <p>They throw rather than returning empties on purpose. Nothing in this test should call
+     * either, and if something starts to, the failure should say so rather than look like a farm
+     * with no printers in it.
+     *
+     * <p>There are two now, which is the module boundary showing through: this module reaches the
+     * roster through {@link MachineManagementService} and a machine through {@link PrinterControl},
+     * and it implements neither.
      */
     @TestConfiguration
     static class Collaborators {
+
+        @Bean
+        PrinterControl printers() {
+            return new PrinterControl() {
+                @Override
+                public Publisher<TemperatureReport> state(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public Publisher<EventMessage> updates(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public Publisher<Void> send(UUID id, PrinterCommand command) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public Publisher<Void> connect(UUID id, ConnectCmd command) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+            };
+        }
 
         @Bean
         MachineManagementService machines() {

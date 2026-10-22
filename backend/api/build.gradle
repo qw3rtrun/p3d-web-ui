@@ -10,6 +10,9 @@ import org.springframework.boot.gradle.plugin.SpringBootPlugin
  */
 plugins {
     id 'p3d.java-conventions'
+    // `api` rather than `implementation` below: PrinterControl's signatures use Publisher, so every
+    // module that depends on this one needs it on its own compile path.
+    id 'java-library'
     id 'org.springframework.boot' version "$spring_boot_version" apply false
     id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
     id "org.jetbrains.kotlin.jvm" version "$kotlin_plugin_version"
@@ -24,6 +27,11 @@ dependencyManagement {
 }
 
 dependencies {
+    // The interop SPI that Mono and Flux implement - not a framework, and the only way to say
+    // "asynchronous" in this module's signatures without putting Reactor on every dependent's
+    // compile path. See api/control/PrinterControl.
+    api 'org.reactivestreams:reactive-streams'
+
     // Only for the @ApplicationModule in package-info.java. The declaration is read out of the
     // bytecode by the verification in :app, which has Modulith on its own classpath.
     compileOnly 'org.springframework.modulith:spring-modulith-api'

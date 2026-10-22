@@ -74,7 +74,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**A3**~~ | [the reactor has an owner](#a3) | ~~Stop and evict a `PrinterReactor` on disconnect and delete; bound the map~~ **done** — `openReactor`/`release`, driven by an `MDeletedEvent` | B3 |
 | ~~**A4**~~ | [delete the half-built](#a4) | ~~The dead WebSocket handler, the null-returning stub service, the one-entry command bus~~ **done** — seven files gone, nothing replaced them | A5 |
 | ~~**A5**~~ | [one dispatch, checked by the compiler](#a5) | ~~Replace `PrinterReactor`'s reflective invoker with a sealed interface and an exhaustive switch~~ **done** — a pattern switch, in the aggregate rather than the reactor | B1 |
-| **A6** | [close the two declared crossings](#a6) | ~~`core` gets a replica fed by events instead of querying `management`~~ **done**; `frontend` reaches `core` through an `api` interface, and `api` closes so the check can enforce both | B2 |
+| ~~**A6**~~ | [close the two declared crossings](#a6) | ~~`core` gets a replica fed by events; `frontend` reaches `core` through an `api` interface; `api` closes so the check enforces both~~ **done** — no submodel names another, and the check says so | B2 |
 | ~~**B1**~~ | [the aggregate leaves the web module](#b1) | ~~`PrinterState` into a domain module that does not depend on WebFlux~~ **done** — it is the `core` submodel now | B2, C3 |
 | **B2** | [the machine remembers what it is](#b2) | Persist firmware, capabilities and last-known state; restore on boot | B4, D1 |
 | **B3** | [a connection lifecycle worth the name](#b3) | An explicit state machine, retry with backoff, health, and events for each transition | C5 |
@@ -325,7 +325,43 @@ tool, at the cost of firing before the commit. **The registry is still wanted fo
 events that must survive a restart - and this records what turning it on will need: a changeset for
 its table.
 
-**What is left of A6**, and why it is bigger than it looked:
+**Done: both crossings closed, and the check enforces them.**
+
+`frontend` names no submodel. Its controllers go through `PrinterControl` in `api`, and
+`:backend:core` and `:gcode` are off its compile path entirely. Closing it needed the thing that
+made this item bigger than it looked: an **application command model**. The obvious interface could
+not be written, because what a controller wanted to send was a `:gcode` command class and `api` must
+not depend on `:gcode`. So `PrinterCommand` is a sealed set of four records in `api`, `frontend`
+binds those as request bodies, and `PrinterControlService` in `core` translates them into Marlin's -
+the outbound twin of `ReplyEvents` in `:backend:terminal`.
+
+That switch **is** exhaustive with no default arm, which is the property A5 wanted and could not
+have: `PrinterCommand` is sealed and `api` owns every case, unlike `GEvent` (which must stay open to
+modules still to be written) and `GRq` (295 implementations).
+
+`api` is closed now, exporting `model`, `msg`, `management` and `control` as named interfaces, and
+is no longer `sharedModules` - that exemption was what let both crossings hide. Each module lists
+the interfaces it uses, and the check was proved to bite: `core` naming `MachineManagementService`
+fails with *"Allowed targets: api :: model, api :: msg, api :: control"*.
+
+**It fixed a second silent bug, the same shape as the first.** `/auto-report-temp` bound `:gcode`'s
+generated class, whose property is `seconds`, while the browser has always posted `{period}` - so
+the field matched nothing and every request silently asked for the firmware's default instead of the
+period the user chose. Naming the field `period`, in a record the application owns, fixes it;
+`PrinterCommandBindingTest` now posts the browser's exact payloads and pins what they become. This
+is the second contract that drifted because generated `:gcode` classes were exposed directly (the
+first was `TemperatureReported`), which is the argument for the two bridges rather than one shared
+model.
+
+**A finding for B3**, from running the assembled app: a command sent to an *offline* printer is a
+500 with a `NullPointerException`, because `PrinterState` holds its `GSender` only while connected.
+The request binds and routes correctly; the aggregate simply has no way to refuse work it cannot do.
+
+**Reactor in `api`: settled.** `org.reactivestreams.Publisher` - the interop SPI `Mono` and `Flux`
+implement, not a framework. A `Flux` already *is* a `Publisher` and WebFlux already accepts one, so
+neither side adapts anything, and `printer-management` does not get Reactor on its compile path.
+
+**Previously recorded as remaining, now done:**
 
 * **`frontend` → `core` needs an `api` command model.** The obvious fix is an interface in `api`
   carrying what the controllers need, but `send` takes a `:gcode` command class, and `api` must not

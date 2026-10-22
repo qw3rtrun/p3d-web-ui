@@ -99,12 +99,19 @@ Never `block()` on a pipeline thread, and never `Thread.sleep`. If a test needs 
 **Four modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
 `:app`:
 
-| Module | Package | Type | Depends on |
-|---|---|---|---|
-| Shared API | `org.qw3rtrun.p3d.api` | **open**, and declared `sharedModules` on `StandaloneApp` | — |
-| Printer core | `org.qw3rtrun.p3d.core` | closed, `allowedDependencies = {}` | `api` only |
-| Machine management | `org.qw3rtrun.p3d.management` | closed, `allowedDependencies = {}` | `api` only |
-| Frontend | `org.qw3rtrun.p3d.frontend` | closed, `allowedDependencies = {"core"}` | `api`, and **`core`, which rule 1 forbids** — see A6 |
+| Module | Package | Exports / depends on |
+|---|---|---|
+| Shared API | `org.qw3rtrun.p3d.api` | closed, exporting four `@NamedInterface`s: `model`, `msg`, `management`, `control` |
+| Printer core | `org.qw3rtrun.p3d.core` | `api::model`, `api::msg`, `api::control` — **not** `api::management` |
+| Machine management | `org.qw3rtrun.p3d.management` | `api::model`, `api::msg`, `api::management` |
+| Frontend | `org.qw3rtrun.p3d.frontend` | all four. Names no other submodel |
+
+**`api` is not `sharedModules` and must not become it again.** A shared module is exempt from the
+dependency checks entirely, which is precisely the exemption that let `core` call
+`printer-management`'s service and `frontend` reach into `core` while the verification reported
+nothing. Four named interfaces say which part of the vocabulary each module may use, and the check
+holds it: `core` naming `MachineManagementService` fails with *"Module 'core' depends on named
+interface(s) 'api :: management' … Allowed targets: api :: model, api :: msg, api :: control"*.
 
 **`:gcode` and `:backend:terminal` are excluded from the model**, by a predicate in the test. They
 live under the base package but are libraries, not parts of the application: neither may depend on
@@ -116,11 +123,11 @@ The rules this leaves for new work:
 
 - **A new module is a direct sub-package of `org.qw3rtrun.p3d`** with a `package-info.java` carrying
   `@ApplicationModule`. Everything in a nested package is internal unless exported.
-- **`allowedDependencies = {}` is the default to aim for.** Two of the three closed modules hold
-  it; `frontend` declares `{"core"}` because its controllers reach `PrinterReactorManager`
-  directly. That is declared rather than hidden on purpose - a boundary relaxed the moment it is
-  declared teaches nobody anything, whereas one crossing named in a file is a thing someone can
-  close. A module that genuinely needs another names it, and that is a decision visible in a diff.
+- **No submodel names another.** Everything crosses through an interface in `api`:
+  `MachineManagementService` for the roster, `PrinterControl` for a machine. A module that genuinely
+  needs another names it in `allowedDependencies`, and that is a decision visible in a diff - but
+  none does today, and the `@NamedInterface` split is what keeps "depends on `api`" from quietly
+  meaning "depends on everything".
 - **A nested package must not carry `@ApplicationModule`.** The annotation is what creates a
   module, so one on `frontend.mvc` made Modulith report a nested module sitting beside its own
   parent. An internal package gets a plain `package-info.java` with no annotation.
@@ -346,6 +353,11 @@ the source, not suspected.
 - **No job, file or queue concept exists.** The product is a print farm; nothing in the backend
   models a G-code file, a print job, or an assignment of one to a machine. `PublisherQueue`'s
   `Priority` enum is the only piece of the machinery that is already there.
+- **Sending a command to an offline printer is a 500 with a `NullPointerException`.**
+  `PrinterState` holds its `GSender` only while connected, so `onCommand` dereferences null, and
+  the same goes for the firmware info an `M104` consults for its extruder count. The request bound
+  and routed correctly; what is missing is the aggregate refusing work it cannot do. Plan item B3
+  owns the connection lifecycle and should give this a real answer.
 - **Kotlin is one file in this layer** (`core/msg/ManagementEvents.kt`), which is enough to pay for
   the Kotlin plugin on `:backend:core` but not enough to settle a language convention. Decide per
   module, and use the `kotlin-tooling-java-to-kotlin` skill when converting.

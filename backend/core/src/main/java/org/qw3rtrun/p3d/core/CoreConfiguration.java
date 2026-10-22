@@ -27,6 +27,12 @@ public class CoreConfiguration {
         return new PrinterReactorManager(directory, aggregates);
     }
 
+    /** The only way into this module from the web - see {@link PrinterControlService}. */
+    @Bean
+    public PrinterControlService printerControl(PrinterReactorManager manager) {
+        return new PrinterControlService(manager);
+    }
+
     /**
      * A new, empty {@link PrinterState} per printer id - which is to say, no persistence at all.
      *

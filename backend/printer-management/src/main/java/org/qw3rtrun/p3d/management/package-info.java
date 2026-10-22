@@ -14,5 +14,5 @@
  */
 @org.springframework.modulith.ApplicationModule(
         displayName = "Machine management",
-        allowedDependencies = {})
+        allowedDependencies = {"api::model", "api::msg", "api::management"})
 package org.qw3rtrun.p3d.management;

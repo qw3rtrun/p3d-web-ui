@@ -103,6 +103,18 @@ class HostTerminalTest {
         return captured.get();
     }
 
+    /** The same outbound side, over a source that emits exactly {@code payloads} and then ends. */
+    private Publisher<String> sendWindowOf(String... payloads) {
+        var captured = new AtomicReference<Publisher<String>>();
+        terminal = new HostTerminal(wire::asFlux, out -> {
+            captured.set(out);
+            return Mono.empty();
+        });
+        subscribeToBus();
+        terminal.start(Flux.fromArray(payloads).doOnRequest(pulled::add)).subscribe();
+        return captured.get();
+    }
+
     private void receive(String line) {
         wire.tryEmitNext(line + "\n");
     }
@@ -199,11 +211,11 @@ class HostTerminalTest {
 
         StepVerifier.create(out, 0)
                 .thenRequest(1)
-                .expectNext("G1 X1\n")
+                .expectNext("N1 G1 X1*96\n")
                 .then(() -> assertEquals(List.of(1L), pulled))
                 .then(() -> receive("echo:busy: processing"))
                 .thenRequest(1)
-                .expectNext("G1 X2\n")
+                .expectNext("N2 G1 X2*96\n")
                 .thenCancel()
                 .verify(TIMEOUT);
 
@@ -218,10 +230,10 @@ class HostTerminalTest {
 
         StepVerifier.create(out, 0)
                 .thenRequest(1)
-                .expectNext("G1 X1\n")
+                .expectNext("N1 G1 X1*96\n")
                 .then(() -> receive("busy: paused for user"))
                 .thenRequest(1)
-                .expectNext("G1 X2\n")
+                .expectNext("N2 G1 X2*96\n")
                 .thenCancel()
                 .verify(TIMEOUT);
 
@@ -243,10 +255,10 @@ class HostTerminalTest {
 
         StepVerifier.create(out, 0)
                 .thenRequest(10)
-                .expectNext("G1 X1\n")
+                .expectNext("N1 G1 X1*96\n")
                 .then(() -> assertEquals(List.of(1L), pulled))
                 .then(() -> receive("ok N2 P15 B3"))
-                .expectNext("G1 X2\n", "G1 X3\n", "G1 X4\n")
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
                 .then(() -> assertEquals(List.of(1L, 3L), pulled))
                 .thenCancel()
                 .verify(TIMEOUT);
@@ -271,10 +283,10 @@ class HostTerminalTest {
 
         StepVerifier.create(out, 0)
                 .thenRequest(10)
-                .expectNext("G1 X1\n")
+                .expectNext("N1 G1 X1*96\n")
                 .then(() -> receive("busy: paused for user"))
                 .then(() -> receive("ok"))
-                .expectNext("G1 X2\n")
+                .expectNext("N2 G1 X2*96\n")
                 .then(() -> assertEquals(List.of(1L, 1L), pulled))
                 .thenCancel()
                 .verify(TIMEOUT);
@@ -302,7 +314,7 @@ class HostTerminalTest {
 
         StepVerifier.create(out, 0)
                 .thenRequest(10)
-                .expectNext("G1 X1\n", "G1 X2\n", "G1 X3\n")
+                .expectNext("N1 G1 X1*96\n", "N2 G1 X2*96\n", "N3 G1 X3*96\n")
                 .then(() -> assertEquals(List.of(1L, 2L), pulled))
                 .thenCancel()
                 .verify(TIMEOUT);
@@ -396,5 +408,134 @@ class HostTerminalTest {
         wire.tryEmitComplete();
 
         assertEquals(Signal.complete(), busEnd.get());
+    }
+
+    /**
+     * What leaves the host is a framed block, not the text that was handed in.
+     *
+     * <p>Spec 7 and 8 through {@code :gcode}'s {@code GSendWindow}: an {@code N} field, one space,
+     * the payload verbatim, and the XOR checksum of everything before the {@code *}. The literals
+     * are the spec's own arithmetic - {@code N1 G28} xors to 18 - and not what the encoder happens
+     * to produce, so this fails if the framing changes under it.
+     */
+    @Test
+    void whatLeavesTheHostIsNumberedAndChecksummed() {
+        var out = sendWindowOf("G28", "M105");
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 G28*18\n")
+                .then(() -> receive("ok"))
+                .thenRequest(1)
+                .expectNext("N2 M105*37\n")
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * Spec 8.5 step 5, answered: the blocks from the requested number onwards go out again, byte
+     * for byte, before anything newer.
+     *
+     * <p>{@code Resend: 3} while 2, 3 and 4 are outstanding replays 3 and 4 - 2 was accepted and is
+     * dropped from the window - and numbering then carries on at 5 rather than rewinding to it,
+     * because the replayed blocks keep the numbers they were sent with.
+     *
+     * <p>Before the send window this was a log line and nothing else: the host did not number what
+     * it sent, so it had nothing to replay and the session stayed broken from the first bad
+     * checksum onwards.
+     */
+    @Test
+    void aResendReplaysTheHeldBlocksByteForByteAndThenCarriesOn() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .then(() -> receive("Resend: 3"))
+                .expectNext("N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .expectNext("N5 G1 X5*96\n")
+                .then(() -> assertEquals(List.of(1L, 3L, 1L), pulled))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * The {@code ok} that closes a resend handshake is credit, and nothing more.
+     *
+     * <p>Marlin answers a rejected block with {@code Error:}, {@code Resend: n} and then
+     * {@code ok}. That last line says the firmware is ready again; it acknowledges no block,
+     * because the block it is about to be sent has not been accepted yet. Letting it reach
+     * {@code GSendWindow.acknowledge()} would release block {@code n} - the very one the rewind
+     * just made outstanding again - and the next {@code Resend:} for it would find nothing held.
+     *
+     * <p>Measured as demand, which is where it shows: the first {@code ok} after the replay moves
+     * nothing, and the second one - a real acknowledgement of the replayed block 3 - frees the slot
+     * that pulls block 6.
+     */
+    @Test
+    void theOkThatClosesAResendAcknowledgesNoBlock() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .then(() -> receive("Error:checksum mismatch, Last Line: 2"))
+                .then(() -> receive("Resend: 3"))
+                .expectNext("N3 G1 X3*96\n", "N4 G1 X4*96\n", "N5 G1 X5*96\n")
+                .then(() -> receive("ok"))
+                .then(() -> assertEquals(List.of(1L, 3L, 1L), pulled))
+                .then(() -> receive("ok"))
+                .expectNext("N6 G1 X6*96\n")
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * The window is the second gate, and it binds when the printer's buffer is the wider of the two.
+     *
+     * <p>{@code B8} offers room for eight commands; the host holds four, because four is what it
+     * can still replay. A send the window would refuse is a command pulled off the source with
+     * nowhere to go, which is a silent drop - so the gate reserves the slot before the pull rather
+     * than discovering it afterwards.
+     */
+    @Test
+    void theSendWindowCapsWhatIsOutstandingEvenWhenThePrinterOffersMore() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(20)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B8"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n", "N5 G1 X5*96\n")
+                .then(() -> assertEquals(List.of(1L, 4L), pulled))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * A {@code Resend:} for a block the host no longer holds is reported, not guessed at.
+     *
+     * <p>Block 1 was acknowledged, so it is gone - a well-behaved firmware cannot ask for it, since
+     * it is the {@code ok} for a block that releases it. A peer that asks anyway has drifted
+     * further than a replay can repair, and a partial answer would put a gap on the wire on top of
+     * the one already there. Nothing is written and nothing is pulled.
+     */
+    @Test
+    void aResendForABlockNoLongerHeldIsReportedAndNotAnswered() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .then(() -> receive("Resend: 1"))
+                .then(() -> assertEquals(List.of(1L, 3L), pulled))
+                .thenCancel()
+                .verify(TIMEOUT);
     }
 }

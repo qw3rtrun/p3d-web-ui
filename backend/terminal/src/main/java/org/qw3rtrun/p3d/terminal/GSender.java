@@ -15,9 +15,16 @@ import java.util.function.Consumer;
  * Renders what the builders produce and hands the text to {@code out}.
  *
  * <p>Deliberately thin, and deliberately separate from the builders: it holds no line number and no
- * window, because that is {@code GCodeReader}/{@code GSendWindow}'s job (todo 05) and duplicating it here would
- * give a caller two counters that could disagree. Send framed blocks by passing
- * {@code GEncoder.frame(...)} output to a window instead.
+ * window. {@link HostTerminal.CommandProcessor} numbers and checksums what it writes, at the moment
+ * it writes it, through {@code :gcode}'s {@code GSendWindow} - and it has to be the last thing in
+ * the chain that does, because {@link PublisherQueue} reorders by
+ * {@link org.qw3rtrun.p3d.terminal.msg.Priority} and a number assigned here would reach the wire
+ * out of sequence. A number assigned in both places would be two counters that disagree.
+ *
+ * <p>So what goes to {@code out} is <strong>one bare block per call</strong>: no {@code N} field, no
+ * {@code *} checksum, no terminator, and no trailing comment - a comment runs to end of line and
+ * would swallow the checksum field the transport appends behind it. That is what every builder here
+ * produces; a draft carrying a {@code GCommentPart} is the one thing that would not.
  *
  * <p>The named operations below exist to carry over the Java facade this replaces, so its callers can
  * move across unchanged. They are a convenience layer with no privileges - each is one line of DSL.

@@ -39,9 +39,27 @@ change is a breaking change one layer up, whatever the compiler says.
 
 ### The send window
 
-`canProcess()` is `min(subscriptionRequested, blockQueue - sentWithoutAck - requestedFromGCode)`,
-and all three counters are `Requested`: atomic, saturating at `Long.MAX_VALUE` for "unbounded", and
-**clamped at zero**.
+`canProcess()` is the tightest of three things - the subscriber's demand, the printer's command
+buffer, and what the host can still replay:
+
+```
+min(subscriptionRequested,
+    blockQueue        - sentWithoutAck   - requestedFromGCode - awaitingFrame,
+    window.capacity   - window.inFlight  - requestedFromGCode - awaitingFrame)
+```
+
+and every counter but the window's own is a `Requested`: atomic, saturating at `Long.MAX_VALUE` for
+"unbounded", and **clamped at zero**.
+
+**`sentWithoutAck` and `window.inFlight` are not the same count and must not be merged.** The first
+is how much of the printer's buffer this host believes it occupies, and a `busy:` zeroes it because
+nothing in flight will be acknowledged while the machine is stalled. The second is what the host
+must still be able to *replay*, and a `busy:` must leave it alone, because those are exactly the
+bytes a later `Resend:` asks for. They diverge at `onBusy` by design.
+
+The third term is what makes a refused `send` impossible: the slot is reserved before the command is
+pulled off the source, so `GSendWindow.send` never returns null with a command in hand. A command
+pulled with nowhere to go is a silent drop, which is the failure this module exists to stop.
 
 The clamp is a contract and not a detail. More acknowledgements than sends is a state the transport
 cannot rule out - `onBusy` zeroes the in-flight count because nothing in flight will ever be
@@ -52,7 +70,41 @@ the printer's buffer for the rest of the session. Marlin answers an overrun by d
 overflow in silence.
 
 What a caller may rely on: between two acknowledgements, the number of commands written is never
-more than the last reported block queue. Nothing wider, and no credit invented from a reply.
+more than the last reported block queue, nor more than the window can replay. Nothing wider, and no
+credit invented from a reply.
+
+### What a caller may hand to the outbound side
+
+**One bare block per item.** No `N` field, no `*` checksum, no line terminator, and no trailing
+comment. `CommandProcessor` frames what it is given verbatim through `GEncoder.frame`, which does
+not parse it: a terminator inside a payload splits the block and leaves the `N` on one side of the
+break and the `*` on the other, and a comment runs to end of line and swallows the checksum field
+behind it.
+
+**The line counter is the transport's, not a caller's.** An `M110` sent as text moves the firmware's
+counter without moving `GSendWindow`'s, and the session desynchronises on the next block. The
+window's own `reset(to)` is the way to move it; nothing calls it yet (see the debt list).
+
+**Numbering happens in `CommandProcessor.onNext` and nowhere earlier.** `PublisherQueue` reorders by
+`Priority`, so a number assigned upstream of it reaches the wire out of sequence, which is the one
+thing Marlin rejects outright.
+
+### The drain loop owns the send window
+
+`GSendWindow` is portable Kotlin with no atomics in it and is not thread-safe, and the three things
+that touch it arrive on different threads - a command on whichever thread the source produces on, an
+`ok` and a `Resend:` on the netty inbound loop. So none of them touches it directly: `onNext` parks
+the payload, `handleBackpressure` and `rewind` park an event, and the `wip` drain loop applies all of
+it on one thread, which is also the only thread that writes. The guard is an `AtomicInteger`, so the
+hand-off carries the happens-before the window's plain fields need.
+
+That single writer is also what the replay needs. A `Resend:` must put its blocks on the wire in
+their original order and *before* anything pulled since; a write issued from the inbound thread
+could promise neither, and would break Reactive Streams rule 1.3 into the bargain.
+
+**A replayed block takes a unit of the subscriber's demand of its own.** The unit it spent when it
+was first written is gone - this is a second `onNext`, and the rule that none goes out unasked has no
+exception for a retransmission. `canProcess()` is zero while a replay is waiting for that demand.
 
 ### `messageFlux()` terminates when the connection does, and at no other time
 
@@ -223,10 +275,15 @@ the default for anything with demand in it.
 - **Sinks for the wire.** `HostTerminalTest` constructs `HostTerminal` over
   `Sinks.many().multicast().onBackpressureBuffer()` and feeds it lines. That is the right shape for
   a protocol-level test: no socket, no sleep, deterministic.
-- **The probes are not tests.** `EmulatorTemperatureProbe`, `GCodeLiveProbe` and `GCodeCorpusProbe`
-  need a printer on `localhost:8099` and must never be wired into `check`. They exist because the
-  unit tests cannot catch a reply shape the firmware actually sends - which is how the `ok N…` bug
-  was found. Run one when you change reply handling.
+- **The probes are not tests.** `EmulatorTemperatureProbe`, `GCodeLiveProbe`, `GCodeCorpusProbe` and
+  `TerminalRecoveryProbe` need a printer on `localhost:8099` and must never be wired into `check`.
+  They exist because the unit tests cannot catch a reply shape the firmware actually sends - which
+  is how the `ok N…` bug was found. Run one when you change reply handling.
+- **`TerminalRecoveryProbe` is the one for the send window**, and the only thing that measures the
+  resend loop end to end: it taps the wire between the processor and the socket, breaks one framed
+  block's checksum, and checks that the firmware rejects it, that the host sends the same bytes
+  again, and that the session carries on. No unit test can do that, because it needs a peer that
+  rejects something.
 
 Run the module's tests with `:backend:terminal:test`. The Gradle summary line only prints on
 failure, so count them out of the XML the way `protocol-dev` does.
@@ -262,44 +319,23 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   a `:gcode` type in its public signature. It compiles only because `:backend:api` declares `:gcode`
   itself; a consumer that does not would fail. The fix is `api` rather than `implementation`, which
   needs the `java-library` plugin in `p3d.java-conventions`.
-- **The host does not number its outbound lines, so the whole resend loop is missing.**
-  `CommandProcessor.onNext` writes `gCode + "\n"` - no `N`, no `*` - and `onWait` is still an empty
-  `// TODO Unsupported yet`. `onResend` now logs the request it cannot answer instead of dropping
-  it, which is the honest half of the gap and not a fix. Four things are needed and none is here:
-  numbering and checksumming outbound blocks, acknowledging them, replaying on `Resend:`, and
-  `M110` counter resets. What was established while scoping it, so it is not re-derived:
-
-  - **Numbering has to happen in `CommandProcessor.onNext` and nowhere earlier.** `PublisherQueue`
-    reorders by `Priority`, so a number assigned upstream of it reaches the wire out of sequence,
-    which is the one thing Marlin rejects outright.
-  - **`:gcode`'s `GSendWindow` is the machine and must not be rebuilt here** - it has the framing,
-    the replay buffer, `acknowledge`/`canResendFrom`/`resendFrom`/`reset` and its own tests. The
-    transport cannot reach it: `send` takes a `GCommand`, the pipeline carries `String` from
-    `GSender` onwards, and there is **no text-to-`GCommand` path in `:gcode`'s main source set** -
-    `GWordReader` lives in `gcode/src/test` and `GCommandParser` was retired there on purpose. The
-    recommended fix is a `GSendWindow.send(payload: String)` in `:gcode` that frames already-rendered
-    bytes, with `send(GCommand)` delegating through `GEncoder.encode`. Making the pipeline carry
-    `GCommand` instead is the alternative and is worse: `GSender.send(GBlockDraft)` has no
-    counterpart on `GSendWindow`, and every raw-text sender dies with it - `GCodeCorpusProbe`'s
-    corpus replay, `TerminalRecoveryProbe`'s hand-fed `N3 M105*1`, and any operator console.
-  - **Two counters, one gate.** `sentWithoutAck` is the printer's planner occupancy and `onBusy`
-    zeroes it; `GSendWindow.inFlight` is what the host must still be able to replay and a `busy:`
-    must *not* clear it, because those are exactly the bytes a later `Resend:` asks for. They are
-    different quantities and diverge at `onBusy`, so neither replaces the other - but there must
-    still be one gate, which means `canProcess()` gains a third term, `capacity - windowInFlight -
-    requestedFromGCode`, so `send` can never refuse a command already pulled. A `send` returning
-    null with a command in hand is a silent drop, which is the failure this module exists to stop.
-  - **`resendFrom(n)` re-occupies planner slots too**, so `sentWithoutAck.inc(replay.size())` has to
-    move in the same step, through the existing `Requested`.
-  - **`GSendWindow` is portable Kotlin with no atomics and is not thread-safe.** `send` runs on the
-    producer thread inside the `wip` drain loop; `acknowledge` and `resendFrom` would be called from
-    the netty inbound thread. They have to be queued and applied inside `processRequest()`, not
-    inline.
-  - **The `ok` that follows `Error:` / `Resend:` must not `acknowledge()`.** Marlin answers a
-    rejected block with `Error:`, `Resend: n`, then `ok`; that `ok` frees a planner slot but
-    acknowledges no block, and letting it reach `acknowledge()` would discard the very block the
-    rewind just made outstanding again. Confirmed on the simulator - see the trace in
-    `TerminalRecoveryProbe`'s notes.
+- **Nothing resets the line counter, so a session that drifts past the window cannot be repaired.**
+  `GSendWindow.reset(to)` builds the `M110 N<to>` block that spec 7.2 exempts from the continuity
+  check, and nothing calls it. The hole shows at `rewind0`: a `Resend: n` for a block the window no
+  longer holds is logged and left, because a partial replay would put a second gap on the wire on
+  top of the one already there. In a well-behaved session it cannot happen - a block is released
+  only by the `ok` that accepted it - so what is missing is the repair for a peer that is already
+  lost, not a path a normal print takes. Whoever adds it owns two decisions the window cannot make:
+  when a session is deemed lost, and what happens to the blocks abandoned by the reset.
+- **`onWait` is still an empty `// TODO Unsupported yet`.** `wait` means the firmware has an empty
+  buffer and nothing to do, which is a different statement from `busy:` and currently says nothing
+  to the window at all.
+- **An `ok` that arrives while the window is empty is logged and lost.** `applyWindowEvents` calls
+  `GSendWindow.acknowledge()`, which answers false for a stray acknowledgement, and the credit is
+  not held for the next block sent. A printer cannot acknowledge a block it has not received, so
+  this is only reachable by a test that fakes the ordering - `anAcknowledgementArrivingMidEmissionIsCreditAndNotExtraRoom`
+  does exactly that, and leaves the window one block narrower for the rest of its run. Worth knowing
+  before that test is extended, not worth a deferred-credit counter today.
 - **`CommandProcessor.onComplete` has `subscriber.onComplete()` commented out**, so upstream
   completion is swallowed. Deliberate or not, it is undocumented.
 - **`PublisherQueue` uses a `PriorityQueue` with partial synchronisation** - `request0` is

@@ -55,7 +55,9 @@ the bridge, never an `api` interface implemented inside `:gcode`.
 **`core` is live data; `printer-management` is static data.** What a machine is called, where to
 dial it and what it can do belong to management. What it is doing right now - connected, hot, busy,
 what it last reported - belongs to core. Rule 2 says core talks to other submodels through events,
-which is not yet true and is plan item A6.
+and it does: `PrinterDirectory` is core's own replica of where to dial, fed by `MRegisteredEvent`
+and `MDeletedEvent`, so core needs no database to start a printer. `frontend` still reaches
+`PrinterReactorManager` directly; that is the rest of A6.
 
 ## IMPORTANT - nothing blocking runs on an event loop
 
@@ -273,12 +275,21 @@ State that survives a request belongs below the controller, not beside it. The t
 class is in the right module is whether `:backend:printer-management` could use it without depending on
 WebFlux.
 
-### Let the event registry do the delivery
+### Match the delivery to what the state is
 
-Spring Modulith's event publication registry gives at-least-once delivery across a transaction
-boundary with persistence and replay, which is exactly what "the printer went offline while the job
-was running" needs. Hand-rolled `Sinks` are right for a live UI stream and wrong for a fact that must
-not be lost.
+Three mechanisms, and picking the wrong one has already cost a debugging session each:
+
+- **A replica of current state** wants a plain `@EventListener` and a re-announcement at startup.
+  It is derived, it is rebuilt every boot, and nothing about it must survive the process.
+  `PrinterDirectory` is the example.
+- **A fact that must not be lost** - a job that was running when the printer went offline - wants
+  Modulith's event publication registry: at-least-once delivery across a transaction boundary, with
+  persistence and replay. **Turning it on needs a Liquibase changeset for its `EVENT_PUBLICATION`
+  table.** It switches itself on the moment a `@TransactionalEventListener` exists alongside
+  `spring-modulith-starter-jpa`, and without the table every publishing transaction dies on commit
+  with `Table "EVENT_PUBLICATION" not found`. That is not a theory; it is how the replica's first
+  version failed.
+- **A live UI stream** wants `Sinks`, and nothing durable at all.
 
 ### Configuration belongs to `:app`
 

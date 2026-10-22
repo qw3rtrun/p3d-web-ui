@@ -2,10 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.api.service.MachineManagementService;
-import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
-import org.qw3rtrun.p3d.api.service.PrinterAggregateManager;
 import org.qw3rtrun.p3d.terminal.TerminalManager;
 import org.springframework.context.event.EventListener;
 
@@ -26,7 +23,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class PrinterReactorManager {
 
-    private final MachineManagementService machines;
+    private final PrinterDirectory directory;
 
     private final PrinterAggregateManager aggregateManager;
 
@@ -36,16 +33,19 @@ public class PrinterReactorManager {
      * The printer's runtime, started if this is the first caller.
      *
      * <p><strong>Called {@code open} and not {@code get} because it is not a getter.</strong> On a
-     * miss it reads the printer's row, builds a reactor, and - if the row says the printer was
-     * connected - opens a socket to it. A name that promised a lookup made that side effect
-     * invisible at every call site, and the call sites are REST handlers.
+     * miss it builds a reactor for the machine, which is a resource. It pairs with
+     * {@link #release(UUID)}: whatever this opens, that closes.
      *
-     * <p>It pairs with {@link #release(UUID)}: whatever this opens, that closes.
+     * <p>It no longer opens a socket. It used to, when the printer's row said {@code connected} -
+     * which made a GET on a query path dial a machine. That branch was also dead: nothing in
+     * production ever writes the flag, because {@code PrinterController.connect} goes to the
+     * reactor and not to the management service, so the column is {@code false} from creation
+     * onwards. Reconnecting after a restart is a real feature and plan item B3 owns it; doing it
+     * as a side effect of a lookup was not that feature.
      *
-     * <p>The reconnect-on-first-access is close to dead code today, and worth knowing before
-     * relying on it: nothing in production ever sets the row's {@code connected} flag.
-     * {@code PrinterController.connect} goes to the reactor, not to the management service, so the
-     * column is written {@code false} at creation and never again. Plan item B3 owns that.
+     * <p>Throws when the machine is unknown to this module. That is a different statement from
+     * "the farm has no such machine" - it can also mean this module has not been told yet - and the
+     * caller gets to see the difference rather than receiving a reactor pointed at nowhere.
      */
     public synchronized PrinterReactor openReactor(UUID uuid) {
         return running.computeIfAbsent(uuid, this::startReactor);
@@ -86,12 +86,9 @@ public class PrinterReactorManager {
     }
 
     private PrinterReactor startReactor(UUID uuid) {
-        var descriptor = machines.fetch(uuid);
+        var entry = directory.find(uuid).orElseThrow(() ->
+                new IllegalArgumentException("no machine known with id " + uuid));
         var aggregate = (PrinterState) aggregateManager.loadState(uuid);
-        var reactor = new PrinterReactor(new TerminalManager(descriptor.connection()), aggregate);
-        if (descriptor.connected()) {
-            reactor.handleConnectCmd(new ConnectCmd(true));
-        }
-        return reactor;
+        return new PrinterReactor(new TerminalManager(entry.connection()), aggregate);
     }
 }

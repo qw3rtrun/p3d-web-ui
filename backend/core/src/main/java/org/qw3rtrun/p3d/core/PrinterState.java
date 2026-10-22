@@ -3,7 +3,6 @@ package org.qw3rtrun.p3d.core;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.api.model.PrinterAggregate;
 import org.qw3rtrun.p3d.api.msg.*;
 import org.qw3rtrun.p3d.core.firmware.CapabilitiesInfo;
 import org.qw3rtrun.p3d.core.firmware.FirmwareInfo;

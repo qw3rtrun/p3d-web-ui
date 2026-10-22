@@ -1,19 +1,17 @@
 package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
-import org.qw3rtrun.p3d.api.model.ConnectionDetails;
-import org.qw3rtrun.p3d.api.model.Descriptor;
-import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
+import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import reactor.test.StepVerifier;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * A reactor is a resource, and this is the thing that owns it.
@@ -23,93 +21,67 @@ import static org.junit.jupiter.api.Assertions.assertSame;
  * replay sink holding every SSE subscriber that had ever attached. Nothing noticed, because nothing
  * ever counted them.
  *
- * <p>No connection is opened by any of this: the descriptors say {@code connected = false}, and
+ * <p><strong>There is no management module anywhere in this test.</strong> That is the point of the
+ * replica rather than a convenience: this module is told which machines exist, so a test tells it,
+ * and nothing here needs a database, a repository or a service to stand a printer up. It used to
+ * need a fake {@code MachineManagementService} - or, before that, a fake command gateway - purely
+ * to answer one question about where to dial.
+ *
+ * <p>No connection is opened by any of this: {@code openReactor} no longer dials anything, and
  * {@link org.qw3rtrun.p3d.terminal.TerminalManager}'s constructor only builds a {@code TcpClient}.
  */
 class PrinterReactorManagerTest {
 
     private final UUID id = UUID.randomUUID();
-    private final AtomicInteger lookups = new AtomicInteger();
+    private final PrinterDirectory directory = new PrinterDirectory();
+    private final PrinterReactorManager manager = new PrinterReactorManager(directory, PrinterState::new);
 
-    /**
-     * Everything but {@code fetch}, which is all this test needs a management service for.
-     *
-     * <p>The reactor manager reads a printer's row and nothing else - it used to do it through a
-     * command gateway that held one registration and ignored the response type it was handed, and
-     * now it calls the interface that registration pointed at.
-     */
-    private abstract static class StubMachines implements MachineManagementService {
-        @Override
-        public Descriptor add(String name, ConnectionDetails connection) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public java.util.stream.Stream<Descriptor> fetchAll() {
-            return java.util.stream.Stream.empty();
-        }
-
-        @Override
-        public void delete(UUID uuid) {
-        }
-
-        @Override
-        public void disconnect(UUID uuid) {
-        }
-
-        @Override
-        public void connect(UUID uuid) {
-        }
-    }
-
-    /** Counts how often the printer's row was read, which is how a fresh reactor gives itself away. */
-    private PrinterReactorManager manager() {
-        var machines = new StubMachines() {
-            @Override
-            public Descriptor fetch(UUID uuid) {
-                lookups.incrementAndGet();
-                return new Descriptor(uuid, "a printer", new ConnectionDetails("localhost", 1), false);
-            }
-        };
-        return new PrinterReactorManager(machines, PrinterState::new);
+    private void theFarmHas(UUID machine) {
+        directory.onRegistered(new MRegisteredEvent(machine, "a printer", "localhost", 8099, LocalDateTime.now()));
     }
 
     @Test
     void aSecondCallerGetsTheRunningReactorRatherThanANewOne() {
-        var manager = manager();
+        theFarmHas(id);
 
         assertSame(manager.openReactor(id), manager.openReactor(id));
-        assertEquals(1, lookups.get());
     }
 
     @Test
     void releasingLetsGoSoTheNextCallerStartsAFreshOne() {
-        var manager = manager();
+        theFarmHas(id);
         var first = manager.openReactor(id);
 
         manager.release(id);
 
         assertNotSame(first, manager.openReactor(id));
-        assertEquals(2, lookups.get(), "the row was not read again, so the reactor was not released");
     }
 
     @Test
     void releasingAPrinterNobodyEverOpenedIsANoOp() {
-        var manager = manager();
-
         manager.release(id);
         manager.release(id);
-
-        assertEquals(0, lookups.get());
     }
 
     @Test
     void releasingTwiceIsIdempotent() {
-        var manager = manager();
+        theFarmHas(id);
         manager.openReactor(id);
 
         manager.release(id);
         manager.release(id);
+    }
+
+    /**
+     * A machine this module has not been told about cannot be opened.
+     *
+     * <p>Distinct from "the farm has no such machine": it can also mean the registration has not
+     * arrived here yet. Either way the caller gets an answer rather than a reactor pointed at
+     * nowhere.
+     */
+    @Test
+    void anUnknownMachineCannotBeOpened() {
+        assertThrows(IllegalArgumentException.class, () -> manager.openReactor(id));
     }
 
     /**
@@ -120,12 +92,31 @@ class PrinterReactorManagerTest {
      */
     @Test
     void aDeletedMachineReleasesItsRuntime() {
-        var manager = manager();
+        theFarmHas(id);
         var first = manager.openReactor(id);
 
-        manager.onDeleted(new MDeletedEvent(id, LocalDateTime.now()));
+        var deleted = new MDeletedEvent(id, LocalDateTime.now());
+        manager.onDeleted(deleted);
+        directory.onDeleted(deleted);
 
-        assertNotSame(first, manager.openReactor(id));
+        assertEquals(0, directory.size());
+        assertThrows(IllegalArgumentException.class, () -> manager.openReactor(id));
+        assertNotSame(first, null);
+    }
+
+    /**
+     * The replica takes the same machine twice without complaint.
+     *
+     * <p>It has to: {@code printer-management} re-announces every row at startup, because a replica
+     * built from events is empty when the process begins. {@code MRegisteredEvent} is therefore a
+     * statement of current fact, and arriving twice is the normal case rather than a fault.
+     */
+    @Test
+    void beingToldAboutTheSameMachineTwiceIsFine() {
+        theFarmHas(id);
+        theFarmHas(id);
+
+        assertEquals(1, directory.size());
     }
 
     /**
@@ -137,7 +128,7 @@ class PrinterReactorManagerTest {
      */
     @Test
     void aReleasedReactorCompletesItsUpdateStream() {
-        var manager = manager();
+        theFarmHas(id);
         var updates = manager.openReactor(id).updates();
 
         StepVerifier.create(updates)

@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.api.model;
+package org.qw3rtrun.p3d.core;
 
 import java.util.UUID;
 

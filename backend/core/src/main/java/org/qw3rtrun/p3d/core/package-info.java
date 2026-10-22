@@ -7,16 +7,17 @@
  * a printer - its name, where to dial it, what it can do - belongs to {@code management}, and the
  * two are deliberately different modules.
  *
- * <p><strong>Communication with other submodels is meant to be events.</strong> That is rule 2 of
- * {@code doc/sub_boundaries.txt}, and it is not true yet: {@code PrinterReactorManager} reaches
- * {@code management} synchronously through {@code MachineManagementService} to find out where to
- * dial. Because that interface lives in the shared {@code api} module, the boundary check cannot
- * see it, so this is a rule the verification does not enforce and a reader has to be told.
+ * <p><strong>Communication with other submodels is events.</strong> That is rule 2 of
+ * {@code doc/sub_boundaries.txt}, and it is true now: {@link PrinterDirectory} is this module's own
+ * replica of where to dial each machine, fed by {@code MRegisteredEvent} and {@code MDeletedEvent}
+ * and never by a query. Nothing here calls {@code printer-management}, and nothing here needs a
+ * database to start a printer.
  *
- * <p>Closing it means this module keeping its own replica of the static data, fed by events from
- * {@code management} - which is plan item A6, and which is also what will let the check enforce the
- * rule: once nothing here calls a service, {@code api} can become a closed module with named
- * interfaces, and this one can be denied the service package outright.
+ * <p>The verification still cannot see that, because the only thing that would have broken the rule
+ * - {@code MachineManagementService} - lives in the shared {@code api} module and so is invisible
+ * to the dependency check. Making it enforceable means closing {@code api} and exporting its
+ * packages as named interfaces, so this module can be denied the service package outright. That is
+ * what remains of plan item A6, along with the {@code frontend} crossing below.
  *
  * <p>{@code firmware} is a nested package and so an internal: it holds what {@code M115} and
  * {@code M503} reported, which is the aggregate's state and nobody else's.

@@ -4,9 +4,12 @@ import lombok.RequiredArgsConstructor;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
+import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.api.msg.ManagementEvent;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.management.model.PrinterEntity;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.Sort;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,7 +31,32 @@ public class MachineManagementImpl implements MachineManagementService {
 
     @Transactional
     public Descriptor add(String name, ConnectionDetails connection) {
-        return map(repo.save(new PrinterEntity(UUID.randomUUID(), name, connection.host(), connection.port(), false)));
+        var saved = repo.save(new PrinterEntity(UUID.randomUUID(), name, connection.host(), connection.port(), false));
+        eventBus.push(registered(saved));
+        return map(saved);
+    }
+
+    /**
+     * Tells everyone what the farm currently contains, once the application is up.
+     *
+     * <p>A module that keeps a replica of this data builds it from {@link MRegisteredEvent}, and a
+     * replica is empty when the process starts - the events that filled it last time are long
+     * delivered. So the rows are announced again here, which is why that event is worded as a
+     * statement of fact rather than of a change.
+     *
+     * <p>This is the whole of the bootstrap story, and it is deliberately the dull version:
+     * re-publishing current state beats replaying a log of changes, because the replica only ever
+     * wants to know what is true now.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    @Transactional(readOnly = true)
+    public void announceTheFarm() {
+        repo.findAll().forEach(entity -> eventBus.push(registered(entity)));
+    }
+
+    private static MRegisteredEvent registered(PrinterEntity entity) {
+        return new MRegisteredEvent(entity.getId(), entity.getName(),
+                entity.getHost(), entity.getPort(), LocalDateTime.now());
     }
 
     public Stream<Descriptor> fetchAll() {

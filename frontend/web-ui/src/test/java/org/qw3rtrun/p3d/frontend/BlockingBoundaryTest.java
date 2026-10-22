@@ -4,12 +4,16 @@ import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
+import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
+import org.qw3rtrun.p3d.core.PrinterDirectory;
 import org.qw3rtrun.p3d.core.PrinterReactorManager;
 import org.qw3rtrun.p3d.core.PrinterState;
 import org.qw3rtrun.p3d.frontend.mvc.MvcPrinterController;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.ui.ConcurrentModel;
 
+import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -136,16 +140,26 @@ class BlockingBoundaryTest {
     /**
      * The reactor lookup, which is the one that was never even lazy.
      *
-     * <p>{@code PrinterReactorManager.openReactor} reads the printer's row, builds a reactor and -
-     * on a row that says connected - opens a socket, all inside a {@code synchronized} block. Every
-     * handler called it directly in its own body, so it ran eagerly on the event loop before the
-     * returned publisher existed.
+     * <p>Every handler called {@code openReactor} directly in its own body, so it ran eagerly on
+     * the event loop before the returned publisher existed. It no longer reads a database - plan
+     * item A6 gave {@code core} its own replica of where to dial - but it is still
+     * {@code synchronized}, and a monitor is not something an event-loop thread should queue on
+     * when several requests arrive for one printer. So the scheduling stays, and so does this.
      */
     @Test
     void theReactorLookupRunsOffTheCallersThread() {
-        var manager = new PrinterReactorManager(recordingService(), PrinterState::new);
+        var directory = new PrinterDirectory() {
+            @Override
+            public Optional<Entry> find(UUID id) {
+                record();
+                return super.find(id);
+            }
+        };
+        directory.onRegistered(new MRegisteredEvent(
+                descriptor.uuid(), "a printer", "localhost", 8099, LocalDateTime.now()));
+        var manager = new PrinterReactorManager(directory, PrinterState::new);
 
-        WebTestClient.bindToController(new PrinterController(recordingService(), manager)).build()
+        WebTestClient.bindToController(new PrinterController(manager)).build()
                 .get().uri("/api-printer/" + descriptor.uuid()).exchange().expectStatus().isOk();
 
         assertRanOffTheCallersThread();

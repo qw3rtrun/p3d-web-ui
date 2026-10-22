@@ -1,7 +1,5 @@
 package org.qw3rtrun.p3d.core;
 
-import org.qw3rtrun.p3d.api.service.MachineManagementService;
-import org.qw3rtrun.p3d.api.service.PrinterAggregateManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -20,8 +18,13 @@ import org.springframework.context.annotation.Configuration;
 public class CoreConfiguration {
 
     @Bean
-    public PrinterReactorManager printer(MachineManagementService machines, PrinterAggregateManager aggregates) {
-        return new PrinterReactorManager(machines, aggregates);
+    public PrinterDirectory directory() {
+        return new PrinterDirectory();
+    }
+
+    @Bean
+    public PrinterReactorManager printer(PrinterDirectory directory, PrinterAggregateManager aggregates) {
+        return new PrinterReactorManager(directory, aggregates);
     }
 
     /**

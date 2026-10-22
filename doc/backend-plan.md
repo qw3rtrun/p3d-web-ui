@@ -74,7 +74,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**A3**~~ | [the reactor has an owner](#a3) | ~~Stop and evict a `PrinterReactor` on disconnect and delete; bound the map~~ **done** — `openReactor`/`release`, driven by an `MDeletedEvent` | B3 |
 | ~~**A4**~~ | [delete the half-built](#a4) | ~~The dead WebSocket handler, the null-returning stub service, the one-entry command bus~~ **done** — seven files gone, nothing replaced them | A5 |
 | ~~**A5**~~ | [one dispatch, checked by the compiler](#a5) | ~~Replace `PrinterReactor`'s reflective invoker with a sealed interface and an exhaustive switch~~ **done** — a pattern switch, in the aggregate rather than the reactor | B1 |
-| **A6** | [close the two declared crossings](#a6) | `core` gets a replica fed by events instead of querying `management`; `frontend` reaches `core` through an `api` interface. Then `allowedDependencies = {}` everywhere | B2 |
+| **A6** | [close the two declared crossings](#a6) | ~~`core` gets a replica fed by events instead of querying `management`~~ **done**; `frontend` reaches `core` through an `api` interface, and `api` closes so the check can enforce both | B2 |
 | ~~**B1**~~ | [the aggregate leaves the web module](#b1) | ~~`PrinterState` into a domain module that does not depend on WebFlux~~ **done** — it is the `core` submodel now | B2, C3 |
 | **B2** | [the machine remembers what it is](#b2) | Persist firmware, capabilities and last-known state; restore on boot | B4, D1 |
 | **B3** | [a connection lifecycle worth the name](#b3) | An explicit state machine, retry with backoff, health, and events for each transition | C5 |
@@ -296,6 +296,53 @@ names a service, `api` can become a closed module with a `@NamedInterface` per n
 **Done when.** All three closed modules declare `allowedDependencies = {}`; `api` is closed with
 named interfaces; `core` starts a printer from its own replica with the management module stubbed
 out entirely in the test.
+
+**Half done: `core` no longer queries `management`.** `PrinterDirectory` is the replica, fed by
+`MRegisteredEvent` and `MDeletedEvent`. `PrinterReactorManagerTest` has no management module in it
+at all - no service, no repository, no fake - which is the clause above and the real payoff: this
+module can be started and reasoned about without a database behind it.
+
+Two things fell out of it. `PrinterAggregate` and `PrinterAggregateManager` **moved from `api` into
+`core`**: nothing outside `core` ever used them, so they were core's internal seam parked in the
+shared kernel, and moving them leaves `api.service` holding exactly `MachineManagementService` -
+which is what a named-interface split needs. And `openReactor` **stopped opening sockets**: the
+auto-connect branch read `descriptor.connected()`, which the A3 finding showed is never written in
+production, so the replica simply does not carry it. A query path no longer dials a machine.
+
+**Bootstrap, settled by running rather than argued.** `printer-management` re-announces every row on
+`ApplicationReadyEvent`, so `MRegisteredEvent` is a statement of current fact rather than of a
+change and arriving twice is normal. Verified across a real restart: a printer created in one
+process is reachable in the next, which never received a live registration for it.
+
+**One failure only running could have found.** The first version used
+`@TransactionalEventListener`, which is the textbook choice - and with `spring-modulith-starter-jpa`
+on the persistence module's classpath it silently switches on Modulith's *durable event publication
+registry*, which writes every such event to an `EVENT_PUBLICATION` table. Liquibase owns this schema
+and has no changeset for it, so registering a printer died on commit with
+`Table "EVENT_PUBLICATION" not found`. The replica is derived state rebuilt at every startup, so it
+wants in-process notification and not durable publication; a plain `@EventListener` is the right
+tool, at the cost of firing before the commit. **The registry is still wanted for C2 and C5** - job
+events that must survive a restart - and this records what turning it on will need: a changeset for
+its table.
+
+**What is left of A6**, and why it is bigger than it looked:
+
+* **`frontend` → `core` needs an `api` command model.** The obvious fix is an interface in `api`
+  carrying what the controllers need, but `send` takes a `:gcode` command class, and `api` must not
+  depend on `:gcode`. So closing this crossing means api-level commands - `SetHotendTarget`,
+  `SetBedTarget` and so on - with `frontend` building them and `core` mapping them to Marlin
+  commands. That is the **outbound** half of the two-models split, matching the inbound bridge in
+  `:backend:terminal`, and it also fixes something the skill already flags: today the REST contract
+  follows the generated Marlin command set, so a generated-class rename is a breaking API change.
+* **Making either crossing enforceable needs `api` closed.** Both go through types in the shared
+  module, so the dependency check cannot see them. Closing `api`, exporting `model`, `msg` and
+  `service` as `@NamedInterface`s and dropping `sharedModules` would let `core` be denied
+  `api::service` outright. Mechanical, but it touches every module's `allowedDependencies`.
+
+**Reactor in `api` is no longer the blocker it was.** When this item was written, `:gcode` depended
+on `api`, so Reactor there would have reached the protocol core. `:gcode` no longer does. The
+remaining question is smaller - whether `printer-management` should carry Reactor on its compile
+path - and `org.reactivestreams.Publisher` sidesteps it if not.
 
 ---
 

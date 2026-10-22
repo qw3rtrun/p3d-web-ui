@@ -1,6 +1,6 @@
-package org.qw3rtrun.p3d.api.service;
+package org.qw3rtrun.p3d.core;
 
-import org.qw3rtrun.p3d.api.model.PrinterAggregate;
+
 
 import java.util.UUID;
 

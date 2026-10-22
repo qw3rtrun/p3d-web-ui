@@ -7,7 +7,6 @@ import org.qw3rtrun.p3d.core.PrinterReactor;
 import org.qw3rtrun.p3d.core.PrinterReactorManager;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.TemperatureReport;
-import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
@@ -26,24 +25,23 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class PrinterController {
 
-    private final MachineManagementService machines;
     private final PrinterReactorManager manager;
 
     /**
      * The printer's runtime, looked up off the event loop.
      *
-     * <p>{@code openReactor} is not a lookup. On a miss it reads the printer's
-     * row through the command gateway - blocking JDBC - builds a reactor, and connects a socket if
-     * the row says the printer was connected, all inside a {@code synchronized} block. Every
-     * handler below used to call it directly in its own body, so that ran on a Netty event-loop
-     * thread, eagerly, before the returned publisher was even subscribed.
+     * <p>{@code openReactor} is not a lookup - on a miss it builds a reactor, which is a
+     * resource - and every handler below used to call it directly in its own body, so it ran on a
+     * Netty event-loop thread, eagerly, before the returned publisher was even subscribed.
      *
-     * <p>Deferring it into a {@code Mono} does two things: the work moves to a pool that is allowed
-     * to block, and it stops happening at all for a request that is cancelled before it is
-     * subscribed.
+     * <p>Deferring it into a {@code Mono} stops that, and stops it happening at all for a request
+     * cancelled before subscription.
      *
-     * <p>The side effect is still there and still wrong - a lookup should not open a socket - but
-     * that is plan item A3, and it is a lifecycle change rather than a threading one.
+     * <p><strong>The {@code subscribeOn} outlived its original reason and keeps a smaller one.</strong>
+     * It was there because the lookup read the printer's row through blocking JDBC; it no longer
+     * does, since {@code core} keeps its own replica of where to dial. What remains is that
+     * {@code openReactor} is {@code synchronized}, and a monitor is still something an event-loop
+     * thread should not be queueing on when several requests arrive for the same printer.
      */
     private Mono<PrinterReactor> reactor(UUID id) {
         return Mono.fromSupplier(() -> manager.openReactor(id)).subscribeOn(Schedulers.boundedElastic());

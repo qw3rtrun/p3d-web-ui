@@ -16,7 +16,9 @@ dependencyManagement {
 }
 
 application {
-    mainClass = 'org.qw3rtrun.p3d.machine-mng.PrintersmngApplication'
+    // Was 'org.qw3rtrun.p3d.machine-mng.PrintersmngApplication' - a package with a hyphen in it,
+    // which is not a legal Java identifier, naming a class that does not exist.
+    mainClass = 'org.qw3rtrun.p3d.mng.MachineManagementApplication'
 }
 
 dependencies {

@@ -69,7 +69,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 
 | # | Item | What it is | Blocks |
 |---|---|---|---|
-| **A1** | [package split and module boundaries](#a1) | Move `:backend:api` out of `org.qw3rtrun.p3d.core`; declare `@ApplicationModule`s; add `ApplicationModules.verify()` | A2–D3 |
+| ~~**A1**~~ | [package split and module boundaries](#a1) | ~~Move `:backend:api` out of `org.qw3rtrun.p3d.core`; declare `@ApplicationModule`s; add `ApplicationModules.verify()`~~ **done** — four modules declared, each depending on nothing but the shared kernel, and the verification bites | A2–D3 |
 | **A2** | [blocking work off the event loop](#a2) | `subscribeOn(boundedElastic)` at every JPA boundary, and a test that catches the next one | C1, C2 |
 | **A3** | [the reactor has an owner](#a3) | Stop and evict a `PrinterReactor` on disconnect and delete; bound the map | B3 |
 | **A4** | [delete the half-built](#a4) | The dead WebSocket handler, the null-returning stub service, the one-entry command bus | A5 |
@@ -118,6 +118,21 @@ test; `./gradlew build` is green; the Modulith actuator endpoint lists the modul
 owned by two Gradle modules. Also fix `machine-mng/build.gradle`'s `mainClass`, which names
 `org.qw3rtrun.p3d.machine-mng.PrintersmngApplication` — a package with a hyphen in it, and a class
 that does not exist.
+
+**Done.** Four modules — `core` (open, shared), `api`, `mng`, `mvc` — with `:gcode` and
+`:backend:terminal` excluded from the model, because neither may depend on Spring and so neither can
+carry a Modulith annotation; they are consumed as libraries. All three closed modules declare
+`allowedDependencies = {}`, which is Modulith's "no other application module", and that is true
+today: every cross-module call goes through the shared kernel. The check was proved to bite before
+it was trusted — `mvc` importing `PrinterEntity` fails with *"Allowed targets: core"*. 987 tests
+green across the repo.
+
+**Two things learned while doing it**, recorded because the next module will hit both.
+`@Modulithic(sharedModules = …)` exempts a module from the **dependency** check but does **not**
+open its nested packages, so `core` needed `@ApplicationModule(type = OPEN)` as well — the two
+settings solve different halves and a shared kernel wants both. And the default for
+`allowedDependencies` is a sentinel string (`¯\_(ツ)_/¯`) meaning "unrestricted", so an explicit
+`{}` is how a module says it depends on nothing.
 
 ### A2 — blocking work off the event loop {#a2}
 

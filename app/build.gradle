@@ -25,6 +25,12 @@ dependencies {
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
+    // The assembly is where the module structure is declared (@Modulithic on StandaloneApp) and
+    // where it is verified, so it needs Modulith at compile and test time rather than only at
+    // runtime for the actuator below.
+    implementation 'org.springframework.modulith:spring-modulith-starter-core'
+    testImplementation 'org.springframework.modulith:spring-modulith-starter-test'
+
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
 

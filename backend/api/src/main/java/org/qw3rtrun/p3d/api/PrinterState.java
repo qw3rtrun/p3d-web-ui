@@ -1,12 +1,12 @@
-package org.qw3rtrun.p3d.core;
+package org.qw3rtrun.p3d.api;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.core.model.PrinterAggregate;
 import org.qw3rtrun.p3d.core.msg.*;
-import org.qw3rtrun.p3d.firmware.CapabilitiesInfo;
-import org.qw3rtrun.p3d.firmware.FirmwareInfo;
+import org.qw3rtrun.p3d.api.firmware.CapabilitiesInfo;
+import org.qw3rtrun.p3d.api.firmware.FirmwareInfo;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;

@@ -11,10 +11,16 @@ plugins {
 dependencyManagement {
     imports {
         mavenBom SpringBootPlugin.BOM_COORDINATES
+        mavenBom "org.springframework.modulith:spring-modulith-bom:$springModulithVersion"
     }
 }
 
 dependencies {
+    // compileOnly, and only for the @ApplicationModule in package-info.java. This module is the
+    // shared vocabulary and is deliberately free of Spring at runtime; the annotation is read from
+    // the bytecode by the verification in :app, which has Modulith on its own classpath.
+    compileOnly 'org.springframework.modulith:spring-modulith-api'
+
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

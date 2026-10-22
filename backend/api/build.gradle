@@ -5,10 +5,20 @@ plugins {
     id "io.freefair.lombok" version "$lombok_plugin_version"
 }
 
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.modulith:spring-modulith-bom:$springModulithVersion"
+    }
+}
+
 dependencies {
     implementation project(':backend:core')
     implementation project(':backend:terminal')
     implementation project(':gcode')
+
+    // compileOnly, and only for the @ApplicationModule in package-info.java - the declaration is
+    // read out of the bytecode by the verification in :app. See backend/core/build.gradle.
+    compileOnly 'org.springframework.modulith:spring-modulith-api'
 
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
     // Explicit Jackson dependency for ObjectMapper and JSON processing

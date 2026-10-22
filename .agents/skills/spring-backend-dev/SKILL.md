@@ -77,31 +77,51 @@ Three ways out, in order of preference:
 Never `block()` on a pipeline thread, and never `Thread.sleep`. If a test needs time to pass, use
 `VirtualTimeScheduler`.
 
-## Spring Modulith - declared, not assumed
+## Spring Modulith - the declared structure
 
-The dependencies are on the classpath (`spring-modulith-starter-core`, `-jpa`, `-actuator`,
-`-observability`, and the test starter) and **nothing uses them**: there is no `@ApplicationModule`,
-no `package-info.java`, no `@NamedInterface`, and no `ApplicationModules.verify()` test anywhere in
-the repository. Today's module boundary is the Gradle module and the compiler, which cannot see
-inside a jar.
+**Four modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
+`:app`:
 
-What that buys when it is actually wired up, and what this skill expects of new work:
+| Module | Package | Type | Depends on |
+|---|---|---|---|
+| Shared domain | `org.qw3rtrun.p3d.core` | **open**, and declared `sharedModules` on `StandaloneApp` | — |
+| Web API | `org.qw3rtrun.p3d.api` | closed, `allowedDependencies = {}` | the shared kernel only |
+| Machine management | `org.qw3rtrun.p3d.mng` | closed, `allowedDependencies = {}` | the shared kernel only |
+| Web UI | `org.qw3rtrun.p3d.mvc` | closed, `allowedDependencies = {}` | the shared kernel only |
 
-- **A module is a package under the application's base package**, with its boundary declared in a
-  `package-info.java` carrying `@ApplicationModule`. Everything in a nested package is internal
-  unless exported.
-- **Exported types are `@NamedInterface`**, and that is what a sibling module may import. An entity,
-  a repository and an `*Impl` are internal by definition.
-- **`ApplicationModules.of(App.class).verify()` is a test**, and it is the one that fails the build
-  when someone reaches into another module's internals. A Modulith setup without that test is
-  decoration.
-- **Cross-module calls go through an interface in `:backend:core` or through an event**, not through
-  a concrete class. The existing `MachineManagementService` is the right shape already.
+**`:gcode` and `:backend:terminal` are excluded from the model**, by a predicate in the test. They
+live under the base package but are libraries, not parts of the application: neither may depend on
+Spring, so neither can carry a Modulith annotation, and treating them as modules would mean either
+annotating them or reporting every use of them as a violation. They are consumed the way Reactor or
+Jackson is.
+
+The rules this leaves for new work:
+
+- **A new module is a direct sub-package of `org.qw3rtrun.p3d`** with a `package-info.java` carrying
+  `@ApplicationModule`. Everything in a nested package is internal unless exported.
+- **`allowedDependencies = {}` is the default to aim for**, and the three closed modules all hold
+  it: every cross-module call goes through an interface in the shared kernel or through an event.
+  A module that genuinely needs another names it, and that is a decision visible in a diff.
+- **Exported types of a closed module are `@NamedInterface`**. An entity, a repository and an
+  `*Impl` are internal by definition - `PrinterEntity` must not leave `mng`.
+- **`ApplicationModules.verify()` is the test**, and it is what makes any of the above real. It was
+  proved to bite before it was trusted: `mvc` importing `PrinterEntity` fails with *"Module 'mvc'
+  depends on module 'mng' … Allowed targets: core"*.
 - **`@ApplicationModuleTest`** boots one module with the rest stubbed, which is the test slice to
   reach for before `@SpringBootTest`.
 
-Gradle modules and Modulith modules are allowed to be the same thing here, and mostly should be -
-but the declaration still has to exist, because it is what the verification reads.
+Two behaviours of the annotations that are easy to get wrong, both established by running:
+
+- **`sharedModules` and `type = OPEN` solve different halves.**
+  `@Modulithic(sharedModules = "core")` exempts the module from the *dependency* check; it does
+  **not** open its nested packages, so without `@ApplicationModule(type = OPEN)` every use of
+  `core.model.Descriptor` is reported as "depends on non-exposed type". A shared kernel wants both.
+- **The default of `allowedDependencies` is a sentinel** (`¯\_(ツ)_/¯`) meaning unrestricted. An
+  explicit `{}` is how a module states that it depends on no other.
+
+The annotation reaches `:backend:core` and `:backend:api` as `compileOnly`, so neither gains a
+Spring runtime dependency; the declaration is read out of the bytecode by the verification in
+`:app`, which has Modulith on its own classpath.
 
 ## One dispatch mechanism, not three
 
@@ -262,9 +282,11 @@ the source, not suspected.
   no `boundedElastic` anywhere in `backend/` or `app/`. `FDMPrinterManagementController` wraps the
   repository in `Mono.fromSupplier`/`Flux.fromStream`, and `MvcPrinterController` calls
   `manager.fetchAll()` straight from a handler returning `Mono<String>`.
-- **Spring Modulith is a dependency and nothing else.** No `@ApplicationModule`, no
-  `@NamedInterface`, no `ApplicationModules.verify()`. The only trace of it in the source is a
-  logging level set to DEBUG in two `application.properties` files.
+- **The module boundaries are declared but not yet tight.** Four modules are verified, and the
+  three closed ones depend on nothing but the shared kernel - but `core` is OPEN, so nothing stops
+  a type that should belong to one module from being parked in the shared vocabulary instead.
+  `@NamedInterface` is not used anywhere yet; the first closed module that needs a partial export
+  introduces it.
 - **`WSGPrinterHandler` cannot work.** It reads a session attribute nothing writes, and no client
   connects to `/ws-printer/*` - the UI uses SSE. It is also the only consumer of the
   `webSocketHandlerMapping` bean.

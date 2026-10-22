@@ -74,16 +74,16 @@ backend/machine-mng/src/main/java/.../mng/
   MachineManagementModule.java  @Configuration + @EnableJpaRepositories - the bean wiring
   resources/db/changelog/       Liquibase. The schema authority
 
-backend/api/src/main/java/.../
-  core/ApiApplication.java      @SpringBootApplication, the gateway bean, and a null-returning
+backend/api/src/main/java/org/qw3rtrun/p3d/api/
+  ApiApplication.java           @SpringBootApplication, the gateway bean, and a null-returning
                                 stub MachineManagementService under @ConditionalOnMissingBean
-  core/PrinterController.java   /api-printer/{id} - state, SSE stream, set-temp, connect
-  core/FDMPrinterManagementController.java  /api-manager - printer CRUD
-  core/PrinterReactor.java      one printer's runtime: terminal + queue + reflective invoker
-  core/PrinterReactorManager.java  UUID -> PrinterReactor, created on demand, never released
-  core/PrinterState.java        THE AGGREGATE, in the web module, not persisted
-  core/WSGPrinterHandler.java   dead and broken - reads a session attribute nothing writes
-  core/TemperatureControl.java  last hotend/bed report, and whether it changed
+  PrinterController.java        /api-printer/{id} - state, SSE stream, set-temp, connect
+  FDMPrinterManagementController.java  /api-manager - printer CRUD
+  PrinterReactor.java           one printer's runtime: terminal + queue + reflective invoker
+  PrinterReactorManager.java    UUID -> PrinterReactor, created on demand, never released
+  PrinterState.java             THE AGGREGATE, in the web module, not persisted
+  WSGPrinterHandler.java        dead and broken - reads a session attribute nothing writes
+  TemperatureControl.java       last hotend/bed report, and whether it changed
   firmware/**                   FirmwareInfo, CapabilitiesInfo - M115/M503 state, in memory only
 
 app/src/main/java/.../
@@ -125,6 +125,9 @@ Build and test through the IDEA MCP tools, not the shell — that is the user's 
 # test totals - the Gradle summary line only prints on failure
 grep -ho 'tests="[0-9]*"' backend/api/build/test-results/test/*.xml \
   | grep -o '[0-9]*' | awk '{s+=$1} END {print "tests:",s}'
+
+# the module boundary - fast, no Spring context, run it on every change that moves a type
+./gradlew :app:test --tests '*ApplicationModulesTest*'
 
 # the one-way dependency
 grep -rn 'reactor\.\|jakarta\.persistence\|springframework\.web' backend/core/src/main/   # must print nothing

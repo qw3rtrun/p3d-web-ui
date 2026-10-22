@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.firmware;
+package org.qw3rtrun.p3d.api.firmware;
 
 import lombok.Getter;
 import org.qw3rtrun.p3d.core.msg.CapabilityReportEvent;

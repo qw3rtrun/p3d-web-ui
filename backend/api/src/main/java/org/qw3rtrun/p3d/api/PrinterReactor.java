@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d.core;
+package org.qw3rtrun.p3d.api;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.core.msg.*;

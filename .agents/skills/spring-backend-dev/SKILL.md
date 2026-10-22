@@ -298,10 +298,13 @@ today; the module's copy should be test-scope or gone.
 Live examples of what this skill rules out, so nobody copies them as precedent. Each is verified in
 the source, not suspected.
 
-- **Every JPA call in the application runs on the Netty event loop.** There is no `subscribeOn` and
-  no `boundedElastic` anywhere in `backend/` or `app/`. `FDMPrinterManagementController` wraps the
-  repository in `Mono.fromSupplier`/`Flux.fromStream`, and `MvcPrinterController` calls
-  `manager.fetchAll()` straight from a handler returning `Mono<String>`.
+- **The blocking boundary is per-call-site, not behind a service.** Every JPA touch is now
+  scheduled onto `boundedElastic` and `BlockingBoundaryTest` records the thread the service was
+  called on, so forgetting one fails a test rather than a farm. What is not done is the stronger
+  shape the skill prefers once there are several callers: a service that hands back an
+  already-scheduled publisher, so a caller cannot forget in the first place. That needs either
+  Reactor in `api` or a frontend-local facade, and A4 is about to delete the `ObjectFactory`
+  indirection those controllers use, so it is worth doing after rather than before.
 - **The module boundaries are declared but not yet tight.** Four modules are verified, and the
   three closed ones depend on nothing but the shared kernel - but `core` is OPEN, so nothing stops
   a type that should belong to one module from being parked in the shared vocabulary instead.

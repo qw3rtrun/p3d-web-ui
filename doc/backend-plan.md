@@ -70,7 +70,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | # | Item | What it is | Blocks |
 |---|---|---|---|
 | ~~**A1**~~ | [package split and module boundaries](#a1) | ~~Move `:backend:api` out of `org.qw3rtrun.p3d.core`; declare `@ApplicationModule`s; add `ApplicationModules.verify()`~~ **done** — four modules declared, each depending on nothing but the shared kernel, and the verification bites | A2–D3 |
-| **A2** | [blocking work off the event loop](#a2) | `subscribeOn(boundedElastic)` at every JPA boundary, and a test that catches the next one | C1, C2 |
+| ~~**A2**~~ | [blocking work off the event loop](#a2) | ~~`subscribeOn(boundedElastic)` at every JPA boundary, and a test that catches the next one~~ **done** — three controllers, nine call sites, and a test that records the thread | C1, C2 |
 | **A3** | [the reactor has an owner](#a3) | Stop and evict a `PrinterReactor` on disconnect and delete; bound the map | B3 |
 | **A4** | [delete the half-built](#a4) | The dead WebSocket handler, the null-returning stub service, the one-entry command bus | A5 |
 | **A5** | [one dispatch, checked by the compiler](#a5) | Replace `PrinterReactor`'s reflective invoker with a sealed interface and an exhaustive switch | B1 |
@@ -150,6 +150,20 @@ the first thing that breaks at forty.
 shows a scheduler on every hit; a `BlockHound` agent (or an equivalent assertion) runs in the test
 task and fails on a blocking call from a non-blocking thread; the management endpoints still pass a
 `WebTestClient` test.
+
+**Done.** Three controllers and nine call sites. `FDMPrinterManagementController` gained one
+`offLoop` helper; `PrinterController` defers `getReactor` into a `Mono` - it was not merely
+unscheduled but *eager*, running a JPA read inside a `synchronized` block before the returned
+publisher existed; `MvcPrinterController`'s four handlers read the printer list through one
+scheduled supplier, draining the JPA stream inside it so a template cannot iterate a lazy stream
+during rendering.
+
+**No BlockHound.** It needs a JVM agent and `-XX:+AllowRedefinitionToAddDeleteMethods`, and what it
+proves - "something blocked on a non-blocking thread" - is weaker than what is wanted here.
+`BlockingBoundaryTest` instead records `Thread.currentThread()` from inside a fake
+`MachineManagementService` and insists on a `boundedElastic` worker. That tests the property
+directly, needs no agent, and is deterministic: removing a single `subscribeOn` fails four of its
+seven cases, which was checked before the test was trusted.
 
 ### A3 — the reactor has an owner {#a3}
 

@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.UUID;
 
@@ -22,24 +23,43 @@ public class FDMPrinterManagementController {
 
     private final ObjectFactory<MachineManagementService> management;
 
+    /**
+     * The blocking boundary, in one place.
+     *
+     * <p>Everything behind {@link MachineManagementService} is Spring Data JPA, which is blocking
+     * JDBC, and WebFlux serves every request on a handful of Netty event-loop threads. Blocking one
+     * of those stalls every other request sharing it, and at one printer and one browser it is
+     * invisible - which is how it survived this long.
+     *
+     * <p>{@code Mono.fromSupplier} alone does <strong>not</strong> move the work: a {@code Mono} is
+     * lazy, so its supplier runs on whichever thread subscribes, and for a controller that is the
+     * event loop. The {@code subscribeOn} is what moves it, and it is the whole of the fix.
+     */
+    private <T> Mono<T> offLoop(java.util.function.Supplier<T> blocking) {
+        return Mono.fromSupplier(blocking).subscribeOn(Schedulers.boundedElastic());
+    }
+
     @GetMapping(value = "/{uuid}")
     public Mono<Descriptor> fetch(@PathVariable UUID uuid) {
-        return Mono.fromSupplier(() -> management.getObject().fetch(uuid));
+        return offLoop(() -> management.getObject().fetch(uuid));
     }
 
     @GetMapping
     public Flux<Descriptor> fetchAll() {
-        return Flux.fromStream(management.getObject()::fetchAll);
+        return offLoop(() -> management.getObject().fetchAll().toList()).flatMapIterable(d -> d);
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Descriptor> create(@RequestBody Mono<PrinterPayload> payload) {
-        return payload.map(p -> management.getObject().add(p.name(), new ConnectionDetails(p.host(), p.port())));
+        return payload.flatMap(p -> offLoop(() -> management.getObject().add(p.name(), new ConnectionDetails(p.host(), p.port()))));
     }
 
     @DeleteMapping("/{uuid}")
     public Mono<Void> delete(@PathVariable UUID uuid) {
-        return Mono.fromRunnable(() -> management.getObject().delete(uuid));
+        return offLoop(() -> {
+            management.getObject().delete(uuid);
+            return null;
+        }).then();
     }
 
     public record PrinterPayload(

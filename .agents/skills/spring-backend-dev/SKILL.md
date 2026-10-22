@@ -7,8 +7,8 @@ description: >-
   module boundaries and their verification, the command/query and event buses, the printer aggregate
   and its lifecycle, and anything that joins a blocking persistence layer to a non-blocking web
   layer. Enforces the rule that nothing blocking runs on an event loop, that a module boundary is
-  declared and verified rather than assumed, and that there is one dispatch mechanism rather than
-  three. Does NOT cover `:gcode` (that is `low-level-protocol-dev`) or `:backend:terminal` (that is
+  declared and verified rather than assumed, and that routing a message is the business of whatever
+  acts on it. Does NOT cover `:gcode` (that is `low-level-protocol-dev`) or `:backend:terminal` (that is
   `reactive-transport-dev`).
 ---
 
@@ -143,30 +143,39 @@ The annotation reaches `:backend:core` and `:backend:api` as `compileOnly`, so n
 Spring runtime dependency; the declaration is read out of the bytecode by the verification in
 `:app`, which has Modulith on its own classpath.
 
-## One dispatch mechanism, not two
+## One dispatch mechanism
 
-The application routed a message two different ways until A4; there were three before that.
+**Spring events**, and nothing else. `MachineEventBus` (`printer-management`) wraps
+`ApplicationEventPublisher`, and that is how a module tells another module something happened - it
+is what Modulith understands, and its event publication registry, `@ApplicationModuleListener` and
+the observability actuator all hang off it. `core` learns a machine was deleted this way.
 
-- **`MachineEventBus`** (`printer-management`) wraps `ApplicationEventPublisher` and publishes
-  `ManagementEvent`s. This is the one that is conventional, and the one Modulith understands - its
-  event publication registry, `@ApplicationModuleListener` and the observability actuator all hang
-  off Spring events. It is how `core` learns a machine was deleted.
-- **`PrinterReactor.invoke`** reflects over `PrinterState`'s declared methods at construction, keys
-  them by parameter type, and dispatches by a breadth-first walk of the message's supertype graph.
-  It is a hand-rolled visitor the compiler cannot check: a renamed handler method or an event record
-  that stops implementing its interface silently changes what runs, and the only sign is a
-  "No invoker for" at WARN. **Plan item A5 replaces it with a sealed interface and an exhaustive
-  switch**, which is the last of the three.
+Two others existed and are gone:
 
-**`CommandQueryBus` was the third and is deleted.** It walked a `List<CommandQueryService>` asking
-each `isApplicable(Object)`, took the first, and cast the result unchecked; `send(req, responseType)`
-ignored `responseType` entirely, so the class literal at every call site was decoration and a wrong
-one failed as a `ClassCastException` at the caller. It held exactly one registration,
-`UUID -> Descriptor`, which `PrinterReactorManager` now reaches by calling
-`MachineManagementService.fetch` - the interface that registration pointed at all along.
+- **`CommandQueryBus`** walked a `List<CommandQueryService>` asking each `isApplicable(Object)`,
+  took the first, and cast unchecked; `send(req, responseType)` ignored `responseType`, so the class
+  literal at every call site was decoration. It held one registration, `UUID -> Descriptor`, which
+  `PrinterReactorManager` now reaches by calling the interface it pointed at. Deleted in A4.
+- **`PrinterReactor.invoke`** reflected over `PrinterState`'s declared methods at construction and
+  resolved each message by a breadth-first walk of its supertype graph. Deleted in A5; the
+  aggregate dispatches for itself, with a pattern switch, in `PrinterState.onEvent` and
+  `onCommand`.
 
-**New work does not add a third back, and prefers Spring events for anything that is genuinely an
-event.** When a change touches one of the two, reducing the count is in scope and growing it is not.
+**Routing a message is the business of whatever acts on it.** The reactor's job is to carry
+messages, not to work out who wants them, and moving the switch into the aggregate is what made it
+checkable: a handler that is renamed or deleted now fails the build (`no suitable method found for
+on(TemperatureReportedEvent)`), where the reflective version compiled happily and went quiet at
+WARN level.
+
+**The switches are not exhaustive in the compiler's sense, deliberately.** `GEvent` is not sealed,
+and sealing it would close the application's event vocabulary to the modules that are going to add
+to it - plan item C2 adds job events. `GRq` cannot be sealed at all: it has 295 implementations in
+`:gcode`. So each switch carries a `default`, and the two defaults differ on purpose: an unhandled
+**event** is a debug line, because most replies genuinely are not the aggregate's business; an
+unhandled **command** is a warning, because a user asked for it and nothing happened.
+
+**New work does not add a second mechanism back.** When a change touches the dispatch, reducing it
+is in scope and growing it is not.
 
 ## What CQRS means here
 

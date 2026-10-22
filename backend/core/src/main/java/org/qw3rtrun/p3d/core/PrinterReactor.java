@@ -14,18 +14,6 @@ import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
-import java.lang.reflect.InvocationTargetException;
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.function.Consumer;
-
-import static java.util.Arrays.asList;
 import static reactor.core.publisher.Sinks.EmitFailureHandler.FAIL_FAST;
 
 @Slf4j
@@ -41,31 +29,11 @@ public class PrinterReactor {
 
     private PublisherQueue<String, Priority> commandQueue = new PublisherQueue<>();
 
-    private Map<Class<?>, Consumer<Object>> invokers = new HashMap<>();
-
     public PrinterReactor(TerminalManager manager, PrinterState printer) {
         this.manager = manager;
         this.printer = printer;
         updates = Sinks.many().replay().latestOrDefault(new EventMessage(printer.getId(), new MachineOfflineEvent()));
         this.printer.setEmitter(this::onEvent);
-        collectInvokers();
-    }
-
-    private void collectInvokers() {
-        Arrays.stream(PrinterState.class.getDeclaredMethods())
-                .filter(method -> method.getParameterCount() == 1)
-                .filter(method -> GRq.class.isAssignableFrom(method.getParameterTypes()[0])
-                        || GEvent.class.isAssignableFrom(method.getParameterTypes()[0]))
-                .forEach(method -> {
-                    log.info("register invoker {}", method);
-                    invokers.put(method.getParameterTypes()[0], obj -> {
-                        try {
-                            method.invoke(printer, obj);
-                        } catch (IllegalAccessException | InvocationTargetException e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
-                });
     }
 
     public Mono<Void> handleConnectCmd(Mono<ConnectCmd> connectCmd) {
@@ -167,7 +135,7 @@ public class PrinterReactor {
         log.info("gEvent()");
         return terminal.messageFlux()
                 .publishOn(executor)
-                .doOnNext(this::invoke)
+                .doOnNext(printer::onEvent)
                 .then();
     }
 
@@ -190,49 +158,8 @@ public class PrinterReactor {
         return command
                 .publishOn(executor)
                 .doOnNext(cmd -> log.info("-> {}", cmd))
-                .doOnNext(this::invoke)
+                .doOnNext(printer::onCommand)
                 .then();
-    }
-
-    public void invoke(Object message) {
-        if (!invokers.containsKey(message.getClass())) {
-            findInvoker(message.getClass())
-                    .ifPresent(invoker -> invokers.put(message.getClass(), invoker));
-        }
-        invokers.getOrDefault(message.getClass(), m -> log.warn("No invoker for {}", m))
-                .accept(message);
-    }
-
-    /**
-     * The invoker registered for the nearest supertype of {@code type}, breadth-first.
-     *
-     * <p>The whole supertype graph and not just {@code getInterfaces()}. A reply class now reaches
-     * its event interface through its own family interface - {@code OkTemperatureRs} implements
-     * {@code TemperatureRs}, and it is {@code TemperatureRs} that implements
-     * {@code TemperatureReportedEvent} - so a one-level search finds {@code TemperatureRs} and
-     * {@code OkRs}, neither of which has an invoker, and every temperature report is dropped with
-     * "No invoker for". The classes this replaced each declared the event interface directly,
-     * which is why one level was enough before and is not now.
-     */
-    private Optional<Consumer<Object>> findInvoker(Class<?> type) {
-        Deque<Class<?>> queue = new ArrayDeque<>();
-        Set<Class<?>> seen = new HashSet<>();
-        queue.add(type);
-        while (!queue.isEmpty()) {
-            Class<?> current = queue.poll();
-            if (!seen.add(current)) {
-                continue;
-            }
-            Consumer<Object> invoker = invokers.get(current);
-            if (invoker != null) {
-                return Optional.of(invoker);
-            }
-            queue.addAll(asList(current.getInterfaces()));
-            if (current.getSuperclass() != null) {
-                queue.add(current.getSuperclass());
-            }
-        }
-        return Optional.empty();
     }
 
     private void onEvent(GEvent report) {

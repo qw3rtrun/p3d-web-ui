@@ -74,10 +74,10 @@ without that.
        framework dependency added here lands on the portable protocol core
 
 :backend:core         org.qw3rtrun.p3d.core         THE AGGREGATE AND THE LIVE RUNTIME
-  PrinterState.java             the aggregate: connection, firmware, capabilities, temperatures
-  PrinterReactor.java           one printer's running conversation: terminal + queue + the
-                                reflective invoker A5 replaces
-  PrinterReactorManager.java    UUID -> PrinterReactor, created on demand, never released (A3)
+  PrinterState.java             the aggregate: connection, firmware, capabilities,
+                                temperatures, and its own onEvent/onCommand dispatch
+  PrinterReactor.java           one printer's running conversation: terminal, queue, replies
+  PrinterReactorManager.java    UUID -> PrinterReactor; openReactor/release, MDeletedEvent
   TemperatureControl.java       last hotend/bed report, and whether it changed
   CoreConfiguration.java        the gateway, the reactor manager, and the no-persistence stub
   firmware/**                   FirmwareInfo, CapabilitiesInfo - M115/M503 state, in memory only
@@ -126,8 +126,8 @@ development, Lombok throughout.
 - **Liquibase owns the schema.** No `ddl-auto`, ever. A column is a changeset.
 - **A declared module boundary is verified by a test**, or it is decoration. Modulith without
   `ApplicationModules.verify()` buys nothing.
-- **No third dispatch mechanism.** There are two - Spring events, and the reflective invoker A5
-  replaces. A change that touches one should leave the count lower, never higher.
+- **One dispatch mechanism: Spring events.** The other two are deleted. Routing a message is the
+  business of whatever acts on it - a pattern switch in that class, never reflection.
 - **Everything created is released.** A reactor, a socket, a sink, a subscription — name the owner.
 
 ## Working in this repo

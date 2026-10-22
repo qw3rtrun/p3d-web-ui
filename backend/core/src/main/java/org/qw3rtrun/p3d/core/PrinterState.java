@@ -8,6 +8,7 @@ import org.qw3rtrun.p3d.api.msg.*;
 import org.qw3rtrun.p3d.core.firmware.CapabilitiesInfo;
 import org.qw3rtrun.p3d.core.firmware.FirmwareInfo;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
+import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
@@ -36,6 +37,57 @@ public class PrinterState implements PrinterAggregate {
     private FirmwareInfo firmware = new FirmwareInfo();
 
     private CapabilitiesInfo capabilities = new CapabilitiesInfo();
+
+    /**
+     * One decoded reply from the machine, routed to whatever this aggregate does about it.
+     *
+     * <p><strong>A switch, and not reflection.</strong> {@code PrinterReactor} used to do this by
+     * reflecting over this class's declared methods at construction, keying them by parameter type
+     * and resolving a message with a breadth-first walk of its supertype graph. Nothing about that
+     * was checked: renaming a handler below unregistered it, and a reply type that gained an
+     * interface changed which handler won. The only symptom was a {@code No invoker for} at WARN -
+     * nothing threw, the temperature simply stopped moving, which is how a real regression reached
+     * production once already.
+     *
+     * <p>It also put the decision in the wrong class. What this aggregate reacts to is this
+     * aggregate's business; the reactor's job is to carry messages, not to work out who wants them.
+     *
+     * <p>The arms are ordered but do not overlap today. Most events are deliberately not handled -
+     * an error, a busy notice, a reply with no application event at all - and fall through to a
+     * debug line rather than a warning, because "the aggregate has nothing to do about this" is the
+     * normal case and not a gap.
+     *
+     * <p>Not exhaustive in the compiler's sense: {@code GEvent} is not sealed, and sealing it would
+     * close the application's event vocabulary to the modules that are going to add to it. What the
+     * switch does buy is that every arm is type-checked and a handler that is renamed or removed
+     * breaks the build instead of going quiet.
+     */
+    public void onEvent(GEvent event) {
+        switch (event) {
+            case TemperatureReportedEvent e -> on(e);
+            case FirmwareInfoReportEvent e -> on(e);
+            case CapabilityReportEvent e -> on(e);
+            default -> log.debug("nothing for the aggregate to do about {}", event);
+        }
+    }
+
+    /**
+     * One command from a caller, routed to the handler that knows how to send it.
+     *
+     * <p>Unhandled is a <em>warning</em> here, unlike {@link #onEvent}: a command is something a
+     * user asked for, and silently doing nothing about it is the failure. The REST surface accepts
+     * any Marlin command class, and this is the short list the aggregate actually acts on - the
+     * rest are a gap in this layer rather than noise from the machine.
+     */
+    public void onCommand(GRq<?> command) {
+        switch (command) {
+            case SetHotendTemperature c -> handle(c);
+            case SetBedTemperature c -> handle(c);
+            case ReportHotendTemperature c -> handle(c);
+            case TemperatureAutoReport c -> handle(c);
+            default -> log.warn("no handler for {}, so nothing was sent", command);
+        }
+    }
 
     public TemperatureReport getTemperature() {
         return temperatureControl.getHotend();

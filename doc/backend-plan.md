@@ -73,7 +73,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**A2**~~ | [blocking work off the event loop](#a2) | ~~`subscribeOn(boundedElastic)` at every JPA boundary, and a test that catches the next one~~ **done** — three controllers, nine call sites, and a test that records the thread | C1, C2 |
 | ~~**A3**~~ | [the reactor has an owner](#a3) | ~~Stop and evict a `PrinterReactor` on disconnect and delete; bound the map~~ **done** — `openReactor`/`release`, driven by an `MDeletedEvent` | B3 |
 | ~~**A4**~~ | [delete the half-built](#a4) | ~~The dead WebSocket handler, the null-returning stub service, the one-entry command bus~~ **done** — seven files gone, nothing replaced them | A5 |
-| **A5** | [one dispatch, checked by the compiler](#a5) | Replace `PrinterReactor`'s reflective invoker with a sealed interface and an exhaustive switch | B1 |
+| ~~**A5**~~ | [one dispatch, checked by the compiler](#a5) | ~~Replace `PrinterReactor`'s reflective invoker with a sealed interface and an exhaustive switch~~ **done** — a pattern switch, in the aggregate rather than the reactor | B1 |
 | **A6** | [close the two declared crossings](#a6) | `core` gets a replica fed by events instead of querying `management`; `frontend` reaches `core` through an `api` interface. Then `allowedDependencies = {}` everywhere | B2 |
 | ~~**B1**~~ | [the aggregate leaves the web module](#b1) | ~~`PrinterState` into a domain module that does not depend on WebFlux~~ **done** — it is the `core` submodel now | B2, C3 |
 | **B2** | [the machine remembers what it is](#b2) | Persist firmware, capabilities and last-known state; restore on boot | B4, D1 |
@@ -247,6 +247,24 @@ in `:backend:terminal` is the shape to copy.
 **Done when.** No reflection in the dispatch path; adding a message type without handling it fails
 the build; the existing `PrinterReactorDispatchTest` passes unchanged or is replaced by a stronger
 one.
+
+**Done, and the switch moved somewhere the item did not anticipate.** It is in `PrinterState`, not
+`PrinterReactor` - routing a message is the business of whatever acts on it, and the reactor's job
+is to carry messages rather than work out who wants them. That is also what made it checkable: the
+handlers and the arms are now in one class, so a renamed handler fails the build
+(`no suitable method found for on(TemperatureReportedEvent)`), which was verified by renaming one.
+`PrinterReactor` lost 60 lines and all of its reflection.
+
+**One part of the done-when is not met, and should not be.** "Adding a message type without
+handling it fails the build" needs sealing, and neither type can be sealed for a good reason:
+`GEvent` sealed would close the application's event vocabulary to the modules about to extend it
+(C2 adds job events), and `GRq` has 295 implementations in `:gcode`. So both switches carry a
+`default`, and the two differ on purpose - an unhandled event is a debug line because most replies
+are genuinely not the aggregate's business, while an unhandled command is a warning because a user
+asked for it and nothing happened.
+
+The test moved with the dispatch, to `PrinterStateDispatchTest`, and gained the half the reflective
+version never had one for: that a **command** routed through the dispatch still reaches the wire.
 
 ### A6 — close the two declared crossings {#a6}
 

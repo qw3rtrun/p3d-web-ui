@@ -1,8 +1,8 @@
 package org.qw3rtrun.p3d.management;
 
-import org.qw3rtrun.p3d.core.bus.CommandQueryService;
-import org.qw3rtrun.p3d.core.model.Descriptor;
-import org.qw3rtrun.p3d.core.service.MachineManagementService;
+import org.qw3rtrun.p3d.api.bus.CommandQueryService;
+import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.management.service.MachineEventBus;
 import org.qw3rtrun.p3d.management.service.MachineManagementImpl;
 import org.qw3rtrun.p3d.management.service.PrinterRepository;

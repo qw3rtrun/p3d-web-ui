@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.core.msg.CapabilityReportEvent
-import org.qw3rtrun.p3d.core.msg.FirmwareInfoReportEvent
+import org.qw3rtrun.p3d.api.msg.CapabilityReportEvent
+import org.qw3rtrun.p3d.api.msg.FirmwareInfoReportEvent
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.GRs

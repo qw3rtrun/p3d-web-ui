@@ -51,7 +51,7 @@ currently throws at GTokenizer.kt:142" is the deliverable.
 
 **DDD.** Bounded contexts before classes. The recurring question here is where the printer domain
 actually lives: `:gcode` owns the *protocol* (bytes, blocks, commands, replies), `:backend:core` and
-`:backend:machine-mng` own the *machine* (state, jobs, capabilities), `:backend:terminal` owns the
+`:backend:printer-management` own the *machine* (state, jobs, capabilities), `:backend:terminal` owns the
 *transport*. When a type wants to be in two of them at once, that is the design problem — name it,
 and pick the side that leaves the dependency arrow pointing one way. Ubiquitous language matters
 concretely: the spec's vocabulary (word, field, block, line number, checksum, resend) is the domain language
@@ -96,7 +96,7 @@ backend/core/              shared domain types (Kotlin + Java, Spring BOM)
 backend/terminal/          serial/TCP transport — GFlux, HostTerminal, TerminalManager (Reactor).
                            Owned by terminal-dev under the reactive-transport-dev skill
 backend/api/               controllers, websocket, PrinterReactor (Reactor, WebFlux)
-backend/machine-mng/       machine management
+backend/printer-management/       machine management
 app/                       Spring Boot app: WebFlux, Thymeleaf, Spring Modulith, actuator
 frontend/web-ui/           Vue 3 + TypeScript + Vite (src/frontend), built through Gradle
 doc/specs/GCODE_spec.md    the syntax authority — cite sections by number

@@ -8,7 +8,7 @@ plugins {
 }
 
 dependencies {
-    implementation project(':backend:core')
+    implementation project(':backend:api')
     implementation project(':gcode')
 
     // import a BOM

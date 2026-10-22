@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import org.qw3rtrun.p3d.core.msg.GEvent
+import org.qw3rtrun.p3d.api.msg.GEvent
 
 /**
  * A reply the machine sends to the host: one line of the reply stream, typed, and an event for the

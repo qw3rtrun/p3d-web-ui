@@ -1,39 +1,35 @@
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+/**
+ * The `api` submodel: the shared vocabulary every other submodel is written in.
+ *
+ * It depends on nothing but the JDK. That is the point of it - both the web side and the
+ * persistence side depend on this module, and neither should reach the other's framework through
+ * it. The one Spring reference is the Modulith annotation in package-info.java, and it is
+ * compileOnly.
+ */
 plugins {
     id 'p3d.java-conventions'
-    id 'org.springframework.boot' version "$spring_boot_version"
+    id 'org.springframework.boot' version "$spring_boot_version" apply false
     id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
+    id "org.jetbrains.kotlin.jvm" version "$kotlin_plugin_version"
     id "io.freefair.lombok" version "$lombok_plugin_version"
 }
 
 dependencyManagement {
     imports {
+        mavenBom SpringBootPlugin.BOM_COORDINATES
         mavenBom "org.springframework.modulith:spring-modulith-bom:$springModulithVersion"
     }
 }
 
 dependencies {
-    implementation project(':backend:core')
-    implementation project(':backend:terminal')
-    implementation project(':gcode')
-
-    // compileOnly, and only for the @ApplicationModule in package-info.java - the declaration is
-    // read out of the bytecode by the verification in :app. See backend/core/build.gradle.
+    // Only for the @ApplicationModule in package-info.java. The declaration is read out of the
+    // bytecode by the verification in :app, which has Modulith on its own classpath.
     compileOnly 'org.springframework.modulith:spring-modulith-api'
 
-    implementation 'org.springframework.boot:spring-boot-starter-webflux'
-    // Explicit Jackson dependency for ObjectMapper and JSON processing
-    implementation 'com.fasterxml.jackson.core:jackson-databind'
-    // The REST surface binds Kotlin data classes (marlin.command.*) as @RequestBody. Jackson
-    // cannot construct one without this module: their properties are `val`, so there is nothing
-    // to set after a no-arg construction, and Kotlin does not emit java parameter names by
-    // default for the databind ParameterNamesModule to match against. Spring Boot registers
-    // KotlinModule automatically once it is on the classpath.
-    implementation 'com.fasterxml.jackson.module:jackson-module-kotlin'
-    compileOnly 'org.projectlombok:lombok'
-    developmentOnly 'org.springframework.boot:spring-boot-devtools'
-    annotationProcessor 'org.projectlombok:lombok'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-    testImplementation 'io.projectreactor:reactor-test'
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {

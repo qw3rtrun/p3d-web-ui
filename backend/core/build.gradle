@@ -1,10 +1,17 @@
 import org.springframework.boot.gradle.plugin.SpringBootPlugin
 
+/**
+ * The `core` submodel: the printer aggregate and the live runtime around it.
+ *
+ * Spring is here for bean wiring and nothing else - there is no web, no persistence and no
+ * starter. What this module needs is the transport (`:backend:terminal`), the protocol (`:gcode`)
+ * and the shared vocabulary (`:backend:api`); if a dependency on WebFlux or JPA ever looks
+ * necessary here, the design went wrong rather than the build file.
+ */
 plugins {
     id 'p3d.java-conventions'
     id 'org.springframework.boot' version "$spring_boot_version" apply false
     id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
-    id "org.jetbrains.kotlin.jvm" version "$kotlin_plugin_version"
     id "io.freefair.lombok" version "$lombok_plugin_version"
 }
 
@@ -16,13 +23,19 @@ dependencyManagement {
 }
 
 dependencies {
-    // compileOnly, and only for the @ApplicationModule in package-info.java. This module is the
-    // shared vocabulary and is deliberately free of Spring at runtime; the annotation is read from
-    // the bytecode by the verification in :app, which has Modulith on its own classpath.
+    implementation project(':backend:api')
+    implementation project(':backend:terminal')
+    implementation project(':gcode')
+
+    implementation 'io.projectreactor:reactor-core'
+    implementation 'org.springframework:spring-context'
+    implementation 'org.slf4j:slf4j-api'
+
+    // Only for the @ApplicationModule in package-info.java - see backend/api/build.gradle.
     compileOnly 'org.springframework.modulith:spring-modulith-api'
 
-    testImplementation 'org.junit.jupiter:junit-jupiter'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'io.projectreactor:reactor-test'
 }
 
 tasks.named('test') {

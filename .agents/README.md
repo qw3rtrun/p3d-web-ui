@@ -20,7 +20,7 @@ Then restart Claude Code so it re-reads the configuration.
 | [`protocol-dev`](./agents/protocol-dev.md) | yes | Implementing and fixing low-level protocol code — tokenizer, framer, checksums, encoders, decoders. Picking up an item from the :gcode issue queue. |
 | [`protocol-reviewer`](./agents/protocol-reviewer.md) | **no** | Auditing protocol code against `doc/specs/GCODE_spec.md` and the style rules. Pre-commit passes, "does this match the spec", test-quality review. |
 | [`terminal-dev`](./agents/terminal-dev.md) | yes | The reactive transport — `:backend:terminal`. Flux pipelines, the send window and backpressure, hand-written Publishers, line framing, StepVerifier. |
-| [`backend-dev`](./agents/backend-dev.md) | yes | The Spring application — `:backend:core`, `:backend:api`, `:backend:machine-mng`, `:app`. WebFlux and SSE, JPA and Liquibase, Modulith boundaries, the printer aggregate, print jobs and scheduling. |
+| [`backend-dev`](./agents/backend-dev.md) | yes | The Spring application — the `api`, `core`, `printer-management`, `frontend` and `app` submodels. WebFlux and SSE, JPA and Liquibase, Modulith boundaries, the printer aggregate, print jobs and scheduling. |
 | [`lead-dev`](./agents/lead-dev.md) | **no** (notes only) | Design, architecture, module boundaries, refactoring strategy, concurrency and reactive-pipeline design. Turning a vague ask into task notes someone can execute. |
 
 The four writing agents are split by **layer, not by task**, because the layers have genuinely
@@ -47,7 +47,7 @@ runs on the expensive model on the explicit condition that it only does work tha
 |---|---|
 | `:gcode` | [GitHub issue #18](https://github.com/qw3rtrun/p3d-web-ui/issues/18) and the issues it indexes; `doc/gcode-completed.md` is what is already done |
 | `:backend:terminal` | the *Known debt* section of `reactive-transport-dev` |
-| The application | [`doc/backend-plan.md`](../doc/backend-plan.md) — four phases, seventeen items, in execution order |
+| The application | [`doc/backend-plan.md`](../doc/backend-plan.md) — four phases, eighteen items, in execution order. Its boundaries are [`doc/sub_boundaries.txt`](../doc/sub_boundaries.txt) |
 
 ## Skills
 

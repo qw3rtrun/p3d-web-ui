@@ -2,7 +2,7 @@ package org.qw3rtrun.p3d.terminal;
 
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.core.model.ConnectionDetails;
+import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
 import reactor.netty.tcp.TcpClient;

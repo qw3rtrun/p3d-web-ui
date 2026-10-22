@@ -6,8 +6,8 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
-import org.qw3rtrun.p3d.core.msg.MConnectedEvent;
-import org.qw3rtrun.p3d.core.msg.MDisconnectedEvent;
+import org.qw3rtrun.p3d.api.msg.MConnectedEvent;
+import org.qw3rtrun.p3d.api.msg.MDisconnectedEvent;
 
 import java.time.LocalDateTime;
 import java.util.UUID;

@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import org.qw3rtrun.p3d.core.msg.WaitReceivedEvent
+import org.qw3rtrun.p3d.api.msg.WaitReceivedEvent
 
 /**
  * `wait` - the machine's command buffers are empty and it is waiting for the next line.

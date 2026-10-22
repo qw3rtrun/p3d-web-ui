@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
-import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
+import org.qw3rtrun.p3d.api.msg.OKReceivedEvent
 import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
 import org.qw3rtrun.p3d.g.protocol.BusyRs
 import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs

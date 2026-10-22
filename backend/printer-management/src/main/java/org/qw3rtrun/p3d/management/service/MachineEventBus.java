@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.management.service;
 
 import lombok.RequiredArgsConstructor;
-import org.qw3rtrun.p3d.core.msg.ManagementEvent;
+import org.qw3rtrun.p3d.api.msg.ManagementEvent;
 import org.springframework.context.ApplicationEventPublisher;
 
 @RequiredArgsConstructor

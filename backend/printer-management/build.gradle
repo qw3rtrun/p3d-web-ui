@@ -22,7 +22,7 @@ application {
 }
 
 dependencies {
-    implementation project(':backend:core')
+    implementation project(':backend:api')
 
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation "org.springframework.boot:spring-boot-starter-liquibase"

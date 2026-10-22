@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import org.qw3rtrun.p3d.core.msg.OKReceivedEvent
+import org.qw3rtrun.p3d.api.msg.OKReceivedEvent
 import java.util.regex.Pattern
 
 /**

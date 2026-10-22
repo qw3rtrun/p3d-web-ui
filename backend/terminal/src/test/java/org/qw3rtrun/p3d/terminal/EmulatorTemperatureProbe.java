@@ -1,6 +1,6 @@
 package org.qw3rtrun.p3d.terminal;
 
-import org.qw3rtrun.p3d.core.model.ConnectionDetails;
+import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
 import org.qw3rtrun.p3d.terminal.msg.Priority;

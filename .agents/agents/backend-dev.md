@@ -1,8 +1,8 @@
 ---
 name: backend-dev
 description: >-
-  Spring application work in this repo: `:backend:core`, `:backend:api`, `:backend:machine-mng` and
-  `:app` - the Java/Kotlin layers that expose printers over REST and SSE, persist them with JPA and
+  Spring application work in this repo: the `api`, `core`, `printer-management`, `frontend` and
+  `app` submodels - the Java/Kotlin layers that expose printers over REST and SSE, persist them with JPA and
   Liquibase, and hold the printer aggregate. Use for WebFlux controllers, SSE and WebSocket
   endpoints, Spring configuration and bean wiring, JPA entities, repositories and changelogs, Spring
   Modulith boundaries and their verification, the command/query and event buses, the printer
@@ -44,7 +44,7 @@ this layer's habits to either does real damage.
 
 | Authority | Where | Covers |
 |---|---|---|
-| Style and contracts | `spring-backend-dev` skill | What you may write in the four application modules, and what the layer owes its callers. |
+| Style and contracts | `spring-backend-dev` skill | What you may write in the five submodels, and what the layer owes its callers. |
 | The plan of record | [`doc/backend-plan.md`](../../doc/backend-plan.md) | What is being built, in what order, and why that order. Each item has a definition of done. |
 | The protocol | `doc/specs/GCODE_spec.md` | What the bytes mean. You consume `:gcode`'s types; you never reinterpret the wire. |
 | The transport contract | `reactive-transport-dev` skill, *The contracts callers depend on* | What `HostTerminal` promises you: when `messageFlux()` terminates, what the send window guarantees, what a caller may hand to the outbound side. Read it before you rely on it. |
@@ -55,46 +55,61 @@ exported surface — write it down there in the same change.
 
 ## Repository map
 
+Five submodels, named by `doc/sub_boundaries.txt`. The Gradle module and the package are both listed
+because `api` and `core` exchanged meaning during the realignment and the history reads oddly
+without that.
+
 ```
-backend/core/src/main/java/.../core/
+:backend:api          org.qw3rtrun.p3d.api          THE SHARED VOCABULARY. Depends on nothing,
+                                                    not even Spring at runtime
   bus/CommandQueryBus.java      hand-rolled gateway: a List<CommandQueryService>, first match wins,
-                                unchecked cast. One registration exists: UUID -> Descriptor
-  bus/CommandQueryService.java  a Predicate + a Function, pretending to be a handler
+                                unchecked cast. One registration: UUID -> Descriptor. A4 deletes it
   model/Descriptor.java         the printer projection the REST layer returns
   model/ConnectionDetails.java  host + port. Also what :backend:terminal connects with
-  model/PrinterAggregate.java   a marker interface with getId(). The real aggregate is elsewhere
-  service/MachineManagementService.java   the cross-module interface. The right shape already
+  model/PrinterAggregate.java   a marker interface with getId()
+  service/MachineManagementService.java   the cross-submodel interface. The right shape already
   msg/**                        GEvent, EventMessage, the report records, ConnectCmd
-  msg/ManagementEvents.kt       the only Kotlin in this layer: ManagementEvent + two records
+  msg/ManagementEvents.kt       the only Kotlin here: ManagementEvent + two records
+  NOTE :gcode depends on this module for the event interfaces its replies implement, so a
+       framework dependency added here lands on the portable protocol core
 
-backend/machine-mng/src/main/java/.../mng/
+:backend:core         org.qw3rtrun.p3d.core         THE AGGREGATE AND THE LIVE RUNTIME
+  PrinterState.java             the aggregate: connection, firmware, capabilities, temperatures
+  PrinterReactor.java           one printer's running conversation: terminal + queue + the
+                                reflective invoker A5 replaces
+  PrinterReactorManager.java    UUID -> PrinterReactor, created on demand, never released (A3)
+  TemperatureControl.java       last hotend/bed report, and whether it changed
+  CoreConfiguration.java        the gateway, the reactor manager, and the no-persistence stub
+  firmware/**                   FirmwareInfo, CapabilitiesInfo - M115/M503 state, in memory only
+
+:backend:printer-management  org.qw3rtrun.p3d.management   STATIC DATA ABOUT PRINTERS
   model/PrinterEntity.java      @Entity, id/name/host/port/connected, and two state transitions
   service/MachineManagementImpl.java   the JPA implementation, @Transactional, blocking
   service/MachineEventBus.java  ApplicationEventPublisher behind one push() method
   MachineManagementModule.java  @Configuration + @EnableJpaRepositories - the bean wiring
   resources/db/changelog/       Liquibase. The schema authority
 
-backend/api/src/main/java/org/qw3rtrun/p3d/api/
-  ApiApplication.java           @SpringBootApplication, the gateway bean, and a null-returning
-                                stub MachineManagementService under @ConditionalOnMissingBean
+:frontend:web-ui      org.qw3rtrun.p3d.frontend     REST, SSE, THYMELEAF AND THE VUE BUILD
   PrinterController.java        /api-printer/{id} - state, SSE stream, set-temp, connect
   FDMPrinterManagementController.java  /api-manager - printer CRUD
-  PrinterReactor.java           one printer's runtime: terminal + queue + reflective invoker
-  PrinterReactorManager.java    UUID -> PrinterReactor, created on demand, never released
-  PrinterState.java             THE AGGREGATE, in the web module, not persisted
   WSGPrinterHandler.java        dead and broken - reads a session attribute nothing writes
-  TemperatureControl.java       last hotend/bed report, and whether it changed
-  firmware/**                   FirmwareInfo, CapabilitiesInfo - M115/M503 state, in memory only
-
-app/src/main/java/.../
-  StandaloneApp.java            the assembly: core + api + machine-mng + web-ui
+  FrontendConfiguration.java    the WS mapping and the null-returning stub service. A4 deletes both
   mvc/MvcPrinterController.java Thymeleaf pages, calling the repository from a reactive handler
+  resources/templates/**        the pages
   resources/static/js/lib/client.js   the UI client - fetch + EventSource. SSE, not WebSocket
+  src/frontend/                 the Vue sources and the node build
+
+:app                  org.qw3rtrun.p3d              ASSEMBLY ONLY
+  StandaloneApp.java            @Modulithic + @SpringBootApplication. Declares the structure
+  ApplicationModulesTest.java   the boundary verification. Run it on every change that moves a type
 
 :gcode                          the protocol. Consumed from here; never the other way
 :backend:terminal               the Reactor transport. Consumed from here; not your layer to edit
-frontend/web-ui                 node build + Thymeleaf. Not your layer either
 ```
+
+`:gcode` and `:backend:terminal` are **excluded from the Modulith model** by a predicate in
+`ApplicationModulesTest`: they live under the base package but are libraries, and neither may depend
+on Spring.
 
 Java 25, Spring Boot 4.1, Spring Modulith 2.1, WebFlux, Spring Data JPA, Liquibase, H2 in
 development, Lombok throughout.
@@ -104,9 +119,10 @@ development, Lombok throughout.
 - **Nothing blocking on an event loop.** Every JPA touch from a reactive path is scheduled onto
   `boundedElastic` or moved behind a boundary that does it. `Mono.fromSupplier` is lazy and moves
   nothing. This is the rule the layer breaks everywhere today.
-- **The dependency runs one way**, `:gcode` → `:backend:terminal` → `:backend:api`, with
-  `:backend:core` below all of them. `:backend:core` imports no WebFlux, no JPA and no Reactor;
-  check it after any change that moves code.
+- **Every submodel depends on `api` and on no other submodel** - rule 1 of
+  `doc/sub_boundaries.txt`, enforced by `allowedDependencies`. Two crossings are declared today and
+  A6 closes them. `api` itself imports no WebFlux, no JPA, no Reactor and no Spring; check that
+  after any change that moves code, because `:gcode` depends on it.
 - **Liquibase owns the schema.** No `ddl-auto`, ever. A column is a changeset.
 - **A declared module boundary is verified by a test**, or it is decoration. Modulith without
   `ApplicationModules.verify()` buys nothing.
@@ -120,17 +136,18 @@ Build and test through the IDEA MCP tools, not the shell — that is the user's 
 
 ```bash
 # module tests
-:backend:api:test   :backend:machine-mng:test   :app:test
+:backend:api:test   :backend:core:test   :backend:printer-management:test
+:frontend:web-ui:test   :app:test
 
 # test totals - the Gradle summary line only prints on failure
-grep -ho 'tests="[0-9]*"' backend/api/build/test-results/test/*.xml \
+grep -ho 'tests="[0-9]*"' backend/core/build/test-results/test/*.xml \
   | grep -o '[0-9]*' | awk '{s+=$1} END {print "tests:",s}'
 
 # the module boundary - fast, no Spring context, run it on every change that moves a type
 ./gradlew :app:test --tests '*ApplicationModulesTest*'
 
 # the one-way dependency
-grep -rn 'reactor\.\|jakarta\.persistence\|springframework\.web' backend/core/src/main/   # must print nothing
+grep -rn 'reactor\.\|jakarta\.persistence\|springframework\.' backend/api/src/main/   # must print nothing
 
 # the blocking-on-the-loop rule, as a grep
 grep -rn 'fromSupplier\|fromStream\|fromRunnable' backend/ app/ --include=*.java   # each one needs a subscribeOn

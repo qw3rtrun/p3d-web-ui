@@ -1,7 +1,7 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.core.msg.TemperatureReport
-import org.qw3rtrun.p3d.core.msg.TemperatureReportedEvent
+import org.qw3rtrun.p3d.api.msg.TemperatureReport
+import org.qw3rtrun.p3d.api.msg.TemperatureReportedEvent
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.OkRs

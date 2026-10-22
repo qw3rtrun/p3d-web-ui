@@ -1,10 +1,10 @@
 package org.qw3rtrun.p3d.management.service;
 
 import lombok.RequiredArgsConstructor;
-import org.qw3rtrun.p3d.core.model.ConnectionDetails;
-import org.qw3rtrun.p3d.core.model.Descriptor;
-import org.qw3rtrun.p3d.core.msg.ManagementEvent;
-import org.qw3rtrun.p3d.core.service.MachineManagementService;
+import org.qw3rtrun.p3d.api.model.ConnectionDetails;
+import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.msg.ManagementEvent;
+import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.management.model.PrinterEntity;
 import org.springframework.data.domain.Sort;
 import org.springframework.transaction.annotation.Transactional;

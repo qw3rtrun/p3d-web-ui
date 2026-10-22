@@ -1,7 +1,7 @@
 # Backend plan of record
 
-The work queue for the Spring application layers — `:backend:core`, `:backend:api`,
-`:backend:machine-mng`, `:app`, and the modules this plan adds. The style authority is the
+The work queue for the five submodels of `doc/sub_boundaries.txt` — `api`, `core`,
+`printer-management`, `frontend` and `app` — and the modules this plan adds. The style authority is the
 [`spring-backend-dev`](../.agents/skills/spring-backend-dev/SKILL.md) skill; the agent that executes
 it is [`backend-dev`](../.agents/agents/backend-dev.md). The `:gcode` queue lives in
 [GitHub issue #18](https://github.com/qw3rtrun/p3d-web-ui/issues/18) and is not duplicated here.
@@ -48,7 +48,7 @@ Verified by reading the source, not assumed:
   `boundedElastic` anywhere in `backend/` or `app/`.
 - **Spring Modulith is five dependencies and a logging level.** No `@ApplicationModule`, no
   `@NamedInterface`, no `ApplicationModules.verify()`.
-- **Test coverage of this layer is 19 tests** — `:backend:api` 13, `:backend:machine-mng` 1 (a
+- **Test coverage of this layer is 19 tests** — `:backend:api` 13, `:backend:printer-management` 1 (a
   context load that asserts nothing), `:app` 1 — against `:gcode`'s 927 and `:backend:terminal`'s 41.
 
 ### Two structural facts worth knowing before anything is planned on top
@@ -74,7 +74,8 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | **A3** | [the reactor has an owner](#a3) | Stop and evict a `PrinterReactor` on disconnect and delete; bound the map | B3 |
 | **A4** | [delete the half-built](#a4) | The dead WebSocket handler, the null-returning stub service, the one-entry command bus | A5 |
 | **A5** | [one dispatch, checked by the compiler](#a5) | Replace `PrinterReactor`'s reflective invoker with a sealed interface and an exhaustive switch | B1 |
-| **B1** | [the aggregate leaves the web module](#b1) | `PrinterState` into a domain module that does not depend on WebFlux | B2, C3 |
+| **A6** | [close the two declared crossings](#a6) | `core` gets a replica fed by events instead of querying `management`; `frontend` reaches `core` through an `api` interface. Then `allowedDependencies = {}` everywhere | B2 |
+| ~~**B1**~~ | [the aggregate leaves the web module](#b1) | ~~`PrinterState` into a domain module that does not depend on WebFlux~~ **done** — it is the `core` submodel now | B2, C3 |
 | **B2** | [the machine remembers what it is](#b2) | Persist firmware, capabilities and last-known state; restore on boot | B4, D1 |
 | **B3** | [a connection lifecycle worth the name](#b3) | An explicit state machine, retry with backoff, health, and events for each transition | C5 |
 | **B4** | [machine profile and groups](#b4) | Bed volume, extruders, nozzle, materials, tags — what a scheduler matches against | D1 |
@@ -202,12 +203,85 @@ in `:backend:terminal` is the shape to copy.
 the build; the existing `PrinterReactorDispatchTest` passes unchanged or is replaced by a stronger
 one.
 
+### A6 — close the two declared crossings {#a6}
+
+**Goal.** `allowedDependencies = {}` on all three closed submodels, which is rule 1 of
+`doc/sub_boundaries.txt` holding without exception.
+
+**Why.** The realignment declared two crossings rather than hiding them, and each needs a different
+fix:
+
+* **`frontend` → `core`.** The controllers call `PrinterReactorManager` directly. Closing it means
+  an interface in `api` carrying what they actually need — the state, the update stream, and a way
+  to hand a command to one machine. **Settle first whether `api` may carry Reactor types**, because
+  every one of those methods is a `Mono` or a `Flux`. Today `api` depends on nothing at all, and
+  `:gcode` depends on `api`, so adding Reactor there would put Reactor on the protocol core's
+  compile path — which is the one thing the layering forbids. The likely answer is a separate
+  package, or `Publisher` from the Reactive Streams API rather than Reactor's own types.
+* **`core` → `management`.** `PrinterReactorManager` asks `MachineManagementService` where to dial.
+  Rule 2 says core communicates through events, so management publishes `PrinterRegistered`,
+  `PrinterChanged` and `PrinterDeleted`, and core keeps its own small replica of the static data it
+  needs — id, name, host, port, and later capabilities. **The open question is bootstrap**: a replica
+  is empty on restart, so either management re-publishes its rows on startup, or Modulith's event
+  publication registry replays them. Decide that before writing the replica, not after.
+
+Neither crossing is visible to the verification today, because both go through types that live in
+`api` and `api` is open. **Closing them is also what makes them checkable**: once nothing in `core`
+names a service, `api` can become a closed module with a `@NamedInterface` per nested package, and
+`core` can be denied the service package outright.
+
+**Done when.** All three closed modules declare `allowedDependencies = {}`; `api` is closed with
+named interfaces; `core` starts a printer from its own replica with the management module stubbed
+out entirely in the test.
+
 ---
 
 ## Phase B — the machine as a durable thing
 
 The "set up" verb. After phase B a printer is something the system knows, not just something it can
 dial.
+
+## The submodel realignment
+
+Between A1 and A2 the module structure was realigned to
+[`doc/sub_boundaries.txt`](./sub_boundaries.txt), which named five submodels the repository did not
+have. What changed, once:
+
+| Submodel | Gradle module | Package | Was |
+|---|---|---|---|
+| **api** | `:backend:api` | `org.qw3rtrun.p3d.api` | `:backend:core` — the shared kernel |
+| **core** | `:backend:core` | `org.qw3rtrun.p3d.core` | the aggregate and runtime, stranded in the web module |
+| **printer-management** | `:backend:printer-management` | `org.qw3rtrun.p3d.management` | `:backend:printer-management` |
+| **frontend** | `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | controllers in `:backend:api`, pages in `:app` |
+| **app** | `:app` | `org.qw3rtrun.p3d` | the same, plus templates and static assets |
+
+`api` and `core` **exchanged meaning**, which is the confusing part of reading the history: what was
+called core is now api, and core is a new thing. `:gcode` and `:backend:terminal` are unchanged and
+stay outside the module model as libraries.
+
+Three things the move forced, each a real finding:
+
+* **`:gcode` depends on the shared kernel**, for the event interfaces its reply types implement.
+  Repointing it at the old `:backend:core` — which is now the aggregate — produced a dependency
+  cycle, and that is the reason `api` must stay free of Spring and Reactor: anything added there is
+  on the protocol core's compile path.
+* **`ApiApplication` could not move as a unit.** It was a `@SpringBootApplication` in what is now
+  the shared API module, wiring three submodels' beans from one place. It split along the boundary
+  it was straddling: `CoreConfiguration` and `FrontendConfiguration`, every bean carried over
+  unchanged including the two A4 deletes.
+* **A nested package must not carry `@ApplicationModule`.** The annotation is what creates a module,
+  so the one that travelled with `mvc` made Modulith report `frontend.mvc` as a module beside its
+  own parent.
+
+B1 is done as a side effect — the aggregate is the `core` submodel now — and A6 is new: the
+realignment declared two crossings rather than hiding them, and closing them is what makes rule 1
+hold without exception.
+
+Verified by running: 987 tests green, and the assembled app serves the dashboard, the static assets
+and the management API, with a printer POSTed, listed and deleted through real JPA rather than the
+stub.
+
+---
 
 ### B1 — the aggregate leaves the web module {#b1}
 
@@ -217,7 +291,7 @@ or is deleted.
 
 **Why.** State that outlives a request does not belong beside the controller, and B2 cannot persist
 an aggregate that only the web module can see. The test for whether a class is in the right module:
-could `:backend:machine-mng` use it without pulling in WebFlux?
+could `:backend:printer-management` use it without pulling in WebFlux?
 
 **Done when.** `:backend:api` holds controllers, the reactor and its manager, and nothing else; the
 new module has no `org.springframework.web` import; the Modulith verification from A1 still passes.

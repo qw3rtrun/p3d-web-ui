@@ -11,7 +11,7 @@ plugins {
 }
 
 dependencies {
-    implementation project(':backend:core')
+    implementation project(':backend:api')
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

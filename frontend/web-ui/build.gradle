@@ -11,7 +11,25 @@ version = '0.0.1-SNAPSHOT'
 
 def nodeVersionProp = "24.21.0"
 
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.modulith:spring-modulith-bom:$springModulithVersion"
+    }
+}
+
 dependencies {
+    // The `frontend` submodel: REST and SSE, the Thymeleaf controllers, and the Vue build below.
+    implementation project(':backend:api')
+    implementation project(':backend:core')
+    implementation project(':gcode')
+
+    // The REST surface binds Kotlin data classes (marlin.command.*) as @RequestBody; Jackson cannot
+    // construct one without this module. Moved here with the controllers that need it.
+    implementation 'com.fasterxml.jackson.module:jackson-module-kotlin'
+
+    // Only for the @ApplicationModule in package-info.java - see backend/api/build.gradle.
+    compileOnly 'org.springframework.modulith:spring-modulith-api'
+
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'

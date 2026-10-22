@@ -1,8 +1,8 @@
 ---
 name: spring-backend-dev
 description: >-
-  Write or review the Spring application layers of this repo - `:backend:core`, `:backend:api`,
-  `:backend:machine-mng` and `:app`. Use for WebFlux controllers and SSE/WebSocket endpoints, Spring
+  Write or review the Spring application submodels of this repo - `api`, `core`,
+  `printer-management`, `frontend` and `app`. Use for WebFlux controllers and SSE/WebSocket endpoints, Spring
   wiring and configuration, JPA entities and repositories, Liquibase changelogs, Spring Modulith
   module boundaries and their verification, the command/query and event buses, the printer aggregate
   and its lifecycle, and anything that joins a blocking persistence layer to a non-blocking web
@@ -14,8 +14,8 @@ description: >-
 
 # Spring backend development
 
-This skill covers the four application modules: `:backend:core`, `:backend:api`,
-`:backend:machine-mng` and `:app`. It is Java 25 with Spring Boot 4.1, WebFlux, Spring Data JPA,
+This skill covers the five submodels of `doc/sub_boundaries.txt`: `api`, `core`,
+`printer-management`, `frontend` and `app`. It is Java 25 with Spring Boot 4.1, WebFlux, Spring Data JPA,
 Liquibase, Spring Modulith 2.1 and Lombok, with Kotlin available and used in one file so far.
 
 The two modules it does *not* cover have their own skills and their own, different rules.
@@ -25,22 +25,31 @@ and say so** rather than applying this skill's rules to them.
 
 ## The layering rule
 
-| Layer | Module | May depend on |
-|---|---|---|
-| **Protocol** | `:gcode` | nothing but the Kotlin stdlib (`low-level-protocol-dev`) |
-| **Transport** | `:backend:terminal` | `:gcode`, `:backend:core`, Reactor, reactor-netty (`reactive-transport-dev`) |
-| **Shared domain** | `:backend:core` | nothing but the JDK and Spring's `ApplicationEventPublisher` |
-| **Persistence** | `:backend:machine-mng` | `:backend:core`, Spring Data JPA, Liquibase |
-| **Web** | `:backend:api` | `:backend:core`, `:backend:terminal`, `:gcode`, WebFlux |
-| **Assembly** | `:app` | everything |
+| Submodel | Gradle module | Package | May depend on |
+|---|---|---|---|
+| **api** | `:backend:api` | `org.qw3rtrun.p3d.api` | nothing. Not even Spring at runtime |
+| **core** | `:backend:core` | `org.qw3rtrun.p3d.core` | `api`, `:backend:terminal`, `:gcode`, Reactor, spring-context |
+| **printer-management** | `:backend:printer-management` | `org.qw3rtrun.p3d.management` | `api`, Spring Data JPA, Liquibase |
+| **frontend** | `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | `api`, WebFlux, Thymeleaf, the Vue build |
+| **app** | `:app` | `org.qw3rtrun.p3d` | everything. Assembly only |
+| *library* | `:gcode` | `org.qw3rtrun.p3d.g` | the Kotlin stdlib and `api` (`low-level-protocol-dev`) |
+| *library* | `:backend:terminal` | `org.qw3rtrun.p3d.terminal` | `:gcode`, `api`, Reactor (`reactive-transport-dev`) |
 
-The arrows never reverse. `:backend:core` in particular is the shared vocabulary - records, service
-interfaces, event types - and it must stay free of WebFlux, JPA and Reactor so that both the web and
-the persistence side can depend on it without dragging the other in.
+The five submodels and their rules are `doc/sub_boundaries.txt`; this table is how they are
+realised. **Rule 1 is that every submodel depends on `api` and on no other submodel**, and
+`allowedDependencies` on each module declaration is where that is enforced.
 
-**`:backend:core` is the only place a type crosses modules.** A `PrinterEntity` must not leave
-`:backend:machine-mng` and a `GRs` must not reach a controller signature without a deliberate
-decision - see the named-interface rule below.
+`api` must stay free of WebFlux, JPA, Reactor and Spring itself, for a harder reason than taste:
+`:gcode` depends on it for the event interfaces its reply types implement, and `:gcode` has to stay
+portable to JS, C and Rust. A framework dependency in `api` reaches the protocol core.
+
+**`api` is the only place a type crosses submodels.** A `PrinterEntity` must not leave
+`printer-management`, and the aggregate must not leave `core`.
+
+**`core` is live data; `printer-management` is static data.** What a machine is called, where to
+dial it and what it can do belong to management. What it is doing right now - connected, hot, busy,
+what it last reported - belongs to core. Rule 2 says core talks to other submodels through events,
+which is not yet true and is plan item A6.
 
 ## IMPORTANT - nothing blocking runs on an event loop
 
@@ -84,10 +93,10 @@ Never `block()` on a pipeline thread, and never `Thread.sleep`. If a test needs 
 
 | Module | Package | Type | Depends on |
 |---|---|---|---|
-| Shared domain | `org.qw3rtrun.p3d.core` | **open**, and declared `sharedModules` on `StandaloneApp` | — |
-| Web API | `org.qw3rtrun.p3d.api` | closed, `allowedDependencies = {}` | the shared kernel only |
-| Machine management | `org.qw3rtrun.p3d.mng` | closed, `allowedDependencies = {}` | the shared kernel only |
-| Web UI | `org.qw3rtrun.p3d.mvc` | closed, `allowedDependencies = {}` | the shared kernel only |
+| Shared API | `org.qw3rtrun.p3d.api` | **open**, and declared `sharedModules` on `StandaloneApp` | — |
+| Printer core | `org.qw3rtrun.p3d.core` | closed, `allowedDependencies = {}` | `api` only |
+| Machine management | `org.qw3rtrun.p3d.management` | closed, `allowedDependencies = {}` | `api` only |
+| Frontend | `org.qw3rtrun.p3d.frontend` | closed, `allowedDependencies = {"core"}` | `api`, and **`core`, which rule 1 forbids** — see A6 |
 
 **`:gcode` and `:backend:terminal` are excluded from the model**, by a predicate in the test. They
 live under the base package but are libraries, not parts of the application: neither may depend on
@@ -99,9 +108,14 @@ The rules this leaves for new work:
 
 - **A new module is a direct sub-package of `org.qw3rtrun.p3d`** with a `package-info.java` carrying
   `@ApplicationModule`. Everything in a nested package is internal unless exported.
-- **`allowedDependencies = {}` is the default to aim for**, and the three closed modules all hold
-  it: every cross-module call goes through an interface in the shared kernel or through an event.
-  A module that genuinely needs another names it, and that is a decision visible in a diff.
+- **`allowedDependencies = {}` is the default to aim for.** Two of the three closed modules hold
+  it; `frontend` declares `{"core"}` because its controllers reach `PrinterReactorManager`
+  directly. That is declared rather than hidden on purpose - a boundary relaxed the moment it is
+  declared teaches nobody anything, whereas one crossing named in a file is a thing someone can
+  close. A module that genuinely needs another names it, and that is a decision visible in a diff.
+- **A nested package must not carry `@ApplicationModule`.** The annotation is what creates a
+  module, so one on `frontend.mvc` made Modulith report a nested module sitting beside its own
+  parent. An internal package gets a plain `package-info.java` with no annotation.
 - **Exported types of a closed module are `@NamedInterface`**. An entity, a repository and an
   `*Impl` are internal by definition - `PrinterEntity` must not leave `mng`.
 - **`ApplicationModules.verify()` is the test**, and it is what makes any of the above real. It was
@@ -133,7 +147,7 @@ message is:
   **ignores `responseType` entirely** and delegates to the one-argument form, so the class literal at
   every call site is decoration and a wrong one fails as a `ClassCastException` at the caller. One
   service is registered: `UUID → Descriptor`.
-- **`MachineEventBus`** (`:backend:machine-mng`) wraps `ApplicationEventPublisher` and publishes
+- **`MachineEventBus`** (`:backend:printer-management`) wraps `ApplicationEventPublisher` and publishes
   `ManagementEvent`s. This is the one that is conventional, and the one Modulith understands - its
   event publication registry, `@ApplicationModuleListener` and the observability actuator all hang
   off Spring events.
@@ -205,7 +219,7 @@ Two rules for anything that touches it:
 
 - **Liquibase owns the schema. Hibernate does not.** There is no `ddl-auto` anywhere and there must
   not be. A new column is a changeset.
-- **One changelog, included from the master.** `:backend:machine-mng` points at
+- **One changelog, included from the master.** `:backend:printer-management` points at
   `classpath:db/changelog/db.changelog-master.xml`; `:app` points at `/db/changelog/...`. Those
   resolve to the same file today by accident of the classpath - make it one spelling.
 - **H2 file-backed is the development store** (`./data/printersdb`). Nothing may depend on an
@@ -226,7 +240,7 @@ Two rules for anything that touches it:
 - **`@DataJpaTest`** for repositories, against the real Liquibase schema rather than a generated one.
 - **A context-load test is not a test of behaviour.** `MachineManagementApplicationTests` adds a
   printer and connects it and asserts nothing; treat that as a placeholder rather than coverage.
-- Run a module's tests with `:backend:api:test`, `:backend:machine-mng:test`, `:app:test`. The
+- Run a module's tests with `:backend:api:test`, `:backend:printer-management:test`, `:app:test`. The
   Gradle summary line only prints on failure, so count them out of the XML under
   `<module>/build/test-results/test/`.
 
@@ -241,7 +255,7 @@ reflective invoker in `PrinterReactor` gives up.
 ### Keep the aggregate out of the web module
 
 State that survives a request belongs below the controller, not beside it. The test for whether a
-class is in the right module is whether `:backend:machine-mng` could use it without depending on
+class is in the right module is whether `:backend:printer-management` could use it without depending on
 WebFlux.
 
 ### Let the event registry do the delivery
@@ -254,7 +268,7 @@ not be lost.
 ### Configuration belongs to `:app`
 
 A library module that carries its own `application.properties` with a datasource URL in it will
-fight the assembly that imports it. `:backend:machine-mng` and `:app` both define the same datasource
+fight the assembly that imports it. `:backend:printer-management` and `:app` both define the same datasource
 today; the module's copy should be test-scope or gone.
 
 ## Review checklist
@@ -306,7 +320,7 @@ the source, not suspected.
 - **Kotlin is one file in this layer** (`core/msg/ManagementEvents.kt`), which is enough to pay for
   the Kotlin plugin on `:backend:core` but not enough to settle a language convention. Decide per
   module, and use the `kotlin-tooling-java-to-kotlin` skill when converting.
-- **`backend/machine-mng/src/main/resources/application.properties` ships a datasource URL** from a
+- **`backend/printer-management/src/main/resources/application.properties` ships a datasource URL** from a
   library module, duplicating `:app`'s and differing from it in the Liquibase changelog path.
 - **There is no written spec for this layer.** This skill is the only authority, so a behaviour that
   callers come to depend on gets written down here, in the change that establishes it.

@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d;
+package org.qw3rtrun.p3d.frontend;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.control.PrinterControl;

@@ -3,7 +3,9 @@ package org.qw3rtrun.p3d.management.service;
 import lombok.RequiredArgsConstructor;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.msg.MCapabilityReportedEvent;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
+import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.api.msg.ManagementEvent;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
@@ -31,7 +33,7 @@ public class MachineManagementImpl implements MachineManagementService {
 
     @Transactional
     public Descriptor add(String name, ConnectionDetails connection) {
-        var saved = repo.save(new PrinterEntity(UUID.randomUUID(), name, connection.host(), connection.port(), false));
+        var saved = repo.save(new PrinterEntity(UUID.randomUUID(), name, connection.host(), connection.port()));
         eventBus.push(registered(saved));
         return map(saved);
     }
@@ -56,7 +58,37 @@ public class MachineManagementImpl implements MachineManagementService {
 
     private static MRegisteredEvent registered(PrinterEntity entity) {
         return new MRegisteredEvent(entity.getId(), entity.getName(),
-                entity.getHost(), entity.getPort(), LocalDateTime.now());
+                entity.getHost(), entity.getPort(), entity.profile(), LocalDateTime.now());
+    }
+
+    /**
+     * A machine reported its firmware, so the roster remembers it.
+     *
+     * <p>This module cannot learn this for itself - it would have to talk to the printer, which is
+     * {@code core}'s job and nobody else's - so the two halves meet here: {@code core} asks and
+     * reports, this keeps and re-announces. That is why the fact travels as an event in one
+     * direction and comes back inside {@link MRegisteredEvent} in the other.
+     *
+     * <p>Announced again straight away, so that a replica learns the new profile without waiting
+     * for the next restart.
+     */
+    @Transactional
+    @EventListener
+    public void on(MFirmwareReportedEvent event) {
+        repo.findById(event.machineId()).ifPresent(entity -> {
+            entity.learnedFirmware(event.firmware(), event.timestamp());
+            eventBus.push(registered(repo.save(entity)));
+        });
+    }
+
+    /** The same, one {@code Cap:} line at a time - see {@link PrinterEntity#learnedCapability}. */
+    @Transactional
+    @EventListener
+    public void on(MCapabilityReportedEvent event) {
+        repo.findById(event.machineId()).ifPresent(entity -> {
+            entity.learnedCapability(event.capability(), event.enabled(), event.timestamp());
+            eventBus.push(registered(repo.save(entity)));
+        });
     }
 
     public Stream<Descriptor> fetchAll() {
@@ -95,7 +127,8 @@ public class MachineManagementImpl implements MachineManagementService {
 
     private static Descriptor map(PrinterEntity entity) {
         return new Descriptor(entity.getId(), entity.getName(),
-                new ConnectionDetails(entity.getHost(), entity.getPort()), entity.isConnected());
+                new ConnectionDetails(entity.getHost(), entity.getPort()), entity.isConnected(),
+                entity.profile());
     }
 
     public void with(UUID id, Consumer<PrinterEntity> operation) {

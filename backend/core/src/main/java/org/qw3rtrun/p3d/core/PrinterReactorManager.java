@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.terminal.TerminalManager;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 
 import java.util.HashMap;
@@ -26,6 +27,8 @@ public class PrinterReactorManager {
     private final PrinterDirectory directory;
 
     private final PrinterAggregateManager aggregateManager;
+
+    private final ApplicationEventPublisher roster;
 
     private final Map<UUID, PrinterReactor> running = new HashMap<>();
 
@@ -89,6 +92,6 @@ public class PrinterReactorManager {
         var entry = directory.find(uuid).orElseThrow(() ->
                 new IllegalArgumentException("no machine known with id " + uuid));
         var aggregate = (PrinterState) aggregateManager.loadState(uuid);
-        return new PrinterReactor(new TerminalManager(entry.connection()), aggregate);
+        return new PrinterReactor(new TerminalManager(entry.connection()), aggregate, roster);
     }
 }

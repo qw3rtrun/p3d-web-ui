@@ -159,35 +159,17 @@ class PrinterStateGcodeTest {
         }
     }
 
+    /**
+     * What an {@code M115} saying "this many extruders" looks like by the time it reaches the
+     * aggregate.
+     *
+     * <p>The real one is {@code FirmwareReport}, a record over the key-values the firmware sent;
+     * this is the same shape built by hand, so the aggregate reads the count the way it does in
+     * production - out of the map, rather than from a named accessor that only a test implements.
+     */
     private static FirmwareInfoReportEvent firmwareReporting(int extruderCount) {
-        return new FirmwareInfoReportEvent() {
-            public String fullReportString() {
-                return "FIRMWARE_NAME:Test EXTRUDER_COUNT:" + extruderCount;
-            }
-
-            public UUID uuid() {
-                return UUID.randomUUID();
-            }
-
-            public String firmwareName() {
-                return "Test";
-            }
-
-            public String srcCodeUrl() {
-                return "";
-            }
-
-            public String protocolVersion() {
-                return "";
-            }
-
-            public String machineType() {
-                return "";
-            }
-
-            public int extruderCount() {
-                return extruderCount;
-            }
-        };
+        return new org.qw3rtrun.p3d.api.msg.FirmwareReport(
+                java.util.Map.of("FIRMWARE_NAME", "Test", "EXTRUDER_COUNT", String.valueOf(extruderCount)));
     }
+
 }

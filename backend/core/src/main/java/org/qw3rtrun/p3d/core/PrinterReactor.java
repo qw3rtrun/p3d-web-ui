@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.*;
+import org.springframework.context.ApplicationEventPublisher;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.terminal.GSender;
 import org.qw3rtrun.p3d.terminal.HostTerminal;
@@ -13,6 +14,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
+import java.time.LocalDateTime;
 
 import static reactor.core.publisher.Sinks.EmitFailureHandler.FAIL_FAST;
 
@@ -29,7 +31,23 @@ public class PrinterReactor {
 
     private PublisherQueue<String, Priority> commandQueue = new PublisherQueue<>();
 
+    /**
+     * Where facts about the machine itself go: to the roster, which keeps them.
+     *
+     * <p>{@code core} is the only module that can learn what a printer is, because learning it
+     * means asking the printer. {@code printer-management} is where static facts about a machine
+     * belong. So this is the seam where the one hands to the other - as an event, because a
+     * submodel does not call another.
+     */
+    private final ApplicationEventPublisher roster;
+
     public PrinterReactor(TerminalManager manager, PrinterState printer) {
+        this(manager, printer, event -> {
+        });
+    }
+
+    public PrinterReactor(TerminalManager manager, PrinterState printer, ApplicationEventPublisher roster) {
+        this.roster = roster;
         this.manager = manager;
         this.printer = printer;
         updates = Sinks.many().replay().latestOrDefault(new EventMessage(printer.getId(), new MachineOfflineEvent()));
@@ -164,5 +182,24 @@ public class PrinterReactor {
 
     private void onEvent(GEvent report) {
         updates.emitNext(new EventMessage(printer.getId(), report), FAIL_FAST);
+        report(report);
+    }
+
+    /**
+     * Passes on the two things the roster wants to remember about a machine.
+     *
+     * <p>Only reached when the aggregate decided the report <em>changed</em> something, because
+     * that is what {@link PrinterState} emits on - so a printer auto-reporting the same
+     * capabilities every connect does not write to the database every connect.
+     */
+    private void report(GEvent event) {
+        switch (event) {
+            case FirmwareInfoReportEvent firmware -> roster.publishEvent(new MFirmwareReportedEvent(
+                    printer.getId(), firmware.keyValues(), LocalDateTime.now()));
+            case CapabilityReportEvent capability -> roster.publishEvent(new MCapabilityReportedEvent(
+                    printer.getId(), capability.capability(), capability.enabled(), LocalDateTime.now()));
+            default -> {
+            }
+        }
     }
 }

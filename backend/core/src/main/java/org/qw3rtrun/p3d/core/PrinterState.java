@@ -4,9 +4,8 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.*;
-import org.qw3rtrun.p3d.core.firmware.CapabilitiesInfo;
-import org.qw3rtrun.p3d.core.firmware.FirmwareInfo;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
+import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
@@ -14,28 +13,63 @@ import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import java.math.RoundingMode;
 import java.util.UUID;
 import java.util.function.Consumer;
 
 @Slf4j
-@RequiredArgsConstructor
 public class PrinterState implements PrinterAggregate {
 
     @Getter
     private final UUID id;
+
+    /**
+     * What this machine is, as far as anyone knows.
+     *
+     * <p><strong>Seeded from the roster, not discovered from nothing.</strong> It used to be two
+     * objects - a {@code FirmwareInfo} wrapping a nullable report and a {@code CapabilitiesInfo}
+     * wrapping a map - both starting empty every time the process did. So the extruder-count check
+     * below had nothing to read until a machine had been dialled, and a command sent to one that
+     * had not blew up on a null rather than being refused.
+     *
+     * <p>The profile is now a single value that {@code printer-management} persists and announces,
+     * so a restart knows what each machine is before anything connects to it. It is replaced
+     * wholesale on each change, which is what makes it safe to hand out.
+     */
+    private MachineProfile profile;
+
+    public PrinterState(UUID id) {
+        this(id, MachineProfile.unknown());
+    }
+
+    public PrinterState(UUID id, MachineProfile seed) {
+        this.id = id;
+        this.profile = seed == null ? MachineProfile.unknown() : seed;
+    }
+
+    /** What this machine reported about itself, never null. */
+    public MachineProfile getProfile() {
+        return profile;
+    }
 
     private boolean connected;
 
     private boolean online;
 
     private TemperatureControl temperatureControl = new TemperatureControl();
-    private Consumer<GEvent> emitter;
+
+    /**
+     * Where state changes go, once anything is listening.
+     *
+     * <p>A no-op until {@link #setEmitter} replaces it, because an aggregate can now be built and
+     * seeded before its reactor exists - and one that cannot announce itself yet should not throw.
+     */
+    private Consumer<GEvent> emitter = event -> {
+    };
     private GSender g;
-
-    private FirmwareInfo firmware = new FirmwareInfo();
-
-    private CapabilitiesInfo capabilities = new CapabilitiesInfo();
 
     /**
      * One decoded reply from the machine, routed to whatever this aggregate does about it.
@@ -120,11 +154,11 @@ public class PrinterState implements PrinterAggregate {
             return;
         }
         int index = temperature.getT() == null ? 0 : temperature.getT();
-        if (index < firmware.getRaw().extruderCount()) {
+        if (index < profile.extruderCount()) {
             g.m104(index, wireTemp(temperature.getTemp()));
         } else {
-            log.warn("According to FirmwareInfoReport, this machine has only {} extruders. But command's hotend index is {}",
-                    firmware.getRaw().extruderCount(), index);
+            log.warn("According to its profile this machine has only {} extruders, but the command's"
+                    + " hotend index is {}", profile.extruderCount(), index);
         }
     }
 
@@ -187,16 +221,24 @@ public class PrinterState implements PrinterAggregate {
         }
     }
 
-    public void on(FirmwareInfoReportEvent firmwareInfoReportEvent) {
-        if (this.firmware.on(firmwareInfoReportEvent)) {
-            emitter.accept(firmwareInfoReportEvent);
+    public void on(FirmwareInfoReportEvent report) {
+        var updated = new MachineProfile(report.keyValues(), profile.capabilities(), LocalDateTime.now());
+        if (updated.firmware().equals(profile.firmware())) {
+            return;
         }
+        profile = updated;
+        emitter.accept(report);
     }
 
-    public void on(CapabilityReportEvent capabilityReportEvent) {
-        if (this.capabilities.on(capabilityReportEvent)) {
-            emitter.accept(capabilityReportEvent);
+    public void on(CapabilityReportEvent report) {
+        var previous = profile.capabilities().get(report.capability());
+        if (previous != null && previous == report.enabled()) {
+            return;
         }
+        var merged = new HashMap<>(profile.capabilities());
+        merged.put(report.capability(), report.enabled());
+        profile = new MachineProfile(profile.firmware(), Map.copyOf(merged), LocalDateTime.now());
+        emitter.accept(report);
     }
 
     protected void setEmitter(Consumer<GEvent> emitter) {

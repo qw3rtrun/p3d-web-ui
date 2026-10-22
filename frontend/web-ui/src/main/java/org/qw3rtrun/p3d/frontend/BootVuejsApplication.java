@@ -1,4 +1,4 @@
-package org.qw3rtrun.p3d;
+package org.qw3rtrun.p3d.frontend;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 @SpringBootApplication
 public class BootVuejsApplication {
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         SpringApplication.run(BootVuejsApplication.class, args);
     }
 

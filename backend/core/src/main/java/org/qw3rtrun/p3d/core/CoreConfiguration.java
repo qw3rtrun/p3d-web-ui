@@ -23,8 +23,9 @@ public class CoreConfiguration {
     }
 
     @Bean
-    public PrinterReactorManager printer(PrinterDirectory directory, PrinterAggregateManager aggregates) {
-        return new PrinterReactorManager(directory, aggregates);
+    public PrinterReactorManager printer(PrinterDirectory directory, PrinterAggregateManager aggregates,
+                                         org.springframework.context.ApplicationEventPublisher roster) {
+        return new PrinterReactorManager(directory, aggregates, roster);
     }
 
     /** The only way into this module from the web - see {@link PrinterControlService}. */
@@ -34,14 +35,21 @@ public class CoreConfiguration {
     }
 
     /**
-     * A new, empty {@link PrinterState} per printer id - which is to say, no persistence at all.
+     * A {@link PrinterState} seeded with what the roster remembers about the machine.
      *
-     * <p>Firmware info, capabilities and every temperature a machine ever reported live only as
-     * long as the process does. Plan item B2 replaces this with something that reads the aggregate
-     * back; until then the name says what it is.
+     * <p>It used to be {@code PrinterState::new} - a blank aggregate every time, which is why a
+     * restart knew nothing about any printer until each was dialled again, and why a command to an
+     * unconnected one dereferenced a null extruder count.
+     *
+     * <p>What is seeded is the *static* half: firmware and capabilities, which
+     * {@code printer-management} persists. Temperatures are not, and should not be - a reading from
+     * before the process restarted is not state, it is a stale number that would read as current.
+     * The aggregate starts with no temperature and says so until the machine reports one.
      */
     @Bean
-    public static PrinterAggregateManager stubStateManager() {
-        return PrinterState::new;
+    public PrinterAggregateManager aggregates(PrinterDirectory directory) {
+        return id -> new PrinterState(id, directory.find(id)
+                .map(PrinterDirectory.Entry::profile)
+                .orElseGet(org.qw3rtrun.p3d.api.model.MachineProfile::unknown));
     }
 }

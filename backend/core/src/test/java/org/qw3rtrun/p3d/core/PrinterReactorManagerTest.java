@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import reactor.test.StepVerifier;
@@ -34,10 +35,13 @@ class PrinterReactorManagerTest {
 
     private final UUID id = UUID.randomUUID();
     private final PrinterDirectory directory = new PrinterDirectory();
-    private final PrinterReactorManager manager = new PrinterReactorManager(directory, PrinterState::new);
+    private final PrinterReactorManager manager =
+            new PrinterReactorManager(directory, PrinterState::new, event -> {
+            });
 
     private void theFarmHas(UUID machine) {
-        directory.onRegistered(new MRegisteredEvent(machine, "a printer", "localhost", 8099, LocalDateTime.now()));
+        directory.onRegistered(new MRegisteredEvent(machine, "a printer", "localhost", 8099,
+                MachineProfile.unknown(), LocalDateTime.now()));
     }
 
     @Test

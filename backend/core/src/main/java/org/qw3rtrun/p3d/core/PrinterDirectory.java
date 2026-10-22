@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
+import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.springframework.context.event.EventListener;
@@ -53,8 +54,16 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class PrinterDirectory {
 
-    /** Everything needed to reach one machine. The farm's view of a printer is richer; this is not that. */
-    public record Entry(UUID id, String name, ConnectionDetails connection) {
+    /**
+     * Everything this module needs about one machine: where to dial it, and what it turned out to
+     * be.
+     *
+     * <p>The profile is here so that a restart does not have to ask. {@code PrinterState} checks a
+     * tool index against the extruder count, and before anything learned it that check had nothing
+     * to read - which is why a command to a machine the process had never connected to failed with
+     * a {@code NullPointerException} rather than a refusal.
+     */
+    public record Entry(UUID id, String name, ConnectionDetails connection, MachineProfile profile) {
     }
 
     private final Map<UUID, Entry> known = new ConcurrentHashMap<>();
@@ -62,7 +71,7 @@ public class PrinterDirectory {
     @EventListener
     public void onRegistered(MRegisteredEvent event) {
         var entry = new Entry(event.getMachineId(), event.getName(),
-                new ConnectionDetails(event.getHost(), event.getPort()));
+                new ConnectionDetails(event.getHost(), event.getPort()), event.getProfile());
         var previous = known.put(entry.id(), entry);
         if (previous == null) {
             log.info("the farm has {} at {}:{}", entry.name(), event.getHost(), event.getPort());

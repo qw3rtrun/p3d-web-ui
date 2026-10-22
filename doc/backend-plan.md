@@ -76,7 +76,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**A5**~~ | [one dispatch, checked by the compiler](#a5) | ~~Replace `PrinterReactor`'s reflective invoker with a sealed interface and an exhaustive switch~~ **done** — a pattern switch, in the aggregate rather than the reactor | B1 |
 | ~~**A6**~~ | [close the two declared crossings](#a6) | ~~`core` gets a replica fed by events; `frontend` reaches `core` through an `api` interface; `api` closes so the check enforces both~~ **done** — no submodel names another, and the check says so | B2 |
 | ~~**B1**~~ | [the aggregate leaves the web module](#b1) | ~~`PrinterState` into a domain module that does not depend on WebFlux~~ **done** — it is the `core` submodel now | B2, C3 |
-| **B2** | [the machine remembers what it is](#b2) | Persist firmware, capabilities and last-known state; restore on boot | B4, D1 |
+| ~~**B2**~~ | [the machine remembers what it is](#b2) | ~~Persist firmware, capabilities and last-known state; restore on boot~~ **done** — the roster keeps it, `core` seeds from it | B4, D1 |
 | **B3** | [a connection lifecycle worth the name](#b3) | An explicit state machine, retry with backoff, health, and events for each transition | C5 |
 | **B4** | [machine profile and groups](#b4) | Bed volume, extruders, nozzle, materials, tags — what a scheduler matches against | D1 |
 | **C1** | [the G-code file store](#c1) | Upload, content hash, size, line count, estimates; streamed in and out, never buffered | C2 |
@@ -502,6 +502,48 @@ capabilities are only known while it is connected.
 **Done when.** A restart with no printer connected still shows each machine's firmware, extruder
 count and capabilities; a Liquibase changeset carries the columns; a `@DataJpaTest` covers the
 round-trip; stale data is marked with the timestamp it was learned.
+
+**Done, and the boundary decided the shape.** `doc/sub_boundaries.txt` puts "capabilities, firmware
+versions" in `printer-management` as static data - so this is not `core` persisting its own state,
+it is `core` *reporting* what only it can learn. Asking a machine what it is means talking to it,
+which is `core`'s job alone; keeping the answer is the roster's. The fact crosses twice: out as
+`MFirmwareReportedEvent` / `MCapabilityReportedEvent`, back inside the `MRegisteredEvent` the roster
+announces - so A6's replica is what carries it, and the aggregate seeds from that rather than from
+nothing.
+
+Firmware is a table of key-values rather than a column per field, because what `M115` reports
+differs between builds and a schema naming only today's keys drops whatever a later Marlin adds.
+A firmware report **replaces** (it is a complete statement about one build); capabilities are
+**upserted** (the firmware sends them one `Cap:` line at a time and nothing marks the last).
+`profile_learned_at` is the staleness marker the item asked for - a printer reflashed while the farm
+was down reports differently next time, so a reader has to be able to tell how old this is.
+
+**It collapsed two classes rather than adding any.** `FirmwareInfo` and `CapabilitiesInfo` were thin
+wrappers that only tracked "did this change", both starting empty every time the process did. They
+are one `MachineProfile` on the aggregate now, seeded from the roster - which also fixes the
+`NullPointerException` A6 found: a command to a machine the process had never connected to
+dereferenced a null extruder count, and an unknown machine now claims one extruder instead.
+
+**Temperatures are deliberately not persisted.** The item said "last-known state"; a temperature
+from before the restart is not state, it is a stale number that would read as current. A machine
+starts with no reading and says so.
+
+**Two deviations from the done-when**, both forced:
+
+* **`@DataJpaTest` does not exist on this classpath.** Spring Boot 4 moved the test slices out of
+  `spring-boot-test-autoconfigure`. `PrinterProfilePersistenceTest` is `@SpringBootTest` with
+  `@Transactional`, which gives the same round-trip-and-roll-back against the real Liquibase schema
+  at the cost of booting the module.
+* **The restart was proved by test, not by restarting.** The simulator on `localhost:8099` was down,
+  so nothing could learn a real `M115`. `PrinterProfileFlowTest` boots the assembled application and
+  asserts the whole loop, including that `announceTheFarm` carries the profile - which is the
+  mechanism a restart depends on.
+
+**Two findings worth keeping**, both from running rather than reading. A column named `value` is a
+reserved word: Hibernate emitted it happily and the database rejected the query, which is the
+argument for testing against the Liquibase schema rather than a generated one. And a test-scope
+`application.properties` **replaces** `:app`'s rather than merging with it, silently dropping the
+Liquibase changelog path - a profile overlay is the fix.
 
 ### B3 — a connection lifecycle worth the name {#b3}
 

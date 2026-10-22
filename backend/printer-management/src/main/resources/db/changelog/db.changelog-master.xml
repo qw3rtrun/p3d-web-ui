@@ -21,5 +21,56 @@
             <column name="connected" type="boolean" defaultOnNull="false"/>
         </createTable>
     </changeSet>
+
+    <!--
+      What a machine turned out to be: M115's key-values and the Cap: lines after it.
+
+      Two tables rather than two columns, because what the firmware reports differs between builds -
+      a schema that named only the keys we know today would drop whatever a later Marlin adds, and a
+      JSON blob would make this module parse something it has no business parsing.
+
+      profile_learned_at is on the printer because the profile is a cache of something only the
+      machine knows. A printer reflashed while the farm was down reports differently next time it
+      connects, so a reader has to be able to tell how old this is rather than assume it is current.
+    -->
+    <changeSet id="2" author="agentic">
+        <addColumn tableName="printer_entity">
+            <column name="profile_learned_at" type="timestamp"/>
+        </addColumn>
+
+        <createTable tableName="printer_firmware" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="key_name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- key_value, not value: `value` is a reserved word in SQL and H2 rejects it unquoted. -->
+            <column name="key_value" type="varchar(1024)"/>
+        </createTable>
+        <addPrimaryKey tableName="printer_firmware" columnNames="printer_id, key_name"
+                       constraintName="pk_printer_firmware"/>
+        <addForeignKeyConstraint baseTableName="printer_firmware" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_firmware_printer"
+                                 onDelete="CASCADE"/>
+
+        <createTable tableName="printer_capability" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="capability" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="enabled" type="boolean"/>
+        </createTable>
+        <addPrimaryKey tableName="printer_capability" columnNames="printer_id, capability"
+                       constraintName="pk_printer_capability"/>
+        <addForeignKeyConstraint baseTableName="printer_capability" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_capability_printer"
+                                 onDelete="CASCADE"/>
+    </changeSet>
+
 </databaseChangeLog>
 

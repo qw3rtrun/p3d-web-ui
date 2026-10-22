@@ -52,6 +52,12 @@ the bridge, never an `api` interface implemented inside `:gcode`.
 **`api` is the only place a type crosses submodels.** A `PrinterEntity` must not leave
 `printer-management`, and the aggregate must not leave `core`.
 
+**`core` is live data; `printer-management` is static data, and the awkward part is that only
+`core` can *learn* the static kind.** Asking a machine what it is means talking to it, which is
+`core`'s job alone; keeping the answer is the roster's. So the fact crosses twice - out as
+`MFirmwareReportedEvent`/`MCapabilityReportedEvent`, back inside the `MRegisteredEvent` the roster
+announces - and `core` seeds its aggregates from the replica rather than from nothing.
+
 **`core` is live data; `printer-management` is static data.** What a machine is called, where to
 dial it and what it can do belong to management. What it is doing right now - connected, hot, busy,
 what it last reported - belongs to core. Rule 2 says core talks to other submodels through events,
@@ -261,7 +267,12 @@ Two rules for anything that touches it:
   fast and it is the only thing that keeps them true.
 - **`@ApplicationModuleTest`** in preference to `@SpringBootTest` - it boots one module and stubs the
   rest, so a failure names the module that broke.
-- **`@DataJpaTest`** for repositories, against the real Liquibase schema rather than a generated one.
+- **Repository tests run against the real Liquibase schema**, never a Hibernate-generated one - the
+  two disagreeing is the failure worth catching, and `PrinterProfilePersistenceTest` caught one
+  (a column named `value`, which is a reserved word; Hibernate emitted it and the database rejected
+  the query). **`@DataJpaTest` does not exist on this classpath**: Spring Boot 4 moved the slice
+  annotations out of `spring-boot-test-autoconfigure`. `@SpringBootTest` with `@Transactional` gives
+  the same round-trip-and-roll-back at the cost of booting the module.
 - **A context-load test is not a test of behaviour.** `MachineManagementApplicationTests` adds a
   printer and connects it and asserts nothing; treat that as a placeholder rather than coverage.
 - Run a module's tests with `:backend:api:test`, `:backend:printer-management:test`, `:app:test`. The
@@ -347,9 +358,10 @@ the source, not suspected.
   on. That was papered over by a `@ConditionalOnMissingBean` stub in *main* answering every query
   with `null` - so a misconfigured farm read as an empty one. It is deleted; `BootVuejsApplicationTests`
   supplies the bean itself, and its version throws rather than returning empties.
-- **`PrinterState` - the aggregate - lives in `:backend:api`**, and `PrinterAggregateManager` is
-  `PrinterState::new`, so a restart loses firmware info, capabilities and every temperature the
-  machine ever reported.
+- **Temperatures still do not survive a restart, and should not.** The aggregate is seeded from the
+  roster's `MachineProfile` - firmware and capabilities - but a temperature from before the process
+  restarted is not state, it is a stale number that would read as current. A machine starts with no
+  reading and says so until it reports one.
 - **No job, file or queue concept exists.** The product is a print farm; nothing in the backend
   models a G-code file, a print job, or an assignment of one to a machine. `PublisherQueue`'s
   `Priority` enum is the only piece of the machinery that is already there.
@@ -361,7 +373,11 @@ the source, not suspected.
 - **Kotlin is one file in this layer** (`core/msg/ManagementEvents.kt`), which is enough to pay for
   the Kotlin plugin on `:backend:core` but not enough to settle a language convention. Decide per
   module, and use the `kotlin-tooling-java-to-kotlin` skill when converting.
-- **`backend/printer-management/src/main/resources/application.properties` ships a datasource URL** from a
-  library module, duplicating `:app`'s and differing from it in the Liquibase changelog path.
+- **`backend/printer-management/src/main/resources/application.properties` ships a datasource URL**
+  from a library module, duplicating `:app`'s and differing from it in the Liquibase changelog path
+  (`classpath:db/changelog/...` against `/db/changelog/...`). Related trap, learned the hard way: a
+  test-scope `application.properties` **replaces** the main one rather than merging, so a test that
+  only wants a different datasource must use a profile overlay (`application-test.properties` plus
+  `@ActiveProfiles`) or it silently drops every other setting.
 - **There is no written spec for this layer.** This skill is the only authority, so a behaviour that
   callers come to depend on gets written down here, in the change that establishes it.

@@ -1,13 +1,9 @@
 package org.qw3rtrun.p3d.core;
 
-import org.qw3rtrun.p3d.api.bus.CommandQueryBus;
-import org.qw3rtrun.p3d.api.bus.CommandQueryGateway;
-import org.qw3rtrun.p3d.api.bus.CommandQueryService;
+import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.api.service.PrinterAggregateManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.util.List;
 
 /**
  * The core submodel's beans: the per-printer runtime and what it is built from.
@@ -15,24 +11,17 @@ import java.util.List;
  * <p>Was half of {@code ApiApplication}, which was a {@code @SpringBootApplication} in what is now
  * the shared API module and wired three submodels' beans from one place. The shared vocabulary has
  * no business owning an entry point or a bean definition, so the class split along the boundary it
- * was straddling - the web half is {@code FrontendConfiguration}, and this is the rest.
+ * was straddling - the web half went to the frontend submodel, and this is the rest.
  *
- * <p>Every bean below is carried over unchanged, including the two that are scheduled for deletion:
- * {@link CommandQueryGateway} holds a single registration and ignores the response type it is
- * handed, and {@link #stubStateManager()} is why no printer state survives a restart. Plan items A4
- * and B2 deal with them; moving them is not the moment to.
+ * <p>{@link #stubStateManager()} is still here and is still why no printer state survives a
+ * restart; that is plan item B2.
  */
 @Configuration
 public class CoreConfiguration {
 
     @Bean
-    public CommandQueryGateway gateway(List<CommandQueryService<?, ?>> services) {
-        return new CommandQueryBus(services);
-    }
-
-    @Bean
-    public PrinterReactorManager printer(CommandQueryGateway gateway, PrinterAggregateManager aggregates) {
-        return new PrinterReactorManager(gateway, aggregates);
+    public PrinterReactorManager printer(MachineManagementService machines, PrinterAggregateManager aggregates) {
+        return new PrinterReactorManager(machines, aggregates);
     }
 
     /**

@@ -1,9 +1,9 @@
 package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
-import org.qw3rtrun.p3d.api.bus.CommandQueryGateway;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import reactor.test.StepVerifier;
 
@@ -31,23 +31,47 @@ class PrinterReactorManagerTest {
     private final UUID id = UUID.randomUUID();
     private final AtomicInteger lookups = new AtomicInteger();
 
+    /**
+     * Everything but {@code fetch}, which is all this test needs a management service for.
+     *
+     * <p>The reactor manager reads a printer's row and nothing else - it used to do it through a
+     * command gateway that held one registration and ignored the response type it was handed, and
+     * now it calls the interface that registration pointed at.
+     */
+    private abstract static class StubMachines implements MachineManagementService {
+        @Override
+        public Descriptor add(String name, ConnectionDetails connection) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public java.util.stream.Stream<Descriptor> fetchAll() {
+            return java.util.stream.Stream.empty();
+        }
+
+        @Override
+        public void delete(UUID uuid) {
+        }
+
+        @Override
+        public void disconnect(UUID uuid) {
+        }
+
+        @Override
+        public void connect(UUID uuid) {
+        }
+    }
+
     /** Counts how often the printer's row was read, which is how a fresh reactor gives itself away. */
     private PrinterReactorManager manager() {
-        var gateway = new CommandQueryGateway() {
+        var machines = new StubMachines() {
             @Override
-            @SuppressWarnings("unchecked")
-            public <R> R send(Object req) {
+            public Descriptor fetch(UUID uuid) {
                 lookups.incrementAndGet();
-                return (R) new Descriptor((UUID) req, "a printer",
-                        new ConnectionDetails("localhost", 1), false);
-            }
-
-            @Override
-            public <R> R send(Object req, Class<R> returnType) {
-                return send(req);
+                return new Descriptor(uuid, "a printer", new ConnectionDetails("localhost", 1), false);
             }
         };
-        return new PrinterReactorManager(gateway, PrinterState::new);
+        return new PrinterReactorManager(machines, PrinterState::new);
     }
 
     @Test

@@ -2,8 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.api.bus.CommandQueryGateway;
-import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.service.PrinterAggregateManager;
@@ -27,7 +26,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class PrinterReactorManager {
 
-    private final CommandQueryGateway gateway;
+    private final MachineManagementService machines;
 
     private final PrinterAggregateManager aggregateManager;
 
@@ -87,7 +86,7 @@ public class PrinterReactorManager {
     }
 
     private PrinterReactor startReactor(UUID uuid) {
-        var descriptor = gateway.send(uuid, Descriptor.class);
+        var descriptor = machines.fetch(uuid);
         var aggregate = (PrinterState) aggregateManager.loadState(uuid);
         var reactor = new PrinterReactor(new TerminalManager(descriptor.connection()), aggregate);
         if (descriptor.connected()) {

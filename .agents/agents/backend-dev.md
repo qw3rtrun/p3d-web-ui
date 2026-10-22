@@ -126,8 +126,8 @@ development, Lombok throughout.
 - **Liquibase owns the schema.** No `ddl-auto`, ever. A column is a changeset.
 - **A declared module boundary is verified by a test**, or it is decoration. Modulith without
   `ApplicationModules.verify()` buys nothing.
-- **No fourth dispatch mechanism.** There are three; a change that touches one should leave the
-  count lower, never higher.
+- **No third dispatch mechanism.** There are two - Spring events, and the reflective invoker A5
+  replaces. A change that touches one should leave the count lower, never higher.
 - **Everything created is released.** A reactor, a socket, a sink, a subscription — name the owner.
 
 ## Working in this repo

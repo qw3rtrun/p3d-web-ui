@@ -72,7 +72,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**A1**~~ | [package split and module boundaries](#a1) | ~~Move `:backend:api` out of `org.qw3rtrun.p3d.core`; declare `@ApplicationModule`s; add `ApplicationModules.verify()`~~ **done** — four modules declared, each depending on nothing but the shared kernel, and the verification bites | A2–D3 |
 | ~~**A2**~~ | [blocking work off the event loop](#a2) | ~~`subscribeOn(boundedElastic)` at every JPA boundary, and a test that catches the next one~~ **done** — three controllers, nine call sites, and a test that records the thread | C1, C2 |
 | ~~**A3**~~ | [the reactor has an owner](#a3) | ~~Stop and evict a `PrinterReactor` on disconnect and delete; bound the map~~ **done** — `openReactor`/`release`, driven by an `MDeletedEvent` | B3 |
-| **A4** | [delete the half-built](#a4) | The dead WebSocket handler, the null-returning stub service, the one-entry command bus | A5 |
+| ~~**A4**~~ | [delete the half-built](#a4) | ~~The dead WebSocket handler, the null-returning stub service, the one-entry command bus~~ **done** — seven files gone, nothing replaced them | A5 |
 | **A5** | [one dispatch, checked by the compiler](#a5) | Replace `PrinterReactor`'s reflective invoker with a sealed interface and an exhaustive switch | B1 |
 | **A6** | [close the two declared crossings](#a6) | `core` gets a replica fed by events instead of querying `management`; `frontend` reaches `core` through an `api` interface. Then `allowedDependencies = {}` everywhere | B2 |
 | ~~**B1**~~ | [the aggregate leaves the web module](#b1) | ~~`PrinterState` into a domain module that does not depend on WebFlux~~ **done** — it is the `core` submodel now | B2, C3 |
@@ -213,6 +213,21 @@ will be written against the farm stream of **D2** rather than the per-printer on
 **Done when.** The three are gone, `:backend:api` and `:app` still boot, the SSE stream and the
 management endpoints still pass their tests, and `spring-backend-dev`'s debt list loses three
 entries.
+
+**Done.** Seven files deleted and nothing put in their place. `PrinterReactorManager` now calls
+`MachineManagementService.fetch` - the interface the bus's single registration pointed at all
+along - and `FDMPrinterManagementController` injects that service directly, which is the
+`ObjectFactory` indirection gone too and the A2 follow-up the skill recorded.
+
+**One thing the deletion exposed**, which is the point of deleting a stub: `BootVuejsApplicationTests`
+started failing, because the frontend submodel cannot boot without a `MachineManagementService` and
+what answers it lives in `printer-management`. The stub had been hiding that, in *main*, by
+answering every query with `null`. The test supplies the bean itself now, and its version throws
+rather than returning empties - a module needing a collaborator is a fact about the design, not
+something to paper over with a shipped bean.
+
+Verified on the assembled app: create, list, delete still work with no stub behind them, the
+dashboard renders, and `/ws-printer/{id}` is a 404.
 
 ### A5 — one dispatch, checked by the compiler {#a5}
 

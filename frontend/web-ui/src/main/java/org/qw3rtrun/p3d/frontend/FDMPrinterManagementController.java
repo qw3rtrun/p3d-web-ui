@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
-import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -21,7 +20,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class FDMPrinterManagementController {
 
-    private final ObjectFactory<MachineManagementService> management;
+    private final MachineManagementService management;
 
     /**
      * The blocking boundary, in one place.
@@ -41,23 +40,23 @@ public class FDMPrinterManagementController {
 
     @GetMapping(value = "/{uuid}")
     public Mono<Descriptor> fetch(@PathVariable UUID uuid) {
-        return offLoop(() -> management.getObject().fetch(uuid));
+        return offLoop(() -> management.fetch(uuid));
     }
 
     @GetMapping
     public Flux<Descriptor> fetchAll() {
-        return offLoop(() -> management.getObject().fetchAll().toList()).flatMapIterable(d -> d);
+        return offLoop(() -> management.fetchAll().toList()).flatMapIterable(d -> d);
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Descriptor> create(@RequestBody Mono<PrinterPayload> payload) {
-        return payload.flatMap(p -> offLoop(() -> management.getObject().add(p.name(), new ConnectionDetails(p.host(), p.port()))));
+        return payload.flatMap(p -> offLoop(() -> management.add(p.name(), new ConnectionDetails(p.host(), p.port()))));
     }
 
     @DeleteMapping("/{uuid}")
     public Mono<Void> delete(@PathVariable UUID uuid) {
         return offLoop(() -> {
-            management.getObject().delete(uuid);
+            management.delete(uuid);
             return null;
         }).then();
     }

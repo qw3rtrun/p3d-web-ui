@@ -143,30 +143,30 @@ The annotation reaches `:backend:core` and `:backend:api` as `compileOnly`, so n
 Spring runtime dependency; the declaration is read out of the bytecode by the verification in
 `:app`, which has Modulith on its own classpath.
 
-## One dispatch mechanism, not three
+## One dispatch mechanism, not two
 
-The application currently routes a message three different ways, and no two of them agree on what a
-message is:
+The application routed a message two different ways until A4; there were three before that.
 
-- **`CommandQueryBus`** (`:backend:core`) walks a `List<CommandQueryService>` asking each
-  `isApplicable(Object)`, takes the first, and casts the result unchecked. `send(req, responseType)`
-  **ignores `responseType` entirely** and delegates to the one-argument form, so the class literal at
-  every call site is decoration and a wrong one fails as a `ClassCastException` at the caller. One
-  service is registered: `UUID → Descriptor`.
-- **`MachineEventBus`** (`:backend:printer-management`) wraps `ApplicationEventPublisher` and publishes
+- **`MachineEventBus`** (`printer-management`) wraps `ApplicationEventPublisher` and publishes
   `ManagementEvent`s. This is the one that is conventional, and the one Modulith understands - its
   event publication registry, `@ApplicationModuleListener` and the observability actuator all hang
-  off Spring events.
+  off Spring events. It is how `core` learns a machine was deleted.
 - **`PrinterReactor.invoke`** reflects over `PrinterState`'s declared methods at construction, keys
   them by parameter type, and dispatches by a breadth-first walk of the message's supertype graph.
-  It is a hand-rolled visitor that the compiler cannot check: a renamed handler method or a reply
-  type that gains an interface silently changes what runs, and the only sign is a "No invoker for"
-  at WARN.
+  It is a hand-rolled visitor the compiler cannot check: a renamed handler method or an event record
+  that stops implementing its interface silently changes what runs, and the only sign is a
+  "No invoker for" at WARN. **Plan item A5 replaces it with a sealed interface and an exhaustive
+  switch**, which is the last of the three.
 
-**New work does not add a fourth, and prefers Spring events for anything that is genuinely an
-event.** When a change touches one of the three, reducing the count is in scope and growing it is
-not. A sealed interface with an exhaustive `switch` is the Java 25 replacement for the reflective
-visitor, and it fails at compile time instead of at WARN level.
+**`CommandQueryBus` was the third and is deleted.** It walked a `List<CommandQueryService>` asking
+each `isApplicable(Object)`, took the first, and cast the result unchecked; `send(req, responseType)`
+ignored `responseType` entirely, so the class literal at every call site was decoration and a wrong
+one failed as a `ClassCastException` at the caller. It held exactly one registration,
+`UUID -> Descriptor`, which `PrinterReactorManager` now reaches by calling
+`MachineManagementService.fetch` - the interface that registration pointed at all along.
+
+**New work does not add a third back, and prefers Spring events for anything that is genuinely an
+event.** When a change touches one of the two, reducing the count is in scope and growing it is not.
 
 ## What CQRS means here
 
@@ -213,12 +213,10 @@ Two rules for anything that touches it:
 - **SSE is what the UI actually uses**: `produces = TEXT_EVENT_STREAM_VALUE` on
   `/api-printer/{id}/stream`, consumed by `EventSource` in `static/js/lib/client.js`. It is the
   working live channel and the one to extend.
-- **The WebSocket handler is dead and broken.** `WSGPrinterHandler` reads
-  `session.getAttributes().get("id")`, and nothing anywhere writes that attribute -
-  `SimpleUrlHandlerMapping` does not extract path variables - so the id is always null and the
-  lookup throws. No client connects to it. Either make it work by parsing the path from
-  `session.getHandshakeInfo().getUri()` and registering a `WebSocketHandlerAdapter`, or delete it;
-  do not leave it as a third half-channel.
+- **There is no WebSocket channel, and that is deliberate.** `WSGPrinterHandler` was deleted in A4:
+  it read a session attribute nothing wrote, so its id was always null, and no client ever connected
+  to `/ws-printer/*`. If one is wanted later it is a day's work on a *working* SSE contract, and it
+  should be written against the farm-wide stream of plan item D2 rather than the per-printer one.
 - **A `:gcode` command class in a `@RequestBody` is a deliberate choice**, not an accident: it is why
   `jackson-module-kotlin` is a dependency. Keep it, but know that it makes the REST contract follow
   the Marlin command set, so a generated-class rename is a breaking API change.
@@ -312,19 +310,16 @@ the source, not suspected.
   a type that should belong to one module from being parked in the shared vocabulary instead.
   `@NamedInterface` is not used anywhere yet; the first closed module that needs a partial export
   introduces it.
-- **`WSGPrinterHandler` cannot work.** It reads a session attribute nothing writes, and no client
-  connects to `/ws-printer/*` - the UI uses SSE. It is also the only consumer of the
-  `webSocketHandlerMapping` bean.
 - **The persisted `connected` flag is write-only.** `MachineManagementService.connect` and
   `disconnect` are called by nothing but a test: `PrinterController.connect` goes to the reactor,
   not to the management service, so the column is written `false` at creation and never again. That
   makes `openReactor`'s reconnect-on-first-access close to dead code, and it is why a restart never
   restores a connection. Plan item B3 owns it.
-- **`ApiApplication` registers a `MachineManagementService` that returns `null` from every method**
-  under `@ConditionalOnMissingBean`, so `:backend:api` run on its own answers every management query
-  with a null body instead of failing.
-- **`CommandQueryBus.send(req, responseType)` ignores `responseType`.** The bus holds exactly one
-  registration, `UUID → Descriptor`, added from `MachineManagementModule`.
+- **A module that needs a collaborator it does not contain gets it in test scope.** The frontend
+  submodel holds controllers; what answers them is in `printer-management`, which it must not depend
+  on. That was papered over by a `@ConditionalOnMissingBean` stub in *main* answering every query
+  with `null` - so a misconfigured farm read as an empty one. It is deleted; `BootVuejsApplicationTests`
+  supplies the bean itself, and its version throws rather than returning empties.
 - **`PrinterState` - the aggregate - lives in `:backend:api`**, and `PrinterAggregateManager` is
   `PrinterState::new`, so a restart loses firmware info, capabilities and every temperature the
   machine ever reported.

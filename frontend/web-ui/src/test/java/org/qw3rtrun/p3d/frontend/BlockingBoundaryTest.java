@@ -1,14 +1,12 @@
 package org.qw3rtrun.p3d.frontend;
 
 import org.junit.jupiter.api.Test;
-import org.qw3rtrun.p3d.api.bus.CommandQueryGateway;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.core.PrinterReactorManager;
 import org.qw3rtrun.p3d.core.PrinterState;
 import org.qw3rtrun.p3d.frontend.mvc.MvcPrinterController;
-import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.ui.ConcurrentModel;
 
@@ -94,9 +92,7 @@ class BlockingBoundaryTest {
     }
 
     private WebTestClient management() {
-        MachineManagementService service = recordingService();
-        ObjectFactory<MachineManagementService> factory = () -> service;
-        return WebTestClient.bindToController(new FDMPrinterManagementController(factory)).build();
+        return WebTestClient.bindToController(new FDMPrinterManagementController(recordingService())).build();
     }
 
     @Test
@@ -140,27 +136,14 @@ class BlockingBoundaryTest {
     /**
      * The reactor lookup, which is the one that was never even lazy.
      *
-     * <p>{@code PrinterReactorManager.openReactor} reads the printer's row through the command
-     * gateway, builds a reactor and - on a row that says connected - opens a socket, all inside a
-     * {@code synchronized} block. Every handler called it directly in its own body, so it ran
-     * eagerly on the event loop before the returned publisher existed.
+     * <p>{@code PrinterReactorManager.openReactor} reads the printer's row, builds a reactor and -
+     * on a row that says connected - opens a socket, all inside a {@code synchronized} block. Every
+     * handler called it directly in its own body, so it ran eagerly on the event loop before the
+     * returned publisher existed.
      */
     @Test
     void theReactorLookupRunsOffTheCallersThread() {
-        var gateway = new CommandQueryGateway() {
-            @Override
-            @SuppressWarnings("unchecked")
-            public <R> R send(Object req) {
-                record();
-                return (R) descriptor;
-            }
-
-            @Override
-            public <R> R send(Object req, Class<R> returnType) {
-                return send(req);
-            }
-        };
-        var manager = new PrinterReactorManager(gateway, PrinterState::new);
+        var manager = new PrinterReactorManager(recordingService(), PrinterState::new);
 
         WebTestClient.bindToController(new PrinterController(recordingService(), manager)).build()
                 .get().uri("/api-printer/" + descriptor.uuid()).exchange().expectStatus().isOk();

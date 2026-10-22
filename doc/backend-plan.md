@@ -71,7 +71,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 |---|---|---|---|
 | ~~**A1**~~ | [package split and module boundaries](#a1) | ~~Move `:backend:api` out of `org.qw3rtrun.p3d.core`; declare `@ApplicationModule`s; add `ApplicationModules.verify()`~~ **done** — four modules declared, each depending on nothing but the shared kernel, and the verification bites | A2–D3 |
 | ~~**A2**~~ | [blocking work off the event loop](#a2) | ~~`subscribeOn(boundedElastic)` at every JPA boundary, and a test that catches the next one~~ **done** — three controllers, nine call sites, and a test that records the thread | C1, C2 |
-| **A3** | [the reactor has an owner](#a3) | Stop and evict a `PrinterReactor` on disconnect and delete; bound the map | B3 |
+| ~~**A3**~~ | [the reactor has an owner](#a3) | ~~Stop and evict a `PrinterReactor` on disconnect and delete; bound the map~~ **done** — `openReactor`/`release`, driven by an `MDeletedEvent` | B3 |
 | **A4** | [delete the half-built](#a4) | The dead WebSocket handler, the null-returning stub service, the one-entry command bus | A5 |
 | **A5** | [one dispatch, checked by the compiler](#a5) | Replace `PrinterReactor`'s reflective invoker with a sealed interface and an exhaustive switch | B1 |
 | **A6** | [close the two declared crossings](#a6) | `core` gets a replica fed by events instead of querying `management`; `frontend` reaches `core` through an `api` interface. Then `allowedDependencies = {}` everywhere | B2 |
@@ -177,6 +177,22 @@ id *connects* as a side effect — so a query path can open a socket.
 **Done when.** Delete and disconnect both release the reactor and its socket; a test asserts the map
 is empty afterwards and that the `Schedulers.single()` worker is disposed; `getReactor` no longer
 connects implicitly, or is renamed to say that it does.
+
+**Done, with two corrections to the above.** `Schedulers.single()` is Reactor's *shared* scheduler,
+not one per reactor, so there was never a worker to dispose — what leaked was the socket, the send
+window and the replay sink. And **disconnect does not release**: a disconnected printer is a state
+the machine can come back from, and its aggregate is worth keeping; only a *deleted* one gives up
+its runtime. `MachineManagementService.disconnect` turns out to be called by nothing in production
+anyway, which is a B3 finding recorded in the skill.
+
+`getReactor` is now `openReactor`, paired with `release`, and `management` publishes `MDeletedEvent`
+rather than reaching across the boundary. Releasing completes the update sink, so an SSE subscriber
+is told the machine is gone instead of waiting on it — which is both the correctness question and
+the leak, since `Sinks.Many` keeps every subscriber referenced until it terminates.
+
+Proved end to end against the assembled app, not only in unit tests: creating a printer, opening its
+runtime, then deleting it logs `releasing the runtime of <id>` from `boundedElastic-1`. The unit
+tests were checked to bite first — turning `release` into a lookup fails two of them.
 
 ### A4 — delete the half-built {#a4}
 

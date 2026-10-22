@@ -3,12 +3,14 @@ package org.qw3rtrun.p3d.management.service;
 import lombok.RequiredArgsConstructor;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.ManagementEvent;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.management.model.PrinterEntity;
 import org.springframework.data.domain.Sort;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -34,10 +36,21 @@ public class MachineManagementImpl implements MachineManagementService {
                 .map(MachineManagementImpl::map);
     }
 
+    /**
+     * Removes the row, and says so.
+     *
+     * <p>The event is what lets {@code core} let go of the machine: it may be holding an open
+     * socket, a send window and a reply sink for a printer that has just stopped existing, and
+     * nothing else would ever tell it. Published only when a row was actually removed, so a delete
+     * of an unknown id stays the no-op it reads as.
+     */
     @Transactional
     @Override
     public void delete(UUID uuid) {
-        repo.deleteById(uuid);
+        repo.findById(uuid).ifPresent(entity -> {
+            repo.delete(entity);
+            eventBus.push(new MDeletedEvent(uuid, LocalDateTime.now()));
+        });
     }
 
     @Transactional

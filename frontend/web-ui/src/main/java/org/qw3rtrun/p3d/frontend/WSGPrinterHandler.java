@@ -23,7 +23,7 @@ public class WSGPrinterHandler implements WebSocketHandler {
     public Mono<Void> handle(WebSocketSession session) {
         log.info("handle()");
         var id = (UUID) session.getAttributes().get("id");
-        var printer = reactorManager.getReactor(id);
+        var printer = reactorManager.openReactor(id);
         return session.send(
                 printer.updates()
                         .<String>handle((value, sink) -> {

@@ -197,12 +197,14 @@ machine reported.
 
 Two rules for anything that touches it:
 
-- **A reactor is a resource and must be released.** `PrinterReactorManager` keeps a `HashMap<UUID,
-  PrinterReactor>` that is only ever added to. A printer deleted through the management API leaves a
-  live reactor, a live socket and a live `Sinks.Many` behind it. Anything that creates one owns
-  stopping it.
-- **`getReactor(id)` has a side effect** - it connects, if the descriptor says the printer was
-  connected - so it is not a getter and must not be called from a query path on a whim.
+- **A reactor is a resource and must be released.** `PrinterReactorManager` owns the map and
+  `release(uuid)` is how one goes away: it stops the reactor, which closes the terminal and
+  *completes* the update sink, so an SSE subscriber is told rather than left hanging. Anything that
+  creates a resource here owns stopping it, and says in a test that it did.
+- **`openReactor(id)` has a side effect** - it connects, if the descriptor says the printer was
+  connected - which is why it is not called `get`. Its pair is `release(id)`, and a printer deleted
+  from the farm releases its runtime through `MDeletedEvent` rather than through a call across the
+  module boundary.
 
 ## REST, SSE and WebSocket
 
@@ -313,8 +315,11 @@ the source, not suspected.
 - **`WSGPrinterHandler` cannot work.** It reads a session attribute nothing writes, and no client
   connects to `/ws-printer/*` - the UI uses SSE. It is also the only consumer of the
   `webSocketHandlerMapping` bean.
-- **`PrinterReactorManager` never releases a reactor.** `computeIfAbsent` into a `HashMap` keyed by
-  printer id, no removal, no `stop()`, and `delete(uuid)` on the management side does not reach it.
+- **The persisted `connected` flag is write-only.** `MachineManagementService.connect` and
+  `disconnect` are called by nothing but a test: `PrinterController.connect` goes to the reactor,
+  not to the management service, so the column is written `false` at creation and never again. That
+  makes `openReactor`'s reconnect-on-first-access close to dead code, and it is why a restart never
+  restores a connection. Plan item B3 owns it.
 - **`ApiApplication` registers a `MachineManagementService` that returns `null` from every method**
   under `@ConditionalOnMissingBean`, so `:backend:api` run on its own answers every management query
   with a null body instead of failing.

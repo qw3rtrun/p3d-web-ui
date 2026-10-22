@@ -140,7 +140,7 @@ class BlockingBoundaryTest {
     /**
      * The reactor lookup, which is the one that was never even lazy.
      *
-     * <p>{@code PrinterReactorManager.getReactor} reads the printer's row through the command
+     * <p>{@code PrinterReactorManager.openReactor} reads the printer's row through the command
      * gateway, builds a reactor and - on a row that says connected - opens a socket, all inside a
      * {@code synchronized} block. Every handler called it directly in its own body, so it ran
      * eagerly on the event loop before the returned publisher existed.

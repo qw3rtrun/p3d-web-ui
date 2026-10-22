@@ -32,7 +32,7 @@ public class PrinterController {
     /**
      * The printer's runtime, looked up off the event loop.
      *
-     * <p>{@code getReactor} is not the getter its name suggests. On a miss it reads the printer's
+     * <p>{@code openReactor} is not a lookup. On a miss it reads the printer's
      * row through the command gateway - blocking JDBC - builds a reactor, and connects a socket if
      * the row says the printer was connected, all inside a {@code synchronized} block. Every
      * handler below used to call it directly in its own body, so that ran on a Netty event-loop
@@ -46,7 +46,7 @@ public class PrinterController {
      * that is plan item A3, and it is a lifecycle change rather than a threading one.
      */
     private Mono<PrinterReactor> reactor(UUID id) {
-        return Mono.fromSupplier(() -> manager.getReactor(id)).subscribeOn(Schedulers.boundedElastic());
+        return Mono.fromSupplier(() -> manager.openReactor(id)).subscribeOn(Schedulers.boundedElastic());
     }
 
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)

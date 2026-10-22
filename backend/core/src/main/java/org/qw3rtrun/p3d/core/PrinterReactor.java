@@ -98,7 +98,33 @@ public class PrinterReactor {
         terminal.stop();
         terminal = null;
         printer.onOffline();
-        //terminal.disconnecting();
+    }
+
+    /**
+     * Releases everything this reactor holds, for good.
+     *
+     * <p>Not the same thing as {@link #disconnect()}, which is a state the printer can come back
+     * from: after {@code stop} the reactor is finished, its subscribers have been told so, and the
+     * manager has let go of it. It is what a deleted printer gets.
+     *
+     * <p>Safe on a reactor that never connected - which is the normal case for one built by a
+     * lookup and never used - because {@code disconnect} dereferences a terminal that would not be
+     * there.
+     *
+     * <p>The sink is completed rather than abandoned. A subscriber of {@link #updates()} is
+     * typically a browser holding an SSE connection; leaving the sink hanging leaves the browser
+     * waiting for a machine that no longer exists, and {@code Sinks.Many} keeps every one of them
+     * referenced until it terminates.
+     */
+    public void stop() {
+        log.info("stop()");
+        if (terminal != null) {
+            disconnect();
+        }
+        Sinks.EmitResult result = updates.tryEmitComplete();
+        if (result.isFailure()) {
+            log.warn("the update stream did not complete ({})", result);
+        }
     }
 
     private Mono<Void> onConnected(HostTerminal terminal) {

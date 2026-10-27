@@ -507,6 +507,83 @@ class HostTerminalTest {
     }
 
     /**
+     * An exhausted source completes the stream - which it used not to do at all.
+     *
+     * <p>{@code CommandProcessor.onComplete} was a log line and a commented-out
+     * {@code subscriber.onComplete()}, so a {@code Processor} swallowed a terminal signal and its
+     * subscriber could never learn that the source had ended. Against a live terminal the source is
+     * a {@code PublisherQueue} that never completes, which is why nothing noticed.
+     */
+    @Test
+    void anExhaustedSourceCompletesTheStream() {
+        var out = sendWindowOf("G28", "M105");
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(10)
+                .expectNext("N1 G28*18\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 M105*37\n")
+                .expectComplete()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * And it does not arrive before the last block is on the wire.
+     *
+     * <p>The source here runs out while the window is still waiting for an acknowledgement, so its
+     * final block is owed. Completing on {@code onComplete} directly would strand it:
+     * {@code write0} refuses to write once the stream is terminated, so it would be dropped in
+     * silence, which is the one failure this module exists to prevent.
+     *
+     * <p>The {@code pending} half of {@link HostTerminal.CommandProcessor#completeIfDrained} is a
+     * guard rather than something this can reach - a payload is only pulled when there is
+     * subscriber demand to write it, and the same drain writes it - so what is asserted is the
+     * reachable half: nothing completes while the window is waiting.
+     */
+    @Test
+    void completionWaitsForTheLastBlockToReachTheWire() {
+        var out = sendWindowOf("G28", "M105");
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(10)
+                .expectNext("N1 G28*18\n")
+                .expectNoEvent(Duration.ofMillis(50))
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 M105*37\n")
+                .expectComplete()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * A cancel is not a completion, which is Reactive Streams rule 2.4.
+     *
+     * <p>{@code cancel()} answered with {@code subscriber.onComplete()}, a terminal signal from a
+     * cancel path. Beyond being wrong it was expensive: {@code StepVerifier} cancels from inside
+     * its own {@code onNext} when an expectation does not match, the {@code onComplete} re-entered
+     * its state machine, and a failing send-window test span at 100% CPU until the build was
+     * killed rather than reporting the mismatch.
+     */
+    @Test
+    void aCancelIsNotACompletion() {
+        var out = sendWindow();
+        var completions = new java.util.concurrent.atomic.AtomicInteger();
+
+        StepVerifier.create(Flux.from(out).doOnComplete(completions::incrementAndGet), 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .thenCancel()
+                .verify(TIMEOUT);
+
+        assertEquals(0, completions.get(), "a cancelled stream must not also be completed");
+    }
+
+    /**
      * The {@code ok} that closes a resend handshake is credit, and nothing more.
      *
      * <p>Marlin answers a rejected block with {@code Error:}, {@code Resend: n} and then

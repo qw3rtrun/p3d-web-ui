@@ -929,8 +929,19 @@ they were written for.
    first, `request(0)` was ignored, and a source that over-produced was forwarded straight at the
    send window. `addPublisher` now also answers with a `Mono<Void>` that completes when the source
    is exhausted, which is what this item was needed *for* — see the note under prerequisite 2.
-2. **`CommandProcessor.onComplete` has `subscriber.onComplete()` commented out**, so an exhausted
-   source signals nothing downstream — a finished job would never be observed as finished.
+2. ~~**`CommandProcessor.onComplete` has `subscriber.onComplete()` commented out**, so an exhausted
+   source signals nothing downstream.~~ **Done** — an exhausted source completes the stream, once
+   everything it handed over is on the wire; completing directly from `onComplete` would have
+   dropped the blocks still owed. Removing the `onComplete` that `cancel()` answered with — a
+   Reactive Streams violation that also cost a debugging session every time a test expectation
+   failed — **leaked the connection**, because completing the outbound was what ended
+   reactor-netty's send. `HostTerminal` takes a dispose hook now.
+
+   **The stated reason for this prerequisite was wrong, though, and it is worth recording why.** A
+   finished job is *not* observed through this: C3 queues a job as one publisher among several in a
+   `PublisherQueue`, and the queue outlives every source in it, so `CommandProcessor.onComplete`
+   never fires in a live terminal. What C3 actually needs is the per-source completion that
+   prerequisite 1 added to `addPublisher`.
 3. **The transport publishes no acknowledgement signal.** `messageFlux()` deliberately drops
    `SimpleOkRs` and `AdvancedOkRs` because they "say nothing a subscriber did not already learn from
    the send window" — but no subscriber can see the send window. **C4** needs that signal; see

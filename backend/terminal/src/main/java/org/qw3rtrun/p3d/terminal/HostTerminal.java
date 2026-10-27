@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.terminal;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.GEvent;
@@ -41,13 +40,42 @@ import static java.lang.Math.min;
 import static java.lang.String.format;
 
 @Slf4j
-@RequiredArgsConstructor
 public class HostTerminal {
 
     private static final Logger TRAFFIC_LOGGER = LoggerFactory.getLogger(HostTerminal.class.getName() + "#traffic");
 
     private final Supplier<Flux<String>> inbound;
     private final Function<Publisher<String>, Mono<Void>> outbound;
+
+    /**
+     * How to close the socket, because cancelling the two halves does not.
+     *
+     * <p><strong>This had to exist the moment {@code cancel()} stopped faking a completion.</strong>
+     * Completing the outbound was what ended {@code reactor-netty}'s send and let the connection go;
+     * with that gone - it was a Reactive Streams violation and it cost a debugging session every
+     * time a test expectation failed - {@link #stop()} cancelled both halves and left the TCP
+     * connection {@code Established}. Observed, not reasoned about: a disconnect through the REST
+     * surface reported {@code OFFLINE}, sent its {@code M155 S0}, and left the socket open on the
+     * printer.
+     *
+     * <p>The constructor without it defaults to doing nothing, which is right for the tests that
+     * build a terminal over a {@code Sinks} rather than a socket - there is nothing to close.
+     */
+    private final Runnable disposeConnection;
+
+    public HostTerminal(Supplier<Flux<String>> inbound,
+                        Function<Publisher<String>, Mono<Void>> outbound) {
+        this(inbound, outbound, () -> {
+        });
+    }
+
+    public HostTerminal(Supplier<Flux<String>> inbound,
+                        Function<Publisher<String>, Mono<Void>> outbound,
+                        Runnable disposeConnection) {
+        this.inbound = inbound;
+        this.outbound = outbound;
+        this.disposeConnection = disposeConnection;
+    }
 
     /**
      * The reply bus, and a <em>safe</em> sink because it now has two emitting threads.
@@ -78,9 +106,15 @@ public class HostTerminal {
         return outbound.apply(outSide);
     }
 
+    /**
+     * Ends the session: both halves cancelled, and the socket actually closed.
+     *
+     * <p>The third line is the one that is easy to leave out - see {@link #disposeConnection}.
+     */
     public void stop() {
         outSide.cancel();
         inSide.handleCancel();
+        disposeConnection.run();
     }
 
     /**
@@ -413,6 +447,15 @@ public class HostTerminal {
          */
         private final AtomicBoolean terminated = new AtomicBoolean();
 
+        /**
+         * Set when the G-code source is exhausted; the drain loop turns it into a completion.
+         *
+         * <p>Separate from {@link #terminated} because they mean different things at different
+         * times: the source running out is not the end of the stream until what it already handed
+         * over has been written. See {@link #completeIfDrained()}.
+         */
+        private final AtomicBoolean sourceComplete = new AtomicBoolean();
+
         private final Supplier<String> report = () -> format("(s=%s, r=%s u=%s w=%s n=%d/%d b=%s)",
                 subscriptionRequested, requestedFromGCode, awaitingFrame, sentWithoutAck,
                 window.getInFlight(), window.getCapacity(), backpressure);
@@ -512,6 +555,7 @@ public class HostTerminal {
                 if (!terminated.get()) {
                     applyWindowEvents();
                     write();
+                    completeIfDrained();
                     long canProcess = canProcess();
                     if (canProcess > 0 && subscription != null) {
                         requestedFromGCode.inc(canProcess);
@@ -697,7 +741,23 @@ public class HostTerminal {
             processRequest();
         }
 
-        /** Idempotent, and the stream stays over: a second call and a late reply both do nothing. */
+        /**
+         * Idempotent, and the stream stays over: a second call and a late reply both do nothing.
+         *
+         * <p><strong>It no longer answers a cancel with {@code onComplete}.</strong> That is a
+         * terminal signal emitted from a cancel path, which Reactive Streams rule 2.4 forbids for
+         * the obvious reason: the subscriber asked to stop and is entitled to stop listening. It
+         * also cost a debugging session every time a send-window expectation failed -
+         * {@code StepVerifier} cancels from inside its own {@code onNext} when an expectation does
+         * not match, the {@code onComplete} re-entered its state machine, and the build spun at
+         * 100% CPU until somebody killed it instead of reporting the mismatch.
+         *
+         * <p><strong>What still closes the connection is {@code PrinterReactor.disconnect}</strong>,
+         * which disposes the retry subscription and so cancels the outbound {@code Mono} that
+         * {@code reactor-netty} is sending from. This method never held that job: {@code HostTerminal}
+         * is handed two lambdas and never the {@code Connection}, so it could only ever have ended
+         * a session by faking a completion - which is what it was doing.
+         */
         @Override
         public void cancel() {
             if (!terminated.compareAndSet(false, true)) {
@@ -708,7 +768,6 @@ public class HostTerminal {
             if (subscription != null) {
                 subscription.cancel();
             }
-            subscriber.onComplete();
         }
 
         @Override
@@ -747,10 +806,51 @@ public class HostTerminal {
             subscriber.onError(t);
         }
 
+        /**
+         * The source is exhausted - but not necessarily written out yet.
+         *
+         * <p>This used to be a log line and a commented-out {@code subscriber.onComplete()}, so an
+         * exhausted source signalled nothing downstream at all. A {@code Processor} that swallows a
+         * terminal signal is one its subscriber can never learn anything from.
+         *
+         * <p><strong>Completing here directly would drop commands.</strong> A payload sits in
+         * {@link #pending} until there is demand to write it, so a source that finishes while the
+         * subscriber is not asking leaves blocks unwritten - and {@link #write0} refuses to write
+         * once {@code terminated} is set. So this records that the source is done and lets the
+         * drain loop decide when that becomes a completion: see {@link #completeIfDrained()}.
+         */
         @Override
         public void onComplete() {
             log.info("GCode Complete {}", report.get());
-            //subscriber.onComplete();
+            sourceComplete.set(true);
+            processRequest();
+        }
+
+        /**
+         * Completes the subscriber once the source is done <em>and</em> everything is on the wire.
+         *
+         * <p>Drain loop only, so "is there anything left to write" is asked on the one thread that
+         * could be writing. The three things that can still be owed are the session's own
+         * {@code M110}, a replay the firmware asked for, and payloads pulled but not yet framed;
+         * none of them may be abandoned because the source ran out.
+         *
+         * <p><strong>It does not wait for acknowledgements.</strong> This stream carries blocks to
+         * the wire, and every one of them is on it; whether the firmware has taken them is a
+         * different question, answered block by block by {@code BlockAcknowledged}. A caller
+         * counting lines accepted - plan item C4 - reads those rather than this.
+         */
+        private void completeIfDrained() {
+            if (!sourceComplete.get() || terminated.get()) {
+                return;
+            }
+            if (opening != null || !replaying.isEmpty() || !pending.isEmpty()) {
+                return;
+            }
+            if (!terminated.compareAndSet(false, true)) {
+                return;
+            }
+            log.info("OUT: the source is exhausted and everything it gave us is written {}", report.get());
+            subscriber.onComplete();
         }
     }
 

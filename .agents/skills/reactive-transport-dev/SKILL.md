@@ -351,9 +351,17 @@ and a subscriber that assumes otherwise is correct only by the grace of its sour
 
 ### Cancellation must be idempotent and must not resurrect the stream
 
-`HostTerminal.stop()` cancels both halves. `ReplaySubscriber.handleCancel` nulls its subscription,
-which makes a second call a no-op; `CommandProcessor.cancel` calls `subscriber.onComplete()`, which
-is a terminal signal emitted from a cancel path.
+`HostTerminal.stop()` cancels both halves and then disposes the connection. All three are needed
+and the third is the one that is easy to leave out: cancelling a `Subscription` does not close a
+socket, and `CommandProcessor.cancel` used to paper over that by answering a cancel with
+`subscriber.onComplete()` - a terminal signal from a cancel path, which also completed
+`reactor-netty`'s outbound and so happened to end the session.
+
+**Removing the violation without replacing what it was accidentally doing leaks the connection.**
+That is not hypothetical: a disconnect reported `OFFLINE`, sent its `M155 S0`, and left the socket
+`Established` on the printer. `TerminalManager` passes `conn::dispose` in now. The rule to take
+from it: when a wrong mechanism is also load-bearing, find out what it was holding up before
+taking it away.
 
 ### Check what `tryEmit*` returns
 
@@ -472,15 +480,14 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   machine. Plan item C5 owns recovery and is where the signal belongs. Do not solve it by having
   the transport re-frame them: the window holds bytes rather than commands on purpose, and a
   relative move replayed under a new number is a move made twice.
-- **A failing expectation in a send-window test hangs the JVM instead of failing.** `StepVerifier`
-  cancels from inside its own `onNext` when an expectation does not match; `CommandProcessor.cancel`
-  answers a cancel with `subscriber.onComplete()`, which re-enters the verifier's state machine and
-  spins at 100% CPU until the build is killed. Emitting a terminal signal from a cancel path is the
-  Reactive Streams violation already listed above, and this is what it costs in practice. It was
-  not removed with the counter reset because `reactor-netty`'s outbound `Mono` completes when its
-  source does, so a send that never completes is a connection that never closes - which is a change
-  to how `HostTerminal.stop()` behaves and wants its own probe. **Know it before debugging a
-  "hanging" test: read the expectation, not the pipeline.**
+- ~~**A failing expectation in a send-window test hangs the JVM instead of failing.**~~ **Fixed**,
+  and the warning it came with was exactly right. `cancel()` no longer answers with
+  `subscriber.onComplete()`, so a mismatched expectation now reports in about three seconds instead
+  of spinning at 100% CPU - but the entry's other half came true the moment it was removed:
+  completing the outbound was what ended `reactor-netty`'s send, so `stop()` cancelled both halves
+  and left the TCP connection `Established`. Observed on a live disconnect, not reasoned about.
+  `HostTerminal` now takes a third constructor argument - how to dispose the connection - because
+  it never held one and so could only ever have ended a session by faking a completion.
 - **`onWait` is still an empty `// TODO Unsupported yet`.** `wait` means the firmware has an empty
   buffer and nothing to do, which is a different statement from `busy:` and currently says nothing
   to the window at all.
@@ -501,8 +508,13 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   is the whole reason a send window exists. For C4's "estimated remaining" that is the right signal
   to start from and not the right signal to stop at: at the end of a job the planner still holds
   seconds of motion that has been acknowledged and not performed.
-- **`CommandProcessor.onComplete` has `subscriber.onComplete()` commented out**, so upstream
-  completion is swallowed. Deliberate or not, it is undocumented.
+- ~~**`CommandProcessor.onComplete` has `subscriber.onComplete()` commented out.**~~ **Fixed** - an
+  exhausted source now completes the stream, once everything it handed over is on the wire.
+  Completing directly from `onComplete` would have dropped commands: a payload sits in `pending`
+  until there is demand to write it, and `write0` refuses to write once the stream is terminated.
+  So the source's completion is recorded and the drain loop decides when it becomes one.
+  **It does not wait for acknowledgements** - this stream carries blocks to the wire, and whether
+  the firmware took them is what `BlockAcknowledged` answers block by block.
 - ~~**`PublisherQueue` uses a `PriorityQueue` with partial synchronisation.**~~ **Fixed** - it is
   a `PriorityBlockingQueue` behind the same `wip` drain loop `CommandProcessor` uses, and the entry
   is kept because of what the rewrite turned up. Four of the rules it broke were invisible:

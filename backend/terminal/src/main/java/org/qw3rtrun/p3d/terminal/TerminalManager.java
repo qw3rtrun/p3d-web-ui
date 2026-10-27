@@ -31,7 +31,10 @@ public class TerminalManager {
                         () -> conn.inbound().receive()
                                 .asString(),
                         (p) -> conn.outbound()
-                                .sendString(p).then()
+                                .sendString(p).then(),
+                        // The terminal cancels its two halves; only the thing that opened the
+                        // connection can close it, and that is here.
+                        conn::dispose
                 ));
     }
 }

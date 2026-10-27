@@ -43,6 +43,15 @@ final class GcodeLines {
     }
 
     /**
+     * One block on its way to a machine, and what the file said around it.
+     *
+     * @param block the bare command, ready for the transport
+     * @param layer the layer the file last declared, or null if it never has
+     */
+    record Fed(String block, Integer layer) {
+    }
+
+    /**
      * The blocks worth transmitting, in file order.
      *
      * <p>Blank lines and comment-only lines are dropped rather than sent. Marlin would accept them,
@@ -50,9 +59,64 @@ final class GcodeLines {
      * sliced file is perhaps a tenth comments, so it is a tenth of the session spent on them.
      */
     static Flux<String> blocksOf(org.reactivestreams.Publisher<ByteBuffer> content) {
+        return feedOf(content).map(Fed::block);
+    }
+
+    /**
+     * The same, carrying the layer the file was last on - plan item C4's telemetry.
+     *
+     * <p><strong>The layer is read from the comments this otherwise throws away</strong>, which is
+     * the only place it exists: a slicer announces it as {@code ;LAYER:12} (Cura) or
+     * {@code ;LAYER_CHANGE} followed by {@code ;Z:0.4} (PrusaSlicer), and nothing in the G-code
+     * itself says what layer a move belongs to. So the comment is read on its way past and then
+     * dropped as before - it is still not something to send.
+     *
+     * <p>A file from a slicer that announces nothing simply never reports a layer, which is a fact
+     * rather than a gap.
+     */
+    static Flux<Fed> feedOf(org.reactivestreams.Publisher<ByteBuffer> content) {
+        var layer = new java.util.concurrent.atomic.AtomicReference<Integer>();
         return lines(content)
-                .map(GcodeLines::blockOf)
-                .filter(block -> !block.isEmpty());
+                .handle((line, sink) -> {
+                    var declared = layerOf(line);
+                    if (declared != null) {
+                        layer.set(declared);
+                    }
+                    var block = blockOf(line);
+                    if (!block.isEmpty()) {
+                        sink.next(new Fed(block, layer.get()));
+                    }
+                });
+    }
+
+    /**
+     * The layer a comment declares, or null.
+     *
+     * <p>Read off the comment text rather than the raw line, so a {@code ;} inside a parenthesised
+     * comment does not produce a layer number - the same reason the block reading goes through
+     * {@code :gcode} rather than a pattern.
+     */
+    static Integer layerOf(String line) {
+        var blocks = GBlockReader.Companion.blocks(line + "\n").iterator();
+        if (!blocks.hasNext()) {
+            return null;
+        }
+        for (GToken token : blocks.next().getRaw()) {
+            if (!(token instanceof GComment comment)) {
+                continue;
+            }
+            var text = comment.getString().trim();
+            int colon = text.indexOf(':');
+            if (colon < 0 || !text.substring(0, colon).trim().equalsIgnoreCase("LAYER")) {
+                continue;
+            }
+            try {
+                return Integer.valueOf(text.substring(colon + 1).trim());
+            } catch (NumberFormatException notANumber) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /**

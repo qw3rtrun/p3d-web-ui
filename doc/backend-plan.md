@@ -82,7 +82,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**C1**~~ | [the G-code file store](#c1) | ~~Upload, content hash, size, line count, estimates; streamed in and out, never buffered~~ **done** — a fifth module, content-addressed on disk, one chunk in flight | C2 |
 | ~~**C2**~~ | [the job and its lifecycle](#c2) | ~~A job entity, a state machine, and the events each transition publishes~~ **done** — a sixth module, a typed refusal instead of an exception, and the event registry on | C3 |
 | ~~**C3**~~ | [the streaming engine](#c3) | ~~A file fed through `PublisherQueue` at `BACKGROUND` while interactive commands preempt~~ **done** — 96,152 blocks to a stand-in in 25s, preempted mid-print, cancellable | C4, C5 |
-| **C4** | [progress and telemetry](#c4) | Lines accepted, elapsed, estimated remaining — driven by acknowledgements, not by what was sent | C5 |
+| ~~**C4**~~ | [progress and telemetry](#c4) | ~~Lines accepted, elapsed, estimated remaining — driven by acknowledgements, not by what was sent~~ **done** — blocks and bytes, checkpointed on a timer, with the in-flight gap reported rather than inferred | C5 |
 | **C5** | [pause, cancel, and survive a disconnect](#c5) | The operations an eight-hour print actually needs | D1 |
 | **D1** | [assignment](#d1) | Match a queued job to a capable, idle machine; a farm queue and a per-machine queue | D2 |
 | **D2** | [the farm view](#d2) | One live stream for N printers instead of N streams of one | — |
@@ -1011,8 +1011,56 @@ that may still be replayed after a `Resend:`; progress counted on the way out wo
 machine and go backwards on recovery. The number that means something is the last line the firmware
 acknowledged, which only the send window knows — hence the prerequisite in C3.
 
+> **That reasoning turned out to be wrong about *where* the double count would happen, and the
+> correction matters because the whole item rests on it.** A replay is served from `GSendWindow`
+> into `CommandProcessor`'s own `replaying` deque and written from there; `pending`, which is what
+> `onNext` fills from the source, is never revisited. So **a resend does not re-enter the job's
+> source**, and a counter driven by what the source emitted cannot double-count on one. Asserted
+> rather than argued: `aResendReplaysWithoutPullingTheSourceAgain` pulls five blocks for the seven
+> that go on the wire.
+>
+> What a send count *does* run ahead of the firmware by is the send window — at most four blocks,
+> because the window will not pull another until one is acknowledged. So the conclusion stands with
+> a different reason: the acknowledgement is still the number that means something, but the gap is
+> four blocks rather than unbounded, and **both are reported** instead of one being inferred.
+
 **Done when.** Progress never moves backwards except across a deliberate rewind; it survives a
 restart to within one persisted checkpoint; a resend during a print does not corrupt the count.
+
+**Done.** `JobProgress` carries blocks sent, how many of those are still in flight, bytes of the
+file read, the layer, and the times. `JobProgressed` is published on a timer and `jobs` writes a
+checkpoint from it.
+
+**The fraction is bytes and the count is blocks**, which is the one design decision worth defending.
+Bytes are exact and free — the file's size is known before anything starts. A file's *block* count
+is not knowable without reading it, because a tenth of a sliced file is comments and blank lines
+that are dropped rather than sent, so the line count C1 records is an upper bound and would leave a
+progress bar permanently short of the end. Counting blocks up front would mean tokenizing every
+file at upload to answer a question only a progress bar asks.
+
+**Published on a timer, persisted from the same event.** A hundred-thousand-block job would
+otherwise be a hundred thousand events and a hundred thousand writes, to answer a question a page
+asks about once a second and a restart asks once. One second is fast enough for a human and slow
+enough for a database — and "often enough" is then a number that was chosen rather than assumed.
+
+**The layer comes out of the comments the feed throws away**, which is the only place it exists:
+nothing in the G-code says what layer a move belongs to, and a slicer announces it as `;LAYER:12`.
+So the comment is read on the way past and still not sent.
+
+**Verified by running**, against the TCP stand-in with a 6,701,673-byte file:
+
+* progress climbed monotonically — `blocks=6052 … 17520 … 34970 … 51356 … 61629 … 72800`, bytes and
+  percentage with it, and **the layer tracked from 15 to 181** over the same readings;
+* `inFlight` sat at **2** throughout, which is the send window's gap and the bound on how far
+  "sent" runs ahead of "accepted";
+* **killed mid-print at 110,339 blocks and restarted, the job came back at 120,138 blocks, 68.5%,
+  layer 300**, timestamped six seconds after the last reading the test had seen — one checkpoint
+  interval, which is exactly what the done-when asks for;
+* `aResendReplaysWithoutPullingTheSourceAgain` is the third condition, asserted as demand.
+
+What it leaves open is C5's: the restarted job came back **`RUNNING` with nothing feeding it**. The
+checkpoint is what a recovery will read, and reconciling a job in that state at startup is recovery
+rather than telemetry.
 
 ### C5 — pause, cancel, and survive a disconnect {#c5}
 

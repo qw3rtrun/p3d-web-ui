@@ -367,7 +367,69 @@ class JobServiceTest {
         });
     }
 
-    /** The listing is newest first, and a machine's own jobs are a narrower question. */
+    /**
+     * A checkpoint is kept, and read back - plan item C4's second done-when.
+     *
+     * <p>"Within one persisted checkpoint" is the promise, and the point of writing it at all is a
+     * restart: a job that was half printed when the process died should say so rather than
+     * starting from nothing.
+     */
+    @Test
+    void progressIsCheckpointedAndReadBack() {
+        var machine = UUID.randomUUID();
+        var job = queued("progress.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+
+        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
+                new org.qw3rtrun.p3d.api.jobs.JobProgress(4200, 3, 150_000, 1_000_000, 12,
+                        LocalDateTime.now().minusMinutes(2), LocalDateTime.now())));
+
+        var read = jobs.fetch(job.id()).orElseThrow().progress();
+        assertEquals(4200, read.blocksSent());
+        assertEquals(4197, read.blocksAccepted(), "three were still in the send window");
+        assertEquals(150_000, read.bytesSent());
+        assertEquals(12, read.layer());
+        assertEquals(0.15, read.fraction(), 0.0001);
+    }
+
+    /**
+     * A checkpoint that lands after the job stopped does not revive its progress.
+     *
+     * <p>The timer and the cancel race by construction - {@code core} publishes about once a second
+     * and a cancel can land between a reading and its delivery - so a late one would otherwise
+     * overwrite the last real checkpoint and make a stopped job look as though it had got further.
+     */
+    @Test
+    void aCheckpointArrivingAfterTheJobStoppedIsIgnored() {
+        var machine = UUID.randomUUID();
+        var job = queued("late-progress.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
+                new org.qw3rtrun.p3d.api.jobs.JobProgress(100, 0, 1000, 10_000, 1,
+                        LocalDateTime.now(), LocalDateTime.now())));
+        jobs.cancel(job.id(), "stopped");
+
+        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
+                new org.qw3rtrun.p3d.api.jobs.JobProgress(9999, 0, 9999, 10_000, 99,
+                        LocalDateTime.now(), LocalDateTime.now())));
+
+        var read = jobs.fetch(job.id()).orElseThrow().progress();
+        assertEquals(100, read.blocksSent(), "the checkpoint from while it was running");
+    }
+
+    /** A job that never ran reports nothing rather than zero-of-zero. */
+    @Test
+    void aJobThatNeverRanHasNoProgress() {
+        var job = queued("never-run.gcode");
+
+        var read = jobs.fetch(job.id()).orElseThrow().progress();
+        assertEquals(0, read.blocksSent());
+        assertNull(read.at());
+    }
+
+    /** The listing is newest first, and a machine's own jobs are a narrower question. */    /** The listing is newest first, and a machine's own jobs are a narrower question. */
     @Test
     void jobsCanBeListedWholeOrPerMachine() {
         var machine = UUID.randomUUID();

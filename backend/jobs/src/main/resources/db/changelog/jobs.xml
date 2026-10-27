@@ -56,4 +56,32 @@
         </createIndex>
     </changeSet>
 
+    <!--
+      Where a print had got to, checkpointed (plan item C4).
+
+      Written on a timer rather than per block: a hundred-thousand-block job would otherwise be a
+      hundred thousand writes to answer a question a restart asks once. So these columns are
+      "within one checkpoint" rather than exact, which is what the plan item asks for and what the
+      column names should not be read as promising.
+
+      blocks_sent is what the feed handed to the machine; blocks_in_flight is how many of those the
+      firmware had not acknowledged. The difference is bounded by the send window and is kept
+      because on a *failed* job it is the difference between what was sent and what was printed -
+      which is what plan item C5 has to reason about.
+
+      Progress is by bytes because that fraction is exact and free: the file's size is known before
+      anything starts. A block count of the file is not known without reading it, since a tenth of
+      a sliced file is comments that are never sent.
+    -->
+    <changeSet id="2" author="agentic">
+        <addColumn tableName="print_job">
+            <column name="blocks_sent" type="bigint"/>
+            <column name="blocks_in_flight" type="int"/>
+            <column name="bytes_sent" type="bigint"/>
+            <column name="bytes_total" type="bigint"/>
+            <column name="layer" type="int"/>
+            <column name="progress_at" type="timestamp"/>
+        </addColumn>
+    </changeSet>
+
 </databaseChangeLog>

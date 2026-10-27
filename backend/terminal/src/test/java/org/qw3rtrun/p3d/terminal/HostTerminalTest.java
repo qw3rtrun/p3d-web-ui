@@ -507,6 +507,42 @@ class HostTerminalTest {
     }
 
     /**
+     * <strong>A resend does not pull the source again</strong>, which is plan item C4's third
+     * done-when and the thing its progress count rests on.
+     *
+     * <p>A replay comes out of {@code GSendWindow} into {@code replaying} and is written from
+     * there; {@code pending}, which is what {@code onNext} fills from the source, is never
+     * revisited. So a counter driven by what the <em>source</em> emitted cannot double-count on a
+     * resend, and the plan's decision 3 is wrong to say it would - its conclusion that the
+     * acknowledgement is the trustworthy signal stands, its reason for distrusting the other count
+     * does not.
+     *
+     * <p>Measured as demand, because demand is what a source is asked for: five blocks are pulled
+     * for five blocks of G-code, across a resend that put two of them on the wire twice.
+     */
+    @Test
+    void aResendReplaysWithoutPullingTheSourceAgain() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .then(() -> receive("Resend: 3"))
+                .expectNext("N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .expectNext("N5 G1 X5*96\n")
+                .then(() -> assertEquals(5, pulled.stream().mapToLong(Long::longValue).sum(),
+                        "the source was asked for " + pulled + ", which must total the five blocks"
+                                + " it produced and not the seven that went on the wire"))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
      * An exhausted source completes the stream - which it used not to do at all.
      *
      * <p>{@code CommandProcessor.onComplete} was a log line and a commented-out

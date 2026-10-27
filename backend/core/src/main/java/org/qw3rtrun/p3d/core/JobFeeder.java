@@ -5,11 +5,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.jobs.JobFeedCompleted;
 import org.qw3rtrun.p3d.api.jobs.JobFeedFailed;
+import org.qw3rtrun.p3d.api.jobs.JobProgress;
+import org.qw3rtrun.p3d.api.jobs.JobProgressed;
 import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import reactor.core.Disposable;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
 import java.time.LocalDateTime;
@@ -59,7 +62,7 @@ public class JobFeeder {
      *                  finished one
      */
     private record Feed(UUID jobId, UUID machineId, Sinks.Empty<Void> stop, AtomicLong sent,
-                        AtomicBoolean cancelled, Disposable subscription) {
+                        AtomicBoolean cancelled, Disposable subscription, Progress progress) {
     }
 
     /**
@@ -92,16 +95,25 @@ public class JobFeeder {
                     + ", so nothing could be sent to it");
             return;
         }
+        var file = files.fetch(event.fileId()).orElse(null);
+        if (file == null) {
+            fail(event, 0, "there is no file " + event.fileId() + " to print");
+            return;
+        }
 
         var stop = Sinks.<Void>empty();
         var sent = new AtomicLong();
         var cancelled = new AtomicBoolean();
+        var progress = new Progress(file.sizeBytes(), LocalDateTime.now());
 
-        var lines = GcodeLines.blocksOf(files.read(event.fileId()))
-                .doOnNext(block -> sent.incrementAndGet())
+        var lines = GcodeLines.feedOf(
+                        Flux.from(files.read(event.fileId())).doOnNext(progress::read))
+                .doOnNext(fed -> progress.block(sent.incrementAndGet(), fed.layer()))
+                .map(GcodeLines.Fed::block)
                 .takeUntilOther(stop.asMono());
 
-        log.info("job {} is feeding {} to {}", event.jobId(), event.fileId(), event.machineId());
+        log.info("job {} is feeding {} ({} bytes) to {}", event.jobId(), file.name(),
+                file.sizeBytes(), event.machineId());
         var subscription = reactor.feed(lines).subscribe(
                 nothing -> {
                 },
@@ -109,7 +121,78 @@ public class JobFeeder {
                 () -> finished(event, sent.get(), cancelled.get(), null));
 
         feeding.put(event.jobId(), new Feed(event.jobId(), event.machineId(), stop, sent,
-                cancelled, subscription));
+                cancelled, subscription, progress));
+    }
+
+    /**
+     * What has gone out, and how much of the file it came from.
+     *
+     * <p><strong>Counted from what the job's source emitted, which is monotone and immune to a
+     * resend.</strong> That is worth stating because plan decision 3 says the opposite - that
+     * counting what the feeder handed over "is wrong in exactly the case that matters: after a
+     * {@code Resend:} the transport replays blocks the job already counted". It does not: a replay
+     * is served from {@code GSendWindow} into {@code CommandProcessor}'s own {@code replaying}
+     * deque and written from there, and the source is never pulled a second time. The decision's
+     * conclusion - that the acknowledgement is the trustworthy signal - is right; its reason for
+     * distrusting this count is not.
+     *
+     * <p>What this number <em>does</em> run ahead of the firmware by is the send window: at most
+     * four blocks, because the window will not pull another until one is acknowledged. That bound
+     * is reported rather than hidden, as {@code JobProgress.inFlight}.
+     */
+    private static final class Progress {
+        private final long bytesTotal;
+        private final LocalDateTime startedAt;
+        private final AtomicLong bytesSent = new AtomicLong();
+        private final AtomicLong blocks = new AtomicLong();
+        private final java.util.concurrent.atomic.AtomicReference<Integer> layer =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        private volatile int inFlight;
+
+        Progress(long bytesTotal, LocalDateTime startedAt) {
+            this.bytesTotal = bytesTotal;
+            this.startedAt = startedAt;
+        }
+
+        void read(java.nio.ByteBuffer chunk) {
+            bytesSent.addAndGet(chunk.remaining());
+        }
+
+        void block(long count, Integer onLayer) {
+            blocks.set(count);
+            if (onLayer != null) {
+                layer.set(onLayer);
+            }
+        }
+
+        void acknowledged(int outstanding) {
+            inFlight = outstanding;
+        }
+
+        JobProgress snapshot() {
+            return new JobProgress(blocks.get(), inFlight, Math.min(bytesSent.get(), bytesTotal),
+                    bytesTotal, layer.get(), startedAt, LocalDateTime.now());
+        }
+    }
+
+    /**
+     * Publishes where every running job has got to.
+     *
+     * <p><strong>On a timer rather than per block, and that is the whole of the rate decision.</strong>
+     * A hundred-thousand-block job would otherwise be a hundred thousand events and, behind them, a
+     * hundred thousand writes - to answer a question a page asks about once a second and a restart
+     * asks once. A second is fast enough for a human and slow enough for a database.
+     */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${p3d.jobs.progress-interval:1000}")
+    public void reportProgress() {
+        feeding.values().forEach(feed -> {
+            var reactor = reactors.runtimeOf(feed.machineId());
+            if (reactor != null) {
+                feed.progress().acknowledged(reactor.blocksInFlight());
+            }
+            events.publishEvent(new JobProgressed(feed.jobId(), feed.machineId(),
+                    feed.progress().snapshot()));
+        });
     }
 
     /**

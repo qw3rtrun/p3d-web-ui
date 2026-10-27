@@ -575,6 +575,11 @@ the source, not suspected.
   the process dies between the last block and the listener, the job is left `RUNNING` with nothing
   feeding it. C5 has to reconcile that at startup, and already has to for a job whose machine went
   away mid-print.
+- **Progress is approximate by design, and the column names do not say so.** `blocks_sent` and the
+  rest are a checkpoint written about once a second, not a ledger - a restart reads them to within
+  one interval. Anything that needs an exact count needs a different mechanism and a reason.
+- **A restarted job comes back `RUNNING` with nothing feeding it.** The checkpoint survives, which
+  is what C4 promised, and nothing acts on it: reconciling a job in that state at startup is C5's.
 - **Resuming a paused job fails it.** The feed holds no position in the file, so resuming would
   restart at line one on a half-printed part. Pausing genuinely stops the feed; resuming is refused
   with that sentence as the job's reason. C5 owns real recovery, and until then pause is a stop.

@@ -173,6 +173,25 @@ public class JobServiceImpl implements JobService {
         complete(event.jobId());
     }
 
+    /**
+     * A running job got further, so the checkpoint moves.
+     *
+     * <p>Arrives about once a second rather than once a block - {@code core} publishes on a timer -
+     * so this is one write per second per running printer, which is what "persisted often enough to
+     * survive a restart" costs. The plan item asks for a checkpoint and not a ledger.
+     *
+     * <p>Plain and transactional for the same reason as the two below: it is published from a
+     * reactive thread with no transaction to tie a durable publication to.
+     */
+    @EventListener
+    @Transactional
+    public void onProgress(org.qw3rtrun.p3d.api.jobs.JobProgressed event) {
+        repo.findById(event.jobId()).ifPresent(job -> {
+            job.progressed(event.progress());
+            repo.save(job);
+        });
+    }
+
     /** The feed stopped before the file did - see {@link #onFeedCompleted} for why this is plain. */
     @EventListener
     @Transactional

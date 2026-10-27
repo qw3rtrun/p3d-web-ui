@@ -283,6 +283,20 @@ public class PrinterReactor {
         return queue.addPublisher(Priority.BACKGROUND, blocks);
     }
 
+    /**
+     * How many blocks the firmware has not acknowledged yet.
+     *
+     * <p>The gap between what a job has sent and what the machine has taken - at most the send
+     * window, because the window will not pull another block until one comes back. Plan item C4
+     * reports it rather than hiding it, so that "sent" is never mistaken for "printed".
+     *
+     * <p>Read off the last {@code BlockAcknowledged}, which is the only place the count exists: the
+     * send window is inside the transport and no subscriber can see one.
+     */
+    public int blocksInFlight() {
+        return printer.getBlocksInFlight();
+    }
+
     /** Passes an edited spec to the aggregate - see {@code PrinterReactorManager.redeclare}. */
     public void declared(MachineSpec spec) {
         printer.declared(spec);

@@ -15,6 +15,7 @@ import org.springframework.context.annotation.Configuration;
  * restart; that is plan item B2.
  */
 @Configuration
+@org.springframework.scheduling.annotation.EnableScheduling
 public class CoreConfiguration {
 
     @Bean

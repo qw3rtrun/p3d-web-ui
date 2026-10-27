@@ -91,6 +91,21 @@ public class PrinterState implements PrinterAggregate {
         return profile;
     }
 
+    /**
+     * How many blocks the machine has taken and not acknowledged, as of the last one it did.
+     *
+     * <p>Kept here because this is where every reply lands, and read by plan item C4 so a job can
+     * report what is still in flight rather than claiming that everything sent has been printed.
+     * It is a snapshot of the transport's send window and nothing derives from it - the aggregate
+     * makes no decision on this number.
+     */
+    private volatile int blocksInFlight;
+
+    /** See {@link #blocksInFlight}. */
+    public int getBlocksInFlight() {
+        return blocksInFlight;
+    }
+
     /** What a human declared about this machine, never null. */
     public MachineSpec getSpec() {
         return spec;
@@ -172,7 +187,10 @@ public class PrinterState implements PrinterAggregate {
      */
     public void onEvent(GEvent event) {
         switch (event) {
-            case BlockAcknowledged _ -> transition(connection.blockAcknowledged());
+            case BlockAcknowledged ack -> {
+                blocksInFlight = ack.inFlight();
+                transition(connection.blockAcknowledged());
+            }
             case MachineBusyEvent e -> transition(connection.busyReported(e.reason()));
             case ErrorReportEvent e -> transition(connection.faulted(e.message()));
             case TemperatureReportedEvent e -> {

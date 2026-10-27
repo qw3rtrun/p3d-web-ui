@@ -9,6 +9,7 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.qw3rtrun.p3d.api.jobs.Job;
+import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
 
@@ -66,6 +67,25 @@ public class JobEntity {
     @Column(name = "finished_at")
     LocalDateTime finishedAt;
 
+    /**
+     * The last progress checkpoint - see the changeset for why these are approximate.
+     *
+     * <p>Null on a job that has never run, which is a different statement from zero: a job that has
+     * sent no blocks because it has not started is not a job that is stuck at the first one.
+     */
+    @Column(name = "blocks_sent")
+    Long blocksSent;
+    @Column(name = "blocks_in_flight")
+    Integer blocksInFlight;
+    @Column(name = "bytes_sent")
+    Long bytesSent;
+    @Column(name = "bytes_total")
+    Long bytesTotal;
+    @Column(name = "layer")
+    Integer layer;
+    @Column(name = "progress_at")
+    LocalDateTime progressAt;
+
     /** A new job: queued, on no machine, with nothing having happened to it yet. */
     public JobEntity(UUID id, UUID fileId, String fileName, LocalDateTime createdAt) {
         this.id = id;
@@ -115,8 +135,40 @@ public class JobEntity {
         return new JobStateChanged(id, fileId, previous, next, machineId, why, clock);
     }
 
+    /**
+     * Records a progress checkpoint.
+     *
+     * <p>Only while the job is running: a checkpoint that arrived after a cancel - the timer and
+     * the cancel race by construction - would otherwise overwrite the last real one and make a
+     * stopped job look as though it had got further.
+     */
+    public void progressed(JobProgress progress) {
+        if (state != JobState.RUNNING) {
+            return;
+        }
+        blocksSent = progress.blocksSent();
+        blocksInFlight = progress.inFlight();
+        bytesSent = progress.bytesSent();
+        bytesTotal = progress.bytesTotal();
+        layer = progress.layer();
+        progressAt = progress.at();
+    }
+
     /** This row as the record that leaves the module. An entity never does. */
     public Job describe() {
-        return new Job(id, fileId, fileName, machineId, state, reason, createdAt, startedAt, finishedAt);
+        return new Job(id, fileId, fileName, machineId, state, reason, createdAt, startedAt,
+                finishedAt, progress());
+    }
+
+    /** The checkpoint as a value, or {@link JobProgress#none()} for a job that never ran. */
+    private JobProgress progress() {
+        if (progressAt == null) {
+            return JobProgress.none();
+        }
+        return new JobProgress(blocksSent == null ? 0 : blocksSent,
+                blocksInFlight == null ? 0 : blocksInFlight,
+                bytesSent == null ? 0 : bytesSent,
+                bytesTotal == null ? 0 : bytesTotal,
+                layer, startedAt, progressAt);
     }
 }

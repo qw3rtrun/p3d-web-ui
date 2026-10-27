@@ -138,6 +138,13 @@ Three things to know before changing it:
 **It is not a count of what the firmware has *executed*.** `ok` means queued, which is the whole
 reason the send window exists. A block acknowledged is a block the planner accepted.
 
+**A resend does not re-enter the source, and a caller counting its own emissions may rely on that.**
+A replay comes out of `GSendWindow` into `CommandProcessor`'s `replaying` deque and is written from
+there; `pending`, which `onNext` fills from the source, is never revisited. So a layer above that
+counts what it handed over is monotone across a resend - it runs ahead of the firmware by the send
+window and by nothing else. The plan's decision 3 said otherwise and was corrected; see
+`aResendReplaysWithoutPullingTheSourceAgain`, which pulls five blocks for the seven that go out.
+
 ### The queue hands demand to one source at a time, and says when one finishes
 
 `PublisherQueue` drains several sources into one subscriber, highest priority first, so an

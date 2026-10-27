@@ -21,6 +21,7 @@ import java.util.UUID;
  * @param createdAt  when it was queued
  * @param startedAt  when a machine first began printing it, or null
  * @param finishedAt when it reached a terminal state, or null
+ * @param progress   the last checkpoint, never null. Approximate by design - see {@link JobProgress}
  */
 public record Job(UUID id,
                   UUID fileId,
@@ -30,5 +31,10 @@ public record Job(UUID id,
                   String reason,
                   LocalDateTime createdAt,
                   LocalDateTime startedAt,
-                  LocalDateTime finishedAt) {
+                  LocalDateTime finishedAt,
+                  JobProgress progress) {
+
+    public Job {
+        progress = progress == null ? JobProgress.none() : progress;
+    }
 }

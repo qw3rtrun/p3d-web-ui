@@ -27,5 +27,6 @@
  */
 @org.springframework.modulith.ApplicationModule(
         displayName = "Frontend",
-        allowedDependencies = {"api::model", "api::msg", "api::control", "api::management", "api::files"})
+        allowedDependencies = {"api::model", "api::msg", "api::control", "api::management",
+                "api::files", "api::jobs"})
 package org.qw3rtrun.p3d.frontend;

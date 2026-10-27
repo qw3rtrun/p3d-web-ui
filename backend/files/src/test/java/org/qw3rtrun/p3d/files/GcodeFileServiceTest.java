@@ -138,7 +138,7 @@ class GcodeFileServiceTest {
 
     @Test
     void anUnknownIdReadsAsEmptyRatherThanFailing() {
-        assertNull(Mono.from(files.fetch(UUID.randomUUID())).block());
+        assertTrue(files.fetch(UUID.randomUUID()).isEmpty());
         assertEquals(0, Flux.from(files.read(UUID.randomUUID())).count().block());
     }
 
@@ -146,7 +146,7 @@ class GcodeFileServiceTest {
     void aStoredFileCanBeFetchedById() {
         var stored = store("fetchable.gcode", contentOf("40"));
 
-        var fetched = Mono.from(files.fetch(stored.id())).block();
+        var fetched = files.fetch(stored.id()).orElse(null);
 
         assertNotNull(fetched);
         assertEquals(stored.contentHash(), fetched.contentHash());
@@ -159,7 +159,7 @@ class GcodeFileServiceTest {
 
         files.delete(stored.id());
 
-        assertNull(Mono.from(files.fetch(stored.id())).block());
+        assertTrue(files.fetch(stored.id()).isEmpty());
         assertEquals(0, Flux.from(files.read(stored.id())).count().block(),
                 "and the bytes went with it");
     }

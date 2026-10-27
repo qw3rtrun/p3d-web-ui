@@ -31,6 +31,7 @@ and say so** rather than applying this skill's rules to them.
 | **core** | `:backend:core` | `org.qw3rtrun.p3d.core` | `api`, `:backend:terminal`, `:gcode`, Reactor, spring-context |
 | **printer-management** | `:backend:printer-management` | `org.qw3rtrun.p3d.management` | `api`, Spring Data JPA, Liquibase |
 | **files** | `:backend:files` | `org.qw3rtrun.p3d.files` | `api`, `:gcode`, Spring Data JPA, Liquibase, Reactor |
+| **jobs** | `:backend:jobs` | `org.qw3rtrun.p3d.jobs` | `api`, Spring Data JPA, Liquibase, Modulith events |
 | **frontend** | `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | `api`, WebFlux, Thymeleaf, the Vue build |
 | **app** | `:app` | `org.qw3rtrun.p3d` | everything. Assembly only |
 | *library* | `:gcode` | `org.qw3rtrun.p3d.g` | the Kotlin stdlib. **Nothing else** (`low-level-protocol-dev`) |
@@ -103,16 +104,17 @@ Never `block()` on a pipeline thread, and never `Thread.sleep`. If a test needs 
 
 ## Spring Modulith - the declared structure
 
-**Five modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
+**Six modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
 `:app`:
 
 | Module | Package | Exports / depends on |
 |---|---|---|
-| Shared API | `org.qw3rtrun.p3d.api` | closed, exporting five `@NamedInterface`s: `model`, `msg`, `management`, `control`, `files` |
+| Shared API | `org.qw3rtrun.p3d.api` | closed, exporting six `@NamedInterface`s: `model`, `msg`, `management`, `control`, `files`, `jobs` |
 | Printer core | `org.qw3rtrun.p3d.core` | `api::model`, `api::msg`, `api::control` — **not** `api::management` |
 | Machine management | `org.qw3rtrun.p3d.management` | `api::model`, `api::msg`, `api::management` |
 | G-code files | `org.qw3rtrun.p3d.files` | `api::files` |
-| Frontend | `org.qw3rtrun.p3d.frontend` | all five named interfaces. Names no other submodel |
+| Print jobs | `org.qw3rtrun.p3d.jobs` | `api::jobs`, `api::files`, `api::msg` |
+| Frontend | `org.qw3rtrun.p3d.frontend` | all six named interfaces. Names no other submodel |
 
 **`api` is not `sharedModules` and must not become it again.** A shared module is exempt from the
 dependency checks entirely, which is precisely the exemption that let `core` call
@@ -350,6 +352,49 @@ Two rules for anything that touches the runtime:
   dial. Its pair is `release(id)`; a printer deleted from the farm releases its runtime through
   `MDeletedEvent` rather than through a call across the module boundary.
 
+## A state machine is a table, a refusal is a value
+
+Plan item C2 added the print queue. The shape it establishes is the one to copy for the next thing
+with states in it, and it is the same shape `ConnectionLifecycle` arrived at from the other end.
+
+- **The legal moves live on the enum.** `JobState.canMoveTo` is the whole table. A page choosing
+  which buttons to show, a scheduler choosing what it may assign, and the service enforcing it are
+  one question; three answers is how a UI comes to offer an action the backend refuses. Assert the
+  whole table in a test - every state against every state - rather than the edges that came to mind.
+- **The entity moves itself.** `JobEntity.moveTo` returns the event it caused or null, and sets the
+  timestamps that belong to the transition: `startedAt` only on the first `RUNNING`, so a resume
+  does not make a job look as though it started twice.
+- **A refusal is a sealed type, not an exception.** `JobOutcome.Refused` carries where the job
+  actually is, what was asked, and a sentence. The REST layer maps it to 409 and 404 without
+  guessing from an exception's class. Nothing reaches the database to discover that a move was
+  illegal.
+- **Terminal means terminal**, including to other terminal states. Re-running means a new row. A
+  finished job is a record, and C5 writes recovery information onto exactly those.
+- **One event with from/to beats one event per transition.** `releasedAMachine()` is a question a
+  scheduler asks and no single `JobStartedEvent`-style record can answer.
+
+## The event publication registry
+
+`@ApplicationModuleListener` is `@TransactionalEventListener` + `@Async` + `@Transactional`, and
+turning it on has three consequences worth knowing before the first one is written:
+
+- **It needs its table as a changeset.** `EVENT_PUBLICATION` lives in
+  `backend/jobs/src/main/resources/db/changelog/modulith-events.xml`, carried by the first module
+  that publishes durably and included by `:app`. Without it every publishing transaction dies on
+  commit. Liquibase owns it rather than `spring.modulith.events.jdbc.schema-initialization`, for
+  the same reason nothing here uses `ddl-auto`.
+- **Every event type must round-trip through JSON, and that is not free.** The registry serialises
+  on publish and *deserialises to replay*. `api`'s management events are Kotlin data classes, which
+  Jackson cannot construct - so publishing and delivery worked and only recovery was broken, which
+  is the half the registry exists for. The fix is a `tools.jackson.databind.JacksonModule` bean
+  (Modulith's own extension point); **a `JsonMapper` bean would quietly become the whole
+  application's** and let one module decide how the web layer renders JSON.
+- **Testing one needs a transaction and a wait.** An event published outside a transaction is
+  dropped - that is the point, there is no commit to tie it to - so a test publishes through a
+  `TransactionTemplate`, and then awaits, because `@Async` means the publisher returns first. Assert
+  on `CompletedEventPublications.findAll()`: that something was written is not the claim, that it
+  was *completed* is, because an incomplete publication is what gets replayed on the next start.
+
 ## Large content never touches the heap
 
 Plan item C1 added the file store, and the rule it establishes applies to anything else that moves
@@ -516,9 +561,19 @@ the source, not suspected.
   roster's `MachineProfile` - firmware and capabilities - but a temperature from before the process
   restarted is not state, it is a stale number that would read as current. A machine starts with no
   reading and says so until it reports one.
-- **No job or queue concept exists.** A G-code file is stored and addressable (C1); nothing models
-  a print job or an assignment of one to a machine. `PublisherQueue`'s `Priority` enum is the only
-  piece of the machinery that is already there.
+- **Nothing runs a job yet.** A job has a lifecycle and survives a restart (C2), and nothing feeds
+  a file to a machine - `start` is a state change that no streaming engine answers. C3 is that, and
+  until it exists every transition past `ASSIGNED` is driven by hand.
+- **Nothing assigns a job either.** `assign` takes a machine id from whoever calls it; there is no
+  scheduler, so a queued job waits forever unless a person picks a printer. D1 is that.
+- **`JobStateChanged` has no durable listener, so the registry records nothing for it.** The
+  registry is wired, its table is there, and it is proven by the queue's own `MDeletedEvent`
+  listener - but a job's own events are at-most-once until something listens with
+  `@ApplicationModuleListener`. C3 will be the first.
+- **A job holds a file id with no foreign key, by design, and nothing stops the file being
+  deleted.** Deleting a file a queued job points at leaves a job that will fail when it starts. The
+  right fix is for the file store to refuse, or for the queue to listen for a file deletion the way
+  it listens for a machine's - and that needs a file-deleted event, which does not exist yet.
 - **A blob whose row is lost is never collected.** Deleting a file removes both, but a crash
   between writing the bytes and committing the row leaves bytes nothing refers to. That order is
   deliberate - the other one leaves a row pointing at content that is not there, which is a file

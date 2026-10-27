@@ -125,7 +125,7 @@ class BootVuejsApplicationTests {
                 }
 
                 @Override
-                public org.reactivestreams.Publisher<org.qw3rtrun.p3d.api.files.GcodeFile> fetch(UUID id) {
+                public java.util.Optional<org.qw3rtrun.p3d.api.files.GcodeFile> fetch(UUID id) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
@@ -141,6 +141,72 @@ class BootVuejsApplicationTests {
 
                 @Override
                 public void delete(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+            };
+        }
+
+        /** The print queue, which lives in a module this one must not depend on. */
+        @Bean
+        org.qw3rtrun.p3d.api.jobs.JobService jobs() {
+            return new org.qw3rtrun.p3d.api.jobs.JobService() {
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome queue(UUID fileId) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome assign(UUID jobId, UUID machineId) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome unassign(UUID jobId, String reason) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome start(UUID jobId) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome pause(UUID jobId) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome resume(UUID jobId) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome complete(UUID jobId) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome fail(UUID jobId, String reason) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome cancel(UUID jobId, String reason) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public java.util.Optional<org.qw3rtrun.p3d.api.jobs.Job> fetch(UUID jobId) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public java.util.List<org.qw3rtrun.p3d.api.jobs.Job> fetchAll() {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public java.util.List<org.qw3rtrun.p3d.api.jobs.Job> forMachine(UUID machineId) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
             };

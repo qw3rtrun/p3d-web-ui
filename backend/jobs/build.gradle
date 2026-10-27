@@ -1,0 +1,45 @@
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+/**
+ * The `jobs` submodel: the farm's print queue and the state machine over it.
+ *
+ * It depends on `api` and nothing else of the application's. Notably not on `:backend:files` -
+ * a job holds a file id, and whether that id is real is a question this module asks through
+ * `GcodeFileService`, an interface in `api`.
+ */
+plugins {
+    id 'p3d.java-conventions'
+    id 'org.springframework.boot' version "$spring_boot_version" apply false
+    id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
+    id "io.freefair.lombok" version "$lombok_plugin_version"
+}
+
+dependencyManagement {
+    imports {
+        mavenBom SpringBootPlugin.BOM_COORDINATES
+        mavenBom "org.springframework.modulith:spring-modulith-bom:$springModulithVersion"
+    }
+}
+
+dependencies {
+    implementation project(':backend:api')
+
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation "org.springframework.boot:spring-boot-starter-liquibase"
+    runtimeOnly 'com.h2database:h2'
+    implementation 'org.springframework.modulith:spring-modulith-starter-core'
+
+    // The event publication registry: a job transition is written down inside the transaction that
+    // caused it and delivered at least once afterwards. See JobStateChanged.
+    implementation 'org.springframework.modulith:spring-modulith-starter-jpa'
+
+    // The registry serialises an event to JSON on publish and reads it back to replay it. api's
+    // management events are Kotlin data classes, which Jackson cannot construct without this -
+    // "no Creators, like default constructor, exist". Publishing appeared to work without it and
+    // only recovery failed, which is the half the registry exists for.
+    implementation 'tools.jackson.module:jackson-module-kotlin'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.modulith:spring-modulith-starter-test'
+    testImplementation("org.springframework.boot:spring-boot-starter-liquibase-test")
+}

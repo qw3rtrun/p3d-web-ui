@@ -80,7 +80,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**B3**~~ | [a connection lifecycle worth the name](#b3) | ~~An explicit state machine, retry with backoff, health, and events for each transition~~ **done** - one enum, bounded retry, and a roster column that is derived rather than guessed | C5 |
 | ~~**B4**~~ | [machine profile and groups](#b4) | ~~Bed volume, extruders, nozzle, materials, tags — what a scheduler matches against~~ **done** — a declared spec beside the reported profile, neither able to write the other | D1 |
 | ~~**C1**~~ | [the G-code file store](#c1) | ~~Upload, content hash, size, line count, estimates; streamed in and out, never buffered~~ **done** — a fifth module, content-addressed on disk, one chunk in flight | C2 |
-| **C2** | [the job and its lifecycle](#c2) | A job entity, a state machine, and the events each transition publishes | C3 |
+| ~~**C2**~~ | [the job and its lifecycle](#c2) | ~~A job entity, a state machine, and the events each transition publishes~~ **done** — a sixth module, a typed refusal instead of an exception, and the event registry on | C3 |
 | **C3** | [the streaming engine](#c3) | A file fed through `PublisherQueue` at `BACKGROUND` while interactive commands preempt | C4, C5 |
 | **C4** | [progress and telemetry](#c4) | Lines accepted, elapsed, estimated remaining — driven by acknowledgements, not by what was sent | C5 |
 | **C5** | [pause, cancel, and survive a disconnect](#c5) | The operations an eight-hour print actually needs | D1 |
@@ -843,6 +843,71 @@ before anything streams is cheaper than discovering them afterwards.
 **Done when.** The state machine rejects illegal transitions with a typed failure rather than an
 exception from the database; every transition publishes a past-tense event through the Modulith
 event registry; a job survives a restart in whatever state it was in.
+
+**Done, and it is a sixth module.** `:backend:jobs`, with `api::jobs` as its contract. It names no
+other submodel: a job holds a file id and asks `GcodeFileService` whether it is real, and it hears
+about a deleted printer through `MDeletedEvent` the way `core` does.
+
+**The transition table is on `JobState` and nowhere else.** A page deciding which buttons to show
+and a scheduler deciding what it may assign are asking the same question as the service that
+enforces it, and three separate answers is how a UI comes to offer an action the backend refuses.
+`JobStateTest` asserts the whole table - every state against every state, forty-nine pairs - rather
+than the handful of edges that came to mind.
+
+**A refusal is a value and never reaches the database.** `JobEntity.moveTo` answers null for an
+illegal move; the service turns that into `JobOutcome.Refused` carrying where the job *actually*
+is; the REST layer turns that into a 409 with the reason. The usual cause is an ordinary race - a
+user clicking Pause as the last line is acknowledged - and the right answer to that is a sentence,
+not a stack trace. Verified live: `POST /api-jobs/{id}/pause` on a queued job returns
+
+```
+http=409
+{"jobId":"…","state":"QUEUED","attempted":"PAUSED","reason":"a job that is QUEUED cannot become PAUSED"}
+```
+
+**Nothing leaves a terminal state, including to another terminal state.** Re-running a file is a
+new job. That is what keeps a finished job a record of what happened, which **C5** depends on: it
+writes the last acknowledged line onto a failed job, and a job that could be revived in place would
+overwrite it.
+
+**One event, not seven.** `JobStateChanged` carries from/to, so `releasedAMachine()` is a question a
+scheduler can ask - and it is unanswerable from any single `JobStartedEvent`-style record. The same
+argument that made `ConnectionStateChanged` one event out of four.
+
+**The event publication registry is on**, with its table as a Liquibase changeset rather than
+Modulith's own schema initialisation. The one durable listener today is the queue's own: a deleted
+printer releases what it was holding, and the two cases differ - an **assigned** job goes back to
+the queue, a **running** one fails, because the file has been partly consumed and a second machine
+starting it from line one would print the top half of the part onto an empty bed.
+
+**It found a real recovery bug.** The registry serialises an event to JSON on publish and reads it
+back to replay it, and `api`'s management events are Kotlin data classes:
+
+```
+Cannot construct instance of `org.qw3rtrun.p3d.api.msg.MDeletedEvent`
+(no Creators, like default constructor, exist)
+```
+
+Publishing worked, delivery worked, and only *recovery* - the half the registry exists for - was
+broken. The fix is a `JacksonModule` bean, which is Modulith's own extension point; a `JsonMapper`
+bean would have quietly become the whole application's. It was invisible until a test asked the
+registry for the publication it had just written.
+
+**Verified by running**, against a fresh database and then a restart of the same one:
+
+* the happy path over HTTP - queue, assign, start, pause, resume - with `startedAt` unmoved by the
+  resume, because the job did not start twice;
+* **a job survived a restart in `RUNNING` with its timestamps intact**, and zero changesets re-ran,
+  which also confirms C1's `logicalFilePath` split is stable now that there are four fragments;
+* deleting the printer moved its assigned job to `QUEUED` with the machine cleared and its running
+  job to `FAILED` with the machine kept - the reason on each says which happened and why;
+* the registry held exactly one row afterwards, `MDeletedEvent ->
+  JobServiceImpl.onMachineDeleted`, marked `COMPLETE`.
+
+**What that last line also shows is the honest limit.** `JobStateChanged` is published through the
+same publisher and is a Java record that round-trips, but nothing listens to it durably yet, so the
+registry records nothing for it. It will the moment **C3** starts a print on one - the wiring and
+the schema are what C2 owed, and they are there.
 
 ### C3 — the streaming engine {#c3}
 

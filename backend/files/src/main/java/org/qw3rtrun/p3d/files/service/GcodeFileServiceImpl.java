@@ -78,10 +78,8 @@ public class GcodeFileServiceImpl implements GcodeFileService {
     }
 
     @Override
-    public Publisher<GcodeFile> fetch(UUID id) {
-        return Mono.fromCallable(() -> repo.findById(id))
-                .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(found -> found.map(e -> Mono.just(e.describe())).orElseGet(Mono::empty));
+    public java.util.Optional<GcodeFile> fetch(UUID id) {
+        return repo.findById(id).map(e -> e.describe());
     }
 
     @Override

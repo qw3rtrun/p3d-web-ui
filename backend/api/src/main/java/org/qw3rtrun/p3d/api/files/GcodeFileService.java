@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.api.files;
 import org.reactivestreams.Publisher;
 
 import java.nio.ByteBuffer;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -44,8 +45,15 @@ public interface GcodeFileService {
      */
     Publisher<GcodeFile> store(String name, Publisher<ByteBuffer> content);
 
-    /** One file's record, or an empty publisher when the farm holds no such file. */
-    Publisher<GcodeFile> fetch(UUID id);
+    /**
+     * One file's record, or empty when the farm holds no such file.
+     *
+     * <p>Blocking and not a {@link Publisher}, unlike {@link #store} and {@link #read}. The split
+     * is by what the method moves rather than by taste: those two carry the content and must
+     * stream, this one reads a row and so matches {@link #fetchAll}. A publisher here would have
+     * forced Reactor onto every blocking caller for a single lookup.
+     */
+    Optional<GcodeFile> fetch(UUID id);
 
     /** Every file the farm holds, newest first. The records only - no content is read. */
     Stream<GcodeFile> fetchAll();

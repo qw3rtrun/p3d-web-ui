@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Print jobs (plan item C2).
+
+      file_name is a copy of what the file store calls the file, and it is safe to copy because a
+      stored file is immutable: a re-upload of the same bytes returns the existing record rather
+      than renaming it, so the copy cannot go stale. What it buys is a job listing that does not
+      query the file store once per row.
+
+      No foreign key to gcode_file, deliberately. The two live in different modules and a database
+      constraint between them would be a dependency the module boundary says does not exist - and
+      the behaviour it would buy is wrong anyway: deleting a file that a finished job printed must
+      not delete the record that it printed.
+
+      machine_id is nullable because a queued job has no machine yet, and is not a foreign key for
+      the same reason.
+
+      state is the enum's name, not its ordinal: an ordinal re-points every stored row at a
+      different state the first time a constant is inserted into the middle of the enum.
+    -->
+    <changeSet id="1" author="agentic">
+        <createTable tableName="print_job">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="file_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="file_name" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="machine_id" type="uuid"/>
+            <column name="state" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="reason" type="varchar(1024)"/>
+            <column name="created_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="started_at" type="timestamp"/>
+            <column name="finished_at" type="timestamp"/>
+        </createTable>
+
+        <!-- The two questions anything asks of this table: what is queued, and what is on a machine. -->
+        <createIndex tableName="print_job" indexName="ix_print_job_state">
+            <column name="state"/>
+        </createIndex>
+        <createIndex tableName="print_job" indexName="ix_print_job_machine">
+            <column name="machine_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

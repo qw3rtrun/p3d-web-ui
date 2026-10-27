@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Spring Modulith's event publication registry.
+
+      Application infrastructure rather than any module's data: it holds one row per (event,
+      listener) pair, written inside the transaction that published the event and completed when
+      the listener returns. That is what makes an event at-least-once across a commit instead of a
+      best-effort call on the way out - plan item C2's job events need it and C5's recovery will.
+
+      It lives here because `jobs` is the first module to publish durable events. It is a separate
+      fragment rather than part of jobs.xml precisely so that it can be included from somewhere
+      else without carrying print jobs with it; when a second module needs the registry, this file
+      moves to :app and both include it from there.
+
+      The columns are Modulith 2.1's: it was turned on once without this table and every publishing
+      transaction died on commit with `Table "EVENT_PUBLICATION" not found`, which is the failure
+      this changeset exists to prevent happening a second time.
+
+      Liquibase owns it rather than `spring.modulith.events.jdbc.schema-initialization.enabled`,
+      for the same reason nothing here uses ddl-auto: one thing creates schema in this application
+      and it is this.
+    -->
+    <changeSet id="1" author="agentic">
+        <createTable tableName="event_publication">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="listener_id" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="event_type" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="serialized_event" type="clob">
+                <constraints nullable="false"/>
+            </column>
+            <column name="publication_date" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="completion_date" type="timestamp"/>
+            <column name="status" type="varchar(32)"/>
+            <column name="completion_attempts" type="int"/>
+            <column name="last_resubmission_date" type="timestamp"/>
+        </createTable>
+
+        <!-- The registry's own query: everything still incomplete, oldest first. -->
+        <createIndex tableName="event_publication" indexName="ix_event_publication_incomplete">
+            <column name="completion_date"/>
+            <column name="publication_date"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

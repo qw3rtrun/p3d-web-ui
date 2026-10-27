@@ -86,14 +86,17 @@ public class GcodeFileController {
 
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public Flux<GcodeFile> list() {
-        return Mono.fromSupplier(() -> files.fetchAll().toList())
-                .subscribeOn(Schedulers.boundedElastic())
-                .flatMapIterable(f -> f);
+        return offLoop(() -> files.fetchAll().toList()).flatMapIterable(f -> f);
+    }
+
+    /** The blocking boundary, in one place - the same shape FDMPrinterManagementController uses. */
+    private <T> Mono<T> offLoop(java.util.function.Supplier<T> blocking) {
+        return Mono.fromSupplier(blocking).subscribeOn(Schedulers.boundedElastic());
     }
 
     @GetMapping(value = "/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<GcodeFile> fetch(@PathVariable UUID id) {
-        return Mono.from(files.fetch(id));
+        return offLoop(() -> files.fetch(id)).flatMap(Mono::justOrEmpty);
     }
 
     /**
@@ -106,7 +109,8 @@ public class GcodeFileController {
      */
     @GetMapping("/{id}/content")
     public Mono<ResponseEntity<Flux<DataBuffer>>> download(@PathVariable UUID id) {
-        return Mono.from(files.fetch(id))
+        return offLoop(() -> files.fetch(id))
+                .flatMap(Mono::justOrEmpty)
                 .map(file -> ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_OCTET_STREAM)
                         .contentLength(file.sizeBytes())

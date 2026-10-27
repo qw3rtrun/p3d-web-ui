@@ -53,15 +53,18 @@ public class CoreConfiguration {
      * restart knew nothing about any printer until each was dialled again, and why a command to an
      * unconnected one dereferenced a null extruder count.
      *
-     * <p>What is seeded is the *static* half: firmware and capabilities, which
-     * {@code printer-management} persists. Temperatures are not, and should not be - a reading from
-     * before the process restarted is not state, it is a stale number that would read as current.
-     * The aggregate starts with no temperature and says so until the machine reports one.
+     * <p>What is seeded is the *static* half, and it is now both halves of that: the profile the
+     * machine reported, and the spec a human declared (plan item B4). Both are
+     * {@code printer-management}'s to keep and both arrive on the same announcement, which is why
+     * seeding reads one replica entry rather than two. Temperatures are not seeded and should not
+     * be - a reading from before the process restarted is not state, it is a stale number that
+     * would read as current. The aggregate starts with no temperature and says so until the machine
+     * reports one.
      */
     @Bean
     public PrinterAggregateManager aggregates(PrinterDirectory directory) {
-        return id -> new PrinterState(id, directory.find(id)
-                .map(PrinterDirectory.Entry::profile)
-                .orElseGet(org.qw3rtrun.p3d.api.model.MachineProfile::unknown));
+        return id -> directory.find(id)
+                .map(entry -> new PrinterState(id, entry.profile(), entry.spec()))
+                .orElseGet(() -> new PrinterState(id));
     }
 }

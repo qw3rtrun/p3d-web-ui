@@ -3,17 +3,23 @@ package org.qw3rtrun.p3d.core;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import reactor.test.StepVerifier;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * A reactor is a resource, and this is the thing that owns it.
@@ -42,7 +48,8 @@ class PrinterReactorManagerTest {
 
     private void theFarmHas(UUID machine) {
         directory.onRegistered(new MRegisteredEvent(machine, "a printer", "localhost", 8099,
-                MachineProfile.unknown(), MachineConnectionState.OFFLINE, LocalDateTime.now()));
+                MachineProfile.unknown(), MachineSpec.undeclared(),
+                MachineConnectionState.OFFLINE, LocalDateTime.now()));
     }
 
     @Test
@@ -122,6 +129,55 @@ class PrinterReactorManagerTest {
         theFarmHas(id);
 
         assertEquals(1, directory.size());
+    }
+
+    /**
+     * An edit reaches a machine that is already running (plan item B4).
+     *
+     * <p>An aggregate is seeded with the spec when it is built, which covers a restart and nothing
+     * else. Without this, declaring a second extruder on a printer that is connected right now
+     * would reach the database and the replica but not the object that refuses the command - so
+     * the edit would appear to do nothing until the farm was restarted, which is the same shape of
+     * defect as the write-only {@code connected} column plan item B3 removed.
+     */
+    @Test
+    void anEditReachesAMachineThatIsAlreadyRunning() {
+        var aggregates = new HashMap<UUID, PrinterState>();
+        var owner = new PrinterReactorManager(directory,
+                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
+        });
+        theFarmHas(id);
+        owner.openReactor(id);
+        assertEquals(1, aggregates.get(id).extruderCount(), "nothing declared, nothing reported");
+
+        owner.onRegistered(announcing(new MachineSpec(null, 2, List.of(), Set.of(), Set.of())));
+
+        assertEquals(2, aggregates.get(id).extruderCount());
+    }
+
+    /**
+     * And it does not build one for a machine nobody opened.
+     *
+     * <p>{@code MRegisteredEvent} is re-published for every machine at startup and again on every
+     * firmware report. Starting a reactor for each would open a socket, a send window and a sink
+     * for every row in the farm, which is precisely the leak plan item A3 closed.
+     */
+    @Test
+    void anAnnouncementDoesNotStartARuntimeForAMachineNobodyOpened() {
+        var aggregates = new HashMap<UUID, PrinterState>();
+        var owner = new PrinterReactorManager(directory,
+                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
+        });
+        theFarmHas(id);
+
+        owner.onRegistered(announcing(new MachineSpec(null, 2, List.of(), Set.of(), Set.of())));
+
+        assertTrue(aggregates.isEmpty(), "an announcement is not a reason to stand a printer up");
+    }
+
+    private MRegisteredEvent announcing(MachineSpec spec) {
+        return new MRegisteredEvent(id, "a printer", "localhost", 8099,
+                MachineProfile.unknown(), spec, MachineConnectionState.OFFLINE, LocalDateTime.now());
     }
 
     /**

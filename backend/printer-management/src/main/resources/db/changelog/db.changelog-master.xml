@@ -101,5 +101,86 @@
         <dropColumn tableName="printer_entity" columnName="connected"/>
     </changeSet>
 
+    <!--
+      What a human declared about a machine (plan item B4): bed volume, tools, nozzles, materials
+      and tags.
+
+      Kept apart from printer_firmware and printer_capability on purpose. Those two hold what the
+      machine said about itself and are rewritten from firmware reports; these hold what a person
+      typed and are only ever written by the management API. Neither can overwrite the other, which
+      is how "what was discovered is distinguishable from what was typed" is expressed in the
+      schema rather than with a flag beside each field.
+
+      Columns for the single-valued facts, tables for the repeating ones - the same division the
+      profile uses, and for a duller reason: a bed has exactly one size, and a machine has as many
+      nozzles as it has tools.
+
+      Nullable throughout. For bed_x/y/z and declared_extruder_count, "nobody said" is a real third
+      state and not a zero: a bed of zero is not a bed, and an extruder count of zero would refuse
+      every command rather than deferring to what M115 reported.
+
+      Groups are tags. B4 offered "free-form tags or a group id"; a group is a tag a reader filters
+      on, costs the same to store, and lets a machine belong to two of them.
+    -->
+    <changeSet id="4" author="agentic">
+        <addColumn tableName="printer_entity">
+            <column name="bed_x" type="number"/>
+            <column name="bed_y" type="number"/>
+            <column name="bed_z" type="number"/>
+            <column name="declared_extruder_count" type="number"/>
+        </addColumn>
+
+        <!--
+          Ordered, because a nozzle belongs to a tool and tool order is what a G-code file's T
+          commands mean. An unordered set would say the machine has a 0.4 and a 0.6 without saying
+          which one T0 is.
+        -->
+        <createTable tableName="printer_nozzle" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tool_index" type="number">
+                <constraints nullable="false"/>
+            </column>
+            <column name="diameter" type="numeric(6,3)"/>
+        </createTable>
+        <addPrimaryKey tableName="printer_nozzle" columnNames="printer_id, tool_index"
+                       constraintName="pk_printer_nozzle"/>
+        <addForeignKeyConstraint baseTableName="printer_nozzle" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_nozzle_printer"
+                                 onDelete="CASCADE"/>
+
+        <createTable tableName="printer_material" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="material" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="printer_material" columnNames="printer_id, material"
+                       constraintName="pk_printer_material"/>
+        <addForeignKeyConstraint baseTableName="printer_material" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_material_printer"
+                                 onDelete="CASCADE"/>
+
+        <createTable tableName="printer_tag" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tag" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="printer_tag" columnNames="printer_id, tag"
+                       constraintName="pk_printer_tag"/>
+        <addForeignKeyConstraint baseTableName="printer_tag" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_tag_printer"
+                                 onDelete="CASCADE"/>
+    </changeSet>
+
 </databaseChangeLog>
 

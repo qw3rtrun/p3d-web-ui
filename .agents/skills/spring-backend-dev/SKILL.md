@@ -267,6 +267,41 @@ it leaves:
   `NullPointerException`: the `GSender` is held only while a link is up and every arm dereferences
   it, so the stack trace pointed at the aggregate instead of at the machine being unreachable.
 
+### Two halves describe a machine, and neither may write the other
+
+`MachineProfile` is what a machine **reported** - `M115`'s key-values and the `Cap:` lines after it.
+`MachineSpec` is what a person **declared** - bed volume, extruder count, nozzle diameters,
+materials and tags. `Descriptor` carries both, apart.
+
+**The separation is structural, not a flag per field**, and that is plan item B4's "what was
+discovered is distinguishable from what was typed". `PrinterEntity.learnedFirmware` writes the
+profile columns, `PrinterEntity.declare` writes the spec columns, and neither can name the other's.
+A flag would have been worse in three ways: every writer becomes responsible for setting it, the
+discovered value is lost the moment somebody overrides it - so a reflashed machine cannot be told
+its typed-in value is now wrong - and a page cannot show both, which is exactly what the edit page
+does show.
+
+The rules that follow:
+
+- **A firmware report replaces the profile wholesale; an edit replaces the spec wholesale.** Both
+  are complete statements from their source. The one exception is a capability, which upserts,
+  because a firmware sends them one line at a time with nothing marking the last.
+- **Where the two meet, declared wins**, and the rule lives once in
+  `MachineSpec.extruderCountOr(profile)`. `Descriptor.extruderCount()` and `PrinterState` both call
+  it rather than keeping a copy. A field that later gains a discovered counterpart - bed volume and
+  nozzles are both in an `M503` dump nothing asks for yet - resolves there too.
+- **Null means "nobody said", and it is a third state.** A bed of zero is not a bed; a declared
+  extruder count of zero would refuse every command rather than deferring to the firmware. The
+  collections normalise to empty instead, because they arrive from a web form.
+- **Groups are tags.** B4 offered "free-form tags or a group id"; a group is a tag a reader filters
+  on, costs the same, and lets a machine belong to two.
+- **An edit reaches a running machine.** `MachineManagementImpl.update` re-publishes
+  `MRegisteredEvent`, `PrinterDirectory` updates its replica, and `PrinterReactorManager.redeclare`
+  hands the new spec to an aggregate that is already running. Without that last step a declared
+  extruder count would reach the database and not the object that refuses the command - the same
+  write-only defect B3 removed. `redeclare` must never *build* a runtime: that event is re-published
+  for every machine at startup and on every firmware report.
+
 ### Retry belongs to the reactor, and wraps the whole conversation
 
 `PrinterReactor.connect()` puts everything from `TerminalManager.connect()` to the end of the
@@ -450,6 +485,15 @@ the source, not suspected.
 - **No job, file or queue concept exists.** The product is a print farm; nothing in the backend
   models a G-code file, a print job, or an assignment of one to a machine. `PublisherQueue`'s
   `Priority` enum is the only piece of the machinery that is already there.
+- **Only the extruder count has both a declared and a discovered source.** Bed volume and nozzle
+  diameters are declared-only, not because that is right but because B2 asked `M115` and nothing
+  asks `M503`, which is where Marlin reports axis limits and the configured nozzle. When something
+  does, they become overrides resolved the way the extruder count is and no type changes shape.
+- **Nothing validates a spec against reality.** A farm can declare four nozzles on a machine whose
+  firmware reports one extruder, and nothing says so - not the form, not the API, not the page that
+  shows both halves side by side. That is deliberate for now, because the override exists precisely
+  for machines whose firmware is wrong, but a warning where the two disagree would be worth having
+  before D1 starts matching jobs against it.
 - **Giving up on a machine is silent except on that machine's own event stream.** When the attempts
   run out the lifecycle goes to `OFFLINE` with the reason and the roster persists it, but nothing
   pushes that to a user who is not watching that printer's SSE channel. The farm-wide stream of plan
@@ -458,12 +502,12 @@ the source, not suspected.
   the busy notices have been quiet for the timeout, so a machine that finishes work and then says
   nothing stays `BUSY` until it speaks again. Survivable because `M155 S1` makes it speak every
   second, and it is the price of keeping a scheduler out of the aggregate.
-- **`IDLE` proves a reply arrived, not that this session can send.** The lifecycle moves on inbound
-  traffic, and auto-report traffic left running by a *previous* session satisfies that - so a
-  machine whose outbound half is broken still reads `IDLE`. Observed live: see the next entry. The
-  honest proof is an acknowledgement of something *this* session sent, which is the signal
-  [decision 3 of the plan](../../../doc/backend-plan.md) says `:backend:terminal` does not expose
-  yet. Do not add a second health flag for this; the fix is the ack signal.
+- ~~**`IDLE` proves a reply arrived, not that this session can send.**~~ **Fixed.**
+  `ONLINE -> IDLE` waits for a `BlockAcknowledged` now - see *One enum is the connection state*
+  above. The entry is kept because the shape of the mistake is worth remembering: the lifecycle
+  moved on *inbound traffic*, and auto-report traffic left running by a previous session satisfies
+  that, so a machine whose outbound half was dead read as healthy. A health signal has to be
+  something the failure cannot produce.
 - **A reconnected session used to be unable to send anything, and that is fixed in the transport.**
   A new session started its window at `N1` while the firmware, still powered and never reset,
   remembered its last line, so every block was rejected and the outbound half was dead for good -

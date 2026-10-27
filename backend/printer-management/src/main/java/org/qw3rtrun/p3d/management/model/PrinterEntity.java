@@ -9,16 +9,23 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.MapKeyColumn;
+import jakarta.persistence.OrderColumn;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
+import org.qw3rtrun.p3d.api.model.BedVolume;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -86,6 +93,53 @@ public class PrinterEntity {
      */
     LocalDateTime profileLearnedAt;
 
+    /**
+     * What a human declared, kept in columns of its own and never written by a firmware report.
+     *
+     * <p>That separation is plan item B4's "what was discovered is distinguishable from what was
+     * typed", expressed in the schema rather than with a flag per field. {@link #learnedFirmware}
+     * rewrites the profile wholesale every time a machine reports; it must not be able to touch
+     * these, and a column it cannot name is the cheapest possible guarantee of that.
+     *
+     * <p>Boxed, because null is a third state here and not a zero: a bed of zero is not a bed, and
+     * a declared extruder count of zero would refuse every command rather than deferring to what
+     * {@code M115} said.
+     */
+    @Column(name = "bed_x")
+    Integer bedX;
+    @Column(name = "bed_y")
+    Integer bedY;
+    @Column(name = "bed_z")
+    Integer bedZ;
+
+    @Column(name = "declared_extruder_count")
+    Integer declaredExtruderCount;
+
+    /**
+     * One nozzle diameter per tool, in tool order.
+     *
+     * <p>An {@code @OrderColumn} and not a set: a nozzle belongs to a tool, and tool order is what
+     * a G-code file's {@code T} commands mean. "This machine has a 0.4 and a 0.6" without saying
+     * which one is {@code T0} answers nothing a slicer asked.
+     */
+    @ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
+    @CollectionTable(name = "printer_nozzle", joinColumns = @JoinColumn(name = "printer_id"))
+    @OrderColumn(name = "tool_index")
+    @Column(name = "diameter")
+    List<Double> nozzleDiameters = new ArrayList<>();
+
+    /** What this machine is set up to print. Unordered, because no material is the first one. */
+    @ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
+    @CollectionTable(name = "printer_material", joinColumns = @JoinColumn(name = "printer_id"))
+    @Column(name = "material")
+    Set<String> materials = new HashSet<>();
+
+    /** Free-form labels, which is also how this farm expresses groups - see {@link MachineSpec}. */
+    @ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
+    @CollectionTable(name = "printer_tag", joinColumns = @JoinColumn(name = "printer_id"))
+    @Column(name = "tag")
+    Set<String> tags = new HashSet<>();
+
     /** A machine as it is registered: reachable, and nothing known about it yet. */
     public PrinterEntity(UUID id, String name, String host, int port) {
         this.id = id;
@@ -126,6 +180,53 @@ public class PrinterEntity {
         return profileLearnedAt == null
                 ? MachineProfile.unknown()
                 : new MachineProfile(Map.copyOf(firmware), Map.copyOf(capabilities), profileLearnedAt);
+    }
+
+    /** What a human declared about this machine, or {@link MachineSpec#undeclared()} if nobody has. */
+    public MachineSpec spec() {
+        return new MachineSpec(bedVolume(), declaredExtruderCount,
+                List.copyOf(nozzleDiameters), Set.copyOf(materials), Set.copyOf(tags));
+    }
+
+    /**
+     * Records what a human declared, replacing whatever was there.
+     *
+     * <p>Replaced and not merged, unlike {@link #learnedCapability}. A firmware sends its
+     * capabilities one line at a time with nothing marking the last, so there is no moment at which
+     * the set is known; a person submits a whole form, and a material they removed from it is a
+     * material they meant to remove.
+     *
+     * <p>The collections are cleared and refilled rather than reassigned, because Hibernate tracks
+     * the instance it handed out - swapping in a new one orphans the old and throws on flush.
+     */
+    public void declare(MachineSpec spec) {
+        var declared = spec == null ? MachineSpec.undeclared() : spec;
+        var bed = declared.bedVolume();
+        bedX = bed == null ? null : bed.x();
+        bedY = bed == null ? null : bed.y();
+        bedZ = bed == null ? null : bed.z();
+        declaredExtruderCount = declared.extruderCount();
+        nozzleDiameters.clear();
+        nozzleDiameters.addAll(declared.nozzleDiameters());
+        materials.clear();
+        materials.addAll(declared.materials());
+        tags.clear();
+        tags.addAll(declared.tags());
+    }
+
+    /** Renames the machine and re-points it, which is the rest of what an edit may change. */
+    public void reachableAs(String name, String host, int port) {
+        this.name = name;
+        this.host = host;
+        this.port = port;
+    }
+
+    /** A bed is all three dimensions or none: a partly-filled form declared nothing. */
+    private BedVolume bedVolume() {
+        if (bedX == null || bedY == null || bedZ == null) {
+            return null;
+        }
+        return new BedVolume(bedX, bedY, bedZ);
     }
 
     /**

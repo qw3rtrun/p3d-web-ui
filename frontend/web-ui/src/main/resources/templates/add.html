@@ -15,7 +15,7 @@
                     <p class="card-description">
                         In order to initialize a new machine, fill out the form below.
                     </p>
-                    <!--/*@thymesVar id="machine" type="org.qw3rtrun.p3d.mvc.MvcPrinterController.MachineInfo"*/-->
+                    <!--/*@thymesVar id="machine" type="org.qw3rtrun.p3d.frontend.mvc.MvcPrinterController.MachineInfo"*/-->
                     <form class="forms-sample" th:action="@{/printers/add.html}" th:object="${machine}" method="post">
                         <div class="form-group">
                             <label>Machine Name</label>
@@ -32,8 +32,14 @@
                             <input type="number" class="form-control" th:field="*{port}"
                                    placeholder="8099">
                         </div>
+                        <hr/>
+                        <h5>What it is</h5>
+                        <p class="card-description">
+                            All optional. Anything left blank can be filled in later, and anything
+                            the machine reports for itself is kept separately.
+                        </p>
+                        <div th:replace="spec::declared_fields"></div>
                         <button type="submit" class="btn btn-primary me-2">Submit</button>
-                        <a href="/test" class="btn btn-light">Delete</a>
                     </form>
                 </div>
             </div>

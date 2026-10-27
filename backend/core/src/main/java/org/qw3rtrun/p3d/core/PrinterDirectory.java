@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.springframework.core.Ordered;
@@ -66,6 +67,12 @@ public class PrinterDirectory {
      * to read - which is why a command to a machine the process had never connected to failed with
      * a {@code NullPointerException} rather than a refusal.
      *
+     * <p>The spec travels beside it because that same check has to honour an override. A machine
+     * flashed with a single-extruder configuration reports one tool whatever is bolted to it, and
+     * the operator's declared count is the only thing that can say otherwise - so a replica that
+     * carried the profile alone would refuse every command for tool 1 on a machine its owner had
+     * already described correctly. It is also what plan item D1 will match a job against.
+     *
      * <p>The state is the roster's last-known record of the machine's connection, and it is read
      * once: {@link PrinterReactorManager} redials, at startup, whatever was connected when the
      * process went down. It is not kept current here afterwards - {@code core} is where the live
@@ -73,7 +80,7 @@ public class PrinterDirectory {
      * connected asks {@code PrinterControl.connection}, not this.
      */
     public record Entry(UUID id, String name, ConnectionDetails connection, MachineProfile profile,
-                        MachineConnectionState state) {
+                        MachineSpec spec, MachineConnectionState state) {
     }
 
     private final Map<UUID, Entry> known = new ConcurrentHashMap<>();
@@ -89,7 +96,7 @@ public class PrinterDirectory {
     public void onRegistered(MRegisteredEvent event) {
         var entry = new Entry(event.getMachineId(), event.getName(),
                 new ConnectionDetails(event.getHost(), event.getPort()), event.getProfile(),
-                event.getState());
+                event.getSpec(), event.getState());
         var previous = known.put(entry.id(), entry);
         if (previous == null) {
             log.info("the farm has {} at {}:{}", entry.name(), event.getHost(), event.getPort());

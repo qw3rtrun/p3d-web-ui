@@ -57,7 +57,7 @@ class BlockingBoundaryTest {
     private final Descriptor descriptor =
             new Descriptor(UUID.randomUUID(), "a printer", new ConnectionDetails("localhost", 1),
                     org.qw3rtrun.p3d.api.model.MachineConnectionState.OFFLINE,
-                    MachineProfile.unknown());
+                    MachineProfile.unknown(), org.qw3rtrun.p3d.api.model.MachineSpec.undeclared());
 
     /** A management service that does nothing but remember which thread asked. */
     private MachineManagementService recordingService() {
@@ -69,7 +69,15 @@ class BlockingBoundaryTest {
             }
 
             @Override
-            public Descriptor add(String name, ConnectionDetails connection) {
+            public Descriptor add(String name, ConnectionDetails connection,
+                                  org.qw3rtrun.p3d.api.model.MachineSpec spec) {
+                record();
+                return descriptor;
+            }
+
+            @Override
+            public Descriptor update(UUID uuid, String name, ConnectionDetails connection,
+                                     org.qw3rtrun.p3d.api.model.MachineSpec spec) {
                 record();
                 return descriptor;
             }
@@ -154,7 +162,7 @@ class BlockingBoundaryTest {
         machine.setHost("localhost");
         machine.setPort(8099);
 
-        controller.postAdd(new ConcurrentModel(), machine).block();
+        controller.postAdd(machine).block();
 
         assertRanOffTheCallersThread();
     }

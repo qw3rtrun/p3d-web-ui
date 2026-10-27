@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -50,7 +51,27 @@ public class FDMPrinterManagementController {
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Descriptor> create(@RequestBody Mono<PrinterPayload> payload) {
-        return payload.flatMap(p -> offLoop(() -> management.add(p.name(), new ConnectionDetails(p.host(), p.port()))));
+        return payload.flatMap(p -> offLoop(() ->
+                management.add(p.name(), new ConnectionDetails(p.host(), p.port()), p.spec())));
+    }
+
+    /**
+     * Changes what a human declared about a machine (plan item B4).
+     *
+     * <p>{@code PUT} and not {@code PATCH}: the body is the whole declaration, and a material left
+     * out of it is a material the submitter meant to remove. A partial update would need a way to
+     * say "leave this alone" that is distinct from "clear this", and every field here already uses
+     * absent to mean cleared.
+     *
+     * <p>It cannot reach the profile. What a machine reported about itself is written from firmware
+     * reports alone, so there is no request that can make the farm claim the firmware said
+     * something it did not - which is what keeps plan item B4's "discovered is distinguishable from
+     * typed" true at the edge and not just in the schema.
+     */
+    @PutMapping(value = "/{uuid}", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<Descriptor> update(@PathVariable UUID uuid, @RequestBody Mono<PrinterPayload> payload) {
+        return payload.flatMap(p -> offLoop(() -> management.update(uuid, p.name(),
+                new ConnectionDetails(p.host(), p.port()), p.spec())));
     }
 
     @DeleteMapping("/{uuid}")
@@ -61,10 +82,21 @@ public class FDMPrinterManagementController {
         }).then();
     }
 
+    /**
+     * One machine as a browser sends it: where to reach it, and what a person declares about it.
+     *
+     * <p>The spec is optional on a create, because registering a machine you have just plugged in
+     * should not require knowing its bed size. An absent {@code spec} is
+     * {@link MachineSpec#undeclared()} and not null, so no handler here has to check.
+     */
     public record PrinterPayload(
             String name,
             String host,
-            int port
+            int port,
+            MachineSpec spec
     ) {
+        public PrinterPayload {
+            spec = spec == null ? MachineSpec.undeclared() : spec;
+        }
     }
 }

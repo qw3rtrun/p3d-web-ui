@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+
+<head th:replace="container::common_headers(~{}, ~{})">
+    <title></title>
+</head>
+
+<body th:replace="container::common_body(~{::#edit_form}, ~{})">
+<!--
+  Plan item B4's "distinguishable", made visible: the form on the left writes what a person
+  declares, and the card on the right shows what the machine reported. Neither can overwrite the
+  other, and seeing both is how an operator notices that a printer claims one extruder while
+  somebody has declared two.
+-->
+<div class="content-wrapper" id="edit_form">
+    <div class="row">
+        <div class="col-md-7 grid-margin stretch-card">
+            <div class="card">
+                <div class="card-body">
+                    <h4 class="card-title">Edit machine</h4>
+                    <p class="card-description">
+                        What you declare about this machine. Firmware reports never overwrite it.
+                    </p>
+                    <!--/*@thymesVar id="machine" type="org.qw3rtrun.p3d.frontend.mvc.MvcPrinterController.MachineInfo"*/-->
+                    <form class="forms-sample" th:action="@{'/printers/' + ${uuid} + '/edit.html'}"
+                          th:object="${machine}" method="post">
+                        <div class="form-group">
+                            <label>Machine Name</label>
+                            <input type="text" class="form-control" th:field="*{name}">
+                        </div>
+                        <div class="form-group">
+                            <label>Host</label>
+                            <input type="text" class="form-control" th:field="*{host}">
+                        </div>
+                        <div class="form-group">
+                            <label>Port</label>
+                            <input type="number" class="form-control" th:field="*{port}">
+                        </div>
+                        <hr/>
+                        <h5>What it is</h5>
+                        <div th:replace="spec::declared_fields"></div>
+                        <button type="submit" class="btn btn-primary me-2">Save</button>
+                        <a th:href="@{'/printers/' + ${uuid}}" class="btn btn-light">Monitor</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-5 grid-margin stretch-card">
+            <div th:replace="spec::discovered_card(${discovered})"></div>
+        </div>
+    </div>
+</div>
+
+</body>
+
+</html>

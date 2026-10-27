@@ -6,6 +6,7 @@ import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.*;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
@@ -53,23 +54,62 @@ public class PrinterState implements PrinterAggregate {
      */
     private final ConnectionLifecycle connection;
 
+    /**
+     * What a human declared about this machine, which the roster keeps and announces.
+     *
+     * <p><strong>Held beside the profile rather than merged into it</strong>, because a firmware
+     * report replaces the profile wholesale and would otherwise erase an override every time a
+     * machine reconnected. Plan item B4 draws that line in the schema and it has to hold here too:
+     * nothing in this class writes the spec, and nothing a machine says can.
+     *
+     * <p>It is here for one live reason - the tool-index check below honours a declared extruder
+     * count - and one that is coming, which is plan item D1 matching a job against it.
+     */
+    private MachineSpec spec;
+
     public PrinterState(UUID id) {
-        this(id, MachineProfile.unknown());
+        this(id, MachineProfile.unknown(), MachineSpec.undeclared());
     }
 
     public PrinterState(UUID id, MachineProfile seed) {
-        this(id, seed, new ConnectionLifecycle());
+        this(id, seed, MachineSpec.undeclared());
     }
 
-    public PrinterState(UUID id, MachineProfile seed, ConnectionLifecycle connection) {
+    public PrinterState(UUID id, MachineProfile seed, MachineSpec declared) {
+        this(id, seed, declared, new ConnectionLifecycle());
+    }
+
+    public PrinterState(UUID id, MachineProfile seed, MachineSpec declared, ConnectionLifecycle connection) {
         this.id = id;
         this.profile = seed == null ? MachineProfile.unknown() : seed;
+        this.spec = declared == null ? MachineSpec.undeclared() : declared;
         this.connection = connection;
     }
 
     /** What this machine reported about itself, never null. */
     public MachineProfile getProfile() {
         return profile;
+    }
+
+    /** What a human declared about this machine, never null. */
+    public MachineSpec getSpec() {
+        return spec;
+    }
+
+    /**
+     * Records an edit, which is the one thing that may change the spec.
+     *
+     * <p>Reached from {@code PrinterReactorManager} when the roster re-announces a machine, so an
+     * edit takes effect on a running printer rather than waiting for a restart. It deliberately
+     * does not touch the profile: an edit is not something the machine said.
+     */
+    public void declared(MachineSpec declared) {
+        this.spec = declared == null ? MachineSpec.undeclared() : declared;
+    }
+
+    /** How many tools to believe this machine has - see {@link MachineSpec#extruderCountOr}. */
+    public int extruderCount() {
+        return spec.extruderCountOr(profile);
     }
 
     /** Where the machine's connection is, as a value a caller can be handed. */
@@ -214,11 +254,11 @@ public class PrinterState implements PrinterAggregate {
             return;
         }
         int index = temperature.getT() == null ? 0 : temperature.getT();
-        if (index < profile.extruderCount()) {
+        if (index < extruderCount()) {
             g.m104(index, wireTemp(temperature.getTemp()));
         } else {
-            log.warn("According to its profile this machine has only {} extruders, but the command's"
-                    + " hotend index is {}", profile.extruderCount(), index);
+            log.warn("This machine has only {} extruders, but the command's hotend index is {}",
+                    extruderCount(), index);
         }
     }
 

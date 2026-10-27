@@ -137,11 +137,33 @@ public class PrinterReactorManager {
     @Order(Ordered.LOWEST_PRECEDENCE)
     @EventListener
     public void onRegistered(MRegisteredEvent event) {
+        redeclare(event);
         if (!event.getState().isLinked()) {
             return;
         }
         log.info("{} was connected when the farm was last up, so dialling it again", event.getName());
         openReactor(event.getMachineId()).connect();
+    }
+
+    /**
+     * Hands an edited spec to a machine that is already running (plan item B4).
+     *
+     * <p>An aggregate is seeded with the spec when it is built, which covers a restart and nothing
+     * else. Without this, declaring a second extruder on a printer that is connected right now
+     * would reach the database and the replica and not the object that refuses the command - so
+     * the edit would appear to do nothing until the farm was restarted, which is the same shape of
+     * defect as the write-only {@code connected} column plan item B3 removed.
+     *
+     * <p>Only an existing runtime is touched: this must not build one. {@code MRegisteredEvent} is
+     * re-published for every machine at startup and on every firmware report, and starting a
+     * reactor for each would undo plan item A3's "a reactor has an owner" by opening one for every
+     * row in the farm.
+     */
+    private synchronized void redeclare(MRegisteredEvent event) {
+        var reactor = running.get(event.getMachineId());
+        if (reactor != null) {
+            reactor.declared(event.getSpec());
+        }
     }
 
     private PrinterReactor startReactor(UUID uuid) {

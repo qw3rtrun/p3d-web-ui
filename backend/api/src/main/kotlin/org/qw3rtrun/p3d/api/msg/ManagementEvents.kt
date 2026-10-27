@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.api.msg
 
 import org.qw3rtrun.p3d.api.model.MachineConnectionState
 import org.qw3rtrun.p3d.api.model.MachineProfile
+import org.qw3rtrun.p3d.api.model.MachineSpec
 import java.time.LocalDateTime
 import java.util.*
 
@@ -46,6 +47,12 @@ data class MConnectionChangedEvent(
  * query rule 2 exists to prevent. A machine nothing has ever connected to carries
  * [MachineProfile.unknown].
  *
+ * It carries the [spec] for the same reason and travelling the opposite way. The profile is a fact
+ * `core` learned and the roster kept; the spec is a fact a human declared to the roster and `core`
+ * has to be told, because a declared extruder count is what decides whether a command for tool 1 is
+ * refused. An edit re-publishes this event, so a replica learns the new spec without waiting for a
+ * restart. A machine nobody has described carries [MachineSpec.undeclared].
+ *
  * It carries the [state] for the same reason and one more: it is what a restart reads. The roster's
  * record of a machine's connection is written from [MConnectionChangedEvent] and would have no
  * reader at all if nothing acted on it - so `core` redials, at startup, every machine that was
@@ -64,6 +71,7 @@ data class MRegisteredEvent(
     val host: String,
     val port: Int,
     val profile: MachineProfile,
+    val spec: MachineSpec,
     val state: MachineConnectionState = MachineConnectionState.OFFLINE,
     override val timestamp: LocalDateTime = LocalDateTime.now()
 ) : ManagementEvent

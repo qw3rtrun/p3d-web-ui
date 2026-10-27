@@ -78,7 +78,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**B1**~~ | [the aggregate leaves the web module](#b1) | ~~`PrinterState` into a domain module that does not depend on WebFlux~~ **done** — it is the `core` submodel now | B2, C3 |
 | ~~**B2**~~ | [the machine remembers what it is](#b2) | ~~Persist firmware, capabilities and last-known state; restore on boot~~ **done** — the roster keeps it, `core` seeds from it | B4, D1 |
 | ~~**B3**~~ | [a connection lifecycle worth the name](#b3) | ~~An explicit state machine, retry with backoff, health, and events for each transition~~ **done** - one enum, bounded retry, and a roster column that is derived rather than guessed | C5 |
-| **B4** | [machine profile and groups](#b4) | Bed volume, extruders, nozzle, materials, tags — what a scheduler matches against | D1 |
+| ~~**B4**~~ | [machine profile and groups](#b4) | ~~Bed volume, extruders, nozzle, materials, tags — what a scheduler matches against~~ **done** — a declared spec beside the reported profile, neither able to write the other | D1 |
 | **C1** | [the G-code file store](#c1) | Upload, content hash, size, line count, estimates; streamed in and out, never buffered | C2 |
 | **C2** | [the job and its lifecycle](#c2) | A job entity, a state machine, and the events each transition publishes | C3 |
 | **C3** | [the streaming engine](#c3) | A file fed through `PublisherQueue` at `BACKGROUND` while interactive commands preempt | C4, C5 |
@@ -693,6 +693,58 @@ by hand, which is the right division: discovered where possible, declared where 
 
 **Done when.** The management API and the add/edit page carry the profile; a changeset carries the
 columns; what was discovered is distinguishable from what was typed.
+
+**Done, and "distinguishable" turned out to be the whole design.** `MachineSpec` in `api` is what a
+person declared - bed volume, extruder count, nozzle diameters, materials and tags - and it sits
+beside `MachineProfile`, which stays exactly what it was: what the machine reported. Neither can
+write the other. `PrinterEntity.learnedFirmware` touches the profile columns, `declare` touches the
+spec columns, and the separation is in the schema rather than in a flag beside each field.
+
+**A flag per field was the alternative and it is worse in three ways.** Every writer becomes
+responsible for setting it; the discovered value is lost the moment somebody overrides it, so a
+reflashed machine cannot be told that a typed-in value has gone stale; and a reader has no way to
+show both, which is precisely what the edit page shows - declared fields on the left, what the
+firmware said read-only on the right with when it was learned.
+
+**Where the two meet, declared wins, and the rule lives once.**
+`MachineSpec.extruderCountOr(profile)` is called by `Descriptor.extruderCount()` and by
+`PrinterState`, rather than copied into both. Only the extruder count has two sources today: bed
+volume and nozzle diameters are in an `M503` dump that B2 did not ask for, so they are declared-only
+until something does, at which point they resolve the same way and no type changes shape.
+
+**Groups are tags.** The item offered "free-form tags or a group id"; a group is a tag a reader
+filters on, costs the same to store, and lets a machine belong to two of them.
+
+**An edit reaches a machine that is already running**, which is the step that keeps the spec from
+being another write-only column. `update` re-publishes `MRegisteredEvent`, `PrinterDirectory`
+updates its replica, and `PrinterReactorManager.redeclare` hands the new spec to a live aggregate.
+It deliberately never *builds* a runtime: that event is re-published for every machine at startup
+and on every firmware report, and opening a reactor per row would undo A3.
+
+**The edit page edits everything, not just the spec** - name and connection too. A form that can set
+a nozzle diameter but cannot fix a mistyped hostname is a worse product than one extra parameter is
+worth. `add` keeps its two-argument form as a default, because registering a printer you have just
+plugged in should not require knowing its bed size.
+
+**Verified by running**, against the TCP stand-in again - MarlinSim is still down:
+
+* changeset 4 ran as a **migration against the existing database**, not a fresh one:
+  `ChangeSet db/changelog/db.changelog-master.xml::4::agentic ran successfully in 54ms`;
+* `POST /api-manager` with a spec, read back whole, both halves separate in the JSON;
+* the edit page rendered the declared values as form fields and the reported firmware read-only
+  beside them - `FIRMWARE_NAME Marlin bugfix-2.1.x … EXTRUDER_COUNT 1` under "What the machine
+  reported", while the form carried what a person had typed;
+* the form round-tripped: renamed, bed changed, a blank extruder count cleared to null, and
+  `tags=prototyping, loud` parsed into two;
+* **a firmware report left the declaration alone.** The machine connected, reported
+  `EXTRUDER_COUNT:1`, and the declared spec was untouched;
+* **the override reached a connected machine with no restart.** The same `set-temp` for tool 1 was
+  refused before the declaration and reached the wire as `N3 M104 S60.00 T1*59` after it.
+
+What it leaves open is in the skill's debt list: nothing warns when a declared spec contradicts what
+the firmware reported - four nozzles on a machine claiming one extruder is accepted in silence.
+That is deliberate while the override exists for firmware that is wrong, but it is worth a warning
+before **D1** matches jobs against any of it.
 
 ---
 

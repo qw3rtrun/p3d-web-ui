@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.management.service;
 import lombok.RequiredArgsConstructor;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.MCapabilityReportedEvent;
 import org.qw3rtrun.p3d.api.msg.MConnectionChangedEvent;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
@@ -30,8 +31,10 @@ public class MachineManagementImpl implements MachineManagementService {
     }
 
     @Transactional
-    public Descriptor add(String name, ConnectionDetails connection) {
-        var saved = repo.save(new PrinterEntity(UUID.randomUUID(), name, connection.host(), connection.port()));
+    public Descriptor add(String name, ConnectionDetails connection, MachineSpec spec) {
+        var entity = new PrinterEntity(UUID.randomUUID(), name, connection.host(), connection.port());
+        entity.declare(spec);
+        var saved = repo.save(entity);
         eventBus.push(registered(saved));
         return map(saved);
     }
@@ -54,10 +57,34 @@ public class MachineManagementImpl implements MachineManagementService {
         repo.findAll().forEach(entity -> eventBus.push(registered(entity)));
     }
 
+    /**
+     * Changes what a human declared, and tells everyone.
+     *
+     * <p><strong>It cannot touch the profile.</strong> An edit writes the spec columns and the
+     * three reachability fields and nothing else, so what a firmware reported survives an edit
+     * untouched and an edit cannot pass itself off as something the machine said - which is plan
+     * item B4's "distinguishable" in the one place it could be broken.
+     *
+     * <p>Re-announced as {@link MRegisteredEvent}, like a firmware report and for the same reason:
+     * {@code core}'s replica has to learn the new spec, and a declared extruder count is what
+     * decides whether a command for tool 1 is refused. Without this an edit would reach the
+     * database and not the running machine until a restart.
+     */
+    @Transactional
+    @Override
+    public Descriptor update(UUID uuid, String name, ConnectionDetails connection, MachineSpec spec) {
+        var entity = repo.findById(uuid).orElseThrow();
+        entity.reachableAs(name, connection.host(), connection.port());
+        entity.declare(spec);
+        var saved = repo.save(entity);
+        eventBus.push(registered(saved));
+        return map(saved);
+    }
+
     private static MRegisteredEvent registered(PrinterEntity entity) {
         return new MRegisteredEvent(entity.getId(), entity.getName(),
-                entity.getHost(), entity.getPort(), entity.profile(), entity.connectionState(),
-                LocalDateTime.now());
+                entity.getHost(), entity.getPort(), entity.profile(), entity.spec(),
+                entity.connectionState(), LocalDateTime.now());
     }
 
     /**
@@ -137,6 +164,6 @@ public class MachineManagementImpl implements MachineManagementService {
     private static Descriptor map(PrinterEntity entity) {
         return new Descriptor(entity.getId(), entity.getName(),
                 new ConnectionDetails(entity.getHost(), entity.getPort()), entity.connectionState(),
-                entity.profile());
+                entity.profile(), entity.spec());
     }
 }

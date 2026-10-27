@@ -83,7 +83,14 @@ class BootVuejsApplicationTests {
                 }
 
                 @Override
-                public Descriptor add(String name, ConnectionDetails connection) {
+                public Descriptor add(String name, ConnectionDetails connection,
+                                      org.qw3rtrun.p3d.api.model.MachineSpec spec) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public Descriptor update(UUID uuid, String name, ConnectionDetails connection,
+                                         org.qw3rtrun.p3d.api.model.MachineSpec spec) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 

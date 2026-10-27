@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.*;
 import org.springframework.context.ApplicationEventPublisher;
@@ -255,6 +256,11 @@ public class PrinterReactor {
     private Mono<Void> gCode() {
         log.info("receiving()");
         return terminal.start(Flux.from(commandQueue));
+    }
+
+    /** Passes an edited spec to the aggregate - see {@code PrinterReactorManager.redeclare}. */
+    public void declared(MachineSpec spec) {
+        printer.declared(spec);
     }
 
     public Mono<TemperatureReport> state() {

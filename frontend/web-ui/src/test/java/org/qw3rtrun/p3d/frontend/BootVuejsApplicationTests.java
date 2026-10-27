@@ -105,6 +105,46 @@ class BootVuejsApplicationTests {
                 }
             };
         }
+
+        /**
+         * The G-code store, which lives in a module this one must not depend on.
+         *
+         * <p>Same shape and same reason as the roster above: {@code GcodeFileController} needs the
+         * bean to exist, and what answers it is in {@code :backend:files}, which this submodel may
+         * not name. It throws rather than returning empties, because a stub that quietly answers
+         * "no files" would let a misconfigured assembly pass this test and then show an empty
+         * library to a user with a full one.
+         */
+        @Bean
+        org.qw3rtrun.p3d.api.files.GcodeFileService gcodeFiles() {
+            return new org.qw3rtrun.p3d.api.files.GcodeFileService() {
+                @Override
+                public org.reactivestreams.Publisher<org.qw3rtrun.p3d.api.files.GcodeFile> store(
+                        String name, org.reactivestreams.Publisher<java.nio.ByteBuffer> content) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.reactivestreams.Publisher<org.qw3rtrun.p3d.api.files.GcodeFile> fetch(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public Stream<org.qw3rtrun.p3d.api.files.GcodeFile> fetchAll() {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.reactivestreams.Publisher<java.nio.ByteBuffer> read(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public void delete(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+            };
+        }
     }
 
     @Test

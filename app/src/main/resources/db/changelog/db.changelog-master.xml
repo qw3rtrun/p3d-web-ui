@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The schema of the assembled application: one changelog per module, included here.
+
+  It lives in :app because this is the only place that knows which modules are in the build.
+  It used to be printer-management's file holding every table in the application, which was fine
+  while there was one persistence module and became wrong the moment a second one needed a table -
+  the files module would have had its schema owned by the roster, and the roster's own tests would
+  have created tables for a module they have never heard of.
+
+  Each fragment keeps a logicalFilePath so that moving a changeset between files never re-runs it:
+  Liquibase identifies a changeset by (id, author, filename), and the filename is a historical fact
+  rather than a location.
+-->
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <include file="db/changelog/printers.xml"/>
+    <include file="db/changelog/gcode-files.xml"/>
+
+</databaseChangeLog>

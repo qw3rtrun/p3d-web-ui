@@ -30,6 +30,7 @@ and say so** rather than applying this skill's rules to them.
 | **api** | `:backend:api` | `org.qw3rtrun.p3d.api` | nothing. Not even Spring at runtime |
 | **core** | `:backend:core` | `org.qw3rtrun.p3d.core` | `api`, `:backend:terminal`, `:gcode`, Reactor, spring-context |
 | **printer-management** | `:backend:printer-management` | `org.qw3rtrun.p3d.management` | `api`, Spring Data JPA, Liquibase |
+| **files** | `:backend:files` | `org.qw3rtrun.p3d.files` | `api`, `:gcode`, Spring Data JPA, Liquibase, Reactor |
 | **frontend** | `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | `api`, WebFlux, Thymeleaf, the Vue build |
 | **app** | `:app` | `org.qw3rtrun.p3d` | everything. Assembly only |
 | *library* | `:gcode` | `org.qw3rtrun.p3d.g` | the Kotlin stdlib. **Nothing else** (`low-level-protocol-dev`) |
@@ -102,15 +103,16 @@ Never `block()` on a pipeline thread, and never `Thread.sleep`. If a test needs 
 
 ## Spring Modulith - the declared structure
 
-**Four modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
+**Five modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
 `:app`:
 
 | Module | Package | Exports / depends on |
 |---|---|---|
-| Shared API | `org.qw3rtrun.p3d.api` | closed, exporting four `@NamedInterface`s: `model`, `msg`, `management`, `control` |
+| Shared API | `org.qw3rtrun.p3d.api` | closed, exporting five `@NamedInterface`s: `model`, `msg`, `management`, `control`, `files` |
 | Printer core | `org.qw3rtrun.p3d.core` | `api::model`, `api::msg`, `api::control` — **not** `api::management` |
 | Machine management | `org.qw3rtrun.p3d.management` | `api::model`, `api::msg`, `api::management` |
-| Frontend | `org.qw3rtrun.p3d.frontend` | all four. Names no other submodel |
+| G-code files | `org.qw3rtrun.p3d.files` | `api::files` |
+| Frontend | `org.qw3rtrun.p3d.frontend` | all five named interfaces. Names no other submodel |
 
 **`api` is not `sharedModules` and must not become it again.** A shared module is exempt from the
 dependency checks entirely, which is precisely the exemption that let `core` call
@@ -348,6 +350,31 @@ Two rules for anything that touches the runtime:
   dial. Its pair is `release(id)`; a printer deleted from the farm releases its runtime through
   `MDeletedEvent` rather than through a call across the module boundary.
 
+## Large content never touches the heap
+
+Plan item C1 added the file store, and the rule it establishes applies to anything else that moves
+bulk bytes: a sliced part is tens to hundreds of megabytes, and the failure mode is an
+out-of-memory error on the first real print rather than anything a test at one-kilobyte scale would
+show.
+
+- **The signature is the enforcement.** `GcodeFileService` takes and returns
+  `Publisher<ByteBuffer>`. A `byte[]`, a `String` or a `Resource` anywhere on that path is the whole
+  bug. `@RequestBody byte[]` in a controller is the same bug one layer up.
+- **`ByteBuffer` and not `DataBuffer`, because `api` carries no framework.** The web layer converts
+  at its own edge - which is also where the pooled buffer must be released, so the two jobs belong
+  together. It costs one copy per chunk; the alternative was a buffer-lifetime contract across a
+  module boundary, which is a rule that holds until somebody changes something that looks unrelated.
+- **Demand has to be one at a time, and nothing else is bounded.** `concatMap(f, 1)` requests one
+  element, processes it, then asks for the next, so backpressure reaches the socket. `reduce`,
+  `doOnNext` and `collectList` all request `Long.MAX_VALUE`; `toIterable` queues 256 elements. Any
+  of them turns a bounded pipeline into a buffered one with no visible symptom.
+- **Prove it by counting demand, not by measuring the heap.** `GcodeBlobStoreTest` asserts the
+  largest single `request(n)` is one. A heap assertion is at the mercy of the collector; this one
+  fails deterministically the moment the prefetch changes.
+- **Bulk bytes go on a filesystem, not in a column.** Content-addressed by SHA-256, two levels of
+  fan-out, which also makes storing idempotent: the same bytes produce the same path, so the dedupe
+  is the naming rather than a check.
+
 ## REST, SSE and WebSocket
 
 - **REST** is `@RestController` returning `Mono`/`Flux`, under `/api-manager` for the farm and
@@ -373,9 +400,16 @@ Two rules for anything that touches the runtime:
 
 - **Liquibase owns the schema. Hibernate does not.** There is no `ddl-auto` anywhere and there must
   not be. A new column is a changeset.
-- **One changelog, included from the master.** `:backend:printer-management` points at
-  `classpath:db/changelog/db.changelog-master.xml`; `:app` points at `/db/changelog/...`. Those
-  resolve to the same file today by accident of the classpath - make it one spelling.
+- **One fragment per module, assembled by `:app`.** `app/src/main/resources/db/changelog/db.changelog-master.xml`
+  includes `printers.xml` from `printer-management` and `gcode-files.xml` from `files`; each module
+  points its own tests at its own fragment. A module owns its tables, which is the same rule as
+  everything else here - the single application-wide changelog that preceded this would have given
+  the files module's schema to the roster.
+- **A fragment carries a `logicalFilePath`, and moving a changeset never changes it.** Liquibase
+  identifies a changeset by (id, author, **filename**), so renaming the file it lives in makes every
+  existing database believe it has not run. `printers.xml` therefore declares
+  `logicalFilePath="db/changelog/db.changelog-master.xml"` - the path is a historical fact now, not
+  a location. Verified by migrating a populated database rather than reasoning about it.
 - **H2 file-backed is the development store** (`./data/printersdb`). Nothing may depend on an
   H2-specific feature, because it is not the production store.
 - An entity is internal to its module. A controller returns a record mapped from it.
@@ -482,9 +516,20 @@ the source, not suspected.
   roster's `MachineProfile` - firmware and capabilities - but a temperature from before the process
   restarted is not state, it is a stale number that would read as current. A machine starts with no
   reading and says so until it reports one.
-- **No job, file or queue concept exists.** The product is a print farm; nothing in the backend
-  models a G-code file, a print job, or an assignment of one to a machine. `PublisherQueue`'s
-  `Priority` enum is the only piece of the machinery that is already there.
+- **No job or queue concept exists.** A G-code file is stored and addressable (C1); nothing models
+  a print job or an assignment of one to a machine. `PublisherQueue`'s `Priority` enum is the only
+  piece of the machinery that is already there.
+- **A blob whose row is lost is never collected.** Deleting a file removes both, but a crash
+  between writing the bytes and committing the row leaves bytes nothing refers to. That order is
+  deliberate - the other one leaves a row pointing at content that is not there, which is a file
+  that lists fine and fails when a print starts - so the debt is the sweep, not the ordering.
+- **An upload has no size limit.** Nothing stops a client filling the disk; the memory is bounded
+  and the storage is not. A limit wants to be a configured maximum checked while streaming, which
+  is a few lines in `GcodeBlobStore.write` and a decision about what the number should be.
+- **The slicer metadata windows are bounded to 64 KiB at each end of a file.** A slicer that writes
+  its summary somewhere in the middle of a large file is not read. That is the price of not
+  tokenizing two hundred megabytes of motion commands to find four numbers, and it is the right
+  trade until a real file turns up that needs otherwise.
 - **Only the extruder count has both a declared and a discovered source.** Bed volume and nozzle
   diameters are declared-only, not because that is right but because B2 asked `M115` and nothing
   asks `M503`, which is where Marlin reports axis limits and the configured nozzle. When something

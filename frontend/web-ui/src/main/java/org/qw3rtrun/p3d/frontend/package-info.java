@@ -19,8 +19,13 @@
  * now and {@code core} translates them into Marlin's, which is the outbound twin of the reply
  * bridge in {@code :backend:terminal}. The field names are the ones the browser already sent, so
  * the HTTP contract did not move - it merely stopped being defined by a code generator.
+ *
+ * <p>{@code api::files} joined the list with plan item C1. The upload and download endpoints are
+ * here because {@code doc/sub_boundaries.txt} puts every server API in this submodel, and because
+ * the pooled {@code DataBuffer}s WebFlux hands out are this layer's to release - the store takes
+ * plain {@code ByteBuffer}s, which is what keeps Spring out of {@code api}.
  */
 @org.springframework.modulith.ApplicationModule(
         displayName = "Frontend",
-        allowedDependencies = {"api::model", "api::msg", "api::control", "api::management"})
+        allowedDependencies = {"api::model", "api::msg", "api::control", "api::management", "api::files"})
 package org.qw3rtrun.p3d.frontend;

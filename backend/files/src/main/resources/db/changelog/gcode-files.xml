@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Stored G-code files (plan item C1).
+
+      The row holds what is *known* about a file; the bytes are on disk, content-addressed, and
+      nowhere near this table. A sliced part is tens to hundreds of megabytes, so a BLOB column
+      would mean the database streaming it twice - once in, once out - through a driver that is
+      very good at rows and not at that.
+
+      content_hash is unique because it is the file's identity. The same bytes uploaded twice are
+      one file, which is what makes a job's reference to a file survive a restart and still mean
+      something.
+
+      The slice_* columns are everything the slicer said, and every one of them is nullable: there
+      is no standard for any of it, a slicer writes the comments it invented, and a file from one
+      this host has never heard of has none. Zero would read as a print that takes no time.
+    -->
+    <changeSet id="1" author="agentic">
+        <createTable tableName="gcode_file">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- SHA-256 as lower-case hex: 64 characters, always. -->
+            <column name="content_hash" type="varchar(64)">
+                <constraints nullable="false" unique="true"
+                             uniqueConstraintName="uq_gcode_file_content_hash"/>
+            </column>
+            <column name="size_bytes" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="line_count" type="bigint">
+                <constraints nullable="false"/>
+            </column>
+            <column name="uploaded_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="slice_slicer" type="varchar(255)"/>
+            <column name="slice_estimated_seconds" type="bigint"/>
+            <column name="slice_filament_mm" type="numeric(12,3)"/>
+            <column name="slice_layer_height" type="numeric(6,3)"/>
+        </createTable>
+    </changeSet>
+
+</databaseChangeLog>

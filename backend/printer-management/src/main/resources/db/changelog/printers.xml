@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The printer roster's own changesets.
+
+  logicalFilePath pins the name Liquibase records against every changeset here, and it is the old
+  file's name on purpose: a changeset's identity is (id, author, filename), so renaming this file
+  without it would make every existing database think changesets 1 to 4 had never run and try them
+  again. The path is a historical fact now rather than a location.
+-->
 <databaseChangeLog
+        logicalFilePath="db/changelog/db.changelog-master.xml"
         xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog

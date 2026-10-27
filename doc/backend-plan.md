@@ -79,7 +79,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**B2**~~ | [the machine remembers what it is](#b2) | ~~Persist firmware, capabilities and last-known state; restore on boot~~ **done** — the roster keeps it, `core` seeds from it | B4, D1 |
 | ~~**B3**~~ | [a connection lifecycle worth the name](#b3) | ~~An explicit state machine, retry with backoff, health, and events for each transition~~ **done** - one enum, bounded retry, and a roster column that is derived rather than guessed | C5 |
 | ~~**B4**~~ | [machine profile and groups](#b4) | ~~Bed volume, extruders, nozzle, materials, tags — what a scheduler matches against~~ **done** — a declared spec beside the reported profile, neither able to write the other | D1 |
-| **C1** | [the G-code file store](#c1) | Upload, content hash, size, line count, estimates; streamed in and out, never buffered | C2 |
+| ~~**C1**~~ | [the G-code file store](#c1) | ~~Upload, content hash, size, line count, estimates; streamed in and out, never buffered~~ **done** — a fifth module, content-addressed on disk, one chunk in flight | C2 |
 | **C2** | [the job and its lifecycle](#c2) | A job entity, a state machine, and the events each transition publishes | C3 |
 | **C3** | [the streaming engine](#c3) | A file fed through `PublisherQueue` at `BACKGROUND` while interactive commands preempt | C4, C5 |
 | **C4** | [progress and telemetry](#c4) | Lines accepted, elapsed, estimated remaining — driven by acknowledgements, not by what was sent | C5 |
@@ -769,6 +769,67 @@ memory — not the upload, not the line count, not the streaming of **C3**. `Dat
 **Done when.** Upload and download are streamed and provably bounded in memory; the same bytes
 uploaded twice do not duplicate storage; the header metadata is parsed by `:gcode`'s comment
 handling rather than a new regex.
+
+**Done, and it is a fifth module.** `:backend:files` holds the rows and the bytes; `api::files` is
+its whole contract — `GcodeFileService` in, `GcodeFile` out. The upload and download endpoints are
+in `frontend`, because `doc/sub_boundaries.txt` puts every server API there.
+
+**The signatures are what make "bounded" true, not the comments.** `api` may not name a Spring
+type, so the store takes `Publisher<ByteBuffer>` and the web layer converts at its own edge, where
+it already owns the pooled `DataBuffer`'s lifetime. One copy per chunk, which is the price of
+keeping spring-core off the compile path of the protocol side. Inside, the write is
+`concatMap(..., 1)`: one chunk requested, processed, and only then the next, so demand propagates
+back to the socket. The obvious shapes all fail — `reduce` and `doOnNext` request `Long.MAX_VALUE`,
+and `toIterable` parks the overflow in a 256-element queue, which at this chunk size is sixteen
+megabytes nothing asked for.
+
+**The memory proof is a demand assertion, not a heap measurement.** `GcodeBlobStoreTest` records
+the largest single `request(n)` the store makes of its source and asserts it is one. A test that
+watched the heap would prove nothing a garbage collector could not undo; this one fails with
+*"the store asked for 256 chunks at once"* the moment the prefetch moves, which was checked by
+moving it.
+
+**Content-addressing makes dedupe fall out rather than be checked for.** A blob's name is the
+SHA-256 of its bytes, fanned out two levels. The bytes stream to a temp file while the hash and the
+line count are computed in the same pass — the hash is not known until the last byte, and the final
+path is named after it, so they have to land somewhere first — and the move is skipped if something
+already lives there. The row's `content_hash` is unique, so **a re-upload of identical bytes returns
+the existing record, under the existing name.** That is the plan's own "the content hash is what
+makes a re-upload of the same file the same file", and it is what lets C2's job hold a file id for
+eight hours.
+
+**Slicer metadata is read by `:gcode`'s tokenizer**, from two bounded 64 KiB windows — the head and
+the tail, because Cura writes its summary at the top and PrusaSlicer repeats its configuration at
+the bottom. What is *not* `:gcode`'s business is which keys mean what: `;TIME:3661` against
+`; estimated printing time (normal mode) = 1h 2m 3s` is two programs' habits, so that table lives in
+`SliceInfoReader`. A file from an unknown slicer stores fine with nothing read.
+
+**It forced the changelog apart, which was already recorded debt.** One master changelog in
+`printer-management` was workable with one persistence module and wrong with two — the files module
+would have had its schema owned by the roster, and the roster's own tests would have created tables
+for a module they have never heard of. The master is in `:app` now and includes one fragment per
+module. Each fragment carries a `logicalFilePath` pinning the name Liquibase records, because a
+changeset's identity is (id, author, filename): without it every existing database would think
+changesets 1–4 had never run.
+
+**Verified by running**, with the application in a jar under `-Xmx256m` and `ExitOnOutOfMemoryError`:
+
+* **a 210,554,463-byte file uploaded through a 256 MB heap in 3.4s.** The SHA-256 the server
+  recorded matches `sha256sum` exactly, and the line count — 5,650,005 — matches `wc -l` exactly;
+* **downloaded back byte-for-byte identical** (`cmp` clean), with `Content-Length` set from the row
+  so a client can show progress without the server buffering to find out;
+* the same bytes re-uploaded under another name returned **the same id and the first name**, and
+  the blob directory held **one** file;
+* **three concurrent 120 MB uploads** left the heap at 153 MB of 256 MB — `jcmd GC.heap_info` after
+  moving over half a gigabyte through the process;
+* a delete removed the row and the blob;
+* Cura's header was read correctly end to end: `Cura_SteamEngine 5.4.0`, 7265s, and `12.3456m`
+  converted to `12345.6` mm.
+
+Open, and in the skill's debt list: the metadata windows are bounded, so a slicer that writes its
+summary in the middle of a very large file is not read; a blob whose row is lost is not collected
+by anything; and the upload has no size limit, so the only thing stopping a client filling the disk
+is the disk.
 
 ### C2 — the job and its lifecycle {#c2}
 

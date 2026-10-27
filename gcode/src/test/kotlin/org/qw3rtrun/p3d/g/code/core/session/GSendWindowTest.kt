@@ -91,21 +91,33 @@ class GSendWindowTest {
         }
 
         @Test
-        fun `an acknowledgement frees a slot`() {
+        fun `an acknowledgement frees a slot and names the block it freed`() {
             val window = GSendWindow(capacity = 2)
             window.send(g28)
             window.send(g28)
             assertNull(window.send(g28))
 
-            assertTrue(window.acknowledge())
+            assertEquals(1, window.acknowledge())
 
             assertEquals(1, window.inFlight)
             assertEquals("N3 G28*16", window.send(g28))
         }
 
         @Test
+        fun `acknowledgements name the outstanding blocks oldest first`() {
+            // The number is what lets a caller report progress: an `ok` is otherwise just a slot
+            // coming free, and a host counting what it *sent* overstates after every resend.
+            val window = GSendWindow()
+            window.send(g28)
+            window.send(t0)
+
+            assertEquals(1, window.acknowledge())
+            assertEquals(2, window.acknowledge())
+        }
+
+        @Test
         fun `acknowledging nothing is not an error but says so`() {
-            assertFalse(GSendWindow().acknowledge())
+            assertNull(GSendWindow().acknowledge())
         }
 
         @Test

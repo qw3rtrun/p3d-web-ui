@@ -104,6 +104,40 @@ Three consequences worth knowing before changing this:
 - **Every send-window test now opens with `N1 M110 N0*124` and an `ok`.** That prelude is the
   handshake, not ceremony.
 
+### An acknowledged block is announced
+
+An `ok` that releases a block from the window is republished on `messageFlux()` as
+`BlockAcknowledged(lineNumber, inFlight)`. `GSendWindow.acknowledge()` returns the number it
+released (null for a stray), `applyWindowEvents` emits, and the layer above counts.
+
+**Why an `ok` stopped being swallowed.** The stated reason was that it said nothing a subscriber had
+not already learned from the send window. No subscriber can see a send window, so what it actually
+said was nothing to anybody - and two things needed it:
+
+- **Progress has to be measured in acknowledgements.** The alternative is counting what the host
+  handed over, and that is wrong in the one case that matters: after a `Resend:` the transport
+  replays blocks the counter already counted, so progress overstates and then walks backwards. A
+  block is announced under the number it was *first sent with*, so a replay does not double-count.
+- **It is the only proof a session can send.** "A reply arrived" is satisfied by `M155 S1`
+  auto-reports an earlier session left running and by a backlog queued while nothing was listening -
+  both of which reach a host whose outbound half is dead. An acknowledgement cannot be produced that
+  way.
+
+Three things to know before changing it:
+
+- **It is emitted from the drain loop, and must be.** The window is the only thing that knows which
+  block an `ok` answered - the bare `ok` most builds send carries no number, so the correspondence
+  is the window's FIFO order and nothing on the wire - and the window may only be touched there.
+- **That is why `replays` is no longer `Sinks.unsafe()`.** The unsafe sink promised external
+  serialisation, which held while every emission came from the netty inbound thread. The drain loop
+  runs on whichever thread got there first, so the promise broke and the safe sink replaced it.
+- **The `ok` that closes a resend announces nothing**, and neither does the `ok` for the session's
+  own `M110` - neither releases a block. The first is `rewinding`; the second is `reset` holding
+  nothing outstanding.
+
+**It is not a count of what the firmware has *executed*.** `ok` means queued, which is the whole
+reason the send window exists. A block acknowledged is a block the planner accepted.
+
 ### Resynchronising a session that has drifted
 
 A `Resend: n` for a block the window no longer holds means the firmware has named a block this host
@@ -154,6 +188,13 @@ could promise neither, and would break Reactive Streams rule 1.3 into the bargai
 **A replayed block takes a unit of the subscriber's demand of its own.** The unit it spent when it
 was first written is gone - this is a second `onNext`, and the rule that none goes out unasked has no
 exception for a retransmission. `canProcess()` is zero while a replay is waiting for that demand.
+
+### `messageFlux()` carries one thing that is not a reply
+
+Everything else on that flux is something the machine said, translated by `ReplyEvents`.
+`BlockAcknowledged` is something the transport knows - see *An acknowledged block is announced*
+above. Anything else added to the bus that is not a decoded reply wants the same justification: a
+fact the layer above needs and genuinely cannot see from here.
 
 ### `messageFlux()` terminates when the connection does, and at no other time
 
@@ -290,10 +331,15 @@ temperature reading that never reaches the UI.
 
 ### `Sinks.unsafe()` means you promise external serialisation
 
-`replays = Sinks.unsafe().many().replay().latest()` opts out of the serialisation the safe variant
-does for you. That is only correct while every emission comes from one thread. Emissions currently
-come from `ReplaySubscriber.onNext` (the netty event loop) and from `onOk` - check that invariant
-before adding a fourth caller, or move to the safe sink.
+`replays` was `Sinks.unsafe().many().replay().latest()`, which opts out of the serialisation the
+safe variant does for you and is correct only while every emission comes from one thread. That held
+while emissions came from `ReplaySubscriber.onNext` and the `onOk` it calls - both the netty event
+loop. `BlockAcknowledged` broke it, because a block is released inside the drain loop and the drain
+loop runs on whichever thread got there first.
+
+**It is the safe sink now**, which is the move this entry used to recommend. The lesson stands for
+the next one: an unsafe sink is a promise about threads, so adding an emitter means re-checking the
+promise rather than the sink.
 
 ## Patterns that work here
 
@@ -405,11 +451,22 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   buffer and nothing to do, which is a different statement from `busy:` and currently says nothing
   to the window at all.
 - **An `ok` that arrives while the window is empty is logged and lost.** `applyWindowEvents` calls
-  `GSendWindow.acknowledge()`, which answers false for a stray acknowledgement, and the credit is
-  not held for the next block sent. A printer cannot acknowledge a block it has not received, so
-  this is only reachable by a test that fakes the ordering - `anAcknowledgementArrivingMidEmissionIsCreditAndNotExtraRoom`
-  does exactly that, and leaves the window one block narrower for the rest of its run. Worth knowing
-  before that test is extended, not worth a deferred-credit counter today.
+  `GSendWindow.acknowledge()`, which answers null for a stray acknowledgement, so the credit is not
+  held for the next block sent and nothing is announced. A printer cannot acknowledge a block it has
+  not received, so this is only reachable by a test that fakes the ordering -
+  `anAcknowledgementArrivingMidEmissionIsCreditAndNotExtraRoom` does exactly that, and leaves the
+  window one block narrower for the rest of its run. Worth knowing before that test is extended, not
+  worth a deferred-credit counter today.
+- **The line number in a `BlockAcknowledged` restarts at 1 when a session resynchronises.** It is
+  the wire's number, and `GSendWindow.reset` is what moves it - so a consumer that treats the
+  sequence as monotonic over the life of a connection is wrong after the first resync, which is also
+  the moment blocks were abandoned. Both halves belong to the same fix: C5 owns recovery and is
+  where a job learns that its numbering started again and which lines went missing. Until then, read
+  a `BlockAcknowledged` as "the firmware took this block" and not as a position in a job.
+- **It counts blocks *queued*, not blocks executed.** `ok` covers acceptance into the planner, which
+  is the whole reason a send window exists. For C4's "estimated remaining" that is the right signal
+  to start from and not the right signal to stop at: at the end of a job the planner still holds
+  seconds of motion that has been acknowledged and not performed.
 - **`CommandProcessor.onComplete` has `subscriber.onComplete()` commented out**, so upstream
   completion is swallowed. Deliberate or not, it is undocumented.
 - **`PublisherQueue` uses a `PriorityQueue` with partial synchronisation** - `request0` is

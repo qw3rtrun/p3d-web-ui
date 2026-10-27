@@ -77,7 +77,7 @@ class ConnectionLifecycleTest {
     }
 
     @Test
-    void connectingThenTheSocketOpeningThenTheFirstReply() {
+    void connectingThenTheSocketOpeningThenTheFirstAcknowledgement() {
         moved(lifecycle.connectRequested(), OFFLINE, CONNECTING, 1);
         assertTrue(lifecycle.wanted());
         assertFalse(lifecycle.linked(), "an attempt in flight is not a connection");
@@ -85,7 +85,7 @@ class ConnectionLifecycleTest {
         moved(lifecycle.linkEstablished(), CONNECTING, ONLINE, 0);
         assertTrue(lifecycle.linked());
 
-        moved(lifecycle.replyReceived(), ONLINE, IDLE, 0);
+        moved(lifecycle.blockAcknowledged(), ONLINE, IDLE, 0);
     }
 
     /**
@@ -102,6 +102,30 @@ class ConnectionLifecycleTest {
         lifecycle.linkEstablished();
 
         assertEquals(ONLINE, lifecycle.state());
+    }
+
+    /**
+     * A machine that talks but accepts nothing is {@code ONLINE}, not {@code IDLE}.
+     *
+     * <p>This is the hole B3 left open and recorded against itself. {@code M155 S1} left running by
+     * a previous session goes on writing a temperature every second into whatever socket is open,
+     * and a backlog the printer queued while nothing was listening arrives the moment one is - so
+     * "a reply arrived" is satisfied by traffic that proves only that the firmware is powered. The
+     * live run reached this state twice from two different causes, and both read as {@code IDLE}
+     * while the outbound half of the session was dead.
+     *
+     * <p>The proof that is worth something is an acknowledgement of a block <em>this</em> session
+     * sent, which is the one thing a dead outbound half cannot produce.
+     */
+    @Test
+    void aMachineThatTalksButAcceptsNothingStaysOnline() {
+        lifecycle.connectRequested();
+        lifecycle.linkEstablished();
+
+        assertNull(lifecycle.replyReceived(), "auto-report traffic is not proof that a block landed");
+        assertEquals(ONLINE, lifecycle.state());
+
+        moved(lifecycle.blockAcknowledged(), ONLINE, IDLE, 0);
     }
 
     @Test
@@ -188,7 +212,7 @@ class ConnectionLifecycleTest {
     void aBusyNoticeIsAStateAndRepeatsDoNotReAnnounceIt() {
         lifecycle.connectRequested();
         lifecycle.linkEstablished();
-        lifecycle.replyReceived();
+        lifecycle.blockAcknowledged();
 
         moved(lifecycle.busyReported("processing"), IDLE, BUSY, 0);
         assertNull(lifecycle.busyReported("processing"), "the firmware repeats this every two seconds");
@@ -236,7 +260,7 @@ class ConnectionLifecycleTest {
     void anErrorIsClearedByTheNextGoodReply() {
         lifecycle.connectRequested();
         lifecycle.linkEstablished();
-        lifecycle.replyReceived();
+        lifecycle.blockAcknowledged();
 
         moved(lifecycle.faulted("checksum mismatch, Last Line: 2"), IDLE, ERROR, 0);
         assertTrue(lifecycle.linked(), "a fault is not a lost connection");

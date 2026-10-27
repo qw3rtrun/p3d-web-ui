@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.terminal;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.GEvent;
 import org.qw3rtrun.p3d.g.code.core.session.GSendWindow;
 import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
@@ -48,7 +49,22 @@ public class HostTerminal {
     private final Supplier<Flux<String>> inbound;
     private final Function<Publisher<String>, Mono<Void>> outbound;
 
-    private Sinks.Many<GEvent> replays = Sinks.unsafe().many().replay().latest();
+    /**
+     * The reply bus, and a <em>safe</em> sink because it now has two emitting threads.
+     *
+     * <p>It was {@code Sinks.unsafe()}, which opts out of the serialisation the safe variant does
+     * and leaves the caller promising it. That promise held while every emission came from the
+     * netty inbound thread - {@link ReplaySubscriber#onNext} and the {@link #onOk} it calls.
+     * {@link BlockAcknowledged} broke it: a block is released inside the drain loop, which runs on
+     * whichever thread got there first, and that is as readily the producer thread pushing a
+     * command as the inbound thread delivering an {@code ok}.
+     *
+     * <p>The honest fix is the safe sink rather than a lock of our own. What it costs is a
+     * compare-and-set on the emitting path; what it buys is that a concurrent emission is reported
+     * as {@code FAIL_NON_SERIALIZED} to {@link #emit}, which logs it, instead of quietly corrupting
+     * the subscriber list.
+     */
+    private final Sinks.Many<GEvent> replays = Sinks.many().replay().latest();
 
     private CommandProcessor outSide;
     private ReplaySubscriber inSide;
@@ -76,11 +92,18 @@ public class HostTerminal {
      * format in three places, and {@code PrinterReactor} was decoding the text a second time
      * anyway, so every line was being read by two parsers that disagreed.
      *
-     * <p>Not every received line reaches here. The ones that drive the protocol and say nothing a
-     * subscriber did not already learn from the send window are consumed: a bare and an advanced
-     * {@code ok}, {@code wait}, and {@code Resend}. Everything else is published - except a line no
-     * decoder claimed, which is dropped with a {@code #traffic} debug line, because {@code GRs} has
-     * no value for "unread" and the raw text has no consumer.
+     * <p>Not every received line reaches here as itself. The ones that drive the protocol are
+     * consumed by the send window: a bare and an advanced {@code ok}, {@code wait}, and
+     * {@code Resend}. Everything else is published - except a line no decoder claimed, which is
+     * dropped with a {@code #traffic} debug line, because {@code GRs} has no value for "unread"
+     * and the raw text has no consumer.
+     *
+     * <p><strong>One thing on this flux is not a reply at all.</strong> An {@code ok} that releases
+     * a block is republished as a {@link BlockAcknowledged} carrying the line number the window
+     * held against it. The justification for swallowing an {@code ok} was that it said nothing a
+     * subscriber had not already learned from the send window - and no subscriber can see a send
+     * window, so what it actually said was nothing to anybody. It is the only honest measure of
+     * progress and the only proof that this session can send; that record says why both needed it.
      *
      * <p><strong>This flux terminates when the connection does, and at no other time.</strong> An
      * {@code onError} here means the inbound side died - the socket, or the decoder - and not that
@@ -510,12 +533,22 @@ public class HostTerminal {
          * <p>Drain loop only - see the class note. The order is the protocol's own: an {@code ok}
          * that arrived before a {@code Resend:} released a block the firmware really had taken, and
          * applying the two the other way round would rewind over it.
+         *
+         * <p><strong>The acknowledgement signal is emitted from here, and it has to be.</strong>
+         * The window is the only thing that knows which block an {@code ok} answered - the bare
+         * {@code ok} most builds send carries no number, so the correspondence is the window's FIFO
+         * order and nothing on the wire - and the window may only be touched from this loop. That
+         * puts the emission on whichever thread happens to be draining, which is why
+         * {@link HostTerminal#replays} could no longer be an unsafe sink.
          */
         private void applyWindowEvents() {
             for (Integer event; (event = windowEvents.poll()) != null; ) {
                 if (event == ACK) {
-                    if (!window.acknowledge()) {
+                    Integer released = window.acknowledge();
+                    if (released == null) {
                         log.debug("OUT: ok with nothing outstanding in the send window {}", report.get());
+                    } else {
+                        emit(new BlockAcknowledged(released, window.getInFlight()));
                     }
                 } else {
                     rewind0(event);

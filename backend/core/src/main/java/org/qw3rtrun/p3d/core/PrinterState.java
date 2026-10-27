@@ -114,11 +114,16 @@ public class PrinterState implements PrinterAggregate {
      * aggregate's business; the reactor's job is to carry messages, not to work out who wants them.
      *
      * <p><strong>Every reply moves the connection lifecycle, including the ones no arm claims.</strong>
-     * A reply - any reply - is the only proof that there is a firmware on the other end of the
-     * socket rather than just an open port, so it is what takes a machine from {@code ONLINE} to
-     * {@code IDLE} and what clears a recoverable {@code ERROR}. Two kinds say something more
-     * specific and are not that proof: a busy notice and an error report, which have arms of their
-     * own. Before B3 both of those fell through to the debug line.
+     * A reply after a fault is what clears a recoverable {@code ERROR}, and a reply after the busy
+     * notices have stopped is what leaves {@code BUSY}. Two kinds say something more specific and
+     * have arms of their own: a busy notice and an error report. Before B3 both of those fell
+     * through to the debug line.
+     *
+     * <p><strong>What a reply does not do is prove the machine is there.</strong> B3 put
+     * {@code ONLINE} to {@code IDLE} on "any reply" and a live run showed what that was worth: a
+     * previous session's {@code M155 S1} auto-reports, and a backlog queued while nothing was
+     * listening, both arrive at a host whose outbound half is dead. That arrow belongs to
+     * {@link BlockAcknowledged}, which names a block this session put on the wire and got back.
      *
      * <p>Not exhaustive in the compiler's sense: {@code GEvent} is not sealed, and sealing it would
      * close the application's event vocabulary to the modules that are going to add to it. What the
@@ -127,6 +132,7 @@ public class PrinterState implements PrinterAggregate {
      */
     public void onEvent(GEvent event) {
         switch (event) {
+            case BlockAcknowledged _ -> transition(connection.blockAcknowledged());
             case MachineBusyEvent e -> transition(connection.busyReported(e.reason()));
             case ErrorReportEvent e -> transition(connection.faulted(e.message()));
             case TemperatureReportedEvent e -> {

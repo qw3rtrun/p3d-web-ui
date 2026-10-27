@@ -224,7 +224,7 @@ from before the restart is a stale number that would read as current.
 
 ```
 OFFLINE    --connect asked for-->  CONNECTING
-CONNECTING --socket up--------->   ONLINE   --first reply-->  IDLE
+CONNECTING --socket up--------->   ONLINE   --block acknowledged-->  IDLE
 CONNECTING --attempt failed---->   CONNECTING (backoff, attempt+1)
 CONNECTING --attempts spent---->   OFFLINE  (with the reason)
 IDLE       --busy notice------->   BUSY     --notices stop-->  IDLE
@@ -242,8 +242,17 @@ it leaves:
   state is where the machine is. A drop while a connection is wanted retries; the identical drop
   after Disconnect rests. Code that needs to know "should this come back" asks the first, not the
   second - and the absence of that distinction is why the code this replaced had no retry at all.
-- **`ONLINE` is a socket; `IDLE` is a firmware answering.** A terminal server with nothing plugged
-  into it stops at `ONLINE`. Do not treat the two as synonyms.
+- **`ONLINE` is a socket; `IDLE` is a firmware that took something this host sent.** A terminal
+  server with nothing plugged into it stops at `ONLINE`. Do not treat the two as synonyms.
+- **A reply does not leave `ONLINE`; an acknowledgement does.** B3 shipped "any reply" on that
+  arrow and a live run disproved it: `M155 S1` left running by an earlier session writes a
+  temperature a second into whatever socket is open, and a printer that queued output while nothing
+  was listening delivers the backlog the moment something is. Both reach a host whose outbound half
+  is dead. `ConnectionLifecycle.blockAcknowledged()` owns the arrow and is fed by the transport's
+  `BlockAcknowledged`, which names a block this session put on the wire and got back. It costs
+  nothing in the normal case because `onOnline` sends `M115` and `M155 S1` the moment the socket
+  opens, so a healthy machine acknowledges within a round trip of connecting. **Anything that needs
+  to know "is this machine actually usable" asks for `IDLE` and not for `linked()`.**
 - **`ERROR` is still linked.** On a Marlin an `Error:` is routine traffic the printer recovers from,
   so it clears on the next good reply. A fault is not a lost connection.
 - **The lifecycle is a plain object with no Reactor in it.** Every transition returns the event it

@@ -177,12 +177,16 @@ public final class ConnectionLifecycle {
     }
 
     /**
-     * The machine said something, which is the only proof the firmware is actually there.
+     * The machine said something.
      *
-     * <p>{@code ONLINE} to {@code IDLE} is what separates "the socket opened" from "there is a
-     * printer on the other end of it", and {@code ERROR} to {@code IDLE} is how a recoverable fault
-     * clears itself. {@code BUSY} is left only once the busy notices have stopped for the busy
-     * timeout - see the class note.
+     * <p>{@code ERROR} to {@code IDLE} is how a recoverable fault clears itself: the machine is
+     * already known to be linked, so any good reply after the fault is enough to say it carried on.
+     * {@code BUSY} is left only once the busy notices have stopped for the busy timeout - see the
+     * class note.
+     *
+     * <p><strong>It no longer moves {@code ONLINE} to {@code IDLE}</strong>, which it used to do on
+     * the grounds that a reply is proof a firmware is there. It is not. See
+     * {@link #blockAcknowledged()}.
      */
     public ConnectionStateChanged replyReceived() {
         if (state == BUSY) {
@@ -191,10 +195,37 @@ public final class ConnectionLifecycle {
             }
             return moveTo(IDLE, null);
         }
-        if (state == ONLINE || state == ERROR) {
+        if (state == ERROR) {
             return moveTo(IDLE, null);
         }
         return null;
+    }
+
+    /**
+     * The firmware accepted a block this session sent, which is the proof {@link #replyReceived()}
+     * only looked like.
+     *
+     * <p><strong>This is the arrow from {@code ONLINE} to {@code IDLE}, and the only one.</strong>
+     * B3 shipped with "any reply" on it and recorded against itself why that was not good enough:
+     * {@code M155 S1} left running by an earlier session writes a temperature a second into
+     * whatever socket is open, and a printer that queued output while nothing was listening
+     * delivers the backlog the moment something is. Both are replies; neither says the host can
+     * send. The live run reached that state twice, from those two different causes, and a machine
+     * whose outbound half was dead read as {@code IDLE} both times.
+     *
+     * <p>An acknowledgement cannot be counterfeited by either, because it names a block this host
+     * put on the wire under this session's numbering. One arrives within a round trip of every
+     * connection without anything having to ask for it - {@code PrinterState.onOnline} sends
+     * {@code M115} and {@code M155 S1} the moment the socket comes up - so nothing waits on a user
+     * to press a button before a healthy machine reads as healthy.
+     *
+     * <p>Otherwise an acknowledgement is a reply like any other, and does what one does.
+     */
+    public ConnectionStateChanged blockAcknowledged() {
+        if (state == ONLINE) {
+            return moveTo(IDLE, null);
+        }
+        return replyReceived();
     }
 
     /** The machine said it is busy. Repeats refresh the deadline without re-announcing. */

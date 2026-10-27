@@ -664,17 +664,15 @@ session after a power-on had ever been able to send. `TerminalRecoveryProbe` pas
 checks with the reset in front of the conversation, including the byte-for-byte replay of a block
 corrupted on the wire.
 
-What is still open from this is the **acknowledgement signal** of [decision 3](#d3-acks), and it
-should still be raised before C3: see the note below on why `IDLE` is not proof that a session can
-send.
-
-**What it exposes in B3 itself** is recorded as debt rather than patched over: `IDLE` means "a reply
-arrived", and a reply can be auto-report traffic left running by a *previous* session, so a machine
-whose outbound half is dead still reads `IDLE`. The live run demonstrated it twice from two
-different causes - once with the broken numbering, and once with a session whose first block sat
-unacknowledged behind a 937-line backlog the simulator had queued while nothing was connected. Both
-read as `IDLE`. The honest proof is an acknowledgement of something *this* session sent, which is
-exactly the signal decision 3 says the transport does not expose yet.
+**What it exposed in B3 itself** was recorded as debt rather than patched over, and has since been
+fixed: `IDLE` meant "a reply arrived", and a reply can be auto-report traffic left running by a
+*previous* session, so a machine whose outbound half was dead still read `IDLE`. The live run
+demonstrated it twice from two different causes - once with the broken numbering, and once with a
+session whose first block sat unacknowledged behind a 937-line backlog the simulator had queued
+while nothing was connected. The honest proof is an acknowledgement of something *this* session
+sent, which is exactly the signal [decision 3](#d3-acks) said the transport did not expose. It does
+now, `ONLINE -> IDLE` is the one arrow that waits for it, and a stand-in that talks without ever
+acknowledging anything stays `ONLINE` - see decision 3 for the run.
 
 1065 tests green, and the four done-when conditions all hold. Two deviations in how, both
 deliberate: `VirtualTimeScheduler` drives
@@ -917,7 +915,42 @@ publish a typed progress signal alongside the reply bus. The alternative, counti
 feeder handed over, is wrong in exactly the case that matters: after a `Resend:` the transport
 replays blocks the job already counted, so progress would overstate and then have to move backwards.
 
-This is a `terminal-dev` item and should be raised as one before **C3** starts.
+**Done, and it closed B3's own debt on the way.** `BlockAcknowledged(lineNumber, inFlight)` is a
+`GEvent` on `messageFlux()`, emitted when `GSendWindow.acknowledge()` releases a block — the window
+now returns the number it released rather than a boolean, because it is the only thing that knows
+which block an `ok` answered. The bare `ok` most builds send carries no number, so the
+correspondence is the window's FIFO order and nothing on the wire.
+
+**It had to move the reply bus to a safe sink.** `replays` was `Sinks.unsafe()`, which promises
+external serialisation; that promise held while every emission came from the netty inbound thread,
+and a block is released inside the drain loop, which runs on whichever thread got there first.
+
+**The second consumer is B3's.** `ONLINE → IDLE` was "any reply", which B3 recorded against itself
+as a lie: `M155 S1` left running by an earlier session, and a backlog queued while nothing was
+listening, both arrive at a host whose outbound half is dead. `ConnectionLifecycle.blockAcknowledged()`
+owns that arrow now and `replyReceived()` no longer does. It costs nothing in the normal case —
+`onOnline` sends `M115` the moment the socket opens, so a healthy machine acknowledges within a
+round trip.
+
+**Verified by running**, against a TCP stand-in rather than MarlinSim, which was down:
+
+* `TerminalRecoveryProbe` passes eight checks including the two new ones. The one that needed a real
+  peer is the replay: a block corrupted on the wire is rejected, replayed byte for byte, and the
+  `ok` that closes the resend announces nothing while the real `ok` announces block 2 — six blocks
+  written, one of them twice, four acknowledgements `[1, 2, 3, 4]`, all distinct. A counter of what
+  was *sent* would have said five;
+* the assembled application dialled a printer and announced `ONLINE -> IDLE` after
+  `-> N1 M115*39` / `<- ok N1 P15 B3`, and **not** after the `ok` for its own `M110`, which releases
+  no block;
+* a stand-in that accepts TCP, writes a temperature every second and never acknowledges anything
+  **stayed `ONLINE` for as long as it was watched**, with the temperatures arriving and decoding
+  normally. That is the case B3 could only describe.
+
+What it does not close is recorded as debt in the `reactive-transport-dev` skill: the number is the
+wire's, so it restarts at 1 when a session resynchronises — the same moment blocks are abandoned,
+which is why both halves belong to **C5**'s recovery rather than here. And `ok` means *queued*, not
+executed, so **C4**'s "estimated remaining" has a planner's worth of motion to account for at the
+end of a job.
 
 ---
 

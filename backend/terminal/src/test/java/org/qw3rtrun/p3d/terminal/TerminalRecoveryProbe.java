@@ -1,5 +1,6 @@
 package org.qw3rtrun.p3d.terminal;
 
+import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BusyReport;
 import org.qw3rtrun.p3d.api.msg.ErrorReport;
 import org.qw3rtrun.p3d.api.msg.GEvent;
@@ -14,6 +15,7 @@ import reactor.netty.tcp.TcpClient;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -115,7 +117,10 @@ public final class TerminalRecoveryProbe {
         replies.dispose();
         terminal.stop();
         conn.dispose();
-        System.exit(busEnded.isEmpty() && afterError > beforeError && replayed(writtenBefore) ? 0 : 1);
+        var acked = acknowledged(seen);
+        var distinct = Set.copyOf(acked.stream().map(BlockAcknowledged::lineNumber).toList()).size();
+        System.exit(busEnded.isEmpty() && afterError > beforeError && replayed(writtenBefore)
+                && !acked.isEmpty() && distinct == acked.size() ? 0 : 1);
     }
 
     /**
@@ -163,6 +168,8 @@ public final class TerminalRecoveryProbe {
 
         var busies = seen.stream().filter(BusyReport.class::isInstance).count();
         var replayed = replayed(writtenBefore);
+        var acked = acknowledged(seen);
+        var ackNumbers = acked.stream().map(BlockAcknowledged::lineNumber).toList();
 
         System.out.println();
         System.out.println("=== checks ===");
@@ -177,6 +184,27 @@ public final class TerminalRecoveryProbe {
                 after > before ? "PASS" : "FAIL", before, after);
         System.out.printf("  echo:busy: decoded as BusyNotice     %s   (%d seen)%n",
                 busies > 0 ? "PASS" : "not exercised", busies);
+        System.out.printf("  acknowledgements reached the bus     %s   (%d seen: %s)%n",
+                acked.isEmpty() ? "FAIL" : "PASS", acked.size(), ackNumbers);
+        System.out.printf("  a replay did not count twice         %s   (%d distinct of %d)%n",
+                Set.copyOf(ackNumbers).size() == ackNumbers.size() ? "PASS" : "FAIL",
+                Set.copyOf(ackNumbers).size(), ackNumbers.size());
+    }
+
+    /**
+     * The acknowledgements on the bus - the signal plan decision 3 asked for.
+     *
+     * <p>The check that needs a real peer is the second one in {@link #report}: this probe breaks a
+     * block on the wire on purpose, so the firmware rejects it, the host replays it, and the replay
+     * is acknowledged. A progress counter that counted what the host <em>sent</em> would count that
+     * block twice. Counting what came back here must not, and that is only demonstrable against
+     * something that actually rejects a block.
+     */
+    private static List<BlockAcknowledged> acknowledged(List<GEvent> seen) {
+        return seen.stream()
+                .filter(BlockAcknowledged.class::isInstance)
+                .map(BlockAcknowledged.class::cast)
+                .toList();
     }
 
     private static boolean isFramed(String block) {

@@ -34,11 +34,17 @@ import org.qw3rtrun.p3d.g.protocol.GRs;
  * protocol.
  *
  * <p><strong>What is not translated is not published.</strong> An {@code ok}, a {@code wait} and a
- * {@code Resend:} drive the send window and say nothing a subscriber did not already learn from it;
- * {@link HostTerminal} consumes those before they reach here. Everything else that no arm below
- * claims becomes an {@link UnknownReply} rather than disappearing - {@code :gcode} decodes a good
- * deal more than the host acts on, and one of those on the bus is the signal that a reply has
- * earned a typed event.
+ * {@code Resend:} drive the send window; {@link HostTerminal} consumes those before they reach
+ * here. Everything else that no arm below claims becomes an {@link UnknownReply} rather than
+ * disappearing - {@code :gcode} decodes a good deal more than the host acts on, and one of those
+ * on the bus is the signal that a reply has earned a typed event.
+ *
+ * <p><strong>The {@code ok} is the exception, and it is not translated here.</strong> It used to be
+ * consumed on the grounds that it said nothing a subscriber had not already learned from the send
+ * window - which was never true, because no subscriber can see one. What it says is republished as
+ * a {@code BlockAcknowledged}, built by {@link HostTerminal} rather than by this class: the line
+ * number an {@code ok} carries is the window's, not the reply's, so it is not a translation of the
+ * reply and does not belong on this side of the bridge.
  */
 final class ReplyEvents {
 

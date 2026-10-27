@@ -37,7 +37,7 @@ import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
  * window.send(GCommand(GLetter('G'), GInt(28)))   // "N1 G28*18"
  * window.send("G90")                              // "N2 G90*18" - the same path, from text
  * window.resendFrom(1)                            // ["N1 G28*18"] - after `Resend: 1`
- * window.acknowledge()                            // true - after `ok`
+ * window.acknowledge()                            // 1 - the block the `ok` released
  * ```
  *
  * @property capacity how many blocks may be outstanding at once; Marlin's `BUFSIZE` is 4
@@ -113,21 +113,35 @@ class GSendWindow(
     }
 
     /**
-     * Records one `ok`: the oldest outstanding block is done and its slot is free. Returns false when
-     * there was nothing outstanding, which is a stray acknowledgement rather than a fault.
+     * Records one `ok`: the oldest outstanding block is done and its slot is free. Returns **the
+     * number of the block it released**, or null when there was nothing outstanding - a stray
+     * acknowledgement rather than a fault.
+     *
+     * **The number is the point, and not a convenience.** A host that wants to report how far a
+     * print has actually got has only two things it could count: the blocks it handed to the
+     * transport, or the blocks the firmware accepted. The first is wrong in exactly the case that
+     * matters - after a [resendFrom] the same blocks go out again, so a count of what was sent
+     * overstates and then has to walk backwards - and the second is knowable only here, because
+     * this is what holds the correspondence between an `ok` and the block it answers.
+     *
+     * An `ok` is matched to the **oldest** outstanding block and not to a number on the line
+     * itself. Spec 8.5 has the firmware acknowledge in order, and the bare `ok` that most builds
+     * send carries no number at all, so order is the only correspondence there is.
      *
      * ```
      * val window = GSendWindow()
-     * window.acknowledge()   // false - nothing was sent
+     * window.send(GCommand(GLetter('G'), GInt(28)))
+     * window.acknowledge()   // 1 - the block that was just released
+     * window.acknowledge()   // null - nothing was outstanding
      * ```
      *
-     * @return true when a block was released, false for a stray `ok`
+     * @return the line number of the block released, or null for a stray `ok`
      */
-    fun acknowledge(): Boolean {
-        if (outstandingNumber.isEmpty()) return false
-        outstandingNumber.removeAt(0)
+    fun acknowledge(): Int? {
+        if (outstandingNumber.isEmpty()) return null
+        val number = outstandingNumber.removeAt(0)
         outstandingText.removeAt(0)
-        return true
+        return number
     }
 
     /**

@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
+import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BusyReport;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.api.msg.ErrorReport;
@@ -70,9 +71,11 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * Firmware and capability reports are republished, and the first of them also proves the
-     * machine is answering - so three events, not two. See
-     * {@link #aReplyWithNoArmSendsNothingAndStillProvesTheMachineIsThere}.
+     * Firmware and capability reports are republished, and prove nothing about the link.
+     *
+     * <p>Two events and not three. An {@code M115} answer is the most convincing-looking reply
+     * there is - it names the firmware - and it is still only something the machine said. See
+     * {@link #aReplyWithNoArmSendsNothingAndProvesNothingEither}.
      */
     @Test
     void firmwareAndCapabilityEventsReachItToo() {
@@ -86,25 +89,45 @@ class PrinterStateDispatchTest {
                         .filter(event -> !(event instanceof ConnectionStateChanged))
                         .map(Object::getClass).toList(),
                 "both should have been republished as state changes");
-        assertEquals(MachineConnectionState.IDLE, printer.getConnection().state());
+        assertEquals(MachineConnectionState.ONLINE, printer.getConnection().state());
     }
 
     /**
-     * A reply nothing claims is still survived, and still moves the connection on.
+     * A reply nothing claims is survived, sends nothing, and moves the connection nowhere.
      *
-     * <p>Two halves, and B3 changed which is which. A reply with no application event at all -
-     * a position report, an echo, half of an {@code M503} dump - falls to the default arm and sends
-     * nothing, as it always did. What it no longer does is pass without trace: <em>any</em> reply is
-     * the proof that there is a firmware on the other end of the socket rather than an open port,
-     * so it is what takes a machine from {@code ONLINE} to {@code IDLE}.
+     * <p>A reply with no application event at all - a position report, an echo, half of an
+     * {@code M503} dump - falls to the default arm and sends nothing, as it always has. What it no
+     * longer does is advance the connection: B3 put <em>any</em> reply on the {@code ONLINE} to
+     * {@code IDLE} arrow on the grounds that it proved a firmware was there, and a live run proved
+     * that it does not. Auto-report traffic an earlier session left running arrives at a host whose
+     * outbound half is dead, and reads exactly like this.
      *
      * <p>Nothing may throw here either way: the event stream has to survive a message nobody wanted.
      */
     @Test
-    void aReplyWithNoArmSendsNothingAndStillProvesTheMachineIsThere() {
+    void aReplyWithNoArmSendsNothingAndProvesNothingEither() {
         var printer = online();
 
         printer.onEvent(new UnknownReply("X:0.00 Y:0.00 Z:5.00"));
+
+        assertEquals(List.of(), sent);
+        assertEquals(MachineConnectionState.ONLINE, printer.getConnection().state());
+        assertEquals(List.of(), emitted);
+    }
+
+    /**
+     * An acknowledged block is what takes a machine to {@code IDLE}, and it arrives unprompted.
+     *
+     * <p>Nothing has to ask for one. {@code onOnline} sends {@code M115} and {@code M155 S1} the
+     * moment the socket comes up, so a healthy printer acknowledges a block within a round trip of
+     * connecting and the stricter arrow costs nothing in the normal case - which is the only reason
+     * it can afford to be this strict.
+     */
+    @Test
+    void anAcknowledgedBlockIsWhatProvesTheMachineIsThere() {
+        var printer = online();
+
+        printer.onEvent(new BlockAcknowledged(1, 0));
 
         assertEquals(List.of(), sent);
         assertEquals(MachineConnectionState.IDLE, printer.getConnection().state());

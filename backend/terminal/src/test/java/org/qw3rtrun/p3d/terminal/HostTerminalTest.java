@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.terminal;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BusyReport;
 import org.qw3rtrun.p3d.api.msg.ErrorReport;
 import org.qw3rtrun.p3d.api.msg.GEvent;
@@ -128,6 +129,20 @@ class HostTerminalTest {
 
     private TemperatureReported firstTemperature() {
         return assertInstanceOf(TemperatureReported.class, published.getFirst());
+    }
+
+    /**
+     * Just the acknowledgements on the bus, which is what a progress counter reads.
+     *
+     * <p>Filtered rather than asserted against the whole list, because the replies that happen to
+     * be on the bus beside them - an {@code Error:}, a temperature - are a different test's
+     * business and change the moment either of those does.
+     */
+    private List<BlockAcknowledged> acknowledged() {
+        return published.stream()
+                .filter(BlockAcknowledged.class::isInstance)
+                .map(BlockAcknowledged.class::cast)
+                .toList();
     }
 
     /**
@@ -520,9 +535,59 @@ class HostTerminalTest {
                 .then(() -> receive("Resend: 3"))
                 .expectNext("N3 G1 X3*96\n", "N4 G1 X4*96\n", "N5 G1 X5*96\n")
                 .then(() -> receive("ok"))
+                .then(() -> assertEquals(List.of(new BlockAcknowledged(1, 0)), acknowledged(),
+                        "it acknowledges no block, so it announces none"))
                 .then(() -> assertEquals(List.of(1L, 3L, 1L), pulled))
                 .then(() -> receive("ok"))
                 .expectNext("N6 G1 X6*96\n")
+                .then(() -> assertEquals(
+                        List.of(new BlockAcknowledged(1, 0), new BlockAcknowledged(3, 2)), acknowledged(),
+                        "the next one is real, and it is block 3 - the one that was replayed"))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * An acknowledged block is announced, with the number of the block the firmware accepted.
+     *
+     * <p><strong>This is the signal plan decision 3 said the transport did not expose.</strong>
+     * Both {@code ok} forms were consumed by the send window on the stated grounds that they said
+     * nothing a subscriber had not already learned from it - and no subscriber can see the send
+     * window, so what they actually said was nothing to anybody. Two things needed it: progress
+     * measured in lines the firmware accepted rather than lines the host handed over, and the
+     * answer to whether this session can send at all.
+     *
+     * <p><strong>Counting what was sent is wrong in exactly the case that matters.</strong> After a
+     * {@code Resend:} the transport replays blocks the layer above already counted, so a count of
+     * what went out overstates and then has to move backwards. The number here is the window's, so
+     * a replayed block is announced under the number it was first sent with - see
+     * {@link #theOkThatClosesAResendAcknowledgesNoBlock}, where the second real acknowledgement is
+     * block 3 and not block 6.
+     *
+     * <p>The second field is what is still outstanding after this one. Without it, acknowledgements
+     * stopping is ambiguous - nothing was sent, or nothing is coming back - and that distinction is
+     * the whole of what a dead outbound half looks like from above.
+     */
+    @Test
+    void anAcknowledgedBlockIsAnnouncedWithItsLineNumber() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .then(() -> assertEquals(List.of(), acknowledged(),
+                        "the session's own reset holds no block, so its ok releases none"))
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .then(() -> assertEquals(List.of(new BlockAcknowledged(1, 0)), acknowledged()))
+                .then(() -> receive("ok"))
+                .expectNext("N5 G1 X5*96\n")
+                .then(() -> assertEquals(
+                        List.of(new BlockAcknowledged(1, 0), new BlockAcknowledged(2, 2)), acknowledged(),
+                        "two more are outstanding behind block 2"))
                 .thenCancel()
                 .verify(TIMEOUT);
     }

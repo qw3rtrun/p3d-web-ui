@@ -14,7 +14,7 @@ package org.qw3rtrun.p3d.api.model;
  *
  * <pre>
  *   OFFLINE   --connect asked for-->  CONNECTING
- *   CONNECTING--socket up--------->   ONLINE   --first reply-->  IDLE
+ *   CONNECTING--socket up--------->   ONLINE   --block acknowledged-->  IDLE
  *   CONNECTING--attempt failed---->   CONNECTING (backoff, attempt+1)
  *   CONNECTING--attempts spent---->   OFFLINE  (with the reason)
  *   IDLE      --busy notice------->   BUSY     --busy goes quiet-->  IDLE
@@ -24,9 +24,16 @@ package org.qw3rtrun.p3d.api.model;
  * </pre>
  *
  * <p>{@code ONLINE} and {@code IDLE} are a real distinction rather than a synonym: {@code ONLINE}
- * means a socket is open, {@code IDLE} means the firmware on the other end has actually answered.
- * A printer that accepts TCP and then says nothing - a terminal server with nothing plugged into it
- * is the usual cause - stops at {@code ONLINE}, and that is worth being able to see.
+ * means a socket is open, {@code IDLE} means the firmware on the other end has taken something this
+ * host sent. A printer that accepts TCP and then says nothing - a terminal server with nothing
+ * plugged into it is the usual cause - stops at {@code ONLINE}, and that is worth being able to see.
+ *
+ * <p><strong>The arrow out of {@code ONLINE} was "any reply" and is now an acknowledgement.</strong>
+ * B3 shipped it as the first, and a live run showed what that is worth: {@code M155 S1} left
+ * running by an earlier session writes a temperature a second into whatever socket is open, and a
+ * printer that queued output while nothing was listening delivers the backlog the moment something
+ * is. Both are replies, both arrive at a host whose outbound half is dead, and both used to read as
+ * a healthy machine. See {@code org.qw3rtrun.p3d.api.msg.BlockAcknowledged}.
  */
 public enum MachineConnectionState {
 
@@ -36,10 +43,15 @@ public enum MachineConnectionState {
     /** Dialling, or waiting out a backoff before the next attempt. */
     CONNECTING,
 
-    /** The socket is open. Nothing has been heard back from the firmware yet. */
+    /**
+     * The socket is open, and nothing this host sent has been accepted yet.
+     *
+     * <p>A machine can sit here while talking steadily - see the class note. Replies are not what
+     * leaves this state.
+     */
     ONLINE,
 
-    /** The firmware is answering and is not working on anything. */
+    /** The firmware has accepted something this session sent, and is not working on anything. */
     IDLE,
 
     /** The firmware said it is busy, and has not stopped saying so. */

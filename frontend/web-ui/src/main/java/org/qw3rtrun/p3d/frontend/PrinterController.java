@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.frontend;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.control.PrinterControl;
+import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.*;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -41,6 +42,19 @@ public class PrinterController {
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<TemperatureReport> getState(@PathVariable UUID id) {
         return Mono.from(printers.state(id));
+    }
+
+    /**
+     * Where this machine's connection is, right now.
+     *
+     * <p>The health signal of plan item B3, answered without opening the stream. The page used to
+     * have no way to ask: it inferred "online" from the fact that <em>any</em> event had arrived on
+     * the SSE channel, which meant a printer that was connected but quiet read as offline until it
+     * said something.
+     */
+    @GetMapping(value = "/connection", produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ConnectionStatus> getConnection(@PathVariable UUID id) {
+        return Mono.from(printers.connection(id));
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

@@ -15,8 +15,4 @@ public interface MachineManagementService {
     Stream<Descriptor> fetchAll();
 
     void delete(UUID uuid);
-
-    void disconnect(UUID uuid);
-
-    void connect(UUID uuid);
 }

@@ -73,6 +73,55 @@ What a caller may rely on: between two acknowledgements, the number of commands 
 more than the last reported block queue, nor more than the window can replay. Nothing wider, and no
 credit invented from a reply.
 
+### A session opens with `M110 N0`
+
+The first block of every session is the counter reset, framed and written through the drain loop
+like any other block: `CommandProcessor` builds it in its constructor from `GSendWindow.reset(0)`
+and `write()` puts it in front of everything, including a replay.
+
+**Why it is not optional.** The window numbers from `N1`; a firmware that was not power-cycled
+remembers the line it last accepted. So the first block of a reconnection is answered with
+`Error:Line Number is not Last Line Number+1, Last Line: n` and a `Resend: n+1` for a block this
+host has never held - the window has nothing to replay, and every block after it is rejected on the
+same grounds. The session is alive, reads as healthy, and cannot send anything ever again.
+
+That was not hypothetical. Against the simulator, a plain Disconnect/Connect with no process
+restart reached exactly that state, which means **only the first session after a printer powers on
+had ever worked**. Spec 7.2 names `M110 N0` as how a host starts a session and exempts `M110` from
+the continuity check precisely so that it can be sent when the sequence is not yet agreed.
+
+Three consequences worth knowing before changing this:
+
+- **It costs a unit of demand and a buffer slot**, like any other block. A printer that has
+  reported nothing is credited with one command, so the first G-code block waits for the reset's
+  `ok`. That is why `canProcess()` returns zero while the reset is owed - the same rule a pending
+  replay obeys, and for the same reason: there is no agreed sequence for a block to take a place in
+  yet.
+- **Its `ok` acknowledges no block in the window.** `reset` does not record the `M110` as
+  outstanding, so `GSendWindow.acknowledge()` answers false for it and logs at debug. The credit
+  (`sentWithoutAck`) is still applied, which is the half that matters - without it the host would
+  believe it has a slot the printer does not.
+- **Every send-window test now opens with `N1 M110 N0*124` and an `ok`.** That prelude is the
+  handshake, not ceremony.
+
+### Resynchronising a session that has drifted
+
+A `Resend: n` for a block the window no longer holds means the firmware has named a block this host
+cannot produce. `CommandProcessor.resynchronise` answers it by starting the numbering again rather
+than patching it, and owns the two decisions `GSendWindow` cannot make:
+
+- **When a session is deemed lost:** at the first `Resend:` that cannot be answered. Not a judgement
+  call - there is no sequence left that both ends agree on.
+- **What happens to the abandoned blocks:** they are dropped, with a WARN naming how many. They
+  cannot be replayed under the new numbering without re-framing them, and the window holds the
+  *bytes* it emitted rather than the commands behind them - spec 8.3 makes the checksum a property
+  of the bytes, which is the whole reason it keeps them that way. Re-reading bytes this module
+  itself framed in order to renumber them would put a second parser back in the transport. It would
+  also be unsafe: a relative move replayed under a new number is a move made twice.
+
+**The layer above is not told.** That is the gap to close when plan item C5 builds job recovery; see
+the debt list.
+
 ### What a caller may hand to the outbound side
 
 **One bare block per item.** No `N` field, no `*` checksum, no line terminator, and no trailing
@@ -336,14 +385,22 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   a `:gcode` type in its public signature. It compiles only because `:backend:api` declares `:gcode`
   itself; a consumer that does not would fail. The fix is `api` rather than `implementation`, which
   needs the `java-library` plugin in `p3d.java-conventions`.
-- **Nothing resets the line counter, so a session that drifts past the window cannot be repaired.**
-  `GSendWindow.reset(to)` builds the `M110 N<to>` block that spec 7.2 exempts from the continuity
-  check, and nothing calls it. The hole shows at `rewind0`: a `Resend: n` for a block the window no
-  longer holds is logged and left, because a partial replay would put a second gap on the wire on
-  top of the one already there. In a well-behaved session it cannot happen - a block is released
-  only by the `ok` that accepted it - so what is missing is the repair for a peer that is already
-  lost, not a path a normal print takes. Whoever adds it owns two decisions the window cannot make:
-  when a session is deemed lost, and what happens to the blocks abandoned by the reset.
+- **A resynchronised session drops the blocks it abandoned, and nothing above is told.** The
+  counter reset is in - see *Resynchronising a session that has drifted* - and the blocks the window
+  was holding are discarded with a WARN naming the count. For a bare terminal session that is the
+  honest answer; for a print it is not, because those are lines of a job that will never reach the
+  machine. Plan item C5 owns recovery and is where the signal belongs. Do not solve it by having
+  the transport re-frame them: the window holds bytes rather than commands on purpose, and a
+  relative move replayed under a new number is a move made twice.
+- **A failing expectation in a send-window test hangs the JVM instead of failing.** `StepVerifier`
+  cancels from inside its own `onNext` when an expectation does not match; `CommandProcessor.cancel`
+  answers a cancel with `subscriber.onComplete()`, which re-enters the verifier's state machine and
+  spins at 100% CPU until the build is killed. Emitting a terminal signal from a cancel path is the
+  Reactive Streams violation already listed above, and this is what it costs in practice. It was
+  not removed with the counter reset because `reactor-netty`'s outbound `Mono` completes when its
+  source does, so a send that never completes is a connection that never closes - which is a change
+  to how `HostTerminal.stop()` behaves and wants its own probe. **Know it before debugging a
+  "hanging" test: read the expectation, not the pipeline.**
 - **`onWait` is still an empty `// TODO Unsupported yet`.** `wait` means the firmware has an empty
   buffer and nothing to do, which is a different statement from `busy:` and currently says nothing
   to the window at all.

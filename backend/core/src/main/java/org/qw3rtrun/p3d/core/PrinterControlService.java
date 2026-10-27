@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.RequiredArgsConstructor;
 import org.qw3rtrun.p3d.api.control.PrinterControl;
+import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.PrinterCommand;
@@ -69,6 +70,11 @@ public class PrinterControlService implements PrinterControl {
     @Override
     public Mono<Void> connect(UUID id, ConnectCmd command) {
         return reactor(id).flatMap(r -> r.handleConnectCmd(Mono.just(command)));
+    }
+
+    @Override
+    public Mono<ConnectionStatus> connection(UUID id) {
+        return reactor(id).flatMap(PrinterReactor::connection);
     }
 
     /**

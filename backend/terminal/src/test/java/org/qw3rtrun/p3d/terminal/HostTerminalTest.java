@@ -30,6 +30,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * {@link HostTerminal#messageFlux()}; {@link #sendWindow} builds one whose outbound side is handed
  * to a {@link StepVerifier}, so what is asserted is the demand the window produced and not just the
  * values it carried.
+ *
+ * <p><strong>Every send-window test opens with {@code N1 M110 N0*124} and an {@code ok}.</strong>
+ * That is the session handshake of spec 7.2 and not test ceremony: a host numbers from {@code N1}
+ * while a firmware that was not power-cycled remembers the line it last accepted, so without it the
+ * first block of every reconnection is rejected and the session never recovers. The reset takes a
+ * unit of demand and the single command slot an unreported printer is credited with; its {@code ok}
+ * returns both, leaving the window in exactly the state these tests used to start in.
  */
 class HostTerminalTest {
 
@@ -213,6 +220,9 @@ class HostTerminalTest {
 
         StepVerifier.create(out, 0)
                 .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(1)
                 .expectNext("N1 G1 X1*96\n")
                 .then(() -> assertEquals(List.of(1L), pulled))
                 .then(() -> receive("echo:busy: processing"))
@@ -231,6 +241,9 @@ class HostTerminalTest {
         var out = sendWindow();
 
         StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
                 .thenRequest(1)
                 .expectNext("N1 G1 X1*96\n")
                 .then(() -> receive("busy: paused for user"))
@@ -256,6 +269,9 @@ class HostTerminalTest {
         var out = sendWindow();
 
         StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
                 .thenRequest(10)
                 .expectNext("N1 G1 X1*96\n")
                 .then(() -> assertEquals(List.of(1L), pulled))
@@ -284,6 +300,9 @@ class HostTerminalTest {
         var out = sendWindow();
 
         StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
                 .thenRequest(10)
                 .expectNext("N1 G1 X1*96\n")
                 .then(() -> receive("busy: paused for user"))
@@ -315,6 +334,9 @@ class HostTerminalTest {
         var out = sendWindowAcking("G1 X1", "ok N1 P15 B3");
 
         StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
                 .thenRequest(10)
                 .expectNext("N1 G1 X1*96\n", "N2 G1 X2*96\n", "N3 G1 X3*96\n")
                 .then(() -> assertEquals(List.of(1L, 2L), pulled))
@@ -426,6 +448,9 @@ class HostTerminalTest {
 
         StepVerifier.create(out, 0)
                 .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(1)
                 .expectNext("N1 G28*18\n")
                 .then(() -> receive("ok"))
                 .thenRequest(1)
@@ -451,6 +476,9 @@ class HostTerminalTest {
         var out = sendWindow();
 
         StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
                 .thenRequest(10)
                 .expectNext("N1 G1 X1*96\n")
                 .then(() -> receive("ok N1 P15 B3"))
@@ -481,6 +509,9 @@ class HostTerminalTest {
         var out = sendWindow();
 
         StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
                 .thenRequest(10)
                 .expectNext("N1 G1 X1*96\n")
                 .then(() -> receive("ok N1 P15 B3"))
@@ -509,6 +540,9 @@ class HostTerminalTest {
         var out = sendWindow();
 
         StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
                 .thenRequest(20)
                 .expectNext("N1 G1 X1*96\n")
                 .then(() -> receive("ok N1 P15 B8"))
@@ -519,24 +553,85 @@ class HostTerminalTest {
     }
 
     /**
-     * A {@code Resend:} for a block the host no longer holds is reported, not guessed at.
+     * A {@code Resend:} for a block the host no longer holds is repaired with a counter reset.
      *
      * <p>Block 1 was acknowledged, so it is gone - a well-behaved firmware cannot ask for it, since
      * it is the {@code ok} for a block that releases it. A peer that asks anyway has drifted
      * further than a replay can repair, and a partial answer would put a gap on the wire on top of
-     * the one already there. Nothing is written and nothing is pulled.
+     * the one already there.
+     *
+     * <p>So the session is restarted rather than patched: {@code M110} puts the firmware's counter
+     * back to zero, numbering resumes at {@code N1}, and the blocks the window was holding are
+     * abandoned because the numbers they carry no longer mean anything. This was a log line and
+     * nothing else until a live run against the simulator showed how a session reaches this state
+     * in the first place.
      */
     @Test
-    void aResendForABlockNoLongerHeldIsReportedAndNotAnswered() {
+    void aResendForABlockNoLongerHeldIsRepairedWithACounterReset() {
         var out = sendWindow();
 
         StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
                 .thenRequest(10)
                 .expectNext("N1 G1 X1*96\n")
                 .then(() -> receive("ok N1 P15 B3"))
                 .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
                 .then(() -> receive("Resend: 1"))
-                .then(() -> assertEquals(List.of(1L, 3L), pulled))
+                .expectNext("N5 M110 N0*120\n")
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * A session opens by telling the firmware where the numbering starts.
+     *
+     * <p><strong>Spec 7.2: {@code M110 N0} is how a host starts a session</strong>, and an
+     * {@code M110} line is exempt from the continuity check precisely so that it can be sent when
+     * the sequence is not yet agreed.
+     *
+     * <p>Without it a reconnect is dead on arrival. The host's window starts at {@code N1} while
+     * the firmware - still powered, never reset - remembers the last line of the previous session,
+     * so the first block is rejected with {@code Error:Line Number is not Last Line Number+1} and a
+     * {@code Resend:} for a block this host has never held. Verified against the simulator: only
+     * the first session after a printer powers on had ever worked.
+     */
+    @Test
+    void aSessionOpensByResettingTheFirmwaresLineCounter() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> assertEquals(List.of(), pulled,
+                        "nothing may be asked of the source before the counter is agreed"))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * Nothing is written in front of the counter reset, and it costs a real buffer slot.
+     *
+     * <p>The {@code M110} is an {@code onNext} like any other: it takes a unit of the subscriber's
+     * demand and occupies one of the printer's command slots until its {@code ok} comes back. A
+     * printer that has reported nothing yet is credited with one block, so the first G-code block
+     * waits for that acknowledgement - the same arithmetic every other block obeys, and the reason
+     * the reset goes through the drain loop rather than straight at the socket.
+     *
+     * <p>Numbering then restarts at {@code N1}, which is what proves the reset moved this host's
+     * window and not only the firmware's counter.
+     */
+    @Test
+    void theCounterResetTakesAUnitOfDemandAndABufferSlot() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(10)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> assertEquals(List.of(), pulled, "the block queue is full until it is acked"))
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N1 G1 X1*96\n", "N2 G1 X2*96\n", "N3 G1 X3*96\n")
                 .thenCancel()
                 .verify(TIMEOUT);
     }

@@ -2,9 +2,12 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
+import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.context.event.EventListener;
 
 import java.util.Map;
@@ -62,16 +65,31 @@ public class PrinterDirectory {
      * tool index against the extruder count, and before anything learned it that check had nothing
      * to read - which is why a command to a machine the process had never connected to failed with
      * a {@code NullPointerException} rather than a refusal.
+     *
+     * <p>The state is the roster's last-known record of the machine's connection, and it is read
+     * once: {@link PrinterReactorManager} redials, at startup, whatever was connected when the
+     * process went down. It is not kept current here afterwards - {@code core} is where the live
+     * answer lives, on the aggregate - so a reader that wants to know whether a printer is
+     * connected asks {@code PrinterControl.connection}, not this.
      */
-    public record Entry(UUID id, String name, ConnectionDetails connection, MachineProfile profile) {
+    public record Entry(UUID id, String name, ConnectionDetails connection, MachineProfile profile,
+                        MachineConnectionState state) {
     }
 
     private final Map<UUID, Entry> known = new ConcurrentHashMap<>();
 
+    /**
+     * <p>{@code HIGHEST_PRECEDENCE} because {@link PrinterReactorManager} listens to the same event
+     * in order to redial what was connected, and it asks this replica where to dial. Spring runs
+     * same-event listeners in an undefined order unless they say otherwise, and "undefined" here
+     * would mean a restart that reconnects only when the coin lands right.
+     */
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     @EventListener
     public void onRegistered(MRegisteredEvent event) {
         var entry = new Entry(event.getMachineId(), event.getName(),
-                new ConnectionDetails(event.getHost(), event.getPort()), event.getProfile());
+                new ConnectionDetails(event.getHost(), event.getPort()), event.getProfile(),
+                event.getState());
         var previous = known.put(entry.id(), entry);
         if (previous == null) {
             log.info("the farm has {} at {}:{}", entry.name(), event.getHost(), event.getPort());

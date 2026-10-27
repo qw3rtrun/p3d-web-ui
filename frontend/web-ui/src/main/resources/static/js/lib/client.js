@@ -21,6 +21,12 @@ function post(uuid, path, payload) {
         });
 }
 
+// A GET returning JSON, for the handful of things the page asks rather than watches.
+function get(uuid, path) {
+    return fetch(`/api-printer/${uuid}${path}`)
+        .then(response => response.ok ? response.json() : null, () => null);
+}
+
 function openEventStream(uuid) {
     const stream = new EventSource(`/api-printer/${uuid}/stream`);
     stream.addEventListener("message", e => console.log(`{${uuid}/stream} -> ${e.data}`));
@@ -64,6 +70,11 @@ export default {
             },
             disconnect() {
                 post(uuid, "/connect", {connect: false}).then();
+            },
+            // Where the machine's connection is, right now - the health signal. Before B3 the only
+            // way to find out was to open the stream and wait for something to happen.
+            connection() {
+                return get(uuid, "/connection");
             },
             setHeatingTemp(index, temp) {
                 post(uuid, "/set-temp", {index: index, temp: temp}).then();

@@ -77,7 +77,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**A6**~~ | [close the two declared crossings](#a6) | ~~`core` gets a replica fed by events; `frontend` reaches `core` through an `api` interface; `api` closes so the check enforces both~~ **done** — no submodel names another, and the check says so | B2 |
 | ~~**B1**~~ | [the aggregate leaves the web module](#b1) | ~~`PrinterState` into a domain module that does not depend on WebFlux~~ **done** — it is the `core` submodel now | B2, C3 |
 | ~~**B2**~~ | [the machine remembers what it is](#b2) | ~~Persist firmware, capabilities and last-known state; restore on boot~~ **done** — the roster keeps it, `core` seeds from it | B4, D1 |
-| **B3** | [a connection lifecycle worth the name](#b3) | An explicit state machine, retry with backoff, health, and events for each transition | C5 |
+| ~~**B3**~~ | [a connection lifecycle worth the name](#b3) | ~~An explicit state machine, retry with backoff, health, and events for each transition~~ **done** - one enum, bounded retry, and a roster column that is derived rather than guessed | C5 |
 | **B4** | [machine profile and groups](#b4) | Bed volume, extruders, nozzle, materials, tags — what a scheduler matches against | D1 |
 | **C1** | [the G-code file store](#c1) | Upload, content hash, size, line count, estimates; streamed in and out, never buffered | C2 |
 | **C2** | [the job and its lifecycle](#c2) | A job entity, a state machine, and the events each transition publishes | C3 |
@@ -559,6 +559,130 @@ dropped. `ConnectCmd` is handled in two places with a `//TODO` on one of them. A
 **Done when.** One enum is the state; the entity's column is derived from it, not a parallel truth;
 a dropped connection retries with bounded backoff and says so on the event stream; a test drives
 every transition with `VirtualTimeScheduler` and no sleeps.
+
+**Done, and it collapsed four truths into one.** `MachineConnectionState` in `api` is the enum -
+`OFFLINE -> CONNECTING -> ONLINE -> {IDLE, BUSY, ERROR}` - and `ConnectionLifecycle` in `core` is the
+machine that moves it. What it replaced was `PrinterState.connected`, `PrinterState.online`,
+`PrinterEntity.connected` and `PrinterReactor`'s implicit `terminal == null`, any two of which could
+disagree, plus four event records (`ConnectedEvent`, `DisconnectedEvent`, `MachineOnlineEvent`,
+`MachineOfflineEvent`) that between them said less than the one `ConnectionStateChanged` does.
+
+**The trick is that intent is held apart from state.** A link that drops while a connection is still
+wanted goes back to `CONNECTING`; the identical drop a moment after Disconnect goes to `OFFLINE`.
+That distinction is the reason the old code had no retry at all - there was nothing to ask whether a
+reconnect would be welcome.
+
+**`ONLINE` and `IDLE` are not synonyms.** `ONLINE` means a socket is open; `IDLE` means the firmware
+answered. A terminal server with nothing plugged into it stops at `ONLINE`, which is worth seeing,
+and the old pair of booleans called that "online" without qualification.
+
+**Leaving `BUSY` is timed by a clock and not by a timer.** Marlin repeats `echo:busy: processing`
+every couple of seconds and the handshake's `M155 S1` interleaves a temperature report every second,
+so "busy until something else arrives" would flicker once a second. A busy notice stamps the clock;
+any later reply asks whether the machine has gone quiet for the timeout. No scheduler in the
+aggregate, and the steady reply stream is the tick.
+
+**The retry wraps the whole conversation, not just the dial.** Everything from `TerminalManager.connect()`
+to the end of the session is one chain, so a link that drops after an hour re-enters it exactly where
+a refused connection does - "reconnect a machine that dropped" needed no second mechanism. A clean
+close is turned into an error on purpose, because a clean close is still the connection being gone.
+The failure is announced from `doBeforeRetry` rather than a `doOnError`, so a machine never announces
+that it is backing off towards an attempt that will never be made.
+
+**The persisted column is now `connection_state`, and it finally has a reader.** `connected` was
+write-only: `MachineManagementService.connect`/`disconnect` were called by nothing but a test, since
+the endpoint has always gone to the runtime, so every row said `false` from registration onwards.
+Both methods, `PrinterEntity.connect`/`disconnect`, and the `MConnectedEvent`/`MDisconnectedEvent`
+pair they published are deleted. `core` reports each transition as `MConnectionChangedEvent` -
+only `core` can know this, because knowing it means holding the socket - the roster keeps it, and
+**`PrinterReactorManager` redials at startup whatever was connected when the process went down.**
+Without that last step B3 would have moved a write-only flag rather than removed one. The connection
+change is deliberately *not* re-announced, unlike a firmware report: the fact came from `core`, and
+handing it back to the module that redials on announcements has exactly one possible effect.
+
+**It fixed the open NPE.** A command to a machine that is not connected dereferenced the `GSender`
+the aggregate holds only while a link is up, so a request that had bound and routed perfectly
+returned a 500 pointing at the aggregate rather than at the machine being unreachable. `onCommand`
+refuses and logs the state instead.
+
+**The page gets one state rather than two booleans it could not keep in step.** `connection.js` and
+`printer.js` switched on four event names and set `online` from *any* event arriving at all, so a
+printer that was connected but quiet read as offline. Both read `ConnectionStateChanged` now, and
+`GET /api-printer/{id}/connection` is the health signal for a page that has not seen an event yet -
+the replay sink is also seeded with the current state, so a late subscriber is told immediately.
+
+**Verified by running**, first against a 50-line TCP stand-in and then against the real simulator
+on `localhost:8099` (Marlin `bugfix-2.1.x`, `MACHINE_TYPE:MarlinSim`) once it came back up:
+
+* a machine at a closed port announced `OFFLINE -> CONNECTING(1) -> CONNECTING(2..5) ->
+  OFFLINE("ConnectException: Connection refused: getsockopt")` on the real SSE stream, which is five
+  attempts over a bounded backoff and then silence - not a farm redialling forever;
+* against the real firmware, `OFFLINE -> CONNECTING(1) -> ONLINE -> IDLE`, 38 capabilities and the
+  real `M115` string learned and persisted, and `connection_state` written as `IDLE`;
+* a `set-temp` posted to the REST surface reached the wire as `M104 S60.00 T0` and the simulator
+  heated 25.0 -> 44.5 C, with `current`, `target` and `power` arriving in the shape
+  `printer.js` reads;
+* **killed and restarted, the process redialled the simulator on its own**, with no request from
+  anybody - which is the headline of this item and it does work;
+* Disconnect wrote `OFFLINE` through to the row and sent `M155 S0` first, and a `set-bed-temp` to the
+  disconnected machine returned 200 having sent nothing, where it used to be a 500.
+
+**And the live run found a defect that the stand-in could not, which is the argument for having
+done it.** The redial reconnects, but *the reconnected session cannot send anything*:
+
+```
+-> N1 M115*39
+<- Error:Line Number is not Last Line Number+1, Last Line: 4
+<- Resend: 5
+OUT: Resend: 5 - not held by the send window, so the sequence cannot be repaired from here;
+     the session is out of sync
+```
+
+A new session starts its send window at `N1` while the firmware - still powered, never reset -
+remembers line 4. Every block is rejected on its line number, the window has nothing to replay, and
+the outbound half of the session is dead for good. A `set-temp` afterwards returns 200 and the target
+never moves.
+
+**It is not a B3 regression.** A plain Disconnect then Connect, with no process restart anywhere
+near it, produces the identical error - so this has been true since reconnecting was possible at
+all, and only the first session after a printer powers on has ever worked. B3 is simply the first
+thing that reconnects without being asked, and the first thing that put the firmware's `Error:` on
+the event stream where somebody could see it.
+
+**It belonged to `:backend:terminal`, and it is fixed.** `HostTerminal`'s own javadoc already named
+the repair - *"`GSendWindow.reset` and an `M110` is the repair, and it is not this method's to
+decide"*, and *"the counter is this layer's to set and not a caller's to send"*. It does both now:
+
+* **every session opens with `M110 N0`**, framed and written through the drain loop like any other
+  block, so it takes a unit of demand and a buffer slot and the accounting stays honest;
+* **a `Resend:` the window cannot answer resynchronises** rather than being logged and left, which
+  is the hole the `reactive-transport-dev` skill had on its debt list.
+
+Verified against the simulator: **five consecutive sessions, five `M110 N0` resets, zero
+`Line Number is not` errors, and an `M104` delivered on each one** - where before only the first
+session after a power-on had ever been able to send. `TerminalRecoveryProbe` passes all six of its
+checks with the reset in front of the conversation, including the byte-for-byte replay of a block
+corrupted on the wire.
+
+What is still open from this is the **acknowledgement signal** of [decision 3](#d3-acks), and it
+should still be raised before C3: see the note below on why `IDLE` is not proof that a session can
+send.
+
+**What it exposes in B3 itself** is recorded as debt rather than patched over: `IDLE` means "a reply
+arrived", and a reply can be auto-report traffic left running by a *previous* session, so a machine
+whose outbound half is dead still reads `IDLE`. The live run demonstrated it twice from two
+different causes - once with the broken numbering, and once with a session whose first block sat
+unacknowledged behind a 937-line backlog the simulator had queued while nothing was connected. Both
+read as `IDLE`. The honest proof is an acknowledgement of something *this* session sent, which is
+exactly the signal decision 3 says the transport does not expose yet.
+
+1065 tests green, and the four done-when conditions all hold. Two deviations in how, both
+deliberate: `VirtualTimeScheduler` drives
+the backoff in `PrinterReactorRetryTest` but the pure transitions are driven by a test `Clock` in
+`ConnectionLifecycleTest`, because a state machine with no scheduler in it should not need one to be
+tested; and the retry test advances time generously rather than by the exact backoff, because the
+policy jitters its delays on purpose - several printers dropped by one blip must not all redial on
+the same tick - so the sequence is deterministic and the instants are not.
 
 ### B4 — machine profile and groups {#b4}
 

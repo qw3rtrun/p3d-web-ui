@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
@@ -41,7 +42,7 @@ class PrinterReactorManagerTest {
 
     private void theFarmHas(UUID machine) {
         directory.onRegistered(new MRegisteredEvent(machine, "a printer", "localhost", 8099,
-                MachineProfile.unknown(), LocalDateTime.now()));
+                MachineProfile.unknown(), MachineConnectionState.OFFLINE, LocalDateTime.now()));
     }
 
     @Test

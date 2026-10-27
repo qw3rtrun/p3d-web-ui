@@ -1,7 +1,9 @@
 package org.qw3rtrun.p3d.frontend;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.msg.BusyReport;
+import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.api.msg.ErrorReport;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.TemperatureReport;
@@ -74,6 +76,39 @@ class EventStreamContractTest {
                 streamed(new TemperatureReported(new TemperatureReport(24.31, 0.0, 0), null)));
 
         assertTrue(payload.get("event").get("bed").isNull());
+    }
+
+    /**
+     * The connection event, field for field, as {@code connection.js} reads it.
+     *
+     * <p>A contract that was <strong>four</strong> event names until plan item B3:
+     * {@code ConnectedEvent}, {@code DisconnectedEvent}, {@code MachineOnlineEvent} and
+     * {@code MachineOfflineEvent}, which the page reduced to a pair of booleans it could not keep
+     * in step - a printer that was connected but quiet read as offline, because the only thing that
+     * ever set {@code online} was the arrival of some unrelated event. One event carrying one state
+     * is what replaced them, and these assertions are what keep the two sides agreeing.
+     */
+    @Test
+    void aConnectionChangeCarriesTheStateTheUiSwitchesOn() {
+        var json = streamed(new ConnectionStateChanged(
+                MachineConnectionState.CONNECTING, MachineConnectionState.ONLINE, 2, "connection reset"));
+
+        var payload = mapper.readTree(json);
+
+        assertEquals("ConnectionStateChanged", payload.get("type").asString());
+        assertEquals("CONNECTING", payload.get("event").get("from").asString());
+        assertEquals("ONLINE", payload.get("event").get("to").asString());
+        assertEquals(2, payload.get("event").get("attempt").asInt());
+        assertEquals("connection reset", payload.get("event").get("reason").asString());
+    }
+
+    /** A transition with nothing to explain says so with a null rather than an empty string. */
+    @Test
+    void aConnectionChangeWithNoReasonCarriesNull() {
+        var payload = mapper.readTree(streamed(new ConnectionStateChanged(
+                MachineConnectionState.ONLINE, MachineConnectionState.IDLE, 0, null)));
+
+        assertTrue(payload.get("event").get("reason").isNull());
     }
 
     @Test

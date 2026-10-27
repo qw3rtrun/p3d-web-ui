@@ -62,8 +62,8 @@ announces - and `core` seeds its aggregates from the replica rather than from no
 dial it and what it can do belong to management. What it is doing right now - connected, hot, busy,
 what it last reported - belongs to core. Rule 2 says core talks to other submodels through events,
 and it does: `PrinterDirectory` is core's own replica of where to dial, fed by `MRegisteredEvent`
-and `MDeletedEvent`, so core needs no database to start a printer. `frontend` still reaches
-`PrinterReactorManager` directly; that is the rest of A6.
+and `MDeletedEvent`, so core needs no database to start a printer. `frontend` reaches core through
+`PrinterControl`, an interface in `api`, and names nothing in it.
 
 ## IMPORTANT - nothing blocking runs on an event loop
 
@@ -213,22 +213,96 @@ Concretely:
 
 ## The printer aggregate and its lifecycle
 
-`PrinterState` is the aggregate - connection state, firmware info, capabilities, temperatures - and
-it currently lives in `:backend:api`, which is the web module. `PrinterAggregate` in `:backend:core`
-is a marker interface with one method, and `PrinterAggregateManager` is implemented as
-`PrinterState::new`, so **no printer state is persisted or restored**; a restart loses everything the
-machine reported.
+`PrinterState` in `:backend:core` is the aggregate - connection state, machine profile,
+temperatures. It is seeded from the roster's `MachineProfile`, so a restart knows what each machine
+is before anything connects to it; temperatures are deliberately not restored, because a reading
+from before the restart is a stale number that would read as current.
 
-Two rules for anything that touches it:
+### One enum is the connection state
+
+`MachineConnectionState` in `api` is the single answer to "what is this printer doing":
+
+```
+OFFLINE    --connect asked for-->  CONNECTING
+CONNECTING --socket up--------->   ONLINE   --first reply-->  IDLE
+CONNECTING --attempt failed---->   CONNECTING (backoff, attempt+1)
+CONNECTING --attempts spent---->   OFFLINE  (with the reason)
+IDLE       --busy notice------->   BUSY     --notices stop-->  IDLE
+linked     --Error: reported--->   ERROR    --next good reply-->  IDLE
+linked     --link dropped------>   CONNECTING, if a connection is still wanted
+any        --disconnect asked-->   OFFLINE
+```
+
+It replaced `PrinterState.connected`, `PrinterState.online`, `PrinterEntity.connected` and
+`PrinterReactor`'s implicit `terminal == null` - four truths, any two of which could disagree - plus
+four event records that between them said less than the one `ConnectionStateChanged` does. The rules
+it leaves:
+
+- **Intent is held apart from state.** `ConnectionLifecycle.wanted` is what the user asked for; the
+  state is where the machine is. A drop while a connection is wanted retries; the identical drop
+  after Disconnect rests. Code that needs to know "should this come back" asks the first, not the
+  second - and the absence of that distinction is why the code this replaced had no retry at all.
+- **`ONLINE` is a socket; `IDLE` is a firmware answering.** A terminal server with nothing plugged
+  into it stops at `ONLINE`. Do not treat the two as synonyms.
+- **`ERROR` is still linked.** On a Marlin an `Error:` is routine traffic the printer recovers from,
+  so it clears on the next good reply. A fault is not a lost connection.
+- **The lifecycle is a plain object with no Reactor in it.** Every transition returns the event it
+  caused, or `null` when nothing moved; the caller emits. Timing - the backoff, and the clock that
+  ends `BUSY` - lives in `PrinterReactor` and in an injected `Clock`, which is what makes every
+  arrow unit-testable without a socket or a scheduler.
+- **Leaving `BUSY` is clock-driven: not a timer, and not the next event.** Marlin repeats
+  `echo:busy:` every couple of seconds while the handshake's `M155 S1` interleaves a temperature
+  report every second, so "busy until something else arrives" flickers once a second. A busy notice
+  stamps the clock and a later reply checks the gap.
+- **A command is refused when the state is not linked.** It used to be a 500 and a
+  `NullPointerException`: the `GSender` is held only while a link is up and every arm dereferences
+  it, so the stack trace pointed at the aggregate instead of at the machine being unreachable.
+
+### Retry belongs to the reactor, and wraps the whole conversation
+
+`PrinterReactor.connect()` puts everything from `TerminalManager.connect()` to the end of the
+session inside one `retryWhen`, so a link that drops after an hour re-enters the chain exactly where
+a refused connection does - "reconnect a machine that dropped" needs no second mechanism with its
+own backoff and its own bugs. Three things about it that are easy to get wrong:
+
+- **A clean close is turned into an error on purpose.** `onConnected` completes when the socket
+  closes cleanly, and left as a completion it falls straight out of the chain - the printer would
+  sit in `ONLINE` forever with nothing attached.
+- **Announce the failure from `doBeforeRetry`, not from a `doOnError` before the retry.**
+  `doBeforeRetry` runs only once the filter has passed and another dial will genuinely happen, so a
+  machine never announces that it is backing off towards an attempt that will never be made. The two
+  ways the series can end - attempts spent, or the intent withdrawn - both reach the `doOnError`
+  after it, and both mean `OFFLINE`.
+- **`ConnectionPolicy.maxAttempts` counts the first dial; `Retry.backoff` counts retries.** Hence
+  the minus one. Jitter is left at Reactor's default on purpose, so several printers dropped by one
+  network blip do not all redial on the same tick - which means a test asserts the *sequence* and
+  not the instants.
+
+### The persisted connection state is derived, and it has a reader
+
+`printer_entity.connection_state` is written from `MConnectionChangedEvent` and from nowhere else -
+only `core` can know this, because knowing it means holding the socket - and
+`PrinterEntity.isConnected()` is computed from it rather than stored beside it. It is read once, at
+startup: `PrinterReactorManager.onRegistered` redials whatever was connected when the process went
+down.
+
+**Both halves are required.** The `connected` boolean this replaced was write-only - nothing in
+production ever set it - so a column written by the runtime and read by nothing would have been the
+same defect in a new place.
+
+**A connection change is deliberately not re-announced**, unlike a firmware report. The fact came
+from `core`, and handing it back to the module that redials on announcements has exactly one
+possible effect.
+
+Two rules for anything that touches the runtime:
 
 - **A reactor is a resource and must be released.** `PrinterReactorManager` owns the map and
-  `release(uuid)` is how one goes away: it stops the reactor, which closes the terminal and
-  *completes* the update sink, so an SSE subscriber is told rather than left hanging. Anything that
-  creates a resource here owns stopping it, and says in a test that it did.
-- **`openReactor(id)` has a side effect** - it connects, if the descriptor says the printer was
-  connected - which is why it is not called `get`. Its pair is `release(id)`, and a printer deleted
-  from the farm releases its runtime through `MDeletedEvent` rather than through a call across the
-  module boundary.
+  `release(uuid)` is how one goes away: it stops the reactor, which disposes any retry in flight,
+  closes the terminal and *completes* the update sink, so an SSE subscriber is told rather than left
+  hanging. Anything that creates a resource here owns stopping it, and says in a test that it did.
+- **`openReactor(id)` builds a resource** - which is why it is not called `get` - but it does not
+  dial. Its pair is `release(id)`; a printer deleted from the farm releases its runtime through
+  `MDeletedEvent` rather than through a call across the module boundary.
 
 ## REST, SSE and WebSocket
 
@@ -236,14 +310,20 @@ Two rules for anything that touches it:
   `/api-printer/{id}` for one machine.
 - **SSE is what the UI actually uses**: `produces = TEXT_EVENT_STREAM_VALUE` on
   `/api-printer/{id}/stream`, consumed by `EventSource` in `static/js/lib/client.js`. It is the
-  working live channel and the one to extend.
+  working live channel and the one to extend. **The replay sink is seeded with the current
+  connection state**, so a late subscriber learns where a machine is without waiting for something
+  to happen to it; `GET /api-printer/{id}/connection` answers the same question without a stream.
 - **There is no WebSocket channel, and that is deliberate.** `WSGPrinterHandler` was deleted in A4:
   it read a session attribute nothing wrote, so its id was always null, and no client ever connected
   to `/ws-printer/*`. If one is wanted later it is a day's work on a *working* SSE contract, and it
   should be written against the farm-wide stream of plan item D2 rather than the per-printer one.
-- **A `:gcode` command class in a `@RequestBody` is a deliberate choice**, not an accident: it is why
-  `jackson-module-kotlin` is a dependency. Keep it, but know that it makes the REST contract follow
-  the Marlin command set, so a generated-class rename is a breaking API change.
+- **A request body is an `api` record, never a `:gcode` command class.** The REST contract used to
+  follow the Marlin command set, so a rename by the generator was a breaking API change - and one
+  had already happened silently, with `/auto-report-temp` binding a `seconds` field while the browser
+  sent `period`. `PrinterCommand` is sealed and `core` translates it.
+- **The browser's contracts are pinned by test, because the build does not compile the browser.**
+  `PrinterCommandBindingTest` for what it posts and `EventStreamContractTest` for what it reads. A
+  renamed field or event name on this side fails there rather than in a browser.
 
 ## Persistence
 
@@ -328,6 +408,7 @@ today; the module's copy should be test-scope or gone.
 - [ ] every resource a change creates has an owner that releases it - reactors, sinks, sockets,
       subscriptions
 - [ ] events are past-tense facts carrying an id and a timestamp
+- [ ] connection state comes from the lifecycle enum, and nothing keeps a second copy of it
 - [ ] a stream is asserted with `StepVerifier`, not collected into a list
 - [ ] `:backend:core` still has no WebFlux, JPA or Reactor import
 
@@ -348,11 +429,6 @@ the source, not suspected.
   a type that should belong to one module from being parked in the shared vocabulary instead.
   `@NamedInterface` is not used anywhere yet; the first closed module that needs a partial export
   introduces it.
-- **The persisted `connected` flag is write-only.** `MachineManagementService.connect` and
-  `disconnect` are called by nothing but a test: `PrinterController.connect` goes to the reactor,
-  not to the management service, so the column is written `false` at creation and never again. That
-  makes `openReactor`'s reconnect-on-first-access close to dead code, and it is why a restart never
-  restores a connection. Plan item B3 owns it.
 - **A module that needs a collaborator it does not contain gets it in test scope.** The frontend
   submodel holds controllers; what answers them is in `printer-management`, which it must not depend
   on. That was papered over by a `@ConditionalOnMissingBean` stub in *main* answering every query
@@ -365,11 +441,27 @@ the source, not suspected.
 - **No job, file or queue concept exists.** The product is a print farm; nothing in the backend
   models a G-code file, a print job, or an assignment of one to a machine. `PublisherQueue`'s
   `Priority` enum is the only piece of the machinery that is already there.
-- **Sending a command to an offline printer is a 500 with a `NullPointerException`.**
-  `PrinterState` holds its `GSender` only while connected, so `onCommand` dereferences null, and
-  the same goes for the firmware info an `M104` consults for its extruder count. The request bound
-  and routed correctly; what is missing is the aggregate refusing work it cannot do. Plan item B3
-  owns the connection lifecycle and should give this a real answer.
+- **Giving up on a machine is silent except on that machine's own event stream.** When the attempts
+  run out the lifecycle goes to `OFFLINE` with the reason and the roster persists it, but nothing
+  pushes that to a user who is not watching that printer's SSE channel. The farm-wide stream of plan
+  item D2 is where it belongs; a notification surface is not in this plan at all.
+- **`BUSY` can outlast the machine's busy phase by one reply.** It is left when a reply arrives and
+  the busy notices have been quiet for the timeout, so a machine that finishes work and then says
+  nothing stays `BUSY` until it speaks again. Survivable because `M155 S1` makes it speak every
+  second, and it is the price of keeping a scheduler out of the aggregate.
+- **`IDLE` proves a reply arrived, not that this session can send.** The lifecycle moves on inbound
+  traffic, and auto-report traffic left running by a *previous* session satisfies that - so a
+  machine whose outbound half is broken still reads `IDLE`. Observed live: see the next entry. The
+  honest proof is an acknowledgement of something *this* session sent, which is the signal
+  [decision 3 of the plan](../../../doc/backend-plan.md) says `:backend:terminal` does not expose
+  yet. Do not add a second health flag for this; the fix is the ack signal.
+- **A reconnected session used to be unable to send anything, and that is fixed in the transport.**
+  A new session started its window at `N1` while the firmware, still powered and never reset,
+  remembered its last line, so every block was rejected and the outbound half was dead for good -
+  **only the first session after a printer powered on had ever worked.** `:backend:terminal` now
+  opens each session with `M110 N0` and resynchronises a `Resend:` it cannot answer; see
+  `reactive-transport-dev`. Nothing in this layer sends `M110`: the line counter belongs to the
+  transport, and a caller that sends one as text desynchronises the window without moving it.
 - **Kotlin is one file in this layer** (`core/msg/ManagementEvents.kt`), which is enough to pay for
   the Kotlin plugin on `:backend:core` but not enough to settle a language convention. Decide per
   module, and use the `kotlin-tooling-java-to-kotlin` skill when converting.

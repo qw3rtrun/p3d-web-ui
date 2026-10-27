@@ -4,10 +4,10 @@ import lombok.RequiredArgsConstructor;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.msg.MCapabilityReportedEvent;
+import org.qw3rtrun.p3d.api.msg.MConnectionChangedEvent;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
-import org.qw3rtrun.p3d.api.msg.ManagementEvent;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.management.model.PrinterEntity;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -17,8 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
-import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.stream.Stream;
 
 @RequiredArgsConstructor
@@ -58,7 +56,8 @@ public class MachineManagementImpl implements MachineManagementService {
 
     private static MRegisteredEvent registered(PrinterEntity entity) {
         return new MRegisteredEvent(entity.getId(), entity.getName(),
-                entity.getHost(), entity.getPort(), entity.profile(), LocalDateTime.now());
+                entity.getHost(), entity.getPort(), entity.profile(), entity.connectionState(),
+                LocalDateTime.now());
     }
 
     /**
@@ -91,6 +90,28 @@ public class MachineManagementImpl implements MachineManagementService {
         });
     }
 
+    /**
+     * A machine's connection moved, so the roster writes it down.
+     *
+     * <p>The third fact that crosses this boundary, and the one that closes plan item B3's "the
+     * entity's column is derived from it, not a parallel truth". Only {@code core} can know this -
+     * knowing it means holding the socket - so the roster is told rather than asking, exactly as it
+     * is told about firmware and capabilities.
+     *
+     * <p><strong>Deliberately not re-announced.</strong> A firmware report is announced back
+     * because a replica has to learn what was kept; this came out of {@code core} and handing it
+     * back would be a round trip whose only possible effect is a reconnect loop. What the
+     * announcement does carry is the state as it stood at startup, which is what a restart reads.
+     */
+    @Transactional
+    @EventListener
+    public void on(MConnectionChangedEvent event) {
+        repo.findById(event.getMachineId()).ifPresent(entity -> {
+            entity.connectionChanged(event.getState());
+            repo.save(entity);
+        });
+    }
+
     public Stream<Descriptor> fetchAll() {
         return repo.findAll(Sort.by("name")).stream()
                 .map(MachineManagementImpl::map);
@@ -113,29 +134,9 @@ public class MachineManagementImpl implements MachineManagementService {
         });
     }
 
-    @Transactional
-    @Override
-    public void disconnect(UUID uuid) {
-        with(uuid, PrinterEntity::disconnect);
-    }
-
-    @Transactional
-    @Override
-    public void connect(UUID uuid) {
-        with(uuid, PrinterEntity::connect);
-    }
-
     private static Descriptor map(PrinterEntity entity) {
         return new Descriptor(entity.getId(), entity.getName(),
-                new ConnectionDetails(entity.getHost(), entity.getPort()), entity.isConnected(),
+                new ConnectionDetails(entity.getHost(), entity.getPort()), entity.connectionState(),
                 entity.profile());
-    }
-
-    public void with(UUID id, Consumer<PrinterEntity> operation) {
-        repo.findById(id).ifPresent(operation);
-    }
-
-    public void with(UUID id, Function<PrinterEntity, ManagementEvent> operation) {
-        repo.findById(id).ifPresent(m -> operation.andThen(eventBus::push).apply(m));
     }
 }

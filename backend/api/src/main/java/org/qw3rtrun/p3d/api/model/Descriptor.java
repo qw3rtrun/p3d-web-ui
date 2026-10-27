@@ -8,15 +8,16 @@ import java.util.UUID;
  * @param uuid       the machine's identity
  * @param name       what a human calls it
  * @param connection where to dial it
- * @param connected  whether the roster believes it is connected. See the note on
- *                   {@code MachineManagementService} - nothing writes this yet
+ * @param state      the roster's record of where the machine's connection is. It was a
+ *                   {@code connected} boolean that nothing in production ever set - see
+ *                   {@code MConnectionChangedEvent} for why it is now derived from the runtime
  * @param profile    what it reported about itself the last time anything asked, never null
  */
 public record Descriptor(
         UUID uuid,
         String name,
         ConnectionDetails connection,
-        boolean connected,
+        MachineConnectionState state,
         MachineProfile profile
 ) {
 }

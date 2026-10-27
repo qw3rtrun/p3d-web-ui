@@ -250,6 +250,11 @@ public class HostTerminal {
      * framed <em>in front of</em> its own {@code N}, and an {@code M110} sent as text moves the
      * firmware's counter without moving this window's, which desynchronises the session until the
      * window is {@code reset} - so the counter is this layer's to set and not a caller's to send.
+     *
+     * <p><strong>And this layer does set it.</strong> The first block of every session is
+     * {@code M110 N0}, and the same block is what repairs a sequence that has drifted past the
+     * window - see {@link #opening} and {@link #resynchronise}. Until that was done, a host that
+     * reconnected to a printer which had not been power-cycled could not send anything at all.
      */
     public class CommandProcessor implements Processor<String, String>, Subscription {
 
@@ -334,6 +339,32 @@ public class HostTerminal {
         private final Deque<String> replaying = new ArrayDeque<>();
 
         /**
+         * The block that opens the session - {@code M110 N0}, framed - until it has been written.
+         *
+         * <p><strong>Spec 7.2: {@code M110 N0} is how a host starts a session.</strong> The window
+         * numbers from {@code N1}, and a firmware that is still powered from a previous session
+         * remembers the line it last accepted - so without this the first block of every
+         * reconnection is rejected with {@code Error:Line Number is not Last Line Number+1} and a
+         * {@code Resend:} for a block this host has never held. The session is then dead in the
+         * outbound direction for good: the window has nothing to replay, and every block after it
+         * is rejected on the same grounds.
+         *
+         * <p>That was not a theory. Against the simulator, a plain reconnect - with or without a
+         * host restart - reached exactly that state, which means <em>only the first session after a
+         * printer powers on had ever worked</em>. An {@code M110} line is exempt from the
+         * continuity check precisely so that it can be sent when the sequence is not yet agreed.
+         *
+         * <p>It is also what {@link #resynchronise} parks when a session drifts past what the
+         * window can repair, so the two routes into a fresh sequence are one piece of code.
+         *
+         * <p>Written through the drain loop like any other block, which is what keeps the
+         * accounting honest: it takes a unit of the subscriber's demand and one slot of the
+         * printer's buffer until its {@code ok} comes back. Poking it straight at the socket would
+         * be an {@code onNext} nobody asked for and a block the window never counted.
+         */
+        private String opening;
+
+        /**
          * Set by a {@code Resend:} and cleared by the {@code ok} that follows it.
          *
          * <p>Marlin answers a rejected block with {@code Error:}, {@code Resend: n}, then
@@ -365,6 +396,7 @@ public class HostTerminal {
 
         public CommandProcessor(Publisher<String> gCode) {
             this.gcode = gCode;
+            this.opening = window.reset(0);
         }
 
         /**
@@ -416,9 +448,13 @@ public class HostTerminal {
          *
          * <p>Zero while a replay is waiting for demand. Those blocks carry numbers the firmware is
          * sitting on, and nothing newer may be pulled, let alone written, in front of them.
+         *
+         * <p>Zero for the same reason while the session's {@code M110} is owed: until the firmware
+         * has been told where the numbering starts, there is no agreed sequence for a block to take
+         * a place in. See {@link #opening}.
          */
         long canProcess() {
-            if (!replaying.isEmpty()) {
+            if (!replaying.isEmpty() || opening != null) {
                 return 0;
             }
             long spokenFor = requestedFromGCode.get() + awaitingFrame.get();
@@ -498,20 +534,52 @@ public class HostTerminal {
          * <p>An empty replay means the session has drifted further than a replay can repair - the
          * firmware is asking for a block this host no longer holds, which in a well-behaved session
          * cannot happen, since a block is only released by the {@code ok} that accepted it. There is
-         * no partial answer worth sending; {@code GSendWindow.reset} and an {@code M110} is the
-         * repair, and it is not this method's to decide.
+         * no partial answer worth sending, so the sequence is started again rather than patched:
+         * see {@link #resynchronise}.
          */
         private void rewind0(int from) {
             List<String> replay = window.resendFrom(from);
             if (replay.isEmpty()) {
-                log.warn("OUT: Resend: {} - not held by the send window, so the sequence cannot be"
-                        + " repaired from here; the session is out of sync {}", from, report.get());
+                resynchronise(from);
                 return;
             }
             sentWithoutAck.reset();
             sentWithoutAck.inc(replay.size());
             log.warn("OUT: Resend: {} - replaying {} block(s) {}", from, replay.size(), report.get());
             replaying.addAll(replay);
+        }
+
+        /**
+         * Starts the numbering again, because this session's is beyond repair.
+         *
+         * <p>Reached when the firmware asks for a block the window no longer holds. Two decisions
+         * live here that {@code GSendWindow} cannot make for itself, and both are deliberate:
+         *
+         * <p><strong>When a session is deemed lost:</strong> at the first {@code Resend:} that
+         * cannot be answered. That is not a judgement call - the firmware has named a block this
+         * host cannot produce, so there is no sequence left that both ends agree on, and every
+         * block sent from here under the old numbering is rejected on the same grounds.
+         *
+         * <p><strong>What happens to the blocks abandoned by the reset:</strong> they are dropped,
+         * loudly. They cannot be replayed under the new numbering without re-framing them, and the
+         * window holds the <em>bytes</em> it emitted rather than the commands behind them - spec
+         * 8.3 makes the checksum a property of the bytes, which is the whole reason it keeps them
+         * that way. Re-reading bytes this module itself framed in order to renumber them would put
+         * a second parser back in the transport, which is the thing it most recently got rid of.
+         * It would also be unsafe: a relative move replayed under a new number is a move made
+         * twice, and nothing here knows which commands are safe to repeat.
+         *
+         * <p>So the WARN is the contract for now - the layer above is not told, and plan item C5's
+         * recovery is where a job that lost blocks will need to be. Noted in the skill's debt list
+         * rather than guessed at here.
+         */
+        private void resynchronise(int from) {
+            int abandoned = window.getInFlight();
+            opening = window.reset(0);
+            sentWithoutAck.reset();
+            log.warn("OUT: Resend: {} - not held by the send window, so the session is out of sync;"
+                            + " resynchronising with {} and abandoning {} block(s) {}",
+                    from, opening, abandoned, report.get());
         }
 
         /**
@@ -525,8 +593,24 @@ public class HostTerminal {
          * Reactive Streams rule that no {@code onNext} goes out unasked does not have an exception
          * for a retransmission. A pulled command spends its unit earlier, in
          * {@link #processRequest()}, where the pull itself is accounted.
+         *
+         * <p>The session's {@code M110} goes before either, and nothing goes out in front of it:
+         * a block written before the firmware has been told where the numbering starts is a block
+         * the firmware rejects. It obeys the same demand rule - no unit, no write - which is why
+         * this returns rather than falling through when the subscriber has not asked for anything
+         * yet. See {@link #opening}.
          */
         private void write() {
+            if (opening != null) {
+                if (subscriptionRequested.get() <= 0) {
+                    return;
+                }
+                subscriptionRequested.dec();
+                sentWithoutAck.inc();
+                String reset = opening;
+                opening = null;
+                write0(reset);
+            }
             while (!replaying.isEmpty() && subscriptionRequested.get() > 0) {
                 subscriptionRequested.dec();
                 write0(replaying.pollFirst());

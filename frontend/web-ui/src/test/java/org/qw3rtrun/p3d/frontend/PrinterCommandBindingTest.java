@@ -63,6 +63,11 @@ class PrinterCommandBindingTest {
                 connected.set(command);
                 return Mono.empty();
             }
+
+            @Override
+            public Publisher<org.qw3rtrun.p3d.api.model.ConnectionStatus> connection(UUID id) {
+                return Mono.empty();
+            }
         };
         return WebTestClient.bindToController(new PrinterController(control)).build();
     }

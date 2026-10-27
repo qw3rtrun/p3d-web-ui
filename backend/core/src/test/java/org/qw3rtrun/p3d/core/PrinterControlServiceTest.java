@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.api.msg.RequestTemperatureReport;
@@ -105,7 +106,7 @@ class PrinterControlServiceTest {
         };
         var id = UUID.randomUUID();
         directory.onRegistered(new MRegisteredEvent(id, "a printer", "localhost", 8099,
-                MachineProfile.unknown(), LocalDateTime.now()));
+                MachineProfile.unknown(), MachineConnectionState.OFFLINE, LocalDateTime.now()));
         var control = new PrinterControlService(
                 new PrinterReactorManager(directory, PrinterState::new, event -> {
                 }));

@@ -1,8 +1,8 @@
 package org.qw3rtrun.p3d.core;
 
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.*;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
@@ -41,13 +41,30 @@ public class PrinterState implements PrinterAggregate {
      */
     private MachineProfile profile;
 
+    /**
+     * Where this machine is in its connection lifecycle - one enum, and the only answer.
+     *
+     * <p><strong>It replaced two booleans on this class and one column on the entity.</strong>
+     * {@code connected} was set by the connect command and {@code online} by the socket coming up,
+     * and the two could say different things: a machine whose link had dropped while nobody asked
+     * it to was {@code connected && !online}, which no reader of this class could have interpreted
+     * and no event announced. See {@link ConnectionLifecycle} for the transitions and
+     * {@code MachineConnectionState} for what each one means.
+     */
+    private final ConnectionLifecycle connection;
+
     public PrinterState(UUID id) {
         this(id, MachineProfile.unknown());
     }
 
     public PrinterState(UUID id, MachineProfile seed) {
+        this(id, seed, new ConnectionLifecycle());
+    }
+
+    public PrinterState(UUID id, MachineProfile seed, ConnectionLifecycle connection) {
         this.id = id;
         this.profile = seed == null ? MachineProfile.unknown() : seed;
+        this.connection = connection;
     }
 
     /** What this machine reported about itself, never null. */
@@ -55,9 +72,20 @@ public class PrinterState implements PrinterAggregate {
         return profile;
     }
 
-    private boolean connected;
+    /** Where the machine's connection is, as a value a caller can be handed. */
+    public ConnectionStatus getConnection() {
+        return connection.status();
+    }
 
-    private boolean online;
+    /** The current connection state as the event that would have announced it. */
+    public ConnectionStateChanged connectionAsEvent() {
+        return connection.current();
+    }
+
+    /** Whether a connection is still wanted - what makes a dropped link worth retrying. */
+    public boolean wantsToBeConnected() {
+        return connection.wanted();
+    }
 
     private TemperatureControl temperatureControl = new TemperatureControl();
 
@@ -85,10 +113,12 @@ public class PrinterState implements PrinterAggregate {
      * <p>It also put the decision in the wrong class. What this aggregate reacts to is this
      * aggregate's business; the reactor's job is to carry messages, not to work out who wants them.
      *
-     * <p>The arms are ordered but do not overlap today. Most events are deliberately not handled -
-     * an error, a busy notice, a reply with no application event at all - and fall through to a
-     * debug line rather than a warning, because "the aggregate has nothing to do about this" is the
-     * normal case and not a gap.
+     * <p><strong>Every reply moves the connection lifecycle, including the ones no arm claims.</strong>
+     * A reply - any reply - is the only proof that there is a firmware on the other end of the
+     * socket rather than just an open port, so it is what takes a machine from {@code ONLINE} to
+     * {@code IDLE} and what clears a recoverable {@code ERROR}. Two kinds say something more
+     * specific and are not that proof: a busy notice and an error report, which have arms of their
+     * own. Before B3 both of those fell through to the debug line.
      *
      * <p>Not exhaustive in the compiler's sense: {@code GEvent} is not sealed, and sealing it would
      * close the application's event vocabulary to the modules that are going to add to it. What the
@@ -97,15 +127,35 @@ public class PrinterState implements PrinterAggregate {
      */
     public void onEvent(GEvent event) {
         switch (event) {
-            case TemperatureReportedEvent e -> on(e);
-            case FirmwareInfoReportEvent e -> on(e);
-            case CapabilityReportEvent e -> on(e);
-            default -> log.debug("nothing for the aggregate to do about {}", event);
+            case MachineBusyEvent e -> transition(connection.busyReported(e.reason()));
+            case ErrorReportEvent e -> transition(connection.faulted(e.message()));
+            case TemperatureReportedEvent e -> {
+                heard();
+                on(e);
+            }
+            case FirmwareInfoReportEvent e -> {
+                heard();
+                on(e);
+            }
+            case CapabilityReportEvent e -> {
+                heard();
+                on(e);
+            }
+            default -> {
+                heard();
+                log.debug("nothing for the aggregate to do about {}", event);
+            }
         }
     }
 
     /**
      * One command from a caller, routed to the handler that knows how to send it.
+     *
+     * <p><strong>Refused outright when there is no connection.</strong> This used to be a 500 and a
+     * {@code NullPointerException}: the {@code GSender} below is held only while a link is up, and
+     * every arm dereferences it. The request had bound and routed correctly, so the stack trace
+     * pointed at the aggregate rather than at the machine being unreachable, which is the least
+     * useful place it could have pointed.
      *
      * <p>Unhandled is a <em>warning</em> here, unlike {@link #onEvent}: a command is something a
      * user asked for, and silently doing nothing about it is the failure. The REST surface accepts
@@ -113,6 +163,10 @@ public class PrinterState implements PrinterAggregate {
      * rest are a gap in this layer rather than noise from the machine.
      */
     public void onCommand(GRq<?> command) {
+        if (!connection.linked()) {
+            log.warn("{} is {}, so {} was not sent", id, connection.state(), command);
+            return;
+        }
         switch (command) {
             case SetHotendTemperature c -> handle(c);
             case SetBedTemperature c -> handle(c);
@@ -181,38 +235,64 @@ public class PrinterState implements PrinterAggregate {
         g.m155(report.getSeconds());
     }
 
+    /**
+     * The socket is open: take the sender, and ask the machine what it is.
+     *
+     * <p>The handshake runs only on the transition into {@code ONLINE}, which is what keeps a
+     * reconnect from asking twice. It is also why {@link ConnectionLifecycle#linkEstablished()}
+     * returns null when nothing moved rather than a no-change event.
+     */
     public void onOnline(GSender g) {
         this.g = g;
-        if (!this.online) {
-            log.info("Printer online");
-            this.online = true;
-            g.firmwareInfo(); //M115
-            g.autoReportTemp(1); //M105
-            emitter.accept(new MachineOnlineEvent());
+        var change = connection.linkEstablished();
+        if (change == null) {
+            return;
         }
+        log.info("{} is online", id);
+        g.firmwareInfo(); //M115
+        g.autoReportTemp(1); //M105
+        emitter.accept(change);
     }
 
-    //TODO
+    /**
+     * Connect or disconnect, as the user asked.
+     *
+     * <p>Only the intent and the announcement live here. Whether that intent means opening a socket,
+     * scheduling a retry or cancelling one in flight is {@link PrinterReactor}'s - this is the
+     * aggregate, and it holds no scheduler.
+     *
+     * <p>Turning auto-reporting off before letting go is deliberate: a printer left auto-reporting
+     * at one-second intervals goes on writing temperatures into a socket nobody is reading, and a
+     * reconnect would then find a backlog rather than a conversation.
+     */
     public void handle(ConnectCmd cmd) {
-        if (!cmd.connect() && this.connected) {
-            log.warn("Handle disconnect");
-            if (this.online) {
-                g.m155(0);
-            }
-            emitter.accept(new DisconnectedEvent());
-        } else if (cmd.connect() && !this.connected) {
-            emitter.accept(new ConnectedEvent());
+        if (cmd.connect()) {
+            transition(connection.connectRequested());
+            return;
         }
-        this.connected = cmd.connect();
+        if (connection.linked() && g != null) {
+            g.m155(0);
+        }
+        transition(connection.disconnectRequested());
     }
 
-    public void onOffline() {
-        if (this.online) {
-            this.online = false;
-            log.warn("Printer offline");
-            this.g = null;
-            emitter.accept(new MachineOfflineEvent());
-        }
+    /**
+     * The link went away, for whatever reason.
+     *
+     * <p>Where it goes next depends on whether a connection is still wanted: a drop nobody asked
+     * for means {@code CONNECTING} and another attempt, and a drop right after Disconnect means
+     * {@code OFFLINE}. That is the one distinction the pair of booleans this replaced could not
+     * express.
+     */
+    public void onOffline(String why) {
+        this.g = null;
+        transition(connection.linkFailed(why));
+    }
+
+    /** The attempts ran out. Nothing retries after this until someone asks again. */
+    public void onGaveUp(String why) {
+        this.g = null;
+        transition(connection.gaveUp(why));
     }
 
     public void on(TemperatureReportedEvent tempEvent) {
@@ -243,5 +323,20 @@ public class PrinterState implements PrinterAggregate {
 
     protected void setEmitter(Consumer<GEvent> emitter) {
         this.emitter = emitter;
+    }
+
+    /** The machine said something, whatever it was. See {@link #onEvent}. */
+    private void heard() {
+        transition(connection.replyReceived());
+    }
+
+    /** Announces a transition, if there was one. A null is "nothing moved" and not a failure. */
+    private void transition(ConnectionStateChanged change) {
+        if (change == null) {
+            return;
+        }
+        log.info("{}: {} -> {}{}", id, change.from(), change.to(),
+                change.reason() == null ? "" : " (" + change.reason() + ")");
+        emitter.accept(change);
     }
 }

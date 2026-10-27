@@ -55,7 +55,8 @@ class BlockingBoundaryTest {
     }
 
     private final Descriptor descriptor =
-            new Descriptor(UUID.randomUUID(), "a printer", new ConnectionDetails("localhost", 1), false,
+            new Descriptor(UUID.randomUUID(), "a printer", new ConnectionDetails("localhost", 1),
+                    org.qw3rtrun.p3d.api.model.MachineConnectionState.OFFLINE,
                     MachineProfile.unknown());
 
     /** A management service that does nothing but remember which thread asked. */
@@ -81,16 +82,6 @@ class BlockingBoundaryTest {
 
             @Override
             public void delete(UUID uuid) {
-                record();
-            }
-
-            @Override
-            public void disconnect(UUID uuid) {
-                record();
-            }
-
-            @Override
-            public void connect(UUID uuid) {
                 record();
             }
         };

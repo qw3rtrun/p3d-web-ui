@@ -15,8 +15,9 @@ export default {
     data() {
         return {
             state: ref(new PrinterState(this.uuid, this.name)),
-            connected: false,
-            online: false,
+            // One connection state from the server, not a pair of booleans inferred here.
+            // See component/connection.js for why the pair could never be kept in step.
+            connectionState: "OFFLINE",
             tempReportPeriod: 1,
             bed: {
                 temp: 0,
@@ -39,10 +40,10 @@ export default {
     },
     methods: {
         eventHandler(e) {
-            this.online = true;
             const payload = JSON.parse(e.data);
-            if (payload.type === "OkTemperatureReported" || payload.type === "TemperatureReported") {
-                this.connected = true;
+            if (payload.type === "ConnectionStateChanged") {
+                this.connectionState = payload.event.to;
+            } else if (payload.type === "OkTemperatureReported" || payload.type === "TemperatureReported") {
                 const report = payload.event.hotend;
                 if (this.target !== report.target) {
                     this.target = report.target;
@@ -57,12 +58,6 @@ export default {
                     this.bed.target_ = bedReport.target;
                 }
                 this.bed.heating = this.bed.target > 0;
-            } else if (payload.type === "DisconnectedEvent") {
-                this.connected = false;
-            } else if (payload.type === "ConnectedEvent") {
-                this.connected = true;
-            } else if (payload.type === "MachineOfflineEvent") {
-                this.online = false;
             }
         },
         setBedTemp() {

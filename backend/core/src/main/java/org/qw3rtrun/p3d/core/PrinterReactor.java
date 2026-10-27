@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
+import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.*;
 import org.springframework.context.ApplicationEventPublisher;
 import org.qw3rtrun.p3d.g.protocol.GRq;
@@ -9,25 +10,54 @@ import org.qw3rtrun.p3d.terminal.HostTerminal;
 import org.qw3rtrun.p3d.terminal.PublisherQueue;
 import org.qw3rtrun.p3d.terminal.TerminalManager;
 import org.qw3rtrun.p3d.terminal.msg.Priority;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
-import java.time.LocalDateTime;
+import reactor.util.retry.Retry;
 
-import static reactor.core.publisher.Sinks.EmitFailureHandler.FAIL_FAST;
+import java.time.Duration;
+import java.time.LocalDateTime;
 
 @Slf4j
 public class PrinterReactor {
 
+    /**
+     * How long a thread will spin waiting for the update sink to be free.
+     *
+     * <p>{@code FAIL_FAST} was correct while every emission came from the one {@code executor}
+     * thread. B3 added two more sources - a failed attempt is announced from whichever scheduler
+     * the backoff ran on, and a dropped link from Netty's - so two emissions can genuinely race,
+     * and failing fast there would silently drop a state change rather than report one late.
+     */
+    private static final Sinks.EmitFailureHandler SERIALISE =
+            Sinks.EmitFailureHandler.busyLooping(Duration.ofSeconds(1));
+
     private final TerminalManager manager;
     private final PrinterState printer;
+    private final ConnectionPolicy policy;
 
     private HostTerminal terminal;
 
-    private Scheduler executor = Schedulers.single();
-    private Sinks.Many<EventMessage> updates;
+    /** Where replies and state changes are handled, so the aggregate is touched by one thread. */
+    private final Scheduler executor;
+
+    /** Where the backoff between connection attempts is timed. A virtual one in tests. */
+    private final Scheduler retries;
+
+    private final Sinks.Many<EventMessage> updates;
+
+    /**
+     * The running attempt chain, or null when nothing is dialling.
+     *
+     * <p>This is what makes a disconnect <em>stop</em> rather than merely be recorded. A retry is a
+     * subscription holding a timer, so cancelling the intent means disposing it; without this
+     * handle a machine told to disconnect mid-backoff would come back a few seconds later, and the
+     * only trace would be a connection nobody asked for.
+     */
+    private Disposable attempts;
 
     private PublisherQueue<String, Priority> commandQueue = new PublisherQueue<>();
 
@@ -47,10 +77,19 @@ public class PrinterReactor {
     }
 
     public PrinterReactor(TerminalManager manager, PrinterState printer, ApplicationEventPublisher roster) {
+        this(manager, printer, roster, ConnectionPolicy.standard(), Schedulers.single(), Schedulers.parallel());
+    }
+
+    public PrinterReactor(TerminalManager manager, PrinterState printer, ApplicationEventPublisher roster,
+                          ConnectionPolicy policy, Scheduler executor, Scheduler retries) {
         this.roster = roster;
         this.manager = manager;
         this.printer = printer;
-        updates = Sinks.many().replay().latestOrDefault(new EventMessage(printer.getId(), new MachineOfflineEvent()));
+        this.policy = policy;
+        this.executor = executor;
+        this.retries = retries;
+        this.updates = Sinks.many().replay()
+                .latestOrDefault(new EventMessage(printer.getId(), printer.connectionAsEvent()));
         this.printer.setEmitter(this::onEvent);
     }
 
@@ -60,30 +99,88 @@ public class PrinterReactor {
                 .then();
     }
 
+    /**
+     * The one place a connect command is acted on.
+     *
+     * <p>It used to be two: this method decided whether to dial by looking at {@code terminal},
+     * while {@link PrinterState#handle(ConnectCmd)} kept a {@code connected} flag of its own and
+     * carried a {@code //TODO}. The aggregate now owns the intent and this owns the machinery, and
+     * both branches are unconditional because {@link #connect()} and {@link #disconnect()} are each
+     * safe to call in any state - which is what the old {@code terminal == null} test was standing
+     * in for, badly: with retries there are states where no terminal exists and a connection is
+     * very much in progress.
+     */
     public void handleConnectCmd(ConnectCmd cmd) {
         printer.handle(cmd);
-        if (cmd.connect() && terminal == null) {
+        if (cmd.connect()) {
             connect();
-        } else if (!cmd.connect() && terminal != null) {
+        } else {
             disconnect();
         }
     }
 
+    /**
+     * Dial the machine, and keep dialling it while a connection is wanted.
+     *
+     * <p><strong>The retry wraps the whole conversation and not just the dial.</strong> Everything
+     * from {@code manager.connect()} to the end of {@link #onConnected} is one chain, so a link
+     * that drops after an hour re-enters it exactly where a refused connection does - which is what
+     * makes "reconnect a machine that dropped" the same code path as "try again", rather than a
+     * second mechanism that would need its own backoff and its own bugs.
+     *
+     * <p><strong>A completed conversation is turned into an error on purpose.</strong>
+     * {@code onConnected} completes when the socket closes cleanly, and a clean close is still the
+     * connection being gone; left as a completion it would fall straight out of the chain and the
+     * printer would sit in {@code ONLINE} forever with nothing attached.
+     *
+     * <p><strong>The failure is announced from {@code doBeforeRetry} and not from a
+     * {@code doOnError}.</strong> That is what keeps the attempt numbers on the event stream
+     * honest: {@code doBeforeRetry} runs only once the filter has passed and another dial is
+     * genuinely going to happen, so a machine never announces that it is backing off towards an
+     * attempt that will never be made. The two ways the series can end instead reach the
+     * {@code doOnError} below - the attempts ran out, or a disconnect withdrew the intent - and
+     * both mean {@code OFFLINE}.
+     *
+     * <p>{@code maxAttempts} on the policy counts the first dial, which Reactor's
+     * {@code Retry.backoff} does not - it counts retries - hence the minus one.
+     */
     public void connect() {
-        log.info("connect()");
-        manager.connect()
+        if (attempts != null && !attempts.isDisposed()) {
+            log.debug("already connecting to {}", printer.getId());
+            return;
+        }
+        log.info("connecting to {}", printer.getId());
+        attempts = manager.connect()
                 .publishOn(executor)
                 .flatMap(this::onConnected)
-                .log(this.getClass().getSimpleName() + "#printer")
-                .doOnTerminate(printer::onOffline)
-                .subscribe();
+                .then(Mono.defer(() -> Mono.error(new ClosedByPeer("the machine closed the connection"))))
+                .retryWhen(Retry.backoff(Math.max(0, policy.maxAttempts() - 1), policy.firstBackoff())
+                        .maxBackoff(policy.maxBackoff())
+                        .scheduler(retries)
+                        .filter(cause -> printer.wantsToBeConnected())
+                        .doBeforeRetry(signal -> printer.onOffline(describe(signal.failure()))))
+                .doOnError(cause -> printer.onGaveUp(describe(cause)))
+                .subscribe(ignored -> {
+                }, cause -> log.warn("gave up on {}: {}", printer.getId(), describe(cause)));
     }
 
+    /**
+     * Stop, and stop trying.
+     *
+     * <p>Idempotent and safe in every state, including the two the old version could not survive:
+     * mid-backoff, where there is no terminal to stop, and never-connected, where
+     * {@code terminal.stop()} was a {@code NullPointerException}.
+     */
     public void disconnect() {
-        log.info("disconnect()");
-        terminal.stop();
-        terminal = null;
-        printer.onOffline();
+        log.info("disconnecting from {}", printer.getId());
+        if (attempts != null) {
+            attempts.dispose();
+            attempts = null;
+        }
+        if (terminal != null) {
+            terminal.stop();
+            terminal = null;
+        }
     }
 
     /**
@@ -93,10 +190,6 @@ public class PrinterReactor {
      * from: after {@code stop} the reactor is finished, its subscribers have been told so, and the
      * manager has let go of it. It is what a deleted printer gets.
      *
-     * <p>Safe on a reactor that never connected - which is the normal case for one built by a
-     * lookup and never used - because {@code disconnect} dereferences a terminal that would not be
-     * there.
-     *
      * <p>The sink is completed rather than abandoned. A subscriber of {@link #updates()} is
      * typically a browser holding an SSE connection; leaving the sink hanging leaves the browser
      * waiting for a machine that no longer exists, and {@code Sinks.Many} keeps every one of them
@@ -104,9 +197,7 @@ public class PrinterReactor {
      */
     public void stop() {
         log.info("stop()");
-        if (terminal != null) {
-            disconnect();
-        }
+        disconnect();
         Sinks.EmitResult result = updates.tryEmitComplete();
         if (result.isFailure()) {
             log.warn("the update stream did not complete ({})", result);
@@ -114,6 +205,10 @@ public class PrinterReactor {
     }
 
     private Mono<Void> onConnected(HostTerminal terminal) {
+        if (this.terminal != null) {
+            // A redial: the dead one still holds a reply subscriber and a send window.
+            this.terminal.stop();
+        }
         commandQueue = new PublisherQueue<>();
         this.terminal = terminal;
         Mono<Void> events = gEvent();
@@ -166,6 +261,11 @@ public class PrinterReactor {
         return Mono.defer(() -> Mono.just(printer.getTemperature())).publishOn(executor);
     }
 
+    /** Where the machine's connection is, answered without opening the stream. */
+    public Mono<ConnectionStatus> connection() {
+        return Mono.defer(() -> Mono.just(printer.getConnection())).publishOn(executor);
+    }
+
     public Flux<EventMessage> updates() {
         return updates.asFlux()
                 .publishOn(executor)
@@ -181,16 +281,21 @@ public class PrinterReactor {
     }
 
     private void onEvent(GEvent report) {
-        updates.emitNext(new EventMessage(printer.getId(), report), FAIL_FAST);
+        updates.emitNext(new EventMessage(printer.getId(), report), SERIALISE);
         report(report);
     }
 
     /**
-     * Passes on the two things the roster wants to remember about a machine.
+     * Passes on the things the roster wants to remember about a machine.
      *
-     * <p>Only reached when the aggregate decided the report <em>changed</em> something, because
-     * that is what {@link PrinterState} emits on - so a printer auto-reporting the same
-     * capabilities every connect does not write to the database every connect.
+     * <p>Firmware and capabilities are only reached when the aggregate decided the report
+     * <em>changed</em> something, because that is what {@link PrinterState} emits on - so a printer
+     * auto-reporting the same capabilities every connect does not write to the database every
+     * connect.
+     *
+     * <p>The connection state is the B3 addition, and it is what makes the roster's persisted
+     * column <em>derived</em> rather than a second opinion. Nothing else can tell the roster this:
+     * knowing whether a machine is connected means holding the socket, which only this module does.
      */
     private void report(GEvent event) {
         switch (event) {
@@ -198,8 +303,32 @@ public class PrinterReactor {
                     printer.getId(), firmware.keyValues(), LocalDateTime.now()));
             case CapabilityReportEvent capability -> roster.publishEvent(new MCapabilityReportedEvent(
                     printer.getId(), capability.capability(), capability.enabled(), LocalDateTime.now()));
+            case ConnectionStateChanged change -> roster.publishEvent(new MConnectionChangedEvent(
+                    printer.getId(), change.to(), change.reason(), LocalDateTime.now()));
             default -> {
             }
+        }
+    }
+
+    private static String describe(Throwable cause) {
+        if (cause instanceof ClosedByPeer) {
+            return cause.getMessage();
+        }
+        var root = cause.getCause() == null ? cause : cause.getCause();
+        return root.getClass().getSimpleName()
+                + (root.getMessage() == null ? "" : ": " + root.getMessage());
+    }
+
+    /**
+     * The conversation ended without anybody failing.
+     *
+     * <p>A value in the shape of an exception, which is what the retry operator understands. It
+     * never leaves this class: {@link #describe} unwraps it back into the sentence it carries, so
+     * what a user sees on the event stream is a reason and not a stack trace.
+     */
+    static final class ClosedByPeer extends RuntimeException {
+        ClosedByPeer(String message) {
+            super(message, null, false, false);
         }
     }
 }

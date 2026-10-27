@@ -66,6 +66,11 @@ class BootVuejsApplicationTests {
                 public Publisher<Void> connect(UUID id, ConnectCmd command) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
+
+                @Override
+                public Publisher<org.qw3rtrun.p3d.api.model.ConnectionStatus> connection(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
             };
         }
 
@@ -89,16 +94,6 @@ class BootVuejsApplicationTests {
 
                 @Override
                 public void delete(UUID uuid) {
-                    throw new UnsupportedOperationException("not expected during a context load");
-                }
-
-                @Override
-                public void disconnect(UUID uuid) {
-                    throw new UnsupportedOperationException("not expected during a context load");
-                }
-
-                @Override
-                public void connect(UUID uuid) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
             };

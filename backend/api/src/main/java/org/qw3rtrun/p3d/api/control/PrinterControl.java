@@ -1,5 +1,6 @@
 package org.qw3rtrun.p3d.api.control;
 
+import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.PrinterCommand;
@@ -42,4 +43,15 @@ public interface PrinterControl {
 
     /** Connects to the machine, or disconnects from it. */
     Publisher<Void> connect(UUID id, ConnectCmd command);
+
+    /**
+     * Where the machine's connection is right now - the health signal, answered once.
+     *
+     * <p>The same facts {@code ConnectionStateChanged} carries on {@link #updates(UUID)}, for a
+     * caller that wants the current answer rather than every change. A page rendering a printer
+     * needs this before it has seen a single event, and before B3 it had nothing to ask: the only
+     * way to learn whether a machine was connected was to open the stream and wait for something
+     * to happen on it.
+     */
+    Publisher<ConnectionStatus> connection(UUID id);
 }

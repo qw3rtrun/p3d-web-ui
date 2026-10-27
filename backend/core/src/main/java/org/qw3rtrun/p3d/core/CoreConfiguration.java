@@ -22,10 +22,22 @@ public class CoreConfiguration {
         return new PrinterDirectory();
     }
 
+    /**
+     * How hard a dropped machine is chased, in one place rather than per reactor.
+     *
+     * <p>A bean so that an assembly can replace it - a farm on a flaky link wants longer backoff
+     * than one in the same rack - without any of this module's classes gaining a property to read.
+     */
+    @Bean
+    public ConnectionPolicy connectionPolicy() {
+        return ConnectionPolicy.standard();
+    }
+
     @Bean
     public PrinterReactorManager printer(PrinterDirectory directory, PrinterAggregateManager aggregates,
-                                         org.springframework.context.ApplicationEventPublisher roster) {
-        return new PrinterReactorManager(directory, aggregates, roster);
+                                         org.springframework.context.ApplicationEventPublisher roster,
+                                         ConnectionPolicy policy) {
+        return new PrinterReactorManager(directory, aggregates, roster, policy);
     }
 
     /** The only way into this module from the web - see {@link PrinterControlService}. */

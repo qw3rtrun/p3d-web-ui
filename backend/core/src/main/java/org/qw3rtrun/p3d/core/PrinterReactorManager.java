@@ -1,11 +1,15 @@
 package org.qw3rtrun.p3d.core;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
+import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.terminal.TerminalManager;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -21,7 +25,6 @@ import java.util.UUID;
  * Over a long-running process that is a socket and a sink per printer ever registered.
  */
 @Slf4j
-@RequiredArgsConstructor
 public class PrinterReactorManager {
 
     private final PrinterDirectory directory;
@@ -30,7 +33,34 @@ public class PrinterReactorManager {
 
     private final ApplicationEventPublisher roster;
 
+    private final ConnectionPolicy policy;
+
+    private final Scheduler executor;
+
+    private final Scheduler retries;
+
     private final Map<UUID, PrinterReactor> running = new HashMap<>();
+
+    public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
+                                 ApplicationEventPublisher roster) {
+        this(directory, aggregateManager, roster, ConnectionPolicy.standard());
+    }
+
+    public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
+                                 ApplicationEventPublisher roster, ConnectionPolicy policy) {
+        this(directory, aggregateManager, roster, policy, Schedulers.single(), Schedulers.parallel());
+    }
+
+    public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
+                                 ApplicationEventPublisher roster, ConnectionPolicy policy,
+                                 Scheduler executor, Scheduler retries) {
+        this.directory = directory;
+        this.aggregateManager = aggregateManager;
+        this.roster = roster;
+        this.policy = policy;
+        this.executor = executor;
+        this.retries = retries;
+    }
 
     /**
      * The printer's runtime, started if this is the first caller.
@@ -39,12 +69,11 @@ public class PrinterReactorManager {
      * miss it builds a reactor for the machine, which is a resource. It pairs with
      * {@link #release(UUID)}: whatever this opens, that closes.
      *
-     * <p>It no longer opens a socket. It used to, when the printer's row said {@code connected} -
-     * which made a GET on a query path dial a machine. That branch was also dead: nothing in
-     * production ever writes the flag, because {@code PrinterController.connect} goes to the
-     * reactor and not to the management service, so the column is {@code false} from creation
-     * onwards. Reconnecting after a restart is a real feature and plan item B3 owns it; doing it
-     * as a side effect of a lookup was not that feature.
+     * <p>It does not open a socket. It used to, when the printer's row said {@code connected} -
+     * which made a GET on a query path dial a machine, and which was dead code besides, since
+     * nothing in production ever wrote the flag. Reconnecting after a restart is a real feature and
+     * it is {@link #onRegistered(MRegisteredEvent)} now: a deliberate step at startup rather than a
+     * side effect of a lookup.
      *
      * <p>Throws when the machine is unknown to this module. That is a different statement from
      * "the farm has no such machine" - it can also mean this module has not been told yet - and the
@@ -88,10 +117,38 @@ public class PrinterReactorManager {
         release(event.getMachineId());
     }
 
+    /**
+     * A machine the roster says was connected gets dialled again.
+     *
+     * <p><strong>This is what gives the persisted connection state a reader.</strong> Before B3 the
+     * {@code connected} column was written once at registration and never again, so a restart lost
+     * every connection and nothing noticed; B3 makes {@code core} report each transition and the
+     * roster keep it, and this is the other end of that - without it the column would merely be
+     * write-only in a new place.
+     *
+     * <p>Ordered after {@link PrinterDirectory#onRegistered}, which consumes the same event: this
+     * asks the replica where to dial, so the replica has to have been told first.
+     *
+     * <p>Safe to receive repeatedly, which matters because {@code MRegisteredEvent} is a statement
+     * of current fact re-published whenever the roster learns something: {@code openReactor} is
+     * idempotent and {@code connect()} declines to start a second attempt while one is in flight.
+     * A machine already connected is therefore left alone rather than redialled.
+     */
+    @Order(Ordered.LOWEST_PRECEDENCE)
+    @EventListener
+    public void onRegistered(MRegisteredEvent event) {
+        if (!event.getState().isLinked()) {
+            return;
+        }
+        log.info("{} was connected when the farm was last up, so dialling it again", event.getName());
+        openReactor(event.getMachineId()).connect();
+    }
+
     private PrinterReactor startReactor(UUID uuid) {
         var entry = directory.find(uuid).orElseThrow(() ->
                 new IllegalArgumentException("no machine known with id " + uuid));
         var aggregate = (PrinterState) aggregateManager.loadState(uuid);
-        return new PrinterReactor(new TerminalManager(entry.connection()), aggregate, roster);
+        return new PrinterReactor(new TerminalManager(entry.connection()), aggregate, roster,
+                policy, executor, retries);
     }
 }

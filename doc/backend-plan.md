@@ -922,9 +922,13 @@ they were written for.
 **Three prerequisites in `:backend:terminal`** — not this layer's to fix, and each one a
 `terminal-dev` item that should be raised as its own piece of work:
 
-1. **`PublisherQueue` is partially synchronised over a non-thread-safe `PriorityQueue`.** Preempting
-   a long background stream with an interactive command is precisely its weakest case, and it is the
-   case this item creates. Already on the transport's debt list.
+1. ~~**`PublisherQueue` is partially synchronised over a non-thread-safe `PriorityQueue`.**~~
+   **Done** — a `PriorityBlockingQueue` behind the same `wip` drain loop `CommandProcessor` uses.
+   The rewrite turned up four further rules it broke, none of which had a symptom: equal priorities
+   came out in heap order rather than arrival order, a second subscriber silently replaced the
+   first, `request(0)` was ignored, and a source that over-produced was forwarded straight at the
+   send window. `addPublisher` now also answers with a `Mono<Void>` that completes when the source
+   is exhausted, which is what this item was needed *for* — see the note under prerequisite 2.
 2. **`CommandProcessor.onComplete` has `subscriber.onComplete()` commented out**, so an exhausted
    source signals nothing downstream — a finished job would never be observed as finished.
 3. **The transport publishes no acknowledgement signal.** `messageFlux()` deliberately drops

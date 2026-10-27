@@ -138,6 +138,32 @@ Three things to know before changing it:
 **It is not a count of what the firmware has *executed*.** `ok` means queued, which is the whole
 reason the send window exists. A block acknowledged is a block the planner accepted.
 
+### The queue hands demand to one source at a time, and says when one finishes
+
+`PublisherQueue` drains several sources into one subscriber, highest priority first, so an
+emergency stop reaches the wire ahead of a print that is already streaming. Four things about it
+that a caller depends on:
+
+- **All the outstanding demand goes to the head source and none is held back.** That is what makes
+  preemption work - the demand follows whatever is now highest priority - and what the previous
+  head did not spend returns to the pool when it completes.
+- **Equal priorities come out in the order they were added.** A heap is not stable and two
+  interactive commands at `REGULAR` are the normal case; without the tie-break a user who pressed
+  Home and then Set Temperature could get them the other way round, which on a printer is a
+  different thing happening.
+- **`addPublisher` returns a `Mono<Void>` that completes when that source is exhausted.** The queue
+  used to remove a finished source and tell nobody, so a print that reached the end of its file was
+  invisible to the layer that queued it. Plan item C3 is the first caller that needs it.
+- **A source that emits without demand is cancelled and its excess dropped**, loudly. Forwarding it
+  would be an `onNext` the send window never asked for, and the send window is the only thing
+  stopping the printer's buffer being overrun - which Marlin answers by dropping commands in
+  silence. A loud drop is the better of two bad outcomes; a well-behaved source never reaches it.
+
+**The demand accounting is atomics plus a drain loop**, the same mechanism `CommandProcessor` uses
+and the only one this module has. It was half of one, and the compound race a lock could not close
+is `peek` then `reset` then `request(n)`: two threads that each peeked the same head would each have
+claimed the demand, and one of them would have handed a source a zero.
+
 ### Resynchronising a session that has drifted
 
 A `Resend: n` for a block the window no longer holds means the firmware has named a block this host
@@ -280,15 +306,16 @@ listed because the current code either depends on it or breaks it.
 
 ### Never signal after a terminal signal
 
-`onComplete` and `onError` are final. `PublisherQueue.onError` calls `subscriber.onError(t)` and
-then `request0(...)`, which can push more `onNext` at a subscriber that has already been told the
-stream is over. Terminal state needs a flag that every path checks.
+`onComplete` and `onError` are final. `PublisherQueue` has that flag now: `terminate` sets it before signalling and every path reads it,
+so a source that completes or fails after a cancel reaches nobody. It used to signal `onError` and
+*then* hand the failed source's demand on, which is an `onNext` after a terminal event - and it did
+not fire only because the cancel one line above had already zeroed the count it passed.
 
 ### Never call `onNext` without demand
 
-`PublisherQueue.onNext` forwards straight to `subscriber.onNext(t)` with no check that the
-downstream asked for it. It happens to work because the only producer is request-driven; it is not
-guaranteed by anything.
+`PublisherQueue` counts what it handed each source and drops what comes back over that, rather than
+forwarding it. It used to forward straight to `subscriber.onNext(t)` with no check, which happened
+to work because every producer was request-driven and was guaranteed by nothing.
 
 ### `request(n)` must be safe to call from any thread, and `n <= 0` is an error
 
@@ -304,16 +331,23 @@ mechanism is **atomics plus a drain loop**, and both halves are needed:
   not make `canProcess() -> inc/dec -> subscription.request(n)` one step, and two threads that each
   read the same room will each claim it.
 
-`PublisherQueue.request0` is `synchronized` but the `onNext` / `onComplete` / `onError` paths that
-mutate the same state are not, and the `PriorityQueue` itself is not thread-safe. Its counters are
-atomic now because they are `Requested`; its queue and its signal paths are still half-synchronised.
+`PublisherQueue` is the same mechanism now - a `PriorityBlockingQueue` behind a `wip` drain loop -
+and it got there by the same route. Half-synchronising it (a `synchronized` request path, unguarded
+signal paths, a `PriorityQueue` that is not thread-safe) was correct only while nothing raced, and
+the case this class exists for is precisely the race: preempting a running print means
+`addPublisher` on a request thread while the netty loop is draining.
 
 ### A `Subscription` may arrive before or after the first `request`
 
-`PublisherDescr.request(n)` calls `subscribe()` and then `subscription.request(n)` on the next
-line. That only works while every upstream calls `onSubscribe` synchronously from inside
-`subscribe`. An asynchronous publisher - any `Mono.fromFuture`, anything with `publishOn` -
-NullPointers there. Buffer the demand and replay it in `onSubscribe`.
+`PublisherDescr` buffers the demand and replays it in `onSubscribe` now. It used to call
+`subscribe()` and then `subscription.request(n)` on the next line, which works only while every
+upstream calls `onSubscribe` synchronously from inside `subscribe`.
+
+**Every Reactor operator tried does** - `publishOn`, `delaySubscription` and `Mono.fromFuture` all
+hand over a subscription immediately and defer only the values - so the test for it needed a
+publisher written to defer it. That is worth knowing before dismissing this class of bug as
+theoretical: the specification allows late `onSubscribe`, a hand-written publisher may well do it,
+and a subscriber that assumes otherwise is correct only by the grace of its sources.
 
 ### Cancellation must be idempotent and must not resurrect the stream
 
@@ -469,9 +503,15 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   seconds of motion that has been acknowledged and not performed.
 - **`CommandProcessor.onComplete` has `subscriber.onComplete()` commented out**, so upstream
   completion is swallowed. Deliberate or not, it is undocumented.
-- **`PublisherQueue` uses a `PriorityQueue` with partial synchronisation** - `request0` is
-  `synchronized`, the signal paths are not, and `PriorityQueue` is not thread-safe. Its `Requested`
-  counters are atomic now; the queue and the signal paths around them are not.
+- ~~**`PublisherQueue` uses a `PriorityQueue` with partial synchronisation.**~~ **Fixed** - it is
+  a `PriorityBlockingQueue` behind the same `wip` drain loop `CommandProcessor` uses, and the entry
+  is kept because of what the rewrite turned up. Four of the rules it broke were invisible:
+  equal-priority sources came out in heap order rather than arrival order (two interactive commands
+  are the normal case), a second subscriber silently replaced the first, `request(0)` was ignored
+  where rule 3.9 makes it an error, and a source that over-produced was forwarded straight at the
+  send window. Two others - signals after a cancel and after an error - were *latent*: the code
+  shape was wrong and the wrong path happened to read a zero and return. A test that pins a rule the
+  implementation gets right by accident is worth having before the accident stops happening.
 - **`CommandProcessor`'s `wip` drain guard has no test that fails without it.** It is the half of
   the demand-accounting fix that closes the compound race - two threads each reading the same room
   out of `canProcess()` and each claiming it - and there is no way to schedule two threads onto a

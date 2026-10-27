@@ -13,6 +13,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.UUID;
+import java.util.function.Supplier;
 
 @Slf4j
 @RestController
@@ -35,8 +36,12 @@ public class FDMPrinterManagementController {
      * lazy, so its supplier runs on whichever thread subscribes, and for a controller that is the
      * event loop. The {@code subscribeOn} is what moves it, and it is the whole of the fix.
      */
-    private <T> Mono<T> offLoop(java.util.function.Supplier<T> blocking) {
+    private <T> Mono<T> offLoop(Supplier<T> blocking) {
         return Mono.fromSupplier(blocking).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private Mono<Void> offLoop(Runnable blocking) {
+        return Mono.<Void>fromRunnable(blocking).subscribeOn(Schedulers.boundedElastic());
     }
 
     @GetMapping(value = "/{uuid}")
@@ -76,10 +81,7 @@ public class FDMPrinterManagementController {
 
     @DeleteMapping("/{uuid}")
     public Mono<Void> delete(@PathVariable UUID uuid) {
-        return offLoop(() -> {
-            management.delete(uuid);
-            return null;
-        }).then();
+        return offLoop(() -> management.delete(uuid)).then();
     }
 
     /**

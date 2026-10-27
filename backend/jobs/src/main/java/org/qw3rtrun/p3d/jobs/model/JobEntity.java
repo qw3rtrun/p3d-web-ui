@@ -112,7 +112,7 @@ public class JobEntity {
             // see a queued job that still claims one.
             machineId = null;
         }
-        return new JobStateChanged(id, previous, next, machineId, why, clock);
+        return new JobStateChanged(id, fileId, previous, next, machineId, why, clock);
     }
 
     /** This row as the record that leaves the module. An entity never does. */

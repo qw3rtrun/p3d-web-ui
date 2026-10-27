@@ -28,5 +28,6 @@
  */
 @org.springframework.modulith.ApplicationModule(
         displayName = "Printer core",
-        allowedDependencies = {"api::model", "api::msg", "api::control"})
+        allowedDependencies = {"api::model", "api::msg", "api::control", "api::jobs",
+                "api::files"})
 package org.qw3rtrun.p3d.core;

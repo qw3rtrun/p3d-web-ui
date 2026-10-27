@@ -159,6 +159,17 @@ public class PrinterReactorManager {
      * reactor for each would undo plan item A3's "a reactor has an owner" by opening one for every
      * row in the farm.
      */
+    /**
+     * The runtime of a machine that is already running, or null.
+     *
+     * <p>Deliberately does not build one, which is why it is not {@code openReactor}. A feed into a
+     * machine nothing has dialled is a print into a socket that does not exist, and answering it
+     * with a fresh reactor would make that look like it had started.
+     */
+    public synchronized PrinterReactor runtimeOf(UUID uuid) {
+        return running.get(uuid);
+    }
+
     private synchronized void redeclare(MRegisteredEvent event) {
         var reactor = running.get(event.getMachineId());
         if (reactor != null) {

@@ -389,6 +389,15 @@ turning it on has three consequences worth knowing before the first one is writt
   is the half the registry exists for. The fix is a `tools.jackson.databind.JacksonModule` bean
   (Modulith's own extension point); **a `JsonMapper` bean would quietly become the whole
   application's** and let one module decide how the web layer renders JSON.
+- **It only works for an event published inside a transaction, and that rules out whole callers.**
+  `JobFeedCompleted` is published by `core` from a reactor-netty thread, which has no transaction
+  and no database to tie one to - so an `@ApplicationModuleListener` on it was *silently dropped*,
+  and a 96,152-block print finished with the job still reading `RUNNING`. Those listeners are plain
+  `@EventListener` with their own `@Transactional`, which makes the outcome **at-most-once** and is
+  recorded as such. **Before reaching for the annotation, ask where the event is published from.**
+- **`@Transactional` goes on the listener, not only on the service method it calls.** A listener
+  that calls its own service method is a self-invocation and does not go through the proxy, so the
+  transaction the service method asked for never starts.
 - **Testing one needs a transaction and a wait.** An event published outside a transaction is
   dropped - that is the point, there is no commit to tie it to - so a test publishes through a
   `TransactionTemplate`, and then awaits, because `@Async` means the publisher returns first. Assert
@@ -561,9 +570,14 @@ the source, not suspected.
   roster's `MachineProfile` - firmware and capabilities - but a temperature from before the process
   restarted is not state, it is a stale number that would read as current. A machine starts with no
   reading and says so until it reports one.
-- **Nothing runs a job yet.** A job has a lifecycle and survives a restart (C2), and nothing feeds
-  a file to a machine - `start` is a state change that no streaming engine answers. C3 is that, and
-  until it exists every transition past `ASSIGNED` is driven by hand.
+- **A feed outcome is at-most-once.** `JobFeedCompleted` and `JobFeedFailed` are published from a
+  reactive thread with no transaction, so they cannot go through the event registry - see above. If
+  the process dies between the last block and the listener, the job is left `RUNNING` with nothing
+  feeding it. C5 has to reconcile that at startup, and already has to for a job whose machine went
+  away mid-print.
+- **Resuming a paused job fails it.** The feed holds no position in the file, so resuming would
+  restart at line one on a half-printed part. Pausing genuinely stops the feed; resuming is refused
+  with that sentence as the job's reason. C5 owns real recovery, and until then pause is a stop.
 - **Nothing assigns a job either.** `assign` takes a machine id from whoever calls it; there is no
   scheduler, so a queued job waits forever unless a person picks a printer. D1 is that.
 - **`JobStateChanged` has no durable listener, so the registry records nothing for it.** The

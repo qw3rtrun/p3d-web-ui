@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
+import org.reactivestreams.Publisher;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.*;
 import org.springframework.context.ApplicationEventPublisher;
@@ -256,6 +257,30 @@ public class PrinterReactor {
     private Mono<Void> gCode() {
         log.info("receiving()");
         return terminal.start(Flux.from(commandQueue));
+    }
+
+    /**
+     * Feeds a job's blocks to this machine at {@code BACKGROUND}, behind everything interactive.
+     *
+     * <p>The returned {@code Mono} completes when the source is exhausted and errors when it fails,
+     * which is {@code PublisherQueue.addPublisher}'s answer and the thing plan item C3's
+     * prerequisite added for exactly this caller.
+     *
+     * <p><strong>{@code BACKGROUND} is what makes a print interruptible.</strong> A temperature
+     * query or an emergency stop is queued at a higher priority and the queue drains that first,
+     * then hands its remaining demand back here - so the job resumes at the block it had reached
+     * rather than being restarted or dropped.
+     *
+     * <p>Refused when there is no connection: the queue is built by {@link #onConnected} and a feed
+     * into a machine that is not there would sit forever looking like a print.
+     */
+    public Mono<Void> feed(Publisher<String> blocks) {
+        var queue = commandQueue;
+        if (queue == null || terminal == null) {
+            return Mono.error(new IllegalStateException(
+                    "printer " + printer.getId() + " is not connected, so nothing can be fed to it"));
+        }
+        return queue.addPublisher(Priority.BACKGROUND, blocks);
     }
 
     /** Passes an edited spec to the aggregate - see {@code PrinterReactorManager.redeclare}. */

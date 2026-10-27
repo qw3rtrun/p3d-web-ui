@@ -81,7 +81,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**B4**~~ | [machine profile and groups](#b4) | ~~Bed volume, extruders, nozzle, materials, tags — what a scheduler matches against~~ **done** — a declared spec beside the reported profile, neither able to write the other | D1 |
 | ~~**C1**~~ | [the G-code file store](#c1) | ~~Upload, content hash, size, line count, estimates; streamed in and out, never buffered~~ **done** — a fifth module, content-addressed on disk, one chunk in flight | C2 |
 | ~~**C2**~~ | [the job and its lifecycle](#c2) | ~~A job entity, a state machine, and the events each transition publishes~~ **done** — a sixth module, a typed refusal instead of an exception, and the event registry on | C3 |
-| **C3** | [the streaming engine](#c3) | A file fed through `PublisherQueue` at `BACKGROUND` while interactive commands preempt | C4, C5 |
+| ~~**C3**~~ | [the streaming engine](#c3) | ~~A file fed through `PublisherQueue` at `BACKGROUND` while interactive commands preempt~~ **done** — 96,152 blocks to a stand-in in 25s, preempted mid-print, cancellable | C4, C5 |
 | **C4** | [progress and telemetry](#c4) | Lines accepted, elapsed, estimated remaining — driven by acknowledgements, not by what was sent | C5 |
 | **C5** | [pause, cancel, and survive a disconnect](#c5) | The operations an eight-hour print actually needs | D1 |
 | **D1** | [assignment](#d1) | Match a queued job to a capable, idle machine; a farm queue and a per-machine queue | D2 |
@@ -950,6 +950,53 @@ they were written for.
 **Done when.** A multi-megabyte file prints to a simulator end to end with bounded memory; a
 temperature query issued mid-job is answered without corrupting the sequence; cancelling mid-stream
 stops the source and drains cleanly.
+
+**Done, and it is events in and events out.** `JobFeeder` in `core` hears that a job started, reads
+the file through `GcodeFileService`, and hands the blocks to the machine's `PublisherQueue` at
+`BACKGROUND`. When the file runs out or the feed breaks it announces `JobFeedCompleted` or
+`JobFeedFailed`, and `jobs` decides what that does to the job. Only `core` can know whether lines
+reached the wire — knowing it means holding the socket — and only `jobs` may move a job: the same
+division a firmware report crosses in B2, running the other way.
+
+**`GcodeLines` turns a file into blocks a printer will accept, and both halves had a trap.** Framing
+bytes into lines means carrying a remainder across chunks without ever accumulating — C1 worked to
+keep a 200 MB file off the heap and a `collectList` here would undo all of it. And a line is not a
+block: the transport's contract is *no trailing comment*, because a comment runs to end of line and
+would swallow the checksum `GEncoder.frame` appends behind it. A sliced file is perhaps a tenth
+comments, so that is the normal case rather than a corner. The reading is `:gcode`'s
+`GBlockReader` — a regex over `;` would be faster and wrong on `(a note ; not a comment)`.
+
+**Tokenizing every line costs nothing here**, which is worth stating because it looks alarming. The
+feed is gated by the printer's command buffer — four blocks in flight — so the file is read at the
+speed a machine consumes it and never faster. Memory is what matters on this path, not throughput.
+
+**Resuming a paused job is refused, loudly.** The feed holds no position in the file, so a naive
+resume starts at line one on a machine that is half way through a part. Pausing stops the feed;
+resuming fails the job with that sentence in its reason. It is not a pleasant answer and it is
+better than printing the part twice or leaving a job that reads as `RUNNING` with nothing behind it.
+**C5** owns real recovery.
+
+**It found the trap C2 had just documented.** `JobFeedCompleted` is published from a reactor-netty
+thread, which has no transaction — and `@ApplicationModuleListener` is a `@TransactionalEventListener`,
+which *drops* an event published outside one. A 96,152-block print reached the end of its file, the
+transport logged the last block, and the job stayed `RUNNING` forever. The listeners are plain
+`@EventListener` now, so **a feed outcome is at-most-once**: if the process dies between the last
+block and the listener, the job is left `RUNNING` with nothing feeding it. Reconciling that at
+startup belongs to C5, which already has to handle a job whose machine went away mid-print.
+
+**Verified by running**, against the TCP stand-in with the application in a jar under `-Xmx256m`:
+
+* **a 3,576,440-byte file printed end to end in 25 seconds** — 96,152 blocks, which is exactly the
+  file's motion-line count, with the comment and blank lines dropped rather than sent;
+* **zero protocol errors on the wire** across every run: no checksum mismatch and no out-of-sequence
+  block, which is what says the numbering survived;
+* **a `set-temp` issued mid-print interleaved at block ~7,315** and the print carried on —
+  `M104 S205.00 T0` on the wire between two `G1`s, sequence intact;
+* **cancelling mid-stream stopped it within four seconds**, the job recorded `CANCELLED` with the
+  operator's reason, the block count stopped moving, and the machine was still `IDLE` and accepting
+  commands afterwards;
+* heap 207 MB of a 256 MB maximum while printing, most of which is the application rather than the
+  file.
 
 ### C4 — progress and telemetry {#c4}
 

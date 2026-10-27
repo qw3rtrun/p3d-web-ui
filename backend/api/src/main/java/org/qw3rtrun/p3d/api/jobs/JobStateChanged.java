@@ -19,6 +19,10 @@ import java.util.UUID;
  * the database and running nowhere else.
  *
  * @param jobId     which job
+ * @param fileId    what it prints. Carried so that a listener acting on the move - {@code core}
+ *                  starting a feed - does not have to query the queue back for it, which would
+ *                  turn an announcement into a round trip and make the two modules depend on each
+ *                  other's availability rather than on a fact
  * @param from      where it was, or null for the event that announces a job into existence -
  *                  a creation is not a transition, but a scheduler still wants to hear about it
  * @param to        where it is now
@@ -27,6 +31,7 @@ import java.util.UUID;
  * @param timestamp when it moved
  */
 public record JobStateChanged(UUID jobId,
+                              UUID fileId,
                               JobState from,
                               JobState to,
                               UUID machineId,

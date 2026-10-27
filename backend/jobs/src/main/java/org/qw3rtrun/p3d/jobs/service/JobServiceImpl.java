@@ -11,6 +11,7 @@ import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.jobs.model.JobEntity;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -63,7 +64,7 @@ public class JobServiceImpl implements JobService {
         var job = repo.save(new JobEntity(UUID.randomUUID(), file.id(), file.name(), now()));
         log.info("queued {} to print {}", job.getId(), file.name());
         events.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobStateChanged(
-                job.getId(), null, JobState.QUEUED, null, null, job.getCreatedAt()));
+                job.getId(), file.id(), null, JobState.QUEUED, null, null, job.getCreatedAt()));
         return new JobOutcome.Done(job.describe());
     }
 
@@ -141,6 +142,42 @@ public class JobServiceImpl implements JobService {
                 apply(job, JobState.FAILED, null, "the machine it was printing on was removed");
             }
         }
+    }
+
+    /**
+     * The machine has been sent every line of the file, so the job is done.
+     *
+     * <p>Only {@code core} can know this - knowing it means holding the socket - and only this
+     * module may move a job, which is why it crosses as an event rather than a call. The same
+     * division a firmware report crosses in plan item B2, running the other way.
+     *
+     * <p><strong>A plain listener, and deliberately not an {@code @ApplicationModuleListener}.</strong>
+     * That annotation is a {@code @TransactionalEventListener}, which <em>drops</em> an event
+     * published outside a transaction - and this one is published by {@code core} from a
+     * reactor-netty thread, which has no transaction and no database to tie one to. Using it here
+     * silently swallowed the completion: a 96,152-block print reached the end of its file, the
+     * transport logged the last block, and the job stayed {@code RUNNING} forever.
+     *
+     * <p>So a feed outcome is <strong>at-most-once</strong>, and that is a real limitation rather
+     * than a detail: if the process dies between the last block and this listener, the job is left
+     * {@code RUNNING} with nothing feeding it. Reconciling that at startup belongs to plan item C5,
+     * which already has to deal with a job whose machine went away mid-print.
+     *
+     * <p>{@code @Transactional} is on the listener rather than only on {@link #complete}, because
+     * the call below is a self-invocation and would not go through the proxy.
+     */
+    @EventListener
+    @Transactional
+    public void onFeedCompleted(org.qw3rtrun.p3d.api.jobs.JobFeedCompleted event) {
+        log.info("job {} was fed {} blocks and is done", event.jobId(), event.lines());
+        complete(event.jobId());
+    }
+
+    /** The feed stopped before the file did - see {@link #onFeedCompleted} for why this is plain. */
+    @EventListener
+    @Transactional
+    public void onFeedFailed(org.qw3rtrun.p3d.api.jobs.JobFeedFailed event) {
+        fail(event.jobId(), event.reason() + " (after " + event.lines() + " blocks)");
     }
 
     private JobOutcome move(UUID jobId, JobState next, UUID machineId, String reason) {

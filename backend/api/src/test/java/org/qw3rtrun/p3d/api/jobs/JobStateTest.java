@@ -116,6 +116,6 @@ class JobStateTest {
     }
 
     private static JobStateChanged changed(JobState from, JobState to) {
-        return new JobStateChanged(null, from, to, null, null, null);
+        return new JobStateChanged(null, null, from, to, null, null, null);
     }
 }

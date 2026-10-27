@@ -61,6 +61,20 @@ public class CoreConfiguration {
      * would read as current. The aggregate starts with no temperature and says so until the machine
      * reports one.
      */
+    /**
+     * The thing that actually prints a file - plan item C3.
+     *
+     * <p>It names no other module: it hears that a job started from {@code api::jobs}'s event,
+     * reads the file through {@code api::files}, and announces what became of the feed. What that
+     * does to the job's state is the queue's business and not this module's.
+     */
+    @Bean
+    public JobFeeder jobFeeder(PrinterReactorManager reactors,
+                               org.qw3rtrun.p3d.api.files.GcodeFileService files,
+                               org.springframework.context.ApplicationEventPublisher events) {
+        return new JobFeeder(reactors, files, events);
+    }
+
     @Bean
     public PrinterAggregateManager aggregates(PrinterDirectory directory) {
         return id -> directory.find(id)

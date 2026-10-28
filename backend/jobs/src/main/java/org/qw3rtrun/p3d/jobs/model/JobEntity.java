@@ -10,6 +10,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobProgress;
+import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
 
@@ -86,13 +87,72 @@ public class JobEntity {
     @Column(name = "progress_at")
     LocalDateTime progressAt;
 
+    /** What the job needs of a machine - see {@link JobRequirements}. Null throughout means any. */
+    @Column(name = "requires_machine")
+    UUID requiresMachine;
+    @Column(name = "requires_bed_x")
+    Integer requiresBedX;
+    @Column(name = "requires_bed_y")
+    Integer requiresBedY;
+    @Column(name = "requires_bed_z")
+    Integer requiresBedZ;
+    @Column(name = "requires_extruders")
+    Integer requiresExtruders;
+    @Column(name = "requires_nozzle")
+    java.math.BigDecimal requiresNozzle;
+    @Column(name = "requires_material")
+    String requiresMaterial;
+    @Column(name = "requires_tag")
+    String requiresTag;
+
+    /**
+     * Why this queued job has not been given a machine yet.
+     *
+     * <p>Separate from {@link #reason}, which says why a job ended. A job can be blocked for an
+     * hour and then run perfectly, and overwriting the one with the other would lose whichever
+     * mattered.
+     */
+    @Column(name = "blocked_reason", length = 1024)
+    String blockedReason;
+
     /** A new job: queued, on no machine, with nothing having happened to it yet. */
-    public JobEntity(UUID id, UUID fileId, String fileName, LocalDateTime createdAt) {
+    public JobEntity(UUID id, UUID fileId, String fileName, LocalDateTime createdAt,
+                     JobRequirements requires) {
         this.id = id;
         this.fileId = fileId;
         this.fileName = fileName;
         this.state = JobState.QUEUED;
         this.createdAt = createdAt;
+        var needs = requires == null ? JobRequirements.any() : requires;
+        this.requiresMachine = needs.machineId();
+        if (needs.bedVolume() != null) {
+            this.requiresBedX = needs.bedVolume().x();
+            this.requiresBedY = needs.bedVolume().y();
+            this.requiresBedZ = needs.bedVolume().z();
+        }
+        this.requiresExtruders = needs.extruders();
+        this.requiresNozzle = needs.nozzleDiameter();
+        this.requiresMaterial = needs.material();
+        this.requiresTag = needs.tag();
+    }
+
+    /** What this job needs, never null. */
+    public JobRequirements requires() {
+        var bed = requiresBedX == null || requiresBedY == null || requiresBedZ == null
+                ? null
+                : new org.qw3rtrun.p3d.api.model.BedVolume(requiresBedX, requiresBedY, requiresBedZ);
+        return new JobRequirements(requiresMachine, bed, requiresExtruders, requiresNozzle,
+                requiresMaterial, requiresTag);
+    }
+
+    /** Records why the farm cannot run this yet. Only meaningful while it is queued. */
+    public void blocked(String why) {
+        this.blockedReason = why;
+    }
+
+    /** Whether the stated reason has changed, so a scheduler only writes when it has something new. */
+    public boolean blockedReasonIs(String why) {
+        return java.util.Objects.equals(blockedReason, why);
     }
 
     /**
@@ -126,6 +186,9 @@ public class JobEntity {
         }
         if (next.isTerminal()) {
             finishedAt = clock;
+        }
+        if (next != JobState.QUEUED) {
+            blockedReason = null;
         }
         if (next == JobState.QUEUED) {
             // Back in the queue means back to nobody's machine, or the next scheduler pass would
@@ -164,8 +227,9 @@ public class JobEntity {
 
     /** This row as the record that leaves the module. An entity never does. */
     public Job describe() {
-        return new Job(id, fileId, fileName, machineId, state, reason, createdAt, startedAt,
-                finishedAt, progress());
+        return new Job(id, fileId, fileName, machineId, state,
+                state == JobState.QUEUED && blockedReason != null ? blockedReason : reason,
+                createdAt, startedAt, finishedAt, progress(), requires());
     }
 
     /** The checkpoint as a value, or {@link JobProgress#none()} for a job that never ran. */

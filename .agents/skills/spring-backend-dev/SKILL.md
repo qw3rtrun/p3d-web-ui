@@ -32,6 +32,7 @@ and say so** rather than applying this skill's rules to them.
 | **printer-management** | `:backend:printer-management` | `org.qw3rtrun.p3d.management` | `api`, Spring Data JPA, Liquibase |
 | **files** | `:backend:files` | `org.qw3rtrun.p3d.files` | `api`, `:gcode`, Spring Data JPA, Liquibase, Reactor |
 | **jobs** | `:backend:jobs` | `org.qw3rtrun.p3d.jobs` | `api`, Spring Data JPA, Liquibase, Modulith events |
+| **scheduling** | `:backend:scheduling` | `org.qw3rtrun.p3d.scheduling` | `api`, spring-context, Reactor |
 | **frontend** | `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | `api`, WebFlux, Thymeleaf, the Vue build |
 | **app** | `:app` | `org.qw3rtrun.p3d` | everything. Assembly only |
 | *library* | `:gcode` | `org.qw3rtrun.p3d.g` | the Kotlin stdlib. **Nothing else** (`low-level-protocol-dev`) |
@@ -104,7 +105,7 @@ Never `block()` on a pipeline thread, and never `Thread.sleep`. If a test needs 
 
 ## Spring Modulith - the declared structure
 
-**Six modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
+**Eight modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
 `:app`:
 
 | Module | Package | Exports / depends on |
@@ -113,7 +114,8 @@ Never `block()` on a pipeline thread, and never `Thread.sleep`. If a test needs 
 | Printer core | `org.qw3rtrun.p3d.core` | `api::model`, `api::msg`, `api::control` — **not** `api::management` |
 | Machine management | `org.qw3rtrun.p3d.management` | `api::model`, `api::msg`, `api::management` |
 | G-code files | `org.qw3rtrun.p3d.files` | `api::files` |
-| Print jobs | `org.qw3rtrun.p3d.jobs` | `api::jobs`, `api::files`, `api::msg` |
+| Print jobs | `org.qw3rtrun.p3d.jobs` | `api::jobs`, `api::files`, `api::msg`, `api::model` |
+| Scheduling | `org.qw3rtrun.p3d.scheduling` | `api::jobs`, `api::management`, `api::control`, `api::model` |
 | Frontend | `org.qw3rtrun.p3d.frontend` | all six named interfaces. Names no other submodel |
 
 **`api` is not `sharedModules` and must not become it again.** A shared module is exempt from the
@@ -594,8 +596,14 @@ the source, not suspected.
   takes one exact reading when it stops and the checkpoint is monotone rather than state-gated.
   **A "latest wins" checkpoint is a different thing from a "highest wins" one, and only the second
   is safe to resume from.**
-- **Nothing assigns a job either.** `assign` takes a machine id from whoever calls it; there is no
-  scheduler, so a queued job waits forever unless a person picks a printer. D1 is that.
+- **First fit does not prefer the least capable machine that fits.** A job with no requirements
+  takes the first eligible printer in roster order, so it can occupy the one big machine a
+  restricted job was waiting for. Observed live. Fixing it means ranking candidates, which is a
+  cost model and which D1 explicitly rules out - so it wants arguing for before it is built.
+- **A module that only reads has no obvious place to be tested end to end.** `FarmScheduler` is
+  unit-tested against three stubs and verified by hand against two stand-in printers; there is no
+  `:app` test that drives a whole farm, because standing two printers up in one needs the probe
+  machinery rather than a context.
 - **`JobStateChanged` has no durable listener, so the registry records nothing for it.** The
   registry is wired, its table is there, and it is proven by the queue's own `MDeletedEvent`
   listener - but a job's own events are at-most-once until something listens with

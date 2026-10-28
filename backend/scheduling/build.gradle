@@ -1,0 +1,34 @@
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+/**
+ * The `scheduling` submodel: which queued job runs on which printer.
+ *
+ * It owns no data and no connection. Everything it needs it asks for through `api` - the queue,
+ * the roster's machine specs, and each machine's live connection state - which is exactly why it
+ * is a module of its own rather than a method on one of them: putting it in `jobs` would make the
+ * queue know what a printer is.
+ */
+plugins {
+    id 'p3d.java-conventions'
+    id 'org.springframework.boot' version "$spring_boot_version" apply false
+    id 'io.spring.dependency-management' version "$spring_dependencies_plugin_version"
+    id "io.freefair.lombok" version "$lombok_plugin_version"
+}
+
+dependencyManagement {
+    imports {
+        mavenBom SpringBootPlugin.BOM_COORDINATES
+        mavenBom "org.springframework.modulith:spring-modulith-bom:$springModulithVersion"
+    }
+}
+
+dependencies {
+    implementation project(':backend:api')
+
+    implementation 'org.springframework:spring-context'
+    implementation 'io.projectreactor:reactor-core'
+    implementation 'org.springframework.modulith:spring-modulith-starter-core'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'io.projectreactor:reactor-test'
+}

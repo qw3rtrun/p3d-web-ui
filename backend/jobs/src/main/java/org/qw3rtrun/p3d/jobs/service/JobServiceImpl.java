@@ -54,14 +54,14 @@ public class JobServiceImpl implements JobService {
      */
     @Override
     @Transactional
-    public JobOutcome queue(UUID fileId) {
+    public JobOutcome queue(UUID fileId, org.qw3rtrun.p3d.api.jobs.JobRequirements requires) {
         Optional<GcodeFile> found = files.fetch(fileId);
         if (found.isEmpty()) {
             return new JobOutcome.Refused(null, null, JobState.QUEUED,
                     "there is no file " + fileId + " to print");
         }
         var file = found.get();
-        var job = repo.save(new JobEntity(UUID.randomUUID(), file.id(), file.name(), now()));
+        var job = repo.save(new JobEntity(UUID.randomUUID(), file.id(), file.name(), now(), requires));
         log.info("queued {} to print {}", job.getId(), file.name());
         events.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobStateChanged(
                 job.getId(), file.id(), null, JobState.QUEUED, null, null, job.getCreatedAt()));
@@ -253,6 +253,40 @@ public class JobServiceImpl implements JobService {
                 reason == null ? "" : " (" + reason + ")");
         events.publishEvent(change);
         return new JobOutcome.Done(job.describe());
+    }
+
+    /**
+     * Records why a queued job is stuck, without moving it.
+     *
+     * <p>Written only when the reason has changed. A scheduler runs on every job transition and on
+     * a timer, so a farm with one unassignable job and nothing else happening would otherwise
+     * write the same sentence to the same row for ever.
+     */
+    @Override
+    @Transactional
+    public JobOutcome blocked(UUID jobId, String why) {
+        var found = repo.findById(jobId);
+        if (found.isEmpty()) {
+            return new JobOutcome.Refused(jobId, null, null, "there is no job " + jobId);
+        }
+        var job = found.get();
+        if (job.getState() != JobState.QUEUED) {
+            return new JobOutcome.Refused(jobId, job.getState(), null,
+                    "only a queued job can be waiting for a machine");
+        }
+        if (job.blockedReasonIs(why)) {
+            return new JobOutcome.Done(job.describe());
+        }
+        log.info("job {} is waiting: {}", jobId, why);
+        job.blocked(why);
+        return new JobOutcome.Done(repo.save(job).describe());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Job> queued() {
+        return repo.findByStateOrderByCreatedAtAsc(JobState.QUEUED).stream()
+                .map(JobEntity::describe).toList();
     }
 
     @Override

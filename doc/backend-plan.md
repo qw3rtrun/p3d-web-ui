@@ -84,7 +84,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**C3**~~ | [the streaming engine](#c3) | ~~A file fed through `PublisherQueue` at `BACKGROUND` while interactive commands preempt~~ **done** — 96,152 blocks to a stand-in in 25s, preempted mid-print, cancellable | C4, C5 |
 | ~~**C4**~~ | [progress and telemetry](#c4) | ~~Lines accepted, elapsed, estimated remaining — driven by acknowledgements, not by what was sent~~ **done** — blocks and bytes, checkpointed on a timer, with the in-flight gap reported rather than inferred | C5 |
 | ~~**C5**~~ | [pause, cancel, and survive a disconnect](#c5) | ~~The operations an eight-hour print actually needs~~ **done** — pause is a stop, resume is a seek, a dropped link fails the job with its position | D1 |
-| **D1** | [assignment](#d1) | Match a queued job to a capable, idle machine; a farm queue and a per-machine queue | D2 |
+| ~~**D1**~~ | [assignment](#d1) | ~~Match a queued job to a capable, idle machine; a farm queue and a per-machine queue~~ **done** — an eighth module that owns nothing, first-fit over three modules' facts | D2 |
 | **D2** | [the farm view](#d2) | One live stream for N printers instead of N streams of one | — |
 | **D3** | [operations](#d3) | Authentication, a real database, and the observability the dependencies already allow for | — |
 
@@ -1164,6 +1164,51 @@ should be argued for separately if ever.
 
 **Done when.** A job queued with no target starts on an eligible idle machine without a human; an
 ineligible farm leaves it queued with a stated reason; assignment is a published event.
+
+**Done, and it is an eighth module that owns nothing.** `:backend:scheduling` has no table, no
+connection and no aggregate — only a rule, and everything the rule needs it asks for through `api`:
+the queue from `api::jobs`, each machine's declared spec from `api::management`, each machine's
+live connection state from `api::control`. That is why it is a module rather than a method on one
+of them: put it in `jobs` and the queue has to know what a printer is; put it in `core` and the
+printer runtime has to know what a queue is.
+
+**A machine is eligible when three things hold**, and they come from those three modules:
+
+- **it is `IDLE`, not merely connected.** `ONLINE` means a socket is open; `IDLE` means the firmware
+  took something this host sent. Starting a print on a machine that has acknowledged nothing is
+  B3's dead outbound half, which read as healthy for exactly that reason;
+- **no job is holding it** — `JobState.holdsAMachine`, written in C2 for this and unused until now.
+  It covers `PAUSED` as well as `RUNNING`: a paused job still owns its printer;
+- **its declared spec satisfies what the job asked for.**
+
+**A requirement nobody has described the machine against is not satisfied.** "Nobody said" is not
+"yes": a job needing PETG must not land on a printer whose materials are blank, because the answer
+is unknown and the cost of being wrong is a failed print on the wrong filament. The effect is that
+stating requirements forces B4's data to be filled in, which is the right pressure — and a job that
+states nothing is unaffected.
+
+**Pinning is the manual override and no capability check widens it.** An operator who names a
+printer knows something the farm does not.
+
+**Assignment is already a published event** — `JobStateChanged(QUEUED → ASSIGNED)` from C2 — so that
+condition needed nothing new.
+
+**Verified by running**, two stand-in printers with different specs, a `small-PLA` (120³, PLA) and a
+`big-PETG` (300×300×400, PLA+PETG):
+
+* **a PETG job placed itself on `big-PETG` and started, with nobody assigning it** —
+  *"giving job b99a9d86 (part.gcode) to big-PETG"*;
+* **an ABS job stayed `QUEUED` with a reason an operator can act on**: *"no free machine fits:
+  big-PETG, for one, it is set up for [PLA, PETG] and the job needs ABS"*;
+* **a pinned job ran on the machine it named**, with the other printer free;
+* **a second job pinned to the same machine waited**: *"it is pinned to small-PLA, which is IDLE and
+  already has a job"*.
+
+**One thing the live run made plain, and it is first-fit working as specified rather than a bug.**
+A job with *no* requirements took `big-PETG` while `small-PLA` sat free, because first-fit takes the
+first eligible machine in the roster's order. A scheduler that preferred the *least* capable machine
+that fits would have kept the big one for a job that needs it — and that is a cost model, which this
+item explicitly rules out. Recorded as debt rather than smuggled in.
 
 ### D2 — the farm view {#d2}
 

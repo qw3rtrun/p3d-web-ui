@@ -14,5 +14,5 @@
  */
 @org.springframework.modulith.ApplicationModule(
         displayName = "Print jobs",
-        allowedDependencies = {"api::jobs", "api::files", "api::msg"})
+        allowedDependencies = {"api::jobs", "api::files", "api::msg", "api::model"})
 package org.qw3rtrun.p3d.jobs;

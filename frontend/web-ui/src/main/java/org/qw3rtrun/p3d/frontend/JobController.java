@@ -79,7 +79,7 @@ public class JobController {
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<?>> queue(@RequestBody QueuePayload payload) {
-        return respond(() -> jobs.queue(payload.fileId()));
+        return respond(() -> jobs.queue(payload.fileId(), payload.requires()));
     }
 
     @PostMapping(value = "/{id}/assign", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -116,7 +116,17 @@ public class JobController {
         return respond(() -> jobs.cancel(id, reason == null ? "cancelled by the operator" : reason));
     }
 
-    public record QueuePayload(UUID fileId) {
+    /**
+     * A file to print and, optionally, what it needs of a machine.
+     *
+     * <p>An absent {@code requires} is {@link org.qw3rtrun.p3d.api.jobs.JobRequirements#any()} and
+     * not null, so a caller that just wants something printed sends {@code {"fileId": "..."}} and
+     * the scheduler puts it on the first idle printer.
+     */
+    public record QueuePayload(UUID fileId, org.qw3rtrun.p3d.api.jobs.JobRequirements requires) {
+        public QueuePayload {
+            requires = requires == null ? org.qw3rtrun.p3d.api.jobs.JobRequirements.any() : requires;
+        }
     }
 
     public record AssignPayload(UUID machineId) {

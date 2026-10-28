@@ -151,7 +151,18 @@ class BootVuejsApplicationTests {
         org.qw3rtrun.p3d.api.jobs.JobService jobs() {
             return new org.qw3rtrun.p3d.api.jobs.JobService() {
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome queue(UUID fileId) {
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome queue(UUID fileId,
+                        org.qw3rtrun.p3d.api.jobs.JobRequirements requires) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public org.qw3rtrun.p3d.api.jobs.JobOutcome blocked(UUID jobId, String why) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public java.util.List<org.qw3rtrun.p3d.api.jobs.Job> queued() {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 

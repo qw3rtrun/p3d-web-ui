@@ -84,4 +84,34 @@
         </addColumn>
     </changeSet>
 
+    <!--
+      What a job needs of a machine (plan item D1), matched against B4's declared spec.
+
+      Columns rather than a table, because every one of them is single-valued and optional: a job
+      states what it cares about and nothing else. Null means "do not care" throughout, which is
+      why they are all nullable and why none has a default - a default would turn "did not say"
+      into a requirement nobody asked for.
+
+      requires_machine is the manual override: a job that names a machine waits for that machine
+      however free the rest of the farm is. It is not a foreign key, for the same reason file_id is
+      not - the machine lives in another module, and a printer deleted while a job named it should
+      leave the job for the scheduler to report on rather than deleting it.
+
+      blocked_reason is why a queued job has not been given a machine. Not a state: a farm that
+      gains a capable printer a minute later should just start it.
+    -->
+    <changeSet id="3" author="agentic">
+        <addColumn tableName="print_job">
+            <column name="requires_machine" type="uuid"/>
+            <column name="requires_bed_x" type="number"/>
+            <column name="requires_bed_y" type="number"/>
+            <column name="requires_bed_z" type="number"/>
+            <column name="requires_extruders" type="number"/>
+            <column name="requires_nozzle" type="numeric(6,3)"/>
+            <column name="requires_material" type="varchar(64)"/>
+            <column name="requires_tag" type="varchar(64)"/>
+            <column name="blocked_reason" type="varchar(1024)"/>
+        </addColumn>
+    </changeSet>
+
 </databaseChangeLog>

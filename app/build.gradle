@@ -23,6 +23,7 @@ dependencies {
     implementation project(':backend:printer-management')
     implementation project(':backend:files')
     implementation project(':backend:jobs')
+    implementation project(':backend:scheduling')
     implementation project(':frontend:web-ui')
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'

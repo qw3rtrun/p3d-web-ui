@@ -28,7 +28,18 @@ public interface JobService {
      * farm queue work before it knows which printer is free. Refused when the file is unknown,
      * because a job pointing at nothing is a job that fails the moment anything tries to run it.
      */
-    JobOutcome queue(UUID fileId);
+    default JobOutcome queue(UUID fileId) {
+        return queue(fileId, JobRequirements.any());
+    }
+
+    /**
+     * The same, stating what the job needs of a machine - plan item D1.
+     *
+     * <p>A job that states nothing runs on the first idle printer. A job that names a machine waits
+     * for that machine however free the rest of the farm is, which is the manual override the plan
+     * asks for.
+     */
+    JobOutcome queue(UUID fileId, JobRequirements requires);
 
     /** Gives a queued job to a machine. Refused unless the job is {@code QUEUED}. */
     JobOutcome assign(UUID jobId, UUID machineId);
@@ -57,6 +68,22 @@ public interface JobService {
 
     /** An operator stopped it. Refused only when the job has already ended. */
     JobOutcome cancel(UUID jobId, String reason);
+
+    /**
+     * Records why a queued job has not been given a machine - plan item D1's "a stated reason".
+     *
+     * <p>It does not move the job: being unassignable is not a state, it is a fact about the farm
+     * at this moment, and a farm that gains a capable printer a minute later should start the job
+     * without anything having to undo a transition. So the reason lands on the job and the job
+     * stays {@code QUEUED}.
+     *
+     * <p>Refused for a job that is not queued, because there is nothing to explain about one that
+     * already has a machine.
+     */
+    JobOutcome blocked(UUID jobId, String why);
+
+    /** Everything waiting for a machine, oldest first - the order a scheduler assigns in. */
+    List<Job> queued();
 
     Optional<Job> fetch(UUID jobId);
 

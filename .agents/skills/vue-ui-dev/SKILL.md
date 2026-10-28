@@ -221,6 +221,22 @@ build it on the backend - that is `spring-backend-dev`'s work.
   component that renders into one should use the same classes rather than bringing its own styling,
   or the page ends up half in one design and half in another.
 
+## Which side a thing belongs on
+
+The test is **does it keep changing**, not "is it data".
+
+- **Firmware, capabilities and the declared spec are rendered by Thymeleaf.** They are true at
+  request time and static afterwards, so an island there would open a fetch to re-learn what the
+  server already knew when it rendered the page. The monitor page's machine panel is plain
+  `th:each` over `printer.profile.firmware()`.
+- **Temperature, connection state, position and job progress are islands.** They change while
+  somebody is looking.
+
+**A derived boolean on a record is `isX()` to Thymeleaf and `x` in JSON, and the two will mislead
+you.** `MachineProfile` has `isKnown()`; the JSON the API returns says `"known": false`, so a
+template written from the JSON says `${printer.profile.known()}` and the page answers **500** -
+*"Method known() cannot be found on type MachineProfile"*. Read the record, not the payload.
+
 ## Testing
 
 - **`vue-tsc`** on every build - see above.
@@ -247,3 +263,15 @@ build it on the backend - that is `spring-backend-dev`'s work.
   charts came with it. Leave them alone unless the task touches them; removing them wholesale is
   its own change.
 - **No user-management page.** D3 left `/api-users` reachable only by `curl`.
+- **The machine panel goes stale while the page is open.** Firmware and capabilities are learned
+  when a machine first connects, and the panel is server-rendered, so connecting a machine while
+  looking at its page leaves the panel empty until a reload. The honest fix is to re-render on
+  `MachineJoinedFarm`-style news rather than to poll, and it is not worth it until somebody is
+  actually bothered.
+- **A fan speed is what this page last asked for, not a reading.** Marlin does not report fan speed
+  the way it reports a temperature, so the control is labelled "requested" and is wrong the moment
+  a print's own `M106` changes it.
+- **Nothing stops a jog driving the toolhead into a frame.** The backend does not validate a move
+  against the declared bed volume and neither does the UI, so the step buttons will happily walk a
+  machine past its limits. Checking it needs tracked position for relative moves; see the backend
+  skill's debt.

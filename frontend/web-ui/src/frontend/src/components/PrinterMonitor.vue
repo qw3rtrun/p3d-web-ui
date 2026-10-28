@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {computed, onMounted, onUnmounted, ref} from 'vue'
 import ConnectionBadge from './ConnectionBadge.vue'
+import FanControl from './FanControl.vue'
+import MotionControl from './MotionControl.vue'
 import TemperatureControl, {type Preset} from './TemperatureControl.vue'
 import {printer, RequestFailed, watchPrinter, type Subscription} from '../api/client'
 import type {
@@ -8,6 +10,7 @@ import type {
     ConnectionStateChanged,
     EventMessage,
     FarmRole,
+    PositionReported,
     TemperatureReported,
 } from '../api/types'
 import {isUsable} from '../api/types'
@@ -34,6 +37,16 @@ const reason = ref<string | null>(null)
 
 const hotend = ref({current: 0, target: 0, power: 0})
 const bed = ref({current: 0, target: 0, power: 0})
+const position = ref<Record<string, number>>({})
+
+/**
+ * What this page last asked the fan for.
+ *
+ * Marlin does not report fan speed, so there is nothing to mirror - see FanControl. It is reset
+ * when the link drops, because a value remembered across a reconnection would describe a machine
+ * that has since been power-cycled.
+ */
+const fanSpeed = ref<number | null>(null)
 
 const failure = ref<string | null>(null)
 const api = printer(props.uuid)
@@ -69,12 +82,22 @@ function onMessage(message: EventMessage) {
             state.value = event.to
             attempt.value = event.attempt
             reason.value = event.reason
+            if (event.to === 'OFFLINE') {
+                // A machine that went away kept none of this. Showing a position from before the
+                // disconnection would be worse than showing none: it reads as current.
+                position.value = {}
+                fanSpeed.value = null
+            }
             break
         }
         case 'TemperatureReported': {
             const event = message.event as TemperatureReported
             hotend.value = {...event.hotend}
             bed.value = {...event.bed}
+            break
+        }
+        case 'PositionReported': {
+            position.value = {...(message.event as PositionReported).axes}
             break
         }
         default:
@@ -98,6 +121,44 @@ const disconnect = () => guarded(() => api.disconnect())
 const setHotend = (temp: number) => guarded(() => api.setHotendTarget(0, temp))
 const setBed = (temp: number) => guarded(() => api.setBedTarget(temp))
 const readNow = () => guarded(() => api.reportTemperature())
+const readPosition = () => guarded(() => api.requestPosition())
+
+const home = (axes: { x?: boolean; y?: boolean; z?: boolean }) =>
+    // Ask where it ended up: homing moves the machine, and nothing reports position unasked.
+    guarded(async () => {
+        await api.home(axes)
+        await api.requestPosition()
+    })
+
+const jog = (move: { x?: number; y?: number; z?: number; feedRate: number }) =>
+    guarded(async () => {
+        await api.move({...move, relative: true})
+        await api.requestPosition()
+    })
+
+const setFan = (speed: number) => guarded(async () => {
+    await api.setFanSpeed(speed)
+    fanSpeed.value = speed
+})
+
+/**
+ * Writing the settings to EEPROM, behind a confirmation.
+ *
+ * It is the one control on this page whose effect outlives the connection: a wrong value stored is
+ * one the machine keeps after a power cycle, and undoing it means `M502` and re-entering whatever
+ * was right. A click that cannot be taken back deserves to be asked about.
+ */
+const STORE_WARNING = [
+    'Write this machine\'s current settings to its EEPROM?',
+    'They survive a power cycle, and undoing it means resetting the firmware to defaults.',
+].join('\n\n')
+
+const storeSettings = () => {
+    if (!window.confirm(STORE_WARNING)) {
+        return
+    }
+    return guarded(() => api.storeSettings())
+}
 
 let subscription: Subscription | null = null
 
@@ -181,10 +242,33 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!--
-      Homing, moving an axis, fan speed and saving settings belong here and are not built: the
-      commands exist in :gcode but there is no application command for them yet, so there is
-      nothing for this page to call. See the note in client.ts.
-    -->
+    <FanControl
+        :speed="fanSpeed"
+        :can-control="controlsEnabled"
+        @change="setFan"
+    />
+
+    <MotionControl
+        :position="position"
+        :can-control="controlsEnabled"
+        @home="home"
+        @jog="jog"
+        @read-position="readPosition"
+    />
+
+    <div class="row pt-4 border-top mt-3">
+      <div class="col">
+        <h4 class="card-title">Settings</h4>
+        <p class="card-subtitle">
+          Write what the firmware currently holds to its EEPROM, so it survives a power cycle.
+        </p>
+      </div>
+      <div class="col-auto align-self-center">
+        <button type="button" class="btn btn-sm btn-outline-warning"
+                :disabled="!controlsEnabled" @click="storeSettings()">
+          Store settings (M500)
+        </button>
+      </div>
+    </div>
   </div>
 </template>

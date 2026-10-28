@@ -429,6 +429,39 @@ stub.
 
 ---
 
+## The Gradle consolidation
+
+The table above is history, and so is most of what the phase writeups say about module counts.
+Phases B to D each added a Gradle module - `:backend:files`, `:backend:jobs`,
+`:backend:scheduling`, `:backend:identity` - because each new concern wanted a boundary, and a
+Gradle module was the only boundary that was enforced.
+
+**That is no longer the only one, so they were merged back.** `printer-management`, `files`,
+`jobs`, `scheduling` and `identity` are packages inside `:backend:core` now. Nothing about the
+architecture moved: a Modulith module is a *package*, so the `@ApplicationModule` declarations,
+the `@NamedInterface` exports and `ApplicationModulesTest` are all exactly as they were, and there
+are still eight of them. What changed is the build - six Gradle modules where there were eleven,
+and no module-per-feature.
+
+**`api` did not merge, for two reasons.** It cannot: `:backend:terminal` is written in `api`'s
+event vocabulary and `core` depends on `terminal`, so folding `api` into `core` makes
+`core -> terminal -> core`, which Gradle refuses. And it should not: its rule is that it names no
+framework at all, and having none on its compile path enforces that at compile time, which no test
+does as cheaply.
+
+**One guarantee genuinely weakened, and it was measured rather than assumed.** `files` naming
+`jobs` used to be impossible - different modules, different compile paths. It compiles now, and
+`ApplicationModulesTest` is all that stands in the way. So before trusting the merge, a deliberate
+`files -> jobs` import was added: `:backend:core:compileJava` succeeded and
+`ApplicationModulesTest > modulesRespectTheirBoundaries()` failed. The net holds, but it is a test
+in `:app` rather than a compiler in the module being edited.
+
+Two things fell out of it. The four per-module test `application.properties` became one, pointing
+at the same set of changelogs `:app` assembles - so a test runs against the application's real
+schema rather than its own slice of it. And `printer-management`'s main `application.properties`,
+which had shipped a datasource URL duplicating `:app`'s since A2 and is recorded as debt in the
+skill, is gone: `:app` is the only module that configures anything.
+
 ## Two models, and the bridge between them
 
 A correction to the realignment above, taken after it landed:

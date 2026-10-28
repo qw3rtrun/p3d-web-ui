@@ -25,19 +25,30 @@ and say so** rather than applying this skill's rules to them.
 
 ## The layering rule
 
-| Submodel | Gradle module | Package | May depend on |
-|---|---|---|---|
-| **api** | `:backend:api` | `org.qw3rtrun.p3d.api` | nothing. Not even Spring at runtime |
-| **core** | `:backend:core` | `org.qw3rtrun.p3d.core` | `api`, `:backend:terminal`, `:gcode`, Reactor, spring-context |
-| **printer-management** | `:backend:printer-management` | `org.qw3rtrun.p3d.management` | `api`, Spring Data JPA, Liquibase |
-| **files** | `:backend:files` | `org.qw3rtrun.p3d.files` | `api`, `:gcode`, Spring Data JPA, Liquibase, Reactor |
-| **jobs** | `:backend:jobs` | `org.qw3rtrun.p3d.jobs` | `api`, Spring Data JPA, Liquibase, Modulith events |
-| **scheduling** | `:backend:scheduling` | `org.qw3rtrun.p3d.scheduling` | `api`, spring-context, Reactor |
-| **identity** | `:backend:identity` | `org.qw3rtrun.p3d.identity` | `api`, Spring Data JPA, Liquibase, spring-security-crypto, Spring Session JDBC, Reactor |
-| **frontend** | `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | `api`, WebFlux, Thymeleaf, the Vue build |
-| **app** | `:app` | `org.qw3rtrun.p3d` | everything. Assembly only |
-| *library* | `:gcode` | `org.qw3rtrun.p3d.g` | the Kotlin stdlib. **Nothing else** (`low-level-protocol-dev`) |
-| *library* | `:backend:terminal` | `org.qw3rtrun.p3d.terminal` | `:gcode`, `api`, Reactor (`reactive-transport-dev`) |
+**A Gradle module is not a Modulith module, and after the merge most of them are not.** There are
+six Gradle modules and eight Modulith modules; the table below is the build, and the one in
+*Spring Modulith - the declared structure* is the architecture. Do not confuse them.
+
+| Gradle module | Holds | May depend on |
+|---|---|---|
+| `:backend:api` | `org.qw3rtrun.p3d.api` | nothing. **Not even Spring**, at compile time or runtime |
+| `:backend:core` | `core`, `management`, `files`, `jobs`, `scheduling`, `identity` | `api`, `:backend:terminal`, `:gcode`, Spring, JPA, Liquibase, Reactor |
+| `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | `api`, WebFlux, Thymeleaf, the Vue build |
+| `:app` | `org.qw3rtrun.p3d` | everything. Assembly only |
+| *library* | `:gcode` — `org.qw3rtrun.p3d.g` | the Kotlin stdlib. **Nothing else** (`low-level-protocol-dev`) |
+| *library* | `:backend:terminal` — `org.qw3rtrun.p3d.terminal` | `:gcode`, `api`, Reactor (`reactive-transport-dev`) |
+
+**Six packages share one Gradle module now, and that moved a guarantee.** Each of them used to be
+a module of its own, so `files` naming `jobs` would not have *compiled*. It compiles today, and
+`ApplicationModulesTest` is the only thing that catches it - which it does: the merge was not
+trusted until a deliberate `files -> jobs` import was shown to compile cleanly and fail that test.
+**When you touch a package boundary here, run `:app:test` - the compiler will not tell you.**
+
+**`api` stays a Gradle module of its own, for two reasons.** It cannot merge: `:backend:terminal`
+is written in `api`'s event vocabulary and `core` depends on `terminal`, so folding `api` into
+`core` makes `core -> terminal -> core`, which Gradle refuses. And it should not: its rule is that
+it names no framework at all, and having none on its compile path is an enforcement no test
+replaces as cheaply.
 
 The five submodels and their rules are `doc/sub_boundaries.txt`; this table is how they are
 realised. **Rule 1 is that every submodel depends on `api` and on no other submodel**, and
@@ -129,7 +140,9 @@ stalls an event loop under load with no symptom at all.
 ## Spring Modulith - the declared structure
 
 **Eight modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
-`:app`:
+`:app`. Six of them now live in one Gradle module, which changes nothing here - a Modulith module
+is a *package*, and the annotations, the named interfaces and the verification are all unchanged
+by how the build groups them:
 
 | Module | Package | Exports / depends on |
 |---|---|---|
@@ -764,8 +777,17 @@ Three mechanisms, and picking the wrong one has already cost a debugging session
 ### Configuration belongs to `:app`
 
 A library module that carries its own `application.properties` with a datasource URL in it will
-fight the assembly that imports it. `:backend:printer-management` and `:app` both define the same datasource
-today; the module's copy should be test-scope or gone.
+fight the assembly that imports it: Spring Boot reads one `application.properties` from the
+classpath root, so two jars shipping one is a coin toss. `:backend:printer-management` shipped a
+datasource URL duplicating `:app`'s for a long time; both it and `core`'s empty one are gone with
+the merge, and `:app` is the only module that configures anything.
+
+**One Gradle module means one test classpath and therefore one test `application.properties`.**
+Four of them merged into `backend/core/src/test/resources/application.properties`, pointing at one
+in-memory database built from `db/changelog/core-test.xml` - the same set of fragments `:app`
+assembles. A test now runs against the schema the application actually has rather than its own
+module's slice of it, which is strictly better: a constraint between two of those tables would
+have been invisible before.
 
 ## Review checklist
 
@@ -917,11 +939,13 @@ the source, not suspected.
 - **Kotlin is one file in this layer** (`core/msg/ManagementEvents.kt`), which is enough to pay for
   the Kotlin plugin on `:backend:core` but not enough to settle a language convention. Decide per
   module, and use the `kotlin-tooling-java-to-kotlin` skill when converting.
-- **`backend/printer-management/src/main/resources/application.properties` ships a datasource URL**
-  from a library module, duplicating `:app`'s and differing from it in the Liquibase changelog path
-  (`classpath:db/changelog/...` against `/db/changelog/...`). Related trap, learned the hard way: a
-  test-scope `application.properties` **replaces** the main one rather than merging, so a test that
-  only wants a different datasource must use a profile overlay (`application-test.properties` plus
-  `@ActiveProfiles`) or it silently drops every other setting.
+- ~~**`backend/printer-management` ships a datasource URL from a library module.**~~ **Gone** with
+  the merge - `:app` is the only module that configures anything now. The trap it taught is worth
+  keeping: a test-scope `application.properties` **replaces** the main one rather than merging, so
+  a test that only wants a different datasource must use a profile overlay
+  (`application-test.properties` plus `@ActiveProfiles`) or it silently drops every other setting.
+- **A package boundary is no longer a compile error.** Six Modulith modules share one Gradle
+  module, so only `ApplicationModulesTest` stands between `files` and `jobs`. It is fast and it is
+  proven to bite, but it runs in `:app` - a change compiled in isolation will look fine.
 - **There is no written spec for this layer.** This skill is the only authority, so a behaviour that
   callers come to depend on gets written down here, in the change that establishes it.

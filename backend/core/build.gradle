@@ -23,20 +23,49 @@ dependencyManagement {
 }
 
 dependencies {
+    // The vocabulary, and the two libraries. `api` stays a module of its own because
+    // `:backend:terminal` is written in it too, and merging it here would make
+    // core -> terminal -> core a cycle - but also because its hard rule, that it names no
+    // framework at all, is enforced by having none on its compile path. No test can do that as
+    // cheaply.
     implementation project(':backend:api')
     implementation project(':backend:terminal')
     implementation project(':gcode')
 
-    implementation 'io.projectreactor:reactor-core'
     implementation 'org.springframework:spring-context'
+    implementation 'io.projectreactor:reactor-core'
     implementation 'org.slf4j:slf4j-api'
 
-    // Only for the @ApplicationModule in package-info.java - see backend/api/build.gradle.
-    compileOnly 'org.springframework.modulith:spring-modulith-api'
+    // Persistence, for the roster, the file store, the queue and the people.
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation "org.springframework.boot:spring-boot-starter-liquibase"
+    runtimeOnly 'com.h2database:h2'
+
+    implementation 'org.springframework.modulith:spring-modulith-starter-core'
+
+    // The event publication registry: a job transition is written down inside the transaction that
+    // caused it and delivered at least once afterwards. See JobStateChanged.
+    implementation 'org.springframework.modulith:spring-modulith-starter-jpa'
+
+    // The registry serialises an event to JSON on publish and reads it back to replay it. api's
+    // management events are Kotlin data classes, which Jackson cannot construct without this -
+    // "no Creators, like default constructor, exist". Publishing appeared to work without it and
+    // only recovery failed, which is the half the registry exists for.
+    implementation 'tools.jackson.module:jackson-module-kotlin'
+
+    // Hashing only - no filter chain, no web. Authenticating a *request* is the frontend's job.
+    implementation 'org.springframework.security:spring-security-crypto'
+
+    // Sessions that survive a restart. JDBC and not Redis: the farm already has a database, and a
+    // second piece of infrastructure to keep one table is a worse trade than the problem it solves.
+    implementation 'org.springframework.session:spring-session-jdbc'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'io.projectreactor:reactor-test'
+    testImplementation 'org.springframework.modulith:spring-modulith-starter-test'
+    testImplementation("org.springframework.boot:spring-boot-starter-liquibase-test")
 }
+
 
 tasks.named('test') {
     useJUnitPlatform()

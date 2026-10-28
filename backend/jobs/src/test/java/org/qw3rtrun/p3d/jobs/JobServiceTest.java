@@ -115,6 +115,9 @@ class JobServiceTest {
     private JobService jobs;
 
     @Autowired
+    private org.qw3rtrun.p3d.jobs.service.JobServiceImpl roster;
+
+    @Autowired
     private StubFiles files;
 
     @Autowired
@@ -394,14 +397,15 @@ class JobServiceTest {
     }
 
     /**
-     * A checkpoint that lands after the job stopped does not revive its progress.
+     * A stale checkpoint loses to the one already recorded.
      *
-     * <p>The timer and the cancel race by construction - {@code core} publishes about once a second
-     * and a cancel can land between a reading and its delivery - so a late one would otherwise
-     * overwrite the last real checkpoint and make a stopped job look as though it had got further.
+     * <p>The timer and a stop race by construction, so readings can arrive out of order. What must
+     * never happen is progress going backwards - and the rule that enforces it is a comparison
+     * rather than a state check, because the <em>exact</em> reading taken at the moment of a pause
+     * arrives after the job has left {@code RUNNING} and is the one a resume depends on.
      */
     @Test
-    void aCheckpointArrivingAfterTheJobStoppedIsIgnored() {
+    void aStaleCheckpointLosesToTheOneAlreadyRecorded() {
         var machine = UUID.randomUUID();
         var job = queued("late-progress.gcode");
         jobs.assign(job.id(), machine);
@@ -412,11 +416,37 @@ class JobServiceTest {
         jobs.cancel(job.id(), "stopped");
 
         publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
-                new org.qw3rtrun.p3d.api.jobs.JobProgress(9999, 0, 9999, 10_000, 99,
+                new org.qw3rtrun.p3d.api.jobs.JobProgress(40, 0, 400, 10_000, 1,
                         LocalDateTime.now(), LocalDateTime.now())));
 
         var read = jobs.fetch(job.id()).orElseThrow().progress();
-        assertEquals(100, read.blocksSent(), "the checkpoint from while it was running");
+        assertEquals(100, read.blocksSent(), "the stale reading must not pull progress backwards");
+    }
+
+    /**
+     * The exact reading taken when a feed stops is kept, even though the job has already moved.
+     *
+     * <p>This is the half the first version got wrong. A resume reads the checkpoint to decide
+     * where to pick up, and the timer's readings are up to a second stale - so throwing away the
+     * accurate final one made a paused job restart thousands of blocks early and print over itself.
+     */
+    @Test
+    void theExactReadingTakenAtAPauseIsKept() {
+        var machine = UUID.randomUUID();
+        var job = queued("exact-pause.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
+                new org.qw3rtrun.p3d.api.jobs.JobProgress(38419, 0, 500_000, 8_000_000, 95,
+                        LocalDateTime.now(), LocalDateTime.now())));
+        jobs.pause(job.id());
+
+        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
+                new org.qw3rtrun.p3d.api.jobs.JobProgress(41996, 0, 546_000, 8_000_000, 104,
+                        LocalDateTime.now(), LocalDateTime.now())));
+
+        assertEquals(41996, jobs.fetch(job.id()).orElseThrow().progress().blocksSent(),
+                "a resume would otherwise restart 3,577 blocks early");
     }
 
     /** A job that never ran reports nothing rather than zero-of-zero. */
@@ -429,7 +459,68 @@ class JobServiceTest {
         assertNull(read.at());
     }
 
-    /** The listing is newest first, and a machine's own jobs are a narrower question. */    /** The listing is newest first, and a machine's own jobs are a narrower question. */
+    /**
+     * A job that was printing when the process died is failed, with its position kept.
+     *
+     * <p>Plan item C5's "the honest first version". The feed lived in memory and the restart took
+     * it, so nothing is sending blocks any more - a job left {@code RUNNING} would hold its printer
+     * against the scheduler for ever and tell an operator that a cold machine is mid-part.
+     */
+    @Test
+    void aJobThatWasPrintingWhenTheProcessDiedIsFailed() {
+        var machine = UUID.randomUUID();
+        var job = queued("interrupted.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
+                new org.qw3rtrun.p3d.api.jobs.JobProgress(7400, 2, 90_000, 500_000, 18,
+                        LocalDateTime.now(), LocalDateTime.now())));
+
+        roster.failWhatTheRestartInterrupted();
+
+        var after = jobs.fetch(job.id()).orElseThrow();
+        assertEquals(JobState.FAILED, after.state());
+        assertTrue(after.reason().contains("7400"), after.reason());
+        assertEquals(7400, after.progress().blocksSent(),
+                "and the position survives, because a better recovery starts from it");
+    }
+
+    /**
+     * A paused job survives a restart, which is the useful half of the same rule.
+     *
+     * <p>Its machine is still connected and still hot - the farm redials at startup - and the block
+     * it stopped at is in the checkpoint, so resuming after a restart works exactly as resuming
+     * before one does.
+     */
+    @Test
+    void aPausedJobSurvivesARestart() {
+        var machine = UUID.randomUUID();
+        var job = queued("paused-over-restart.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
+                new org.qw3rtrun.p3d.api.jobs.JobProgress(5000, 0, 60_000, 500_000, 10,
+                        LocalDateTime.now(), LocalDateTime.now())));
+        jobs.pause(job.id());
+
+        roster.failWhatTheRestartInterrupted();
+
+        var after = jobs.fetch(job.id()).orElseThrow();
+        assertEquals(JobState.PAUSED, after.state(), "a paused job is not an interrupted one");
+        assertEquals(5000, after.progress().blocksSent(), "and it knows where to pick up");
+    }
+
+    /** Nothing to reconcile is not an error, and is the normal case. */
+    @Test
+    void aRestartWithNothingPrintingDoesNothing() {
+        var job = queued("quiet-restart.gcode");
+
+        roster.failWhatTheRestartInterrupted();
+
+        assertEquals(JobState.QUEUED, jobs.fetch(job.id()).orElseThrow().state());
+    }
+
+    /** The listing is newest first, and a machine's own jobs are a narrower question. */
     @Test
     void jobsCanBeListedWholeOrPerMachine() {
         var machine = UUID.randomUUID();

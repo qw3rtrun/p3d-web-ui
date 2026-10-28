@@ -136,14 +136,22 @@ public class JobEntity {
     }
 
     /**
-     * Records a progress checkpoint.
+     * Records a progress checkpoint, if it is ahead of the one already here.
      *
-     * <p>Only while the job is running: a checkpoint that arrived after a cancel - the timer and
-     * the cancel race by construction - would otherwise overwrite the last real one and make a
-     * stopped job look as though it had got further.
+     * <p><strong>Monotone rather than state-gated, and the difference cost a reprint.</strong> The
+     * first version ignored any checkpoint that arrived once the job had stopped, to stop a late
+     * timer tick overwriting the last real one. That also threw away the <em>exact</em> reading the
+     * feed takes at the moment it pauses - so a resume read a checkpoint up to a second stale and
+     * restarted several thousand blocks early, extruding over what was already printed. Observed
+     * on a live run as the E value going backwards from 50.3952 to 46.4220.
+     *
+     * <p>Comparing the count instead keeps what the state check was for - a stale reading is
+     * behind, so it loses - and lets the accurate final one through. It is also plan item C4's
+     * "progress never moves backwards" as an invariant of the row rather than a property the
+     * callers are trusted to have.
      */
     public void progressed(JobProgress progress) {
-        if (state != JobState.RUNNING) {
+        if (blocksSent != null && progress.blocksSent() < blocksSent) {
             return;
         }
         blocksSent = progress.blocksSent();

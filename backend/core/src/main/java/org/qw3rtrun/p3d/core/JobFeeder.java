@@ -48,6 +48,7 @@ public class JobFeeder {
 
     private final PrinterReactorManager reactors;
     private final GcodeFileService files;
+    private final org.qw3rtrun.p3d.api.jobs.JobService jobs;
     private final ApplicationEventPublisher events;
 
     /** What is being fed right now, so that a cancel has something to stop. */
@@ -62,7 +63,47 @@ public class JobFeeder {
      *                  finished one
      */
     private record Feed(UUID jobId, UUID machineId, Sinks.Empty<Void> stop, AtomicLong sent,
-                        AtomicBoolean cancelled, Disposable subscription, Progress progress) {
+                        AtomicBoolean cancelled, Disposable subscription, Disposable watchingTheLink,
+                        Progress progress) {
+
+        void release() {
+            subscription.dispose();
+            watchingTheLink.dispose();
+        }
+    }
+
+    /**
+     * Fails the job if the machine's link goes away while it is printing - plan item C5.
+     *
+     * <p><strong>Nothing else would notice.</strong> When a connection drops, {@code PrinterReactor}
+     * builds a fresh {@code PublisherQueue} for the next attempt and abandons the old one - so the
+     * feed's {@code Mono} is left subscribed to a queue nobody drains, and never completes or
+     * errors. The job would read {@code RUNNING} for ever, on a printer that has been cold for
+     * hours. C3 left a method for this and never called it; this is the call.
+     *
+     * <p>The machine's own event stream is the signal, because that is where the lifecycle
+     * announces itself. What is recorded with the failure is how far the feed had got, which is
+     * the plan's "a killed connection leaves a job in FAILED with its last acknowledged line" -
+     * and the number a better recovery than this one would start from.
+     */
+    private Disposable watchTheLink(JobStateChanged event, PrinterReactor reactor,
+                                    AtomicLong sent, AtomicBoolean cancelled) {
+        return reactor.updates()
+                .map(org.qw3rtrun.p3d.api.msg.EventMessage::event)
+                .filter(org.qw3rtrun.p3d.api.msg.ConnectionStateChanged.class::isInstance)
+                .cast(org.qw3rtrun.p3d.api.msg.ConnectionStateChanged.class)
+                .filter(change -> !change.to().isLinked())
+                .next()
+                .subscribe(lost -> {
+                    if (!feeding.containsKey(event.jobId())) {
+                        return;
+                    }
+                    stop(event.jobId(), JobState.FAILED);
+                    cancelled.set(true);
+                    fail(event, sent.get(), "the connection to the machine went away while it was"
+                            + " printing (" + lost.to()
+                            + (lost.reason() == null ? "" : ": " + lost.reason()) + ")");
+                });
     }
 
     /**
@@ -80,15 +121,22 @@ public class JobFeeder {
             return;
         }
         if (event.to() == JobState.RUNNING && event.from() == JobState.PAUSED) {
-            refuseToResume(event);
+            resume(event);
             return;
         }
         if (event.from() == JobState.RUNNING) {
             stop(event.jobId(), event.to());
+            if (event.to() == JobState.CANCELLED || event.to() == JobState.FAILED) {
+                coolDown(event.machineId());
+            }
         }
     }
 
     private void start(JobStateChanged event) {
+        start(event, 0);
+    }
+
+    private void start(JobStateChanged event, long skip) {
         var reactor = reactors.runtimeOf(event.machineId());
         if (reactor == null) {
             fail(event, 0, "there is no runtime for machine " + event.machineId()
@@ -106,22 +154,28 @@ public class JobFeeder {
         var cancelled = new AtomicBoolean();
         var progress = new Progress(file.sizeBytes(), LocalDateTime.now());
 
+        // The skipped blocks are read and counted but not sent: the machine already has them, and
+        // the layer they left the file on is still the layer it is printing. Counting them is what
+        // keeps a resumed job's progress continuous rather than restarting at zero.
         var lines = GcodeLines.feedOf(
                         Flux.from(files.read(event.fileId())).doOnNext(progress::read))
                 .doOnNext(fed -> progress.block(sent.incrementAndGet(), fed.layer()))
+                .skip(skip)
                 .map(GcodeLines.Fed::block)
                 .takeUntilOther(stop.asMono());
 
-        log.info("job {} is feeding {} ({} bytes) to {}", event.jobId(), file.name(),
-                file.sizeBytes(), event.machineId());
+        log.info("job {} is feeding {} ({} bytes) from block {} to {}", event.jobId(), file.name(),
+                file.sizeBytes(), skip, event.machineId());
         var subscription = reactor.feed(lines).subscribe(
                 nothing -> {
                 },
                 error -> finished(event, sent.get(), cancelled.get(), error),
                 () -> finished(event, sent.get(), cancelled.get(), null));
 
+        var watchingTheLink = watchTheLink(event, reactor, sent, cancelled);
+
         feeding.put(event.jobId(), new Feed(event.jobId(), event.machineId(), stop, sent,
-                cancelled, subscription, progress));
+                cancelled, subscription, watchingTheLink, progress));
     }
 
     /**
@@ -211,29 +265,74 @@ public class JobFeeder {
         log.info("job {} stopped after {} blocks ({})", jobId, feed.sent().get(), to);
         feed.cancelled().set(true);
         feed.stop().tryEmitEmpty();
+        feed.watchingTheLink().dispose();
+
+        // One last, exact reading. The timer's checkpoints are up to a second stale, and a resume
+        // starts from whatever was written down - so without this a paused job restarts thousands
+        // of blocks early and extrudes over what it already printed.
+        events.publishEvent(new JobProgressed(jobId, feed.machineId(), feed.progress().snapshot()));
     }
 
     /**
-     * Resuming a paused job is refused, loudly, rather than silently reprinting from the top.
+     * Resumes a paused job from the block it stopped at - plan item C5.
      *
-     * <p><strong>There is no safe naive resume and this is the honest way to say so.</strong> The
-     * file is a stream and the feed holds no position in it, so starting again means starting at
-     * line one - on a machine that is half way through a part, with the bed hot and the nozzle
-     * somewhere above it. Plan item C5 owns recovery, and it has to restore temperatures, position,
-     * extrusion mode and feedrate as of the last acknowledged line before anything is sent.
+     * <p><strong>This is a seek, and it is safe here for one specific reason: the machine never
+     * lost its state.</strong> A pause stops the feed and nothing else - the printer stays
+     * connected, stays hot, and stays exactly where block N-1 left it, with the positioning mode,
+     * extruder mode, feedrate and fan speed the file had already set. So continuing at block N is
+     * continuing, not restarting.
      *
-     * <p>Failing the job is not a pleasant answer. It is better than the two alternatives: printing
-     * the part twice, or leaving a job that reads as {@code RUNNING} with nothing feeding it.
+     * <p><strong>That is emphatically not true after a disconnect</strong>, which is the case the
+     * plan warns about: a machine that was power-cycled, or sat cooling for an hour, has none of
+     * that state, and resuming it would need the file's state-setting commands replayed up to the
+     * resume point rather than skipped. The honest answer there is to fail the job with its
+     * position recorded - see {@link #onConnectionLost} - and that is what happens.
+     *
+     * <p>The position is read from the job rather than remembered here, which is the one query this
+     * class makes of {@code jobs}. It has to be: a pause that outlives a restart has no in-memory
+     * anything, and the checkpoint is where the number survives. Everything else reaches this class
+     * as a fact on an event, because everything else is wanted on every transition rather than one.
      */
-    private void refuseToResume(JobStateChanged event) {
-        log.warn("job {} was resumed, which plan item C5 owns and this cannot do safely", event.jobId());
-        fail(event, 0, "resuming a paused job is not implemented yet: the feed holds no position in"
-                + " the file, so it would restart from the first line. See plan item C5.");
+    private void resume(JobStateChanged event) {
+        long from = jobs.fetch(event.jobId())
+                .map(job -> job.progress().blocksSent())
+                .orElse(0L);
+        log.info("job {} resumes at block {}", event.jobId(), from);
+        start(event, from);
+    }
+
+    /**
+     * Stops, cools and retracts - what a cancelled or failed print leaves behind.
+     *
+     * <p>Queued at {@code REGULAR} so it preempts whatever is left of the file rather than waiting
+     * for it. A cancellation that queued behind the rest of a six-hour print would cool the machine
+     * down six hours after it was asked for.
+     *
+     * <p><strong>It does not home, park or disable the steppers.</strong> Homing drags the nozzle
+     * across whatever was printed; disabling the steppers drops the Z axis on a machine without a
+     * brake. Both need to know something about the machine that the farm does not, and getting
+     * either wrong breaks a part or a printer. Recorded as debt rather than guessed at.
+     */
+    private void coolDown(UUID machineId) {
+        var reactor = machineId == null ? null : reactors.runtimeOf(machineId);
+        if (reactor == null) {
+            return;
+        }
+        log.info("cooling {} down after a stopped print", machineId);
+        reactor.interject(java.util.List.of(
+                "M107",
+                "M104 S0",
+                "M140 S0",
+                "M83",
+                "G1 E-2 F2400"));
     }
 
     /** What the end of a feed means, reported as the fact {@code jobs} acts on. */
     private void finished(JobStateChanged event, long sent, boolean cancelled, Throwable error) {
-        feeding.remove(event.jobId());
+        var feed = feeding.remove(event.jobId());
+        if (feed != null) {
+            feed.watchingTheLink().dispose();
+        }
         if (cancelled) {
             log.info("job {} stopped after {} blocks, which was asked for", event.jobId(), sent);
             return;
@@ -253,17 +352,4 @@ public class JobFeeder {
                 LocalDateTime.now()));
     }
 
-    /** The connection went away, so every job on that machine stops being fed. */
-    void onMachineOffline(UUID machineId, String why) {
-        feeding.values().stream()
-                .filter(feed -> machineId.equals(feed.machineId()))
-                .toList()
-                .forEach(feed -> {
-                    feeding.remove(feed.jobId());
-                    feed.cancelled().set(true);
-                    feed.stop().tryEmitEmpty();
-                    fail(new JobStateChanged(feed.jobId(), null, JobState.RUNNING, JobState.RUNNING,
-                            machineId, null, LocalDateTime.now()), feed.sent().get(), why);
-                });
-    }
 }

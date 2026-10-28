@@ -72,8 +72,9 @@ public class CoreConfiguration {
     @Bean
     public JobFeeder jobFeeder(PrinterReactorManager reactors,
                                org.qw3rtrun.p3d.api.files.GcodeFileService files,
+                               org.qw3rtrun.p3d.api.jobs.JobService jobs,
                                org.springframework.context.ApplicationEventPublisher events) {
-        return new JobFeeder(reactors, files, events);
+        return new JobFeeder(reactors, files, jobs, events);
     }
 
     @Bean

@@ -575,14 +575,25 @@ the source, not suspected.
   the process dies between the last block and the listener, the job is left `RUNNING` with nothing
   feeding it. C5 has to reconcile that at startup, and already has to for a job whose machine went
   away mid-print.
+- **A cancel does not home, park or disable the steppers.** It cools and retracts. Homing drags the
+  nozzle across the part; disabling the steppers drops Z on a machine without a brake. Both need a
+  machine profile richer than B4's, and getting either wrong breaks a part or a printer.
+- **A pause does not park either**, so the nozzle sits over the part and will ooze onto it. Real
+  firmware has `M125`/`M601` for this and both need safe coordinates the farm does not know.
 - **Progress is approximate by design, and the column names do not say so.** `blocks_sent` and the
   rest are a checkpoint written about once a second, not a ledger - a restart reads them to within
   one interval. Anything that needs an exact count needs a different mechanism and a reason.
-- **A restarted job comes back `RUNNING` with nothing feeding it.** The checkpoint survives, which
-  is what C4 promised, and nothing acts on it: reconciling a job in that state at startup is C5's.
-- **Resuming a paused job fails it.** The feed holds no position in the file, so resuming would
-  restart at line one on a half-printed part. Pausing genuinely stops the feed; resuming is refused
-  with that sentence as the job's reason. C5 owns real recovery, and until then pause is a stop.
+- **Resuming after a *disconnect* is still not implemented, and resuming after a *pause* is.** The
+  difference is whether the machine kept its state. A paused printer is connected, hot and
+  positioned, so a resume is a seek - skip the blocks it has and carry on. A reconnected one has
+  none of that and would need the file's state-setting commands replayed up to the resume point;
+  that job fails with its position recorded instead. Do not collapse the two.
+- **A resume reads its position from the checkpoint, so the checkpoint has to be exact when a feed
+  stops.** It was not, and the cost was a printer extruding over what it had already printed: the
+  timer's readings lag by up to a second, so a resume restarted thousands of blocks early. The feed
+  takes one exact reading when it stops and the checkpoint is monotone rather than state-gated.
+  **A "latest wins" checkpoint is a different thing from a "highest wins" one, and only the second
+  is safe to resume from.**
 - **Nothing assigns a job either.** `assign` takes a machine id from whoever calls it; there is no
   scheduler, so a queued job waits forever unless a person picks a printer. D1 is that.
 - **`JobStateChanged` has no durable listener, so the registry records nothing for it.** The

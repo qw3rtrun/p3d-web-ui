@@ -284,6 +284,27 @@ public class PrinterReactor {
     }
 
     /**
+     * Puts a fixed sequence of blocks in front of whatever is printing.
+     *
+     * <p>{@code REGULAR}, so it preempts a job feeding at {@code BACKGROUND} - which is the whole
+     * point: a cancellation that queued behind the rest of the file would cool the machine down
+     * some hours after it was asked for.
+     *
+     * <p><strong>Not the user command path.</strong> {@code PrinterState.onCommand} is where a
+     * request from a person is routed and refused if it makes no sense; this is a sequence the
+     * host decided on and has to be able to send as a unit. Bare blocks, per the transport's
+     * contract - no numbering, no checksum, no comment.
+     */
+    public void interject(java.util.List<String> blocks) {
+        var queue = commandQueue;
+        if (queue == null || terminal == null) {
+            log.warn("{} is not connected, so {} was not sent", printer.getId(), blocks);
+            return;
+        }
+        queue.addPublisher(Priority.REGULAR, Flux.fromIterable(blocks));
+    }
+
+    /**
      * How many blocks the firmware has not acknowledged yet.
      *
      * <p>The gap between what a job has sent and what the machine has taken - at most the send

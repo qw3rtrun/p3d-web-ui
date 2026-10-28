@@ -174,6 +174,39 @@ public class JobServiceImpl implements JobService {
     }
 
     /**
+     * A job that was printing when the process died cannot still be printing - plan item C5.
+     *
+     * <p><strong>The feed lives in memory and the process took it with it.</strong> Nothing is
+     * sending blocks to that machine any more, so a job left {@code RUNNING} is a job that reads
+     * as alive and is not: it would hold its printer against the scheduler for ever and tell an
+     * operator that a cold machine is halfway through a part.
+     *
+     * <p><strong>They fail, with the checkpoint intact.</strong> That is the plan's own "the honest
+     * first version": resuming would mean restoring temperatures, position, extrusion mode and
+     * feedrate as of the last block, which is a replay of the file's state-setting commands and not
+     * the seek that {@code JobFeeder.resume} does for a pause. The recorded position is what makes
+     * a better version possible later, and it is deliberately not overwritten here.
+     *
+     * <p><strong>{@code PAUSED} jobs are left alone, and that is the useful half.</strong> A paused
+     * job's machine is still connected and still hot - the farm redials it at startup - and the
+     * block it stopped at is in the checkpoint, so resuming it after a restart works exactly as
+     * resuming it before one does.
+     */
+    @EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    @Transactional
+    public void failWhatTheRestartInterrupted() {
+        var interrupted = repo.findByStateOrderByCreatedAtAsc(JobState.RUNNING);
+        if (interrupted.isEmpty()) {
+            return;
+        }
+        log.warn("{} job(s) were printing when the process stopped and cannot be resumed from here",
+                interrupted.size());
+        interrupted.forEach(job -> apply(job, JobState.FAILED, null,
+                "the process restarted while this was printing; it had sent "
+                        + job.describe().progress().blocksSent() + " blocks"));
+    }
+
+    /**
      * A running job got further, so the checkpoint moves.
      *
      * <p>Arrives about once a second rather than once a block - {@code core} publishes on a timer -

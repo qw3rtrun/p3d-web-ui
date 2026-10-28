@@ -83,7 +83,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**C2**~~ | [the job and its lifecycle](#c2) | ~~A job entity, a state machine, and the events each transition publishes~~ **done** — a sixth module, a typed refusal instead of an exception, and the event registry on | C3 |
 | ~~**C3**~~ | [the streaming engine](#c3) | ~~A file fed through `PublisherQueue` at `BACKGROUND` while interactive commands preempt~~ **done** — 96,152 blocks to a stand-in in 25s, preempted mid-print, cancellable | C4, C5 |
 | ~~**C4**~~ | [progress and telemetry](#c4) | ~~Lines accepted, elapsed, estimated remaining — driven by acknowledgements, not by what was sent~~ **done** — blocks and bytes, checkpointed on a timer, with the in-flight gap reported rather than inferred | C5 |
-| **C5** | [pause, cancel, and survive a disconnect](#c5) | The operations an eight-hour print actually needs | D1 |
+| ~~**C5**~~ | [pause, cancel, and survive a disconnect](#c5) | ~~The operations an eight-hour print actually needs~~ **done** — pause is a stop, resume is a seek, a dropped link fails the job with its position | D1 |
 | **D1** | [assignment](#d1) | Match a queued job to a capable, idle machine; a farm queue and a per-machine queue | D2 |
 | **D2** | [the farm view](#d2) | One live stream for N printers instead of N streams of one | — |
 | **D3** | [operations](#d3) | Authentication, a real database, and the observability the dependencies already allow for | — |
@@ -1082,6 +1082,69 @@ version possible later.
 **Done when.** Pause/resume/cancel work against a simulator and are covered by tests; a killed
 connection leaves a job in `FAILED` with its last acknowledged line; the restart path is documented
 in this file rather than inferred.
+
+**Done, and the item turns on one distinction the plan half-made.** *Pause and resume on a live
+machine* and *recovery after a disconnect* are not the same problem. A paused printer is still
+connected, still hot, and still exactly where the last block left it — with the positioning mode,
+extruder mode, feedrate and fan the file had already set. So resuming it is a **seek**: skip the
+blocks it already has and carry on. A disconnected printer has none of that, and resuming it would
+need the file's state-setting commands *replayed* up to the resume point. The first is implemented;
+the second is still the honest refusal the plan asked for.
+
+**Pause stops the feed and nothing else.** No cooldown, no park — the machine holds its
+temperatures because nothing told it otherwise, which is what a pause is for.
+
+**Cancel preempts at `REGULAR`** with `M107`, `M104 S0`, `M140 S0`, `M83`, `G1 E-2 F2400`. A
+cancellation queued behind the rest of a six-hour print would cool the machine six hours after it
+was asked for. It deliberately does **not** home, park or disable the steppers: homing drags the
+nozzle across the part and disabling the steppers drops Z on a machine without a brake, and both
+need to know something about the machine the farm does not.
+
+**A dropped connection now fails the job, and nothing used to notice.** When a link drops
+`PrinterReactor` builds a fresh `PublisherQueue` and abandons the old one, so the feed's `Mono` was
+left subscribed to a queue nobody drained and never completed or errored — the job read `RUNNING`
+for ever on a printer that had been cold for hours. C3 left a method for this and never called it;
+`JobFeeder.watchTheLink` is the call, and it records how far the feed had got.
+
+### The restart path
+
+What happens to a job when the process stops, stated rather than inferred:
+
+| The job was | After a restart | Why |
+|---|---|---|
+| `QUEUED` | `QUEUED` | nothing was in flight |
+| `ASSIGNED` | `ASSIGNED` | the machine is redialled by B3; nothing had started |
+| `RUNNING` | **`FAILED`**, checkpoint intact | the feed lived in memory and went with the process |
+| `PAUSED` | **`PAUSED`**, resumable | the machine is still hot and the block it stopped at is on the row |
+| terminal | unchanged | a finished job is a record |
+
+A `RUNNING` job fails because nothing is sending blocks any more: left alone it would hold its
+printer against a scheduler for ever and tell an operator that a cold machine is mid-part. It fails
+with its position, which is what a better recovery than this one would start from — and it is
+deliberately not overwritten.
+
+**`PAUSED` surviving is the useful half.** The machine is redialled at startup, the block it
+stopped at is in the checkpoint, and resuming after a restart works exactly as resuming before one
+does.
+
+**Verified by running**, against the TCP stand-in with an 8,822,795-byte file:
+
+* **pause genuinely stops the wire** — paused at block 42,275 and the count had not moved four
+  seconds later;
+* **resume continues rather than restarts** — on to block 122,247, and the extrusion never went
+  backwards: 252 sampled blocks, **max backward step 0.0000 mm**;
+* **cancel reached the wire as the whole sequence** — `M107`, `M104 S0`, `M140 S0`, `M83`,
+  `G1 E-2 F2400` — preempting a print that was 242,737 blocks in;
+* **killing the printer mid-print failed the job** with
+  *"the connection to the machine went away while it was printing (CONNECTING: SocketException:
+  Connection reset) (after 37746 blocks)"*, and 2 of those still in flight.
+
+**It found a bug that only a live run could.** The first version read the resume point from the
+persisted checkpoint, which is written on a one-second timer and so lags the moment of the pause —
+so a resume restarted several thousand blocks early and **extruded over what was already printed**.
+Caught as the E value going backwards from 50.3952 to 46.4220 on the wire. The feed now takes one
+exact reading when it stops, and the checkpoint is monotone rather than state-gated so that reading
+lands. The same measurement that caught it is what shows it fixed.
 
 ---
 

@@ -1,17 +1,44 @@
 const streams = new Map();
 const listeners = new Map();
 
+// The CSRF token, read back out of the cookie the server set - plan item D3.
+//
+// The farm authenticates with a session cookie, because that is the only thing an EventSource can
+// carry: it cannot set an Authorization header, so a bearer token would mean putting credentials
+// in a query string. A cookie-authenticated API needs CSRF protection, and the server issues the
+// token as a readable XSRF-TOKEN cookie precisely so this can echo it back in a header - a page on
+// another origin can cause the browser to send the cookie, but cannot read it to build the header.
+function csrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : null;
+}
+
+// A 401 means the session has gone - a restart, or a timeout. Sending the user back to the login
+// page is the only useful thing a page can do, and doing it here means no caller has to remember.
+function signedOut(response) {
+    if (response.status === 401) {
+        window.location = "/login";
+        return true;
+    }
+    return false;
+}
+
 function post(uuid, path, payload) {
     const jsonBody = JSON.stringify(payload);
     console.log(`{${uuid}${path}} <- ${jsonBody}`);
+    const token = csrfToken();
+    const headers = {"Content-Type": "application/json"};
+    if (token) {
+        headers["X-XSRF-TOKEN"] = token;
+    }
     const requestOptions = {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
+        headers: headers,
         body: jsonBody
     };
     // Simple POST request with a JSON body using fetch
     return fetch(`/api-printer/${uuid}${path}`, requestOptions)
-        .then(response => response.json())
+        .then(response => signedOut(response) ? {} : response.json())
         .then(json => {
             console.log(`{${uuid}${path}} -> ${json}`);
             return json;
@@ -24,7 +51,12 @@ function post(uuid, path, payload) {
 // A GET returning JSON, for the handful of things the page asks rather than watches.
 function get(uuid, path) {
     return fetch(`/api-printer/${uuid}${path}`)
-        .then(response => response.ok ? response.json() : null, () => null);
+        .then(response => {
+            if (signedOut(response)) {
+                return null;
+            }
+            return response.ok ? response.json() : null;
+        }, () => null);
 }
 
 // One stream for the whole farm - plan item D2. The dashboard used to open one of these per

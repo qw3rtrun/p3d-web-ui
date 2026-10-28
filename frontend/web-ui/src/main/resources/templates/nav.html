@@ -170,8 +170,8 @@
                     <div class="dropdown-menu dropdown-menu-right navbar-dropdown" aria-labelledby="UserDropdown">
                         <div class="dropdown-header text-center">
                             <img class="img-md rounded-circle" src="/images/face1.jpg" alt="Profile image">
-                            <p class="mb-1 mt-3 font-weight-semibold">Allen Moreno</p>
-                            <p class="fw-light text-muted mb-0">allenmoreno@gmail.com</p>
+                            <p class="mb-1 mt-3 font-weight-semibold" th:text="${currentUser}">signed in</p>
+                            <p class="fw-light text-muted mb-0" th:text="${currentRole}">role</p>
                         </div>
                         <a class="dropdown-item"><i
                                 class="dropdown-item-icon mdi mdi-account-outline text-primary me-2"></i> My Profile
@@ -183,8 +183,18 @@
                             Activity</a>
                         <a class="dropdown-item"><i
                                 class="dropdown-item-icon mdi mdi-help-circle-outline text-primary me-2"></i> FAQ</a>
-                        <a class="dropdown-item"><i class="dropdown-item-icon mdi mdi-power text-primary me-2"></i>Sign
-                            Out</a>
+                        <!--
+                          A form and not a link - plan item D3. Spring Security only accepts a
+                          POST for /logout, because a GET would let any page on the internet sign a
+                          user out by embedding an image tag pointing at it.
+                        -->
+                        <form method="post" th:action="@{/logout}" class="m-0">
+                            <input type="hidden" th:if="${_csrf != null}"
+                                   th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+                            <button type="submit" class="dropdown-item border-0 bg-transparent w-100 text-start">
+                                <i class="dropdown-item-icon mdi mdi-power text-primary me-2"></i>Sign Out
+                            </button>
+                        </form>
                     </div>
                 </li>
             </ul>

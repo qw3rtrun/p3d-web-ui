@@ -74,6 +74,28 @@ class BootVuejsApplicationTests {
             };
         }
 
+        /**
+         * The one password encoder, which the real assembly gets from {@code identity}.
+         *
+         * <p>It must be the same scheme the roster hashes with, or every sign-in fails - which is
+         * why the real application declares exactly one and this test double matches it.
+         */
+        @Bean
+        org.springframework.security.crypto.password.PasswordEncoder passwordEncoder() {
+            return new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        }
+
+        /**
+         * The people roster, which lives in {@code identity} - plan item D3.
+         *
+         * <p>A working in-memory store rather than a throwing stub; see {@link InMemoryFarmUsers}
+         * for why this one is the exception.
+         */
+        @Bean
+        org.qw3rtrun.p3d.api.identity.FarmUserDirectory farmUsers() {
+            return new InMemoryFarmUsers();
+        }
+
         /** The farm-wide stream, which lives in core - plan item D2. */
         @Bean
         org.qw3rtrun.p3d.api.control.FarmView farmView() {

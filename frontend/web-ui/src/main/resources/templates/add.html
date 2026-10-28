@@ -17,6 +17,8 @@
                     </p>
                     <!--/*@thymesVar id="machine" type="org.qw3rtrun.p3d.frontend.mvc.MvcPrinterController.MachineInfo"*/-->
                     <form class="forms-sample" th:action="@{/printers/add.html}" th:object="${machine}" method="post">
+                        <input type="hidden" th:if="${_csrf != null}"
+                               th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
                         <div class="form-group">
                             <label>Machine Name</label>
                             <input type="text" class="form-control" th:field="*{name}"

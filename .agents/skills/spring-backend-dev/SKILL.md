@@ -33,6 +33,7 @@ and say so** rather than applying this skill's rules to them.
 | **files** | `:backend:files` | `org.qw3rtrun.p3d.files` | `api`, `:gcode`, Spring Data JPA, Liquibase, Reactor |
 | **jobs** | `:backend:jobs` | `org.qw3rtrun.p3d.jobs` | `api`, Spring Data JPA, Liquibase, Modulith events |
 | **scheduling** | `:backend:scheduling` | `org.qw3rtrun.p3d.scheduling` | `api`, spring-context, Reactor |
+| **identity** | `:backend:identity` | `org.qw3rtrun.p3d.identity` | `api`, Spring Data JPA, Liquibase, spring-security-crypto |
 | **frontend** | `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | `api`, WebFlux, Thymeleaf, the Vue build |
 | **app** | `:app` | `org.qw3rtrun.p3d` | everything. Assembly only |
 | *library* | `:gcode` | `org.qw3rtrun.p3d.g` | the Kotlin stdlib. **Nothing else** (`low-level-protocol-dev`) |
@@ -132,13 +133,14 @@ stalls an event loop under load with no symptom at all.
 
 | Module | Package | Exports / depends on |
 |---|---|---|
-| Shared API | `org.qw3rtrun.p3d.api` | closed, exporting six `@NamedInterface`s: `model`, `msg`, `management`, `control`, `files`, `jobs` |
+| Shared API | `org.qw3rtrun.p3d.api` | closed, exporting seven `@NamedInterface`s: `model`, `msg`, `management`, `control`, `files`, `jobs`, `identity` |
 | Printer core | `org.qw3rtrun.p3d.core` | `api::model`, `api::msg`, `api::control` — **not** `api::management` |
 | Machine management | `org.qw3rtrun.p3d.management` | `api::model`, `api::msg`, `api::management` |
 | G-code files | `org.qw3rtrun.p3d.files` | `api::files` |
 | Print jobs | `org.qw3rtrun.p3d.jobs` | `api::jobs`, `api::files`, `api::msg`, `api::model` |
 | Scheduling | `org.qw3rtrun.p3d.scheduling` | `api::jobs`, `api::management`, `api::control`, `api::model` |
-| Frontend | `org.qw3rtrun.p3d.frontend` | all six named interfaces. Names no other submodel |
+| Identity | `org.qw3rtrun.p3d.identity` | `api::identity` |
+| Frontend | `org.qw3rtrun.p3d.frontend` | all seven named interfaces. Names no other submodel |
 
 **`api` is not `sharedModules` and must not become it again.** A shared module is exempt from the
 dependency checks entirely, which is precisely the exemption that let `core` call
@@ -476,6 +478,97 @@ show.
   subscriber to arrive. On a farm that runs for days with no dashboard open that is every
   temperature reading since boot. Lossy is also correct downstream - a browser that stops reading
   must never stall the reactor feeding it.
+## Security - who may do what to a farm of heaters
+
+Plan item D3. The rules are written around **consequence**, which is why there are three roles and
+not a permission matrix: VIEWER may look, OPERATOR may run the machines, ADMIN may change what the
+farm *is* and read the actuator. The middle boundary is the one that matters - *a printer is a
+heater, and an unauthenticated `M104 S300` is a safety problem rather than a data one*.
+
+**`.anyExchange().authenticated()` is the last rule, so a path nobody thought about is closed.**
+Adding an endpoint without adding a rule makes it require a login rather than making it public.
+
+### The session cookie is forced, not chosen
+
+`EventSource` cannot set an `Authorization` header. A bearer token would therefore mean credentials
+in a query string, where they end up in access logs and `Referer` headers. So the farm authenticates
+with a session cookie - and a cookie-authenticated API **needs CSRF protection**, which is why the
+token, the `X-XSRF-TOKEN` header in `client.js` and the hidden fields in the Thymeleaf forms are all
+part of the same change.
+
+Three things about that are not obvious and each one was found by running, not by reading:
+
+- **The token the server issues is not the token it accepts, by default.** Spring Security's default
+  request handler masks the rendered token (BREACH mitigation), so a client that reads the
+  `XSRF-TOKEN` cookie and echoes it back is refused with **403 Access Denied** - while the cookie
+  plainly holds the value being sent. State `ServerCsrfTokenRequestAttributeHandler` explicitly;
+  that is the documented configuration for a client that reads the cookie.
+- **`CookieServerCsrfTokenRepository` writes the cookie lazily.** Nothing subscribes to the token on
+  a plain GET, so no cookie is issued and the first POST fails. The `WebFilter` in
+  `SecurityConfiguration` that subscribes to it is load-bearing, not boilerplate.
+- **Thymeleaf does not add the CSRF field on WebFlux.** The `RequestDataValueProcessor` that does it
+  automatically is a servlet-stack feature, and nearly every example online relies on it. A form
+  rendered without the field is posted without a token and rejected by the filter that issued one -
+  a 403 on a page that looks completely normal. `PageModelAdvice` puts `_csrf` in every page's
+  model; a new template with a form needs the hidden field.
+
+### One password encoder, declared by the module that writes hashes
+
+`IdentityModule` declares the `PasswordEncoder`, and `SecurityConfiguration` **hands it to the
+authentication manager explicitly**. Leaving that out is not a subtle bug: the manager defaults to a
+*delegating* encoder that reads a `{bcrypt}` prefix off the stored hash, finds none, and throws - so
+the login page answers **500** rather than "wrong password".
+
+Two encoders configured differently would be worse: the farm would write passwords with one scheme
+and check them with another. There is exactly one bean, and `frontend` injects it as a framework
+type rather than naming `identity`.
+
+### `identity` owns the people; `frontend` owns the request
+
+Authenticating a *request* needs a request, and `frontend` is the only submodel that has one. So
+the filter chain, the login page and the user-admin endpoints are there, and the table, the hashing
+and the bootstrap are in `:backend:identity`, which has **no web dependency at all**.
+
+That split is what lets `FarmUserDirectory.add` take a **raw password** and return a user carrying
+only a hash: cleartext exists for the length of one call, and no other module can store, log or
+forward one. Nothing in `api` can carry a password - `FarmUser` has a hash and `api` names no
+framework, which is what keeps Spring Security out of the module both the web side and the
+persistence side depend on.
+
+Users are deliberately **not** part of `printer-management`. A module that answers "what printers
+are there" has no business also answering "who may log in".
+
+### Rules for new work here
+
+- **`ReactiveUserDetailsService` is called on an event loop.** `FarmUserDetailsService` wraps the
+  blocking directory in `Mono.fromCallable(...).subscribeOn(Schedulers.boundedElastic())`, and
+  `fromCallable` rather than `just` because `just` evaluates eagerly on the calling thread. A login
+  is the one request every user makes, at shift change, when the farm is busiest.
+- **Never return `FarmUser` from a controller.** It carries the hash. `UserController.Account` is
+  the wire shape and has no such field *by construction* rather than by remembering to strip it.
+- **A machine caller gets 401; a browser gets a redirect.** One entry point for the whole
+  application would send a `fetch` to the login page, which follows the redirect and receives **200
+  and a page of HTML** - so an expired session shows up as a JSON parse error, and a test asserting
+  "this endpoint is protected" passes against a 200.
+- **An anonymous write is refused by CSRF (403) before authentication is consulted (401).** Both are
+  correct and the order is fixed. A test that accepts either would keep passing if authentication
+  were removed altogether, so assert the specific one and cover the other case separately.
+- **There is no default password.** `InitialAdmin` runs only when the roster is **empty** - not
+  "when the admin is missing", so a deliberately deleted account does not come back on restart - and
+  either uses `p3d.security.initial-admin.password` or generates 192 bits and logs them once.
+
+### Testing it
+
+`FarmSecurityTest` binds `WebTestClient` to a **real port** and performs the browser's actual
+sign-in: fetch the page, read the `XSRF-TOKEN` cookie, post the form, keep the session. A mock
+exchange skips exactly the hand-off most likely to be wrong.
+
+**The useful signal is 500.** The collaborators in `BootVuejsApplicationTests.Collaborators` throw
+on every call, so a 500 proves the request reached application code and a 401 or 403 proves it did
+not. A test that only checked for "not 200" would pass against an application that was merely
+broken.
+
+
 - **There is no WebSocket channel, and that is deliberate.** `WSGPrinterHandler` was deleted in A4:
   it read a session attribute nothing wrote, so its id was always null, and no client ever connected
   to `/ws-printer/*`. If one is wanted later it is a day's work on a *working* SSE contract, and it
@@ -632,6 +725,17 @@ the source, not suspected.
   takes one exact reading when it stops and the checkpoint is monotone rather than state-gated.
   **A "latest wins" checkpoint is a different thing from a "highest wins" one, and only the second
   is safe to resume from.**
+- **Sessions are in memory.** A restart signs everybody out, and a second instance would not share
+  them. Fine for one host; the first thing to fix if this is ever run as a pair.
+- **Nothing rate-limits the login**, so the sign-in form is open to guessing at network speed.
+  BCrypt makes that slow, not impossible.
+- **No password policy, and the generated initial password is never required to be changed.**
+- **HTTPS is not enforced**, so the session cookie is not `Secure`. Deliberate on a workshop LAN and
+  wrong anywhere else.
+- **Users are managed over the API only** - there is no page, so creating an operator means a
+  `curl`.
+- **The whole actuator is ADMIN-only**, so there is no anonymous liveness probe. A deployment that
+  needs one needs a deliberate exception rather than opening the lot.
 - **An event published while a farm subscriber is mid-snapshot is dropped.** `updates()` is the
   snapshot `concatWith` the live sink, so the sink is not subscribed until the snapshot completes -
   and the snapshot is now asynchronous, one `Mono` per machine. The window is milliseconds and the

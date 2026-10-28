@@ -86,7 +86,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**C5**~~ | [pause, cancel, and survive a disconnect](#c5) | ~~The operations an eight-hour print actually needs~~ **done** — pause is a stop, resume is a seek, a dropped link fails the job with its position | D1 |
 | ~~**D1**~~ | [assignment](#d1) | ~~Match a queued job to a capable, idle machine; a farm queue and a per-machine queue~~ **done** — an eighth module that owns nothing, first-fit over three modules' facts | D2 |
 | ~~**D2**~~ | [the farm view](#d2) | ~~One live stream for N printers instead of N streams of one~~ **done** — one listener on the event bus, a built snapshot, and nothing opened | — |
-| **D3** | [operations](#d3) | Authentication, a real database, and the observability the dependencies already allow for | — |
+| ~~**D3**~~ | [operations](#d3) | ~~Authentication and authorisation, a real database, observability~~ **done** — three roles, an eleventh module for the people, the actuator on; the database half deliberately deferred | — |
 
 ---
 
@@ -1294,6 +1294,111 @@ problem rather than a data one.
 
 **Done when.** Named deliberately as the item to do when the project leaves the bench, so it is not
 mistaken for something phases A–C depend on.
+
+**Scope, decided when the item was taken up.** Two of the three parts are done — authentication and
+authorisation, and the actuator. **The third, moving off the local H2 file, was deliberately not
+done**: the decision was to keep the file database as it is. It is recorded here rather than
+dropped, because the reason the plan named it still stands — an H2 file is one machine's disk, with
+no replica and no backup story — and because this machine has no Docker, so a Postgres migration
+could not have been verified by running, which this plan requires. The schema is already portable
+(Liquibase logical types throughout, no raw SQL blocks, no `dbms=` attributes), so the work when it
+comes is a driver, a profile and a verification run rather than a rewrite.
+
+**Three roles, split by consequence rather than convenience.** VIEWER may look; OPERATOR may run
+the machines; ADMIN may change what the farm *is*, and read the actuator. The middle boundary is
+the one the item exists for — *a printer is a heater, and an unauthenticated `M104 S300` is a safety
+problem rather than a data one* — and it is the only place in the application where "may read" and
+"may act" genuinely differ in cost.
+
+**An eleventh module, `:backend:identity`, owning the people and not the sessions.** One table, one
+question. It has no web layer at all, because authenticating a *request* needs a request and
+`frontend` is the only submodel that has one. The split is what lets password hashing live with
+the store: `FarmUserDirectory.add` takes a raw password and returns a user carrying only a hash, so
+cleartext exists for the length of one call and no other module can store, log or forward one.
+Users are deliberately not part of `printer-management` — a module answering "what printers are
+there" has no business also answering "who may log in".
+
+**The session cookie is forced by the UI, not chosen.** `EventSource` cannot set an `Authorization`
+header, so a bearer token would mean credentials in a query string. Cookie authentication then
+*requires* CSRF protection, which is why the token, the `X-XSRF-TOKEN` header in `client.js` and
+the hidden fields in the Thymeleaf forms are all part of this item rather than extras.
+
+**Three things were only findable by running, and each produced a wrong-looking failure:**
+
+- **The CSRF token the server issues is not the token it accepts.** Spring Security's default
+  request handler masks the rendered token (BREACH mitigation), so a client that reads the
+  `XSRF-TOKEN` cookie and echoes it back is refused. Every form and every POST answered **403
+  Access Denied** while the cookie plainly held the value being sent. The fix is to state
+  `ServerCsrfTokenRequestAttributeHandler`, which is the documented configuration for a client that
+  reads the cookie — but nothing says so until it is run.
+- **A sign-in answered 500, not "wrong password".**
+  `UserDetailsRepositoryReactiveAuthenticationManager` defaults to a *delegating* encoder that reads
+  a `{bcrypt}` prefix off the stored hash; the hashes here have none, so it threw rather than
+  failing the login. The encoder is now handed over explicitly, and there is exactly one in the
+  application — declared by the module that *writes* hashes — so the farm cannot write with one
+  scheme and check with another.
+- **Thymeleaf does not add the CSRF field on WebFlux.** The `RequestDataValueProcessor` that does it
+  automatically is a servlet-stack feature, and almost every example of Spring Security with
+  Thymeleaf relies on it. A form rendered without it is posted without a token and rejected by the
+  very filter that issued one. `PageModelAdvice` puts the token in every page's model instead.
+
+**The live run also found a design hole the tests could not.** The farm bootstraps exactly one
+administrator and had no way to create anybody else, so VIEWER and OPERATOR were unreachable and
+everyone would have shared the admin account — the three roles would have been decoration.
+`/api-users` (ADMIN-only) closes it. No response there carries a password hash, by the shape of the
+record rather than by remembering to strip one.
+
+**There is no default password, which is the point of `InitialAdmin`.** A farm shipping
+`admin`/`admin` would be worse than the unauthenticated farm this replaces, because it would look
+protected. An operator either sets `p3d.security.initial-admin.password`, or 192 bits are generated
+and logged once at WARN. It runs only when the roster is **empty** — not "when the admin is
+missing" — so an administrator who deletes the default account does not find it back after a
+restart.
+
+**Verified by running**, against the assembled application:
+
+```
+--- anonymous
+GET  /api-farm/stream        -> 401
+GET  /api-manager            -> 401
+GET  /actuator/health        -> 401
+POST .../set-temp 300        -> 403   (CSRF refuses it before authentication is consulted)
+GET  /dashboard.html         -> 302   (a browser is redirected, not refused)
+
+--- the bootstrapped administrator
+GET  /api-manager            -> 200
+GET  /actuator/modulith      -> 200
+
+--- the operator it created
+GET  /api-manager            -> 200   may look
+POST /api-manager            -> 403   may not register a machine
+GET  /actuator/health        -> 403
+GET  /api-users              -> 403
+
+--- the viewer it created
+GET  /api-farm/stream        -> 200 + data:{...ConnectionStateChanged...}
+POST .../set-temp 300        -> 403   may NOT heat
+GET  /printers/add.html      -> 403
+```
+
+and the restart check the bootstrap exists for: a second start against the same database created
+**no** second administrator.
+
+**Recorded debt**, all of it real and none of it blocking:
+
+- **Sessions are in memory**, so a restart signs everybody out and a second instance would not share
+  them. Fine for one host; the first thing to fix if this is ever run as a pair.
+- **No rate limiting or lockout on the login**, so the sign-in form is open to guessing at network
+  speed. BCrypt makes that slow, not impossible.
+- **No password policy and no forced rotation** — nothing stops an administrator setting `pw` for an
+  operator, and the generated initial password is never required to be changed.
+- **HTTPS is not enforced**, and the session cookie is therefore not `Secure`. On a workshop LAN
+  that is a deliberate deferral; off one it is the next thing to do.
+- **Users are managed over the API only** — there is no page for it, so creating an operator means a
+  `curl`.
+- **The whole actuator is ADMIN-only**, which means there is no anonymous liveness probe. Nothing
+  probes this farm today; a deployment that needs one needs a deliberate exception rather than
+  opening the lot.
 
 ---
 

@@ -20,6 +20,12 @@
  * bridge in {@code :backend:terminal}. The field names are the ones the browser already sent, so
  * the HTTP contract did not move - it merely stopped being defined by a code generator.
  *
+ * <p>{@code api::identity} joined with plan item D3, and it is the narrowest of the lot: this
+ * submodel is the only place in the application where a request is authenticated, because it is the
+ * only place a request exists. Who the people <em>are</em> belongs to {@code identity}, which owns
+ * the table and the password hashing; what this module does is decide, per path, which of them may
+ * call it.
+ *
  * <p>{@code api::files} joined the list with plan item C1. The upload and download endpoints are
  * here because {@code doc/sub_boundaries.txt} puts every server API in this submodel, and because
  * the pooled {@code DataBuffer}s WebFlux hands out are this layer's to release - the store takes
@@ -28,5 +34,5 @@
 @org.springframework.modulith.ApplicationModule(
         displayName = "Frontend",
         allowedDependencies = {"api::model", "api::msg", "api::control", "api::management",
-                "api::files", "api::jobs"})
+                "api::files", "api::jobs", "api::identity"})
 package org.qw3rtrun.p3d.frontend;

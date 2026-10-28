@@ -1,0 +1,34 @@
+Lets actualize a UI!
+
+1) Now we have a frontend submodule in the project. Which contains a place-holder for the actual UI.
+2) POC was made base on static html/js/css In is located in frontend/web-ui/src/main/resources/static.
+
+Steps you need to do:
+1) Setup a ui-developer agent. The main architecture is based on spring boot with server-side rendering using thymeleaf.
+    current template is located in frontend/web-ui/src/main/resources/templates.
+    endpoints and rest server-side logic is located in frontend/web-ui/src/main/java
+    interactive ui-parts should be written in TS with Vue.js. A Placeholder located frontend/web-ui/src/frontend.
+    There is a POC of vue-components in frontend/web-ui/src/main/resources/static/js/component.
+
+2) Rewrite POC components to pure TS+Vue.js.
+    The core functionality should include:
+    - Login/Logout
+    - User profile
+    - Printers management, add/remove/update of printer in a swarm.
+    - Printers dashboard. all active printers is one place with status monitoring.
+3) Details printer page. With base info and status monitoring. Should support standard operations, as Marlin screen provides:
+    - Machine, capabilities, firmware information, limits.
+    - Machine settings (M500)
+    - Temperature Control
+    - Fan control
+    - Homing
+    - Move axes.
+
+4) Advanced operations will be implemented later.
+
+After it is done, I want to be able to open the UI from the browser, add simulator as a printer, see the status, and control it.
+
+Update 1:
+ - decouple POC so it can be removed
+ - make sure that all frontend/web-ui/src/main/resources/static can be removed, so only thymleaf templates and vue components remain
+ - images can also remain

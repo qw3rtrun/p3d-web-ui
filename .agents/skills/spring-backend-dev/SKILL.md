@@ -33,7 +33,7 @@ and say so** rather than applying this skill's rules to them.
 | **files** | `:backend:files` | `org.qw3rtrun.p3d.files` | `api`, `:gcode`, Spring Data JPA, Liquibase, Reactor |
 | **jobs** | `:backend:jobs` | `org.qw3rtrun.p3d.jobs` | `api`, Spring Data JPA, Liquibase, Modulith events |
 | **scheduling** | `:backend:scheduling` | `org.qw3rtrun.p3d.scheduling` | `api`, spring-context, Reactor |
-| **identity** | `:backend:identity` | `org.qw3rtrun.p3d.identity` | `api`, Spring Data JPA, Liquibase, spring-security-crypto |
+| **identity** | `:backend:identity` | `org.qw3rtrun.p3d.identity` | `api`, Spring Data JPA, Liquibase, spring-security-crypto, Spring Session JDBC, Reactor |
 | **frontend** | `:frontend:web-ui` | `org.qw3rtrun.p3d.frontend` | `api`, WebFlux, Thymeleaf, the Vue build |
 | **app** | `:app` | `org.qw3rtrun.p3d` | everything. Assembly only |
 | *library* | `:gcode` | `org.qw3rtrun.p3d.g` | the Kotlin stdlib. **Nothing else** (`low-level-protocol-dev`) |
@@ -538,6 +538,42 @@ persistence side depend on.
 Users are deliberately **not** part of `printer-management`. A module that answers "what printers
 are there" has no business also answering "who may log in".
 
+### Sessions live in the database, and Boot will not wire that for you
+
+A signed-in session is a row, not a field: `:backend:identity` keeps them with Spring Session's
+JDBC repository so a restart does not sign the whole farm out. Four things about that setup are
+load-bearing.
+
+- **Boot's reactive session auto-configuration covers Redis and MongoDB only.** Given a
+  `ReactiveSessionRepository` of any other kind it configures nothing and **logs nothing**, and
+  WebFlux carries on with `InMemoryWebSessionStore`. Everything looks right - the tables exist, the
+  repository is a bean, the tests pass - and a restart still signs everybody out. That is how it
+  was found: the implementation was finished and the live check still answered 401.
+  `SessionStoreConfiguration` in `frontend` declares the `WebSessionManager` explicitly, and it has
+  to stay there because `WebSessionManager` is a WebFlux type.
+- **There is no reactive JDBC repository in Spring Session**, so `ReactiveJdbcSessions` wraps the
+  blocking one with `subscribeOn(boundedElastic())`. This is the cardinal rule at its most
+  load-bearing: a session is read on **every single request**, so a JDBC call left on the event
+  loop is the whole farm serialised behind one pool. Do not reimplement the repository - session
+  identifiers, expiry and cascade deletion are security-sensitive and Spring Session's version has
+  had far more eyes on it.
+- **Wiring it by hand means owning the housekeeping.** Spring Session's own configuration class
+  schedules the expiry sweep; `ExpiredSessionSweeper` is that obligation, and without it the table
+  grows by a row per sign-in forever. Everything created has an owner that releases it.
+- **The transaction template is `REQUIRES_NEW`,** as Spring Session's own is. A session is saved at
+  the end of a request that may already be in a transaction, and joining it would tie staying
+  signed in to whether that unrelated work commits.
+
+Two smaller traps: Spring Session's `JdbcSession` is **package-private**, so a generic helper
+method is how the compiler infers a type that cannot be written down; and a **negative**
+`maxInactiveInterval` means *never expires*, not *already expired*, so ageing a session out in a
+test needs a short interval and a last-accessed time in the past.
+
+The schema is a Liquibase fragment with **logical** types rather than Spring Session's shipped DDL:
+`ATTRIBUTE_BYTES` is `blob`, which resolves to `LONGVARBINARY` on H2 and `BYTEA` on PostgreSQL. The
+table and column *names* are Spring Session's and its SQL is written against them literally, so a
+rename there is a runtime failure rather than a compile one.
+
 ### Rules for new work here
 
 - **`ReactiveUserDetailsService` is called on an event loop.** `FarmUserDetailsService` wraps the
@@ -725,8 +761,10 @@ the source, not suspected.
   takes one exact reading when it stops and the checkpoint is monotone rather than state-gated.
   **A "latest wins" checkpoint is a different thing from a "highest wins" one, and only the second
   is safe to resume from.**
-- **Sessions are in memory.** A restart signs everybody out, and a second instance would not share
-  them. Fine for one host; the first thing to fix if this is ever run as a pair.
+- **A session carries serialised Java objects**, so changing a class that ends up in one - the
+  security context, a principal - can make existing sessions undeserialisable on the next deploy.
+  The failure mode is everybody signed out at once, which is survivable, but it is a reason not to
+  put application types into a session.
 - **Nothing rate-limits the login**, so the sign-in form is open to guessing at network speed.
   BCrypt makes that slow, not impossible.
 - **No password policy, and the generated initial password is never required to be changed.**

@@ -36,7 +36,18 @@ dependencies {
     // Hashing only - see the note above. No filter chain, no web.
     implementation 'org.springframework.security:spring-security-crypto'
 
+    // Plan item D3 follow-up: sessions that survive a restart. JDBC and not Redis, because the
+    // farm already has a database and adding a second piece of infrastructure to keep one table
+    // would be a worse trade than the one this replaces.
+    implementation 'org.springframework.session:spring-session-jdbc'
+
+    // For the reactive view of the session store only. Reactor is not a web framework, so this
+    // module still has no web layer - which is the property that keeps authenticating a *request*
+    // in frontend, where a request exists.
+    implementation 'io.projectreactor:reactor-core'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'io.projectreactor:reactor-test'
     testImplementation 'org.springframework.modulith:spring-modulith-starter-test'
     testImplementation("org.springframework.boot:spring-boot-starter-liquibase-test")
 }

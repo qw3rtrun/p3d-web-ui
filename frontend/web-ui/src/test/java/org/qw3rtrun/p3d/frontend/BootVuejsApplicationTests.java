@@ -75,6 +75,21 @@ class BootVuejsApplicationTests {
         }
 
         /**
+         * Where sessions are kept, which the real assembly gets from {@code identity} over JDBC.
+         *
+         * <p>An in-memory one here, because this submodel is being booted alone and has no
+         * database - but a <em>real</em> {@code ReactiveSessionRepository}, so the
+         * {@code WebSessionManager} wiring in {@link org.qw3rtrun.p3d.frontend.security
+         * .SessionStoreConfiguration} is exercised rather than skipped. That wiring is the piece
+         * Spring Boot does not do for a JDBC store, and silently.
+         */
+        @Bean
+        org.springframework.session.ReactiveSessionRepository<?> sessions() {
+            return new org.springframework.session.ReactiveMapSessionRepository(
+                    new java.util.concurrent.ConcurrentHashMap<>());
+        }
+
+        /**
          * The one password encoder, which the real assembly gets from {@code identity}.
          *
          * <p>It must be the same scheme the roster hashes with, or every sign-in fails - which is

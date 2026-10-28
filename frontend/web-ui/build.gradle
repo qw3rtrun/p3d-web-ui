@@ -38,6 +38,10 @@ dependencies {
     // submodel that has one. Who the people are is :backend:identity's, reached through
     // FarmUserDirectory in api - this module does not name it.
     implementation 'org.springframework.boot:spring-boot-starter-security'
+
+    // The WebFlux adapter for the session store that :backend:identity keeps in the database.
+    // Core only - the JDBC half belongs to the module that owns the table.
+    implementation 'org.springframework.session:spring-session-core'
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     annotationProcessor 'org.projectlombok:lombok'

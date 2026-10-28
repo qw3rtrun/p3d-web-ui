@@ -1386,8 +1386,20 @@ and the restart check the bootstrap exists for: a second start against the same 
 
 **Recorded debt**, all of it real and none of it blocking:
 
-- **Sessions are in memory**, so a restart signs everybody out and a second instance would not share
-  them. Fine for one host; the first thing to fix if this is ever run as a pair.
+- ~~**Sessions are in memory**, so a restart signs everybody out.~~ **Done.** Sessions are kept in
+  the database now - Spring Session's JDBC repository, wrapped to satisfy the reactive contract
+  WebFlux asks for. Measured before: sign in, `GET /api-manager` 200; restart; the same cookie
+  **401**. Measured after: **200**, and `/api-users` still answers as the same administrator, so
+  the serialised security context comes back rather than just a session id. Two notes for whoever
+  touches it:
+  - **Spring Boot does not wire this, and it fails silently.** Boot's reactive session
+    auto-configuration knows Redis and MongoDB; given a `ReactiveSessionRepository` of any other
+    kind it configures nothing, logs nothing, and WebFlux keeps its `InMemoryWebSessionStore`. The
+    fix was complete - tables created, repository wired, tests green - and the live check still
+    answered 401. `SessionStoreConfiguration` declares the `WebSessionManager` by hand.
+  - **Hand-wiring inherits the housekeeping.** Spring Session's own configuration class schedules
+    the expiry sweep; wiring the repository directly means owning it, which `ExpiredSessionSweeper`
+    does. Without it the table grows by a row per sign-in forever.
 - **No rate limiting or lockout on the login**, so the sign-in form is open to guessing at network
   speed. BCrypt makes that slow, not impossible.
 - **No password policy and no forced rotation** — nothing stops an administrator setting `pw` for an

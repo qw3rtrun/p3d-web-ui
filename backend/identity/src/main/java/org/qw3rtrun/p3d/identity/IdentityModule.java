@@ -2,7 +2,12 @@ package org.qw3rtrun.p3d.identity;
 
 import org.qw3rtrun.p3d.api.identity.FarmUserDirectory;
 import org.qw3rtrun.p3d.identity.service.FarmUserDirectoryImpl;
+import org.qw3rtrun.p3d.identity.service.ExpiredSessionSweeper;
 import org.qw3rtrun.p3d.identity.service.InitialAdmin;
+import org.qw3rtrun.p3d.identity.service.ReactiveJdbcSessions;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.session.ReactiveSessionRepository;
+import org.springframework.session.jdbc.JdbcIndexedSessionRepository;
 import org.qw3rtrun.p3d.identity.service.UserRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,6 +34,63 @@ public class IdentityModule {
     @Bean
     public static FarmUserDirectory farmUsers(UserRepository repository, PasswordEncoder encoder) {
         return new FarmUserDirectoryImpl(repository, encoder);
+    }
+
+    /**
+     * Where signed-in sessions are kept - the fix for "a restart signs everybody out".
+     *
+     * <p>Wired by hand rather than through Spring Session's own configuration class, because that
+     * one targets the servlet stack; the reactive side of Spring Session ships Redis and MongoDB
+     * only. See {@link ReactiveJdbcSessions} for why the blocking repository is wrapped instead of
+     * a JDBC one being written.
+     *
+     * <p>Wiring it by hand also means inheriting what that configuration class does for you -
+     * which is why {@link ExpiredSessionSweeper} exists below.
+     */
+    @Bean
+    public JdbcIndexedSessionRepository jdbcSessions(
+            org.springframework.jdbc.core.JdbcOperations jdbc,
+            org.springframework.transaction.PlatformTransactionManager transactions,
+            @Value("${p3d.security.session-timeout:8h}") java.time.Duration timeout) {
+        var sessions = new JdbcIndexedSessionRepository(jdbc, transactionsFor(transactions));
+        sessions.setDefaultMaxInactiveInterval(timeout);
+        return sessions;
+    }
+
+    /**
+     * The transaction template Spring Session's own configuration builds, including its propagation.
+     *
+     * <p>{@code REQUIRES_NEW} matters: a session is saved at the end of a request that may already
+     * be inside a transaction of its own, and joining it would tie writing the session to whether
+     * that unrelated work commits. A user staying signed in should not depend on whether the
+     * command they just sent succeeded.
+     */
+    private static org.springframework.transaction.support.TransactionTemplate transactionsFor(
+            org.springframework.transaction.PlatformTransactionManager manager) {
+        var template = new org.springframework.transaction.support.TransactionTemplate(manager);
+        template.setPropagationBehavior(
+                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        template.afterPropertiesSet();
+        return template;
+    }
+
+    /**
+     * The reactive view of the above, which is what WebFlux resolves a session through.
+     *
+     * <p>Eight hours by default rather than Spring Session's thirty minutes: the thing looking at
+     * this farm all day is a wall display, and signing it out twice an hour would teach whoever
+     * walks past to leave a browser logged in permanently. A shift is the honest unit. Shorten it
+     * with {@code p3d.security.session-timeout} where that trade does not hold.
+     */
+    @Bean
+    public ReactiveSessionRepository<?> sessions(JdbcIndexedSessionRepository jdbcSessions) {
+        return ReactiveJdbcSessions.over(jdbcSessions);
+    }
+
+    /** Expired rows have an owner that deletes them - see {@link ExpiredSessionSweeper}. */
+    @Bean
+    public ExpiredSessionSweeper expiredSessionSweeper(JdbcIndexedSessionRepository jdbcSessions) {
+        return new ExpiredSessionSweeper(jdbcSessions);
     }
 
     /**

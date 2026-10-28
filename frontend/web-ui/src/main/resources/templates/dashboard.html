@@ -8,6 +8,14 @@
 
 <body th:replace="container::common_body(~{::#dashboard_form}, ~{})">
 <div class="content-wrapper" id="dashboard_form">
+    <!--
+      Every printer in the farm, live, on one subscription - plan item D2.
+
+      The role comes from the server (PageModelAdvice) and not from anything the browser worked
+      out: it decides which controls are *offered*. What is permitted is the filter chain's
+      business, and it refuses regardless of what this page renders.
+    -->
+    <div data-p3d="farm-dashboard" th:attr="data-role=${currentRole}"></div>
 </div>
 
 </body>

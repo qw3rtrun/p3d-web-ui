@@ -29,6 +29,18 @@
 
     <th:block th:replace="${links}"/>
 
+    <!--
+      The Vue islands - one bundle for every page, built by Vite from src/frontend.
+
+      It is `defer`red rather than placed at the end of the body because the mount points live in
+      the fragment this head is included from, and the bundle waits for DOMContentLoaded anyway.
+      A page with no `data-p3d` element simply gets nothing.
+
+      The filename is stable on purpose: a hashed one would need a manifest lookup here. See
+      vite.config.ts.
+    -->
+    <script type="module" src="/assets/p3d-ui.js"></script>
+
     <th:block th:replace="${scripts}"/>
 </head>
 

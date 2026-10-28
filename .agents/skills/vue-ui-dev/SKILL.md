@@ -177,6 +177,20 @@ call. There is no auto-report for position the way `M155` auto-reports temperatu
 demand and after a move - never on a timer, which fills a busy printer's command queue with
 questions while it is trying to print.
 
+## Your own account, and everybody else's
+
+`/api-users` is ADMIN-only on purpose: reading the list of accounts is reconnaissance and creating
+one is privilege granting. That left a farm where a viewer could not change their own password at
+all, so `/profile` is the one narrow hole in it - **your own password, and nothing else**.
+
+**The current password is verified, and that is not ceremony.** Without it a session someone walked
+away from is not merely a session, it is the account: whoever holds it sets a new password and the
+owner is locked out. Requiring the old one means a borrowed session expires instead of becoming
+permanent.
+
+The profile page is Thymeleaf, not an island: a username, a role and a form, none of which keep
+changing.
+
 ## When a control has no command
 
 The detail page's controls - homing, moving an axis, a fan, saving settings - are **application
@@ -232,10 +246,22 @@ The test is **does it keep changing**, not "is it data".
 - **Temperature, connection state, position and job progress are islands.** They change while
   somebody is looking.
 
-**A derived boolean on a record is `isX()` to Thymeleaf and `x` in JSON, and the two will mislead
-you.** `MachineProfile` has `isKnown()`; the JSON the API returns says `"known": false`, so a
-template written from the JSON says `${printer.profile.known()}` and the page answers **500** -
-*"Method known() cannot be found on type MachineProfile"*. Read the record, not the payload.
+### Two Thymeleaf traps, each of which cost a 500
+
+**A derived boolean on a record is `isX()` to Thymeleaf and `x` in JSON.** `MachineProfile` has
+`isKnown()`; the JSON says `"known": false`, so a template written from the payload says
+`${printer.profile.known()}` and the page answers 500 - *"Method known() cannot be found on type
+MachineProfile"*. Read the record, not the payload.
+
+**`${param.x}` is an empty list when the parameter is absent, not null - and Thymeleaf reads that
+as true.** So `th:if="${param.error}"` renders the block on a URL with no query string at all, and
+`param.error[0]` inside it throws *"The collection has '0' elements"*. Check emptiness explicitly:
+`th:if="${not #lists.isEmpty(param.error)}"`.
+
+**A redirect is not evidence the page works.** Both of those sat behind passing tests, because the
+tests drove the POST and asserted its `Location` and never rendered what it pointed at. When a
+controller redirects with a result in the query string, assert the **rendered page** for every
+value it can carry.
 
 ## Testing
 
@@ -262,7 +288,11 @@ template written from the JSON says `${printer.profile.known()}` and the page an
 - **The theme ships a lot of dead markup.** Unused dropdowns, fake notification counts and demo
   charts came with it. Leave them alone unless the task touches them; removing them wholesale is
   its own change.
-- **No user-management page.** D3 left `/api-users` reachable only by `curl`.
+- **No user-management page.** A person can see and change their *own* account at `/profile`, but
+  creating an operator or resetting somebody else's password is still `/api-users` over `curl`.
+- **Changing a password does not sign out that user's other sessions.** Sessions are rows now, so
+  the fix is reachable - delete the user's other rows on a change - but it is not done, and until
+  it is, a password change does not evict whoever prompted it.
 - **The machine panel goes stale while the page is open.** Firmware and capabilities are learned
   when a machine first connects, and the panel is server-rendered, so connecting a machine while
   looking at its page leaves the panel empty until a reload. The honest fix is to re-render on

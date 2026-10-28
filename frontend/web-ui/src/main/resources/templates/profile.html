@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+
+<head th:replace="container::common_headers(~{}, ~{})">
+    <title></title>
+</head>
+
+<body th:replace="container::common_body(~{::#dashboard_form}, ~{})">
+<div class="content-wrapper" id="dashboard_form">
+    <div class="row">
+        <div class="col-md-6 grid-margin stretch-card">
+            <div class="card card-rounded">
+                <div class="card-body">
+                    <h4 class="card-title">Your account</h4>
+
+                    <table class="table table-sm">
+                        <tbody>
+                        <tr>
+                            <td class="text-muted">Username</td>
+                            <td th:text="${currentUser}">someone</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Role</td>
+                            <td>
+                                <span class="badge bg-secondary" th:text="${currentRole}">VIEWER</span>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+
+                    <!--
+                      What each role may do. It is written here rather than inferred in the
+                      browser because the filter chain is the authority and this page is only
+                      describing it - if the two ever disagree, this text is the wrong one.
+                    -->
+                    <p class="text-muted small" th:switch="${currentRole}">
+                        <span th:case="'ADMIN'">
+                            You may register and remove machines, manage accounts and read the
+                            actuator, as well as everything an operator may do.
+                        </span>
+                        <span th:case="'OPERATOR'">
+                            You may connect machines, heat them, move them and run prints. Changing
+                            what the farm <em>is</em> needs an administrator.
+                        </span>
+                        <span th:case="*">
+                            You may watch the farm. Running a machine needs an operator.
+                        </span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 grid-margin stretch-card">
+            <div class="card card-rounded">
+                <div class="card-body">
+                    <h4 class="card-title">Change your password</h4>
+
+                    <!--
+                      `${param.x}` is an EMPTY LIST when the parameter is absent, not null, and
+                      Thymeleaf reads that as true - so a bare `th:if="${param.error}"` renders the
+                      block and `param.error[0]` then throws "The collection has '0' elements".
+                      The emptiness has to be checked explicitly.
+                    -->
+                    <div class="alert alert-success" role="alert"
+                         th:if="${not #lists.isEmpty(param.changed)}">
+                        Your password has been changed.
+                    </div>
+                    <div class="alert alert-danger" role="alert"
+                         th:if="${not #lists.isEmpty(param.error)}">
+                        <span th:if="${param.error[0] == 'wrong'}">That is not your current password.</span>
+                        <span th:if="${param.error[0] == 'mismatch'}">The two new passwords did not match.</span>
+                        <span th:if="${param.error[0] == 'empty'}">A password cannot be blank.</span>
+                    </div>
+
+                    <form method="post" th:action="@{/profile/password}">
+                        <!--
+                          By hand, because WebFlux has no RequestDataValueProcessor and Thymeleaf
+                          will not add it for you. Without it this form is rejected 403 by the very
+                          filter that issued the token.
+                        -->
+                        <input type="hidden" th:if="${_csrf != null}"
+                               th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+
+                        <div class="form-group">
+                            <label for="currentPassword">Current password</label>
+                            <input type="password" class="form-control" id="currentPassword"
+                                   name="currentPassword" autocomplete="current-password" required/>
+                        </div>
+                        <div class="form-group">
+                            <label for="newPassword">New password</label>
+                            <input type="password" class="form-control" id="newPassword"
+                                   name="newPassword" autocomplete="new-password" required/>
+                        </div>
+                        <div class="form-group">
+                            <label for="confirmation">New password again</label>
+                            <input type="password" class="form-control" id="confirmation"
+                                   name="confirmation" autocomplete="new-password" required/>
+                        </div>
+                        <button type="submit" class="btn btn-primary text-white">Change password</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+</body>
+
+</html>

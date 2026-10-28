@@ -125,6 +125,34 @@ async function refresh() {
     }
 }
 
+/**
+ * Removes a machine from the farm, behind a confirmation.
+ *
+ * <strong>The card does not need removing here.</strong> Deleting publishes `MachineLeftFarm`, and
+ * the farm stream this page is already holding carries it - so the row disappears for *every* open
+ * dashboard, not just the one that pressed the button. Removing it locally as well would mean two
+ * mechanisms for one fact, and the local one would be the one that went wrong when a delete failed.
+ */
+async function remove(row: Row) {
+    const warning = [
+        `Remove ${row.name} from the farm?`,
+        'It stops being monitored and any queued job for it is left without a machine. '
+        + 'The printer itself is not touched.',
+    ].join('\n\n')
+
+    if (!window.confirm(warning)) {
+        return
+    }
+    try {
+        await farm.remove(row.uuid)
+        failure.value = null
+    } catch (error) {
+        if (error instanceof RequestFailed && error.status !== 401) {
+            failure.value = error.message
+        }
+    }
+}
+
 async function act(uuid: string, action: 'connect' | 'disconnect') {
     try {
         await (action === 'connect' ? printer(uuid).connect() : printer(uuid).disconnect())
@@ -209,7 +237,7 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div v-if="mayControl" class="mt-3 d-flex gap-2">
+            <div v-if="mayControl" class="mt-3 d-flex gap-2 flex-wrap align-items-center">
               <button type="button" class="btn btn-sm btn-primary text-white"
                       :disabled="isUsable(row.state)" @click="act(row.uuid, 'connect')">
                 Connect
@@ -218,6 +246,13 @@ onUnmounted(() => {
                       :disabled="row.state === 'OFFLINE'" @click="act(row.uuid, 'disconnect')">
                 Disconnect
               </button>
+
+              <template v-if="mayAdminister">
+                <a class="btn btn-sm btn-outline-secondary ms-auto"
+                   :href="`/printers/${row.uuid}/edit.html`">Edit</a>
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        @click="remove(row)">Remove</button>
+              </template>
             </div>
           </div>
         </div>

@@ -2,7 +2,11 @@ package org.qw3rtrun.p3d.frontend;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.identity.FarmRole;
+import org.qw3rtrun.p3d.api.identity.FarmUserDirectory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
@@ -16,6 +20,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Who may do what to a farm of heaters - plan item D3.
@@ -40,6 +45,10 @@ class FarmSecurityTest {
 
     @Value("${local.server.port}")
     private int port;
+
+    /** The same in-memory roster the application is using, so a test can seed a throwaway user. */
+    @Autowired
+    private FarmUserDirectory users;
 
     private WebTestClient web;
 
@@ -204,6 +213,116 @@ class FarmSecurityTest {
                 "a failed sign-in should land back on the login page");
     }
 
+    // ---------------------------------------------------------------- your own account
+
+    /**
+     * Anybody signed in may change their own password, including a viewer.
+     *
+     * <p>This is the one hole in "{@code /api-users} is ADMIN-only", and it has to exist: without
+     * it the only account that could ever change a password is the one everybody would then share.
+     */
+    @Test
+    void aViewerMayChangeTheirOwnPassword() {
+        var username = "temp-" + UUID.randomUUID();
+        users.add(username, "the old one", FarmRole.VIEWER);
+
+        var session = new Session().signIn(username, "the old one");
+        var result = session.form("/profile/password",
+                "currentPassword", "the old one",
+                "newPassword", "the new one",
+                "confirmation", "the new one").returnResult(String.class);
+
+        // 303 and not 302: a Thymeleaf `redirect:` after a POST is post-redirect-get, so a
+        // refresh of the result page does not re-submit the form. Spring Security's own login
+        // handler answers 302, which is why the two differ.
+        assertEquals(HttpStatus.SEE_OTHER, result.getStatus());
+        assertEquals("/profile?changed", result.getResponseHeaders().getLocation().toString());
+
+        var stored = users.byName(username).orElseThrow().passwordHash();
+        assertTrue(new BCryptPasswordEncoder().matches("the new one", stored),
+                "the new password should work");
+    }
+
+    /**
+     * The current password is checked, and that is what stops a borrowed session being permanent.
+     *
+     * <p>Without it, anybody holding a session - one left open on a workshop machine, a stolen
+     * cookie - sets a new password and the owner is locked out of their own account.
+     */
+    @Test
+    void aWrongCurrentPasswordChangesNothing() {
+        var username = "temp-" + UUID.randomUUID();
+        users.add(username, "the old one", FarmRole.OPERATOR);
+        var before = users.byName(username).orElseThrow().passwordHash();
+
+        var session = new Session().signIn(username, "the old one");
+        var result = session.form("/profile/password",
+                "currentPassword", "not it",
+                "newPassword", "the new one",
+                "confirmation", "the new one").returnResult(String.class);
+
+        assertEquals("/profile?error=wrong", result.getResponseHeaders().getLocation().toString());
+        assertEquals(before, users.byName(username).orElseThrow().passwordHash(),
+                "the stored password must be untouched");
+    }
+
+    /** A mismatched confirmation is refused before anything is written. */
+    @Test
+    void aMismatchedConfirmationChangesNothing() {
+        var username = "temp-" + UUID.randomUUID();
+        users.add(username, "the old one", FarmRole.VIEWER);
+        var before = users.byName(username).orElseThrow().passwordHash();
+
+        var result = new Session().signIn(username, "the old one")
+                .form("/profile/password",
+                        "currentPassword", "the old one",
+                        "newPassword", "one thing",
+                        "confirmation", "another thing").returnResult(String.class);
+
+        assertEquals("/profile?error=mismatch",
+                result.getResponseHeaders().getLocation().toString());
+        assertEquals(before, users.byName(username).orElseThrow().passwordHash());
+    }
+
+    /**
+     * The page renders - for a plain visit and for every result it can be redirected back with.
+     *
+     * <p><strong>This is a regression test for a 500 the other profile tests could not catch.</strong>
+     * They drove the POST and the redirect and never rendered the page, so a template error sat
+     * behind three passing tests: `${param.error}` is an <em>empty list</em> when the parameter is
+     * absent rather than null, Thymeleaf reads that as true, and `param.error[0]` then threw.
+     * Asserting a redirect is not asserting that the thing it redirects to works.
+     */
+    @Test
+    void theProfilePageRendersWithAndWithoutAResult() {
+        var session = new Session().signIn("operator");
+
+        for (var uri : java.util.List.of(
+                "/profile", "/profile?changed",
+                "/profile?error=wrong", "/profile?error=mismatch", "/profile?error=empty")) {
+            var body = session.get(uri)
+                    .expectStatus().isOk()
+                    .expectBody(String.class).returnResult().getResponseBody();
+
+            assertNotNull(body, uri);
+            assertTrue(body.contains("operator"), uri + " should name the signed-in user");
+            assertTrue(body.contains("OPERATOR"), uri + " should show their role");
+        }
+    }
+
+    /** And the page itself needs a session, like every other page. */
+    @Test
+    void anAnonymousCallerIsSentToSignInForTheProfile() {
+        var result = WebTestClient.bindToServer().baseUrl("http://localhost:" + port)
+                .build()
+                .get().uri("/profile").exchange()
+                .expectStatus().isFound()
+                .returnResult(String.class);
+
+        assertTrue(result.getResponseHeaders().getLocation().toString().contains("/login"),
+                "a browser should be redirected, not refused");
+    }
+
     // ---------------------------------------------------------------- the browser's flow
 
     /**
@@ -235,10 +354,14 @@ class FarmSecurityTest {
         }
 
         Session signIn(String username) {
+            return signIn(username, InMemoryFarmUsers.PASSWORD);
+        }
+
+        Session signIn(String username, String password) {
             fetchCsrfToken();
             var result = form("/login",
                     "username", username,
-                    "password", InMemoryFarmUsers.PASSWORD).returnResult(String.class);
+                    "password", password).returnResult(String.class);
 
             assertEquals(HttpStatus.FOUND, result.getStatus(), "sign-in should redirect");
             assertEquals("/", result.getResponseHeaders().getLocation().toString(),

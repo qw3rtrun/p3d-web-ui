@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.terminal;
 
 import org.qw3rtrun.p3d.api.msg.BusyReport;
+import org.qw3rtrun.p3d.api.msg.PositionReported;
 import org.qw3rtrun.p3d.api.msg.CapabilityReport;
 import org.qw3rtrun.p3d.api.msg.ErrorReport;
 import org.qw3rtrun.p3d.api.msg.FirmwareReport;
@@ -11,6 +12,7 @@ import org.qw3rtrun.p3d.api.msg.UnknownReply;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
 import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
 import org.qw3rtrun.p3d.g.protocol.BusyRs;
 import org.qw3rtrun.p3d.g.protocol.ErrorRs;
@@ -67,8 +69,24 @@ final class ReplyEvents {
             case CapabilityRs c -> new CapabilityReport(c.encode(), c.getCapability(), c.getEnabled());
             case ErrorRs e -> new ErrorReport(e.getMessage(), e.getLastLine());
             case BusyRs<?> b -> new BusyReport(b.getReason());
+            case PositionRs p -> new PositionReported(axes(p));
             default -> new UnknownReply(reply.encode());
         };
+    }
+
+    /**
+     * Where the machine says its axes are, as plain numbers keyed by axis letter.
+     *
+     * <p>The protocol reports {@code BigDecimal} per axis and a second map of stepper counts; the
+     * application carries the first as {@code double}, because that is what a page renders and
+     * what a move command is expressed in. The counts are dropped here rather than in
+     * {@code :gcode} - they are the firmware's internal position and differ from the planner's
+     * while moves are still queued, so publishing both would invite a reader to pick the wrong one.
+     */
+    private static java.util.Map<String, Double> axes(PositionRs position) {
+        var out = new java.util.LinkedHashMap<String, Double>();
+        position.getAxes().forEach((axis, value) -> out.put(String.valueOf(axis), value.doubleValue()));
+        return out;
     }
 
     /**

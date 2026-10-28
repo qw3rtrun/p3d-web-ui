@@ -208,4 +208,34 @@ class PrinterStateDispatchTest {
 
         assertEquals(List.of(), sent);
     }
+
+    /**
+     * A position report reaches whoever is watching.
+     *
+     * <p><strong>This is a regression test for a silent drop.</strong> The transport decoded
+     * {@code M114}'s answer and converted it to a {@link org.qw3rtrun.p3d.api.msg.PositionReported}
+     * correctly, and it still never appeared in a browser: the aggregate republishes only what it
+     * has an arm for, and everything else reaches {@code default}, which logs at debug and stops.
+     * Every layer in between looked right, which is why it took a live run to find.
+     *
+     * <p>So the rule for any new reply is two changes, not one: map it in {@code ReplyEvents}
+     * <em>and</em> give the aggregate a case for it.
+     */
+    @Test
+    void aPositionReportIsRepublishedToSubscribers() {
+        var printer = online();
+
+        printer.onEvent(new org.qw3rtrun.p3d.api.msg.PositionReported(
+                Map.of("X", 15.0, "Y", 20.0)));
+
+        var published = emitted.stream()
+                .filter(org.qw3rtrun.p3d.api.msg.PositionReported.class::isInstance)
+                .map(org.qw3rtrun.p3d.api.msg.PositionReported.class::cast)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "the position never reached a subscriber; emitted " + emitted));
+
+        assertEquals(15.0, published.axes().get("X"));
+        assertEquals(20.0, published.axes().get("Y"));
+    }
 }

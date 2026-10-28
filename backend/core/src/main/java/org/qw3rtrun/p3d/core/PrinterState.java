@@ -11,6 +11,13 @@ import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
+import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
+import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
+import org.qw3rtrun.p3d.g.marlin.command.FanOff;
+import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition;
+import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
+import org.qw3rtrun.p3d.g.marlin.command.RelativePositioning;
+import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
@@ -205,6 +212,22 @@ public class PrinterState implements PrinterAggregate {
                 heard();
                 on(e);
             }
+            /*
+             * Republished, not kept.
+             *
+             * The aggregate has nothing to decide about a position: there is no rule it enforces
+             * and no other handler that reads one. Storing it anyway would be the write-only field
+             * this module already removed once - `PrinterEntity.connected`, written by nothing and
+             * read by nothing - so it goes to whoever is watching and no further.
+             *
+             * It still needs an arm. An event with no arm reaches `default` and is *dropped*, so a
+             * reply that is mapped all the way through the transport can still never appear in a
+             * browser - which is exactly how this one behaved until this case existed.
+             */
+            case PositionReported e -> {
+                heard();
+                emitter.accept(e);
+            }
             default -> {
                 heard();
                 log.debug("nothing for the aggregate to do about {}", event);
@@ -236,6 +259,21 @@ public class PrinterState implements PrinterAggregate {
             case SetBedTemperature c -> handle(c);
             case ReportHotendTemperature c -> handle(c);
             case TemperatureAutoReport c -> handle(c);
+
+            // Motion, fans and settings carry no decision this layer gets to make: the application
+            // command was already translated into exactly the Marlin command the machine should
+            // receive, so these go through as they are. They are still listed one by one rather
+            // than caught by a wildcard, because the point of this switch is that adding a command
+            // and forgetting to send it is visible here.
+            case AutoHome c -> passThrough(c);
+            case LinearMoveG1 c -> passThrough(c);
+            case RelativePositioning c -> passThrough(c);
+            case AbsolutePositioning c -> passThrough(c);
+            case org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed c -> passThrough(c);
+            case FanOff c -> passThrough(c);
+            case SaveSettings c -> passThrough(c);
+            case GetCurrentPosition c -> passThrough(c);
+
             default -> log.warn("no handler for {}, so nothing was sent", command);
         }
     }
@@ -297,6 +335,24 @@ public class PrinterState implements PrinterAggregate {
     public void handle(TemperatureAutoReport report) {
         log.info("{}", report);
         g.m155(report.getSeconds());
+    }
+
+    /**
+     * Sends a command the aggregate has nothing to add to.
+     *
+     * <p>The temperature handlers above exist because they <em>decide</em> something - a missing
+     * target is refused, a hotend index is checked against the machine's extruder count, a scale is
+     * imposed on the wire. Homing, moving, the fan and {@code M500} have no such decision at this
+     * layer, so a handler each would be eight copies of one line.
+     *
+     * <p><strong>What is deliberately not checked here is the one thing worth checking.</strong> A
+     * move is not validated against the bed volume, because a relative move cannot be without
+     * knowing the position and the declared volume is often absent. That is recorded as debt
+     * rather than half-done.
+     */
+    private void passThrough(GRq<?> command) {
+        log.info("{}", command);
+        g.send(command);
     }
 
     /**

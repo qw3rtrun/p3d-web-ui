@@ -338,11 +338,20 @@ public class PrinterReactor {
                 .doOnNext(rep -> log.info("<- {}", rep));
     }
 
-    public <T extends GRq<?>> Mono<Void> handle(Mono<T> command) {
-        return command
+    /**
+     * One application command, as the Marlin commands that carry it, applied as a single task.
+     *
+     * <p><strong>The whole list goes to the aggregate in one hop on purpose.</strong> A relative
+     * move is {@code G91}, the move, then {@code G90}, and emitting those as three elements would
+     * make them three tasks on this executor - so another request's command could be scheduled
+     * between them and be interpreted in relative mode. One {@code doOnNext} over the list makes
+     * the batch atomic with respect to everything else this printer is asked to do.
+     */
+    public Mono<Void> handle(java.util.List<GRq<?>> commands) {
+        return Mono.just(commands)
                 .publishOn(executor)
-                .doOnNext(cmd -> log.info("-> {}", cmd))
-                .doOnNext(printer::onCommand)
+                .doOnNext(batch -> batch.forEach(cmd -> log.info("-> {}", cmd)))
+                .doOnNext(batch -> batch.forEach(printer::onCommand))
                 .then();
     }
 

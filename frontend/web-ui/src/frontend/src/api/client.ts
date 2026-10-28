@@ -122,12 +122,10 @@ export const farm = {
 /**
  * The commands one printer accepts.
  *
- * **This is the whole list, and it is temperature only.** Homing, moving an axis, fan speed and
- * saving settings exist in `:gcode` but have no application command yet, so there is nothing here
- * to call. They want a `PrinterCommand` record in `api::msg`, an endpoint, and an arm in
- * `PrinterState.onCommand` - a backend change. There is deliberately no "send raw G-code" escape
- * hatch: it would hand any operator arbitrary control of a heater past every check the command
- * model exists to make.
+ * Every one of these is an application command in `api::msg`, not G-code: the browser never sends
+ * a Marlin line. There is deliberately no "send raw G-code" escape hatch - it would hand any
+ * operator arbitrary control of a heater past every check the command model exists to make - so a
+ * control that needs something not listed here needs a backend change rather than a workaround.
  */
 export function printer(uuid: string) {
     const at = (path: string) => `/api-printer/${uuid}${path}`
@@ -155,6 +153,56 @@ export function printer(uuid: string) {
 
         /** One reading, now (M105). */
         reportTemperature: () => send(at('/report-temp'), {}),
+
+        /**
+         * Send axes home (G28). Naming none homes everything, which is Marlin's own rule.
+         *
+         * Homing is a slow move that drags the nozzle across whatever is on the bed, so it is
+         * something an operator asks for - never something another control does on their behalf.
+         */
+        home: (axes: { x?: boolean; y?: boolean; z?: boolean } = {}) =>
+            send(at('/home'), axes),
+
+        /**
+         * Move the toolhead. `relative` is what a jog button means.
+         *
+         * An omitted axis is **not** zero: null is an axis the move does not mention, while zero
+         * in relative mode means "do not move this one" and in absolute mode means "go to the
+         * origin". Pass only the axes being moved.
+         *
+         * `feedRate` is Marlin's F, in millimetres per **minute**.
+         */
+        move: (move: {
+            x?: number; y?: number; z?: number; e?: number
+            feedRate?: number; relative?: boolean
+        }) => send(at('/move'), move),
+
+        /**
+         * Set a part-cooling fan on Marlin's **0..255** scale, not a percentage.
+         *
+         * A UI shows a percentage because that is what a person reads; convert at the control, so
+         * there is only ever one unit travelling to a machine that understands one.
+         */
+        setFanSpeed: (speed: number, index?: number) =>
+            send(at('/fan'), {index: index ?? null, speed}),
+
+        /**
+         * Write the machine's settings to its EEPROM (M500).
+         *
+         * The one command here whose effect outlives the connection: a wrong value stored is one
+         * the machine keeps after a power cycle.
+         */
+        storeSettings: () => send(at('/store-settings'), {}),
+
+        /**
+         * Ask where the toolhead is (M114).
+         *
+         * The answer arrives on the event stream as `PositionReported`, not from this call. There
+         * is no auto-report for position the way M155 auto-reports temperature, so ask on demand
+         * and after a move - never on a timer, which fills a busy printer's command queue with
+         * questions.
+         */
+        requestPosition: () => send(at('/position'), {}),
     }
 }
 

@@ -157,6 +157,26 @@ page simply stopped updating. Nothing in the build noticed.
 **Add a case to that test whenever the UI starts depending on a new `type` string.** It is the only
 thing that will fail when somebody renames an event class.
 
+## The controls that exist
+
+`client.ts` carries the whole command surface, and it is the application's vocabulary rather than
+G-code: temperature (hotend, bed, on-demand read, auto-report), `home`, `move`, `setFanSpeed`,
+`storeSettings` and `requestPosition`.
+
+Three things a control has to get right, because the browser is where the unit is chosen:
+
+- **Fan speed is Marlin's 0..255, not a percentage.** Show a percentage to the person and convert
+  at the control, so only one unit travels.
+- **An omitted axis is not zero.** Send only the axes being moved: zero in relative mode means "do
+  not move this axis" and in absolute mode means "go to the origin".
+- **`relative: true` is what a jog button means.** The operator knows nothing about where the
+  machine is, and the server sends the mode switch around the move so the browser never has to.
+
+**The answer to `requestPosition` arrives on the event stream** as `PositionReported`, not from the
+call. There is no auto-report for position the way `M155` auto-reports temperature, so ask on
+demand and after a move - never on a timer, which fills a busy printer's command queue with
+questions while it is trying to print.
+
 ## When a control has no command
 
 The detail page's controls - homing, moving an axis, a fan, saving settings - are **application
@@ -165,11 +185,15 @@ commands**, not raw G-code. A browser never sends G-code text.
 The chain is: a `PrinterCommand` record in `api::msg` -> a `POST` endpoint on `PrinterController`
 -> an arm in `PrinterState.onCommand` that translates it into a `:gcode` command -> the transport.
 
-Today `api::msg` carries temperature only: `SetHotendTarget`, `SetBedTarget`,
-`RequestTemperatureReport`, `SetTemperatureAutoReport`. **Everything else the UI wants needs the
-backend chain built first** - the `:gcode` side already exists (`AutoHome`, `LinearMoveG0`/`G1`,
-`SetFanSpeed`, `FanOff`, `SaveSettings`, `GetCurrentPosition`, `AbsolutePositioning`,
-`RelativePositioning`), so what is missing is the application model in between.
+`api::msg` carries temperature, homing, moves, the fan, `M500` and a position request. **Anything
+beyond that needs the backend chain built first**, and `:gcode` almost certainly already has the
+command - what is missing is the application model in between.
+
+Note that the chain has **four** links and the compiler only guards two of them: `PrinterCommand`
+is sealed so a record without a translation fails the build, but a translation without an arm in
+`PrinterState.onCommand` compiles and is dropped at runtime with one WARN line. The same is true
+inbound: a reply mapped in `ReplyEvents` still never reaches a browser unless the aggregate has a
+case for it. Both are written up in `spring-backend-dev`.
 
 **Do not work around this in the browser.** There is no endpoint that accepts G-code text and there
 must not be one: it would hand any operator the ability to send arbitrary commands to a heater,

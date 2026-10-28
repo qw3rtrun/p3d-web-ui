@@ -617,6 +617,79 @@ broken.
   `PrinterCommandBindingTest` for what it posts and `EventStreamContractTest` for what it reads. A
   renamed field or event name on this side fails there rather than in a browser.
 
+## The command model, end to end
+
+A control on a page becomes bytes on a serial link through four places, and **a change that misses
+one of them fails silently**. In order:
+
+| Step | Where | What it is |
+|---|---|---|
+| 1 | `api::msg` | a `PrinterCommand` record - the application's word for the intent |
+| 2 | `frontend` | a `@PostMapping` under `/api-printer/{id}` binding that record |
+| 3 | `core` | an arm in `PrinterControlService.toMarlin` turning it into `:gcode` commands |
+| 4 | `core` | an arm in `PrinterState.onCommand` that actually sends them |
+
+**`PrinterCommand` is sealed and `toMarlin` has no `default`**, so steps 1 and 3 cannot diverge:
+adding a record without translating it fails the build. **Steps 3 and 4 have no such protection** -
+`PrinterState.onCommand` switches on `:gcode`'s `GRq`, which cannot be sealed (295 implementations)
+and therefore carries a `default` that logs a warning. A command that translates but has no handler
+reaches the aggregate and is dropped, and the only trace is one WARN line.
+
+That is not hypothetical: it is the red the motion commands were written against. The endpoints
+answered 200, the translation was correct, and nothing reached the printer.
+
+### One intent is sometimes several commands
+
+`toMarlin` returns a **`List<GRq<?>>`**, because Marlin has no per-command relative flag: a
+relative move is `G91`, the move, then `G90`. Two consequences:
+
+- **`G91` is modal.** Forgetting the trailing `G90` leaves the machine in relative mode, so every
+  later absolute move - including a print's - lands somewhere else entirely. The mode switch is
+  returned *with* the move for exactly this reason; it is not the caller's to remember.
+- **`PrinterReactor.handle` applies the whole list as one task** on the aggregate's thread. Emitting
+  the three as separate elements would make them three tasks, so another request's command could be
+  scheduled between them and be interpreted in relative mode. One `doOnNext` over the list is what
+  makes the batch atomic with respect to everything else that printer is asked to do.
+
+### A reply needs two arms, not one
+
+**The inbound path has the same shape and the same trap, one layer deeper.** To make a firmware
+reply reach a browser:
+
+1. `:gcode` decodes it - already true for everything in `marlin/event/`;
+2. `ReplyEvents.of` in `:backend:terminal` maps it to an `api` `GEvent`;
+3. **`PrinterState.onEvent` needs a case for it.**
+
+Step 3 is the one that gets missed. The aggregate republishes only what it has an arm for;
+everything else reaches `default`, which logs at debug and stops. `PositionReported` was mapped
+correctly all the way through the transport - the log showed
+`IN: onNext(PositionRs(axes={X=15.00, ...}))` - and never appeared in a browser, because the
+aggregate had nothing to say about it and therefore said nothing. Every layer looked right, which
+is why it took a live run to find.
+
+**Republishing is not the same as keeping.** The position arm emits and stores nothing: there is no
+rule the aggregate enforces with it and no handler that reads it, and a stored field with no reader
+is the write-only `PrinterEntity.connected` defect in a new place. Add the arm; add the field only
+when something reads it.
+
+### What the farm can tell a machine to do
+
+`HomeAxes`, `MoveAxes`, `SetFanSpeed`, `StoreSettings`, `RequestPosition`, and the four temperature
+commands. Three notes that are easy to get wrong and were verified on the wire:
+
+- **A fan index travels in `P`, not `I`.** Marlin's documentation lists both as "index" and the
+  generated command class carries both fields; `P` is what mainline firmware reads as the fan
+  number, and it is what `M107` uses, so the pair stays consistent.
+- **Fan speed is Marlin's 0..255 PWM scale, not a percentage.** The UI converts, so only one unit
+  ever travels.
+- **A null axis is not zero.** Null is an axis the move does not mention; zero in relative mode
+  means "do not move this axis" and in absolute mode means "go to the origin". A binding that
+  defaulted null to zero would turn a single-axis jog into a move of everything.
+
+**There is deliberately no endpoint that accepts G-code text**, and there must not be. It would
+hand any operator arbitrary control of a heater past every check the command model exists to make,
+and it would put a second command vocabulary in front of the one `api` defines.
+
 ## Persistence
 
 - **Liquibase owns the schema. Hibernate does not.** There is no `ddl-auto` anywhere and there must
@@ -742,6 +815,10 @@ the source, not suspected.
   the process dies between the last block and the listener, the job is left `RUNNING` with nothing
   feeding it. C5 has to reconcile that at startup, and already has to for a job whose machine went
   away mid-print.
+- **A move is not validated against the machine.** Nothing checks a target against the declared
+  bed volume, so an operator can drive the toolhead into a frame. An absolute move could be checked
+  against `MachineSpec.bedVolume`; a relative one could not without tracking position, and the
+  declared volume is often absent anyway. Left undone rather than half-done.
 - **A cancel does not home, park or disable the steppers.** It cools and retracts. Homing drags the
   nozzle across the part; disabling the steppers drops Z on a machine without a brake. Both need a
   machine profile richer than B4's, and getting either wrong breaks a part or a printer.

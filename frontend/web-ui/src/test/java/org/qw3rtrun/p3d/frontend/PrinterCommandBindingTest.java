@@ -7,7 +7,12 @@ import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.PrinterCommand;
 import org.qw3rtrun.p3d.api.msg.RequestTemperatureReport;
 import org.qw3rtrun.p3d.api.msg.SetBedTarget;
+import org.qw3rtrun.p3d.api.msg.HomeAxes;
+import org.qw3rtrun.p3d.api.msg.MoveAxes;
+import org.qw3rtrun.p3d.api.msg.RequestPosition;
+import org.qw3rtrun.p3d.api.msg.SetFanSpeed;
 import org.qw3rtrun.p3d.api.msg.SetHotendTarget;
+import org.qw3rtrun.p3d.api.msg.StoreSettings;
 import org.qw3rtrun.p3d.api.msg.SetTemperatureAutoReport;
 import org.qw3rtrun.p3d.api.msg.TemperatureReport;
 import org.reactivestreams.Publisher;
@@ -20,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 /**
  * The JSON the browser posts, and the command it becomes.
@@ -122,6 +128,74 @@ class PrinterCommandBindingTest {
 
         post("/connect", "{\"connect\":false}");
         assertEquals(new ConnectCmd(false), connected.get());
+    }
+
+    // ------------------------------------------------- the Marlin-screen controls
+
+    /** {@code POST /home} with no axis named means all of them. */
+    @Test
+    void homingBindsItsAxesAndDefaultsToAll() {
+        post("/home", "{}");
+        assertEquals(new HomeAxes(null, null, null), received.get());
+        org.junit.jupiter.api.Assertions.assertTrue(((HomeAxes) received.get()).all());
+
+        post("/home", "{\"x\":true,\"z\":true}");
+        assertEquals(new HomeAxes(true, null, true), received.get());
+        org.junit.jupiter.api.Assertions.assertFalse(((HomeAxes) received.get()).all());
+    }
+
+    /**
+     * A jog carries {@code relative}, and an omitted axis stays null.
+     *
+     * <p>Null and zero are different here and the difference reaches the wire: a null axis is one
+     * the move does not mention, while zero in relative mode means "do not move this axis" and in
+     * absolute mode means "go to the origin". A binding that defaulted null to zero would turn a
+     * single-axis jog into a move of everything.
+     */
+    @Test
+    void aJogBindsItsAxesAndItsMode() {
+        post("/move", "{\"x\":10,\"feedRate\":3000,\"relative\":true}");
+
+        var move = assertInstanceOf(MoveAxes.class, received.get());
+        assertEquals(new BigDecimal("10"), move.x());
+        assertEquals(null, move.y(), "an axis the request did not name must stay null");
+        assertEquals(new BigDecimal("3000"), move.feedRate());
+        org.junit.jupiter.api.Assertions.assertTrue(move.isRelative());
+    }
+
+    /** An absolute move is the same payload without the flag. */
+    @Test
+    void anAbsoluteMoveBinds() {
+        post("/move", "{\"x\":0,\"y\":0,\"feedRate\":6000}");
+
+        var move = assertInstanceOf(MoveAxes.class, received.get());
+        assertEquals(new BigDecimal("0"), move.x());
+        org.junit.jupiter.api.Assertions.assertFalse(move.isRelative());
+    }
+
+    /** {@code POST /fan} on Marlin's 0..255 scale, not a percentage. */
+    @Test
+    void theFanPayloadBinds() {
+        post("/fan", "{\"index\":0,\"speed\":128}");
+        assertEquals(new SetFanSpeed(0, 128), received.get());
+
+        post("/fan", "{\"speed\":0}");
+        assertEquals(new SetFanSpeed(null, 0), received.get());
+        org.junit.jupiter.api.Assertions.assertTrue(((SetFanSpeed) received.get()).off());
+    }
+
+    /** {@code POST /store-settings} takes an empty object - a deliberate write, not a link. */
+    @Test
+    void storingSettingsBinds() {
+        post("/store-settings", "{}");
+        assertEquals(new StoreSettings(), received.get());
+    }
+
+    /** {@code POST /position} carries no body; the answer arrives on the stream. */
+    @Test
+    void askingForThePositionNeedsNoBody() {
+        client().post().uri("/api-printer/" + id + "/position").exchange().expectStatus().isOk();
+        assertEquals(new RequestPosition(), received.get());
     }
 
     /** {@code POST /report-temp} carries no body at all. */

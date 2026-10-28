@@ -10,6 +10,11 @@ import org.qw3rtrun.p3d.api.msg.RequestTemperatureReport;
 import org.qw3rtrun.p3d.api.msg.SetBedTarget;
 import org.qw3rtrun.p3d.api.msg.SetHotendTarget;
 import org.qw3rtrun.p3d.api.msg.SetTemperatureAutoReport;
+import org.qw3rtrun.p3d.api.msg.HomeAxes;
+import org.qw3rtrun.p3d.api.msg.MoveAxes;
+import org.qw3rtrun.p3d.api.msg.RequestPosition;
+import org.qw3rtrun.p3d.api.msg.SetFanSpeed;
+import org.qw3rtrun.p3d.api.msg.StoreSettings;
 import org.qw3rtrun.p3d.api.msg.TemperatureReport;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
 import org.qw3rtrun.p3d.g.protocol.GRq;
@@ -17,6 +22,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -64,7 +70,7 @@ public class PrinterControlService implements PrinterControl {
 
     @Override
     public Mono<Void> send(UUID id, PrinterCommand command) {
-        return reactor(id).flatMap(r -> r.handle(Mono.just(toMarlin(command))));
+        return reactor(id).flatMap(r -> r.handle(toMarlin(command)));
     }
 
     @Override
@@ -90,12 +96,65 @@ public class PrinterControlService implements PrinterControl {
      * {@code PrinterState} is what rounds it, because the wire format of a temperature is that
      * layer's business.
      */
-    static GRq<?> toMarlin(PrinterCommand command) {
+    static List<GRq<?>> toMarlin(PrinterCommand command) {
         return switch (command) {
-            case SetHotendTarget c -> MarlinG.INSTANCE.m104(c.temp(), c.index() == null ? 0 : c.index());
-            case SetBedTarget c -> MarlinG.INSTANCE.m140(c.temp());
-            case RequestTemperatureReport c -> MarlinG.INSTANCE.m105(c.index());
-            case SetTemperatureAutoReport c -> MarlinG.INSTANCE.m155(c.period());
+            case SetHotendTarget c ->
+                    List.of(MarlinG.INSTANCE.m104(c.temp(), c.index() == null ? 0 : c.index()));
+            case SetBedTarget c -> List.of(MarlinG.INSTANCE.m140(c.temp()));
+            case RequestTemperatureReport c -> List.of(MarlinG.INSTANCE.m105(c.index()));
+            case SetTemperatureAutoReport c -> List.of(MarlinG.INSTANCE.m155(c.period()));
+
+            case HomeAxes c -> List.of(c.all()
+                    ? new org.qw3rtrun.p3d.g.marlin.command.AutoHome()
+                    : new org.qw3rtrun.p3d.g.marlin.command.AutoHome(
+                            false, null, false, null,
+                            Boolean.TRUE.equals(c.x()),
+                            Boolean.TRUE.equals(c.y()),
+                            Boolean.TRUE.equals(c.z()),
+                            false, false, false, false, false, false));
+
+            case MoveAxes c -> move(c);
+
+            // The fan index goes in P and not in I. Marlin's own documentation lists both as
+            // "index" and the generated class carries both fields, but P is the one mainline
+            // firmware reads as the fan number - and it is what M107 uses, so the pair stays
+            // consistent. A null index sends no index word at all, which means fan 0.
+            case SetFanSpeed c -> List.of(c.off()
+                    ? new org.qw3rtrun.p3d.g.marlin.command.FanOff(c.index())
+                    : new org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed(
+                            null, c.speed(), c.index(), null));
+
+            case StoreSettings ignored ->
+                    List.of(new org.qw3rtrun.p3d.g.marlin.command.SaveSettings());
+
+            case RequestPosition ignored ->
+                    List.of(new org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition(
+                            false, false, false));
         };
+    }
+
+    /**
+     * A move, and the mode switch a relative one needs around it.
+     *
+     * <p>Marlin has no per-command relative flag: {@code G91} puts the machine in relative mode
+     * and it <strong>stays there</strong> until {@code G90} puts it back. So a relative jog is
+     * three commands, and leaving the machine in relative mode by forgetting the third would make
+     * every later absolute move - including a print's - land somewhere else entirely.
+     *
+     * <p>That is also why they are returned together rather than sent as three requests:
+     * {@code PrinterReactor.handle} applies the whole list as one task on the aggregate's thread,
+     * so no other command can be interpreted while the machine is in the wrong mode.
+     */
+    private static List<GRq<?>> move(MoveAxes c) {
+        var g1 = new org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1(
+                c.x(), c.y(), c.z(), null, null, null, null, null, null,
+                c.e(), c.feedRate(), null);
+        if (!c.isRelative()) {
+            return List.of(g1);
+        }
+        return List.of(
+                new org.qw3rtrun.p3d.g.marlin.command.RelativePositioning(),
+                g1,
+                new org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning());
     }
 }

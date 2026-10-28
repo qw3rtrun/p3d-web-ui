@@ -82,6 +82,61 @@ public class PrinterController {
         return Mono.from(printers.send(id, new RequestTemperatureReport(null)));
     }
 
+    /**
+     * Send the named axes home - {@code G28}.
+     *
+     * <p>Naming no axis homes everything, which is Marlin's own rule. Homing is a move, and a slow
+     * one that drags the nozzle across whatever is on the bed, so it is something an operator asks
+     * for rather than something another endpoint does on their behalf.
+     */
+    @PostMapping("/home")
+    public Mono<Void> home(@PathVariable UUID id, @RequestBody Mono<HomeAxes> command) {
+        return send(id, command);
+    }
+
+    /**
+     * Move the toolhead - a jog when {@code relative}, a positioning move when not.
+     *
+     * <p>A relative move reaches the machine as three commands with the mode switch around it;
+     * {@code core} sends them as one unit, so nothing can land between them and be read in the
+     * wrong mode. See {@link MoveAxes}.
+     */
+    @PostMapping("/move")
+    public Mono<Void> move(@PathVariable UUID id, @RequestBody Mono<MoveAxes> command) {
+        return send(id, command);
+    }
+
+    /** Set a part-cooling fan, on Marlin's 0..255 scale. Zero is sent as {@code M107}. */
+    @PostMapping("/fan")
+    public Mono<Void> fan(@PathVariable UUID id, @RequestBody Mono<SetFanSpeed> command) {
+        return send(id, command);
+    }
+
+    /**
+     * Write the machine's current settings to its EEPROM - {@code M500}.
+     *
+     * <p>The one command here whose effect outlives the connection, which is why it is a
+     * {@code POST} with a body rather than something a stray link could trigger - and why, like
+     * every write under this path, it is OPERATOR-only.
+     */
+    @PostMapping("/store-settings")
+    public Mono<Void> storeSettings(@PathVariable UUID id,
+                                    @RequestBody Mono<StoreSettings> command) {
+        return send(id, command);
+    }
+
+    /**
+     * Ask where the toolhead is - {@code M114}.
+     *
+     * <p>The answer does not come back here. It arrives on the event stream as
+     * {@code PositionReported}, because every reply in this application is an event: a reply can
+     * also arrive unasked, and a caller that waited only for its own would miss those.
+     */
+    @PostMapping("/position")
+    public Mono<Void> position(@PathVariable UUID id) {
+        return Mono.from(printers.send(id, new RequestPosition()));
+    }
+
     @PostMapping("/connect")
     public Mono<Void> connect(@PathVariable UUID id, @RequestBody Mono<ConnectCmd> cmd) {
         log.info("Cmd Connect received");

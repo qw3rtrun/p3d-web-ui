@@ -24,5 +24,6 @@ package org.qw3rtrun.p3d.api.msg;
  * {@code period}), so the browser's contract is unchanged by this moving.
  */
 public sealed interface PrinterCommand
-        permits SetHotendTarget, SetBedTarget, RequestTemperatureReport, SetTemperatureAutoReport {
+        permits SetHotendTarget, SetBedTarget, RequestTemperatureReport, SetTemperatureAutoReport,
+                HomeAxes, MoveAxes, SetFanSpeed, StoreSettings, RequestPosition {
 }

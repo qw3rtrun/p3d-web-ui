@@ -140,4 +140,22 @@ class EventStreamContractTest {
         assertEquals("BusyReport",
                 mapper.readTree(streamed(new BusyReport("processing"))).get("type").asString());
     }
+
+    /**
+     * The position report the move controls read - {@code M114}'s answer.
+     *
+     * <p>Axes are a map keyed by the letter Marlin used, because which axes exist is the machine's
+     * business: a delta reports X/Y/Z, an IDEX reports two carriages. A page renders what it was
+     * given, so the shape must stay a map rather than becoming four named fields the day a
+     * five-axis machine appears.
+     */
+    @Test
+    void aPositionReportCarriesItsAxesByLetter() {
+        var json = streamed(new org.qw3rtrun.p3d.api.msg.PositionReported(
+                new java.util.LinkedHashMap<>(java.util.Map.of("X", 0.0, "Y", 10.5))));
+
+        assertTrue(json.contains("\"type\":\"PositionReported\""), json);
+        assertTrue(json.contains("\"X\":0.0"), json);
+        assertTrue(json.contains("\"Y\":10.5"), json);
+    }
 }

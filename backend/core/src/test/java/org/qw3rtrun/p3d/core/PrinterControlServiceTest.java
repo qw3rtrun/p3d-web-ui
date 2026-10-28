@@ -36,8 +36,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class PrinterControlServiceTest {
 
+    /**
+     * The one Marlin command this application command becomes.
+     *
+     * <p>{@code toMarlin} returns a list because one intent is sometimes several commands - a
+     * relative move is {@code G91}, the move, then {@code G90}. Every command asserted in this
+     * class is a single one, and saying so here means a change that quietly made one of them
+     * multiple would fail rather than assert against the first element.
+     */
     private String marlin(org.qw3rtrun.p3d.api.msg.PrinterCommand command) {
-        return GEncoder.INSTANCE.encode(PrinterControlService.toMarlin(command).encode());
+        var commands = PrinterControlService.toMarlin(command);
+        assertEquals(1, commands.size(), () -> command + " became " + commands);
+        return GEncoder.INSTANCE.encode(commands.getFirst().encode());
     }
 
     @Test

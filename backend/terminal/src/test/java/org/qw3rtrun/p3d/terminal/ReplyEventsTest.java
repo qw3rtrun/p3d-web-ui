@@ -5,6 +5,7 @@ import org.qw3rtrun.p3d.api.msg.BusyReport;
 import org.qw3rtrun.p3d.api.msg.CapabilityReport;
 import org.qw3rtrun.p3d.api.msg.ErrorReport;
 import org.qw3rtrun.p3d.api.msg.FirmwareReport;
+import org.qw3rtrun.p3d.api.msg.PositionReported;
 import org.qw3rtrun.p3d.api.msg.TemperatureReport;
 import org.qw3rtrun.p3d.api.msg.TemperatureReported;
 import org.qw3rtrun.p3d.api.msg.UnknownReply;
@@ -102,17 +103,38 @@ class ReplyEventsTest {
     }
 
     /**
+     * A position report is a typed event now, which is what this file predicted.
+     *
+     * <p>It used to be the example of a reply with <em>no</em> application event - the note below
+     * called it "the current best candidate" for earning one - and the move controls of the
+     * printer page are what earned it. The stepper counts Marlin reports alongside the position
+     * are dropped: they are the firmware's internal count and differ from the planner's while
+     * moves are still queued, so carrying both would invite a reader to pick the wrong one.
+     */
+    @Test
+    void aPositionReportBecomesAPositionEvent() {
+        var event = assertInstanceOf(PositionReported.class,
+                ReplyEvents.of(decode("X:0.00 Y:10.50 Z:5.00 E:0.00 Count X:0 Y:0 Z:2000")));
+
+        assertEquals(0.0, event.axes().get("X"));
+        assertEquals(10.5, event.axes().get("Y"));
+        assertEquals(5.0, event.axes().get("Z"));
+        assertEquals(0.0, event.axes().get("E"));
+        assertEquals(4, event.axes().size(), "the stepper counts are not axes: " + event.axes());
+    }
+
+    /**
      * A decoded reply the application has no event for still reaches the bus.
      *
      * <p>Dropping it would make the application's model look complete when it is merely small.
-     * Seeing one of these is the signal that a reply has earned a typed event - the position report
-     * below is the current best candidate.
+     * Seeing one of these is the signal that a reply has earned a typed event, the way the
+     * position report above just did.
      */
     @Test
     void aReplyWithNoApplicationEventBecomesAnUnknownReply() {
         var event = assertInstanceOf(UnknownReply.class,
-                ReplyEvents.of(decode("X:0.00 Y:0.00 Z:5.00 E:0.00 Count X:0 Y:0 Z:2000")));
+                ReplyEvents.of(decode("Reporting endstop status")));
 
-        assertEquals("X:0.00 Y:0.00 Z:5.00 E:0.00 Count X:0 Y:0 Z:2000", event.text());
+        assertEquals("Reporting endstop status", event.text());
     }
 }

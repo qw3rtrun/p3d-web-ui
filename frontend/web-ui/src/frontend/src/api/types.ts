@@ -113,6 +113,16 @@ export interface TemperatureReported {
     bed: TemperatureReport
 }
 
+/**
+ * `type: "PositionReported"` - the answer to asking where the toolhead is.
+ *
+ * Keyed by the axis letter Marlin used, in millimetres. A map rather than named fields because
+ * which axes exist is the machine's business - render what you were given.
+ */
+export interface PositionReported {
+    axes: Record<string, number>
+}
+
 /** `type: "MachineJoinedFarm"` - a printer registered while the page was open. */
 export interface MachineJoinedFarm {
     name: string

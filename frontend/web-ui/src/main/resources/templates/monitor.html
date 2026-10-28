@@ -1,19 +1,15 @@
 <!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
 
-<head th:replace="container::common_headers(~{}, ~{:: //script})">
+<!--
+  Two empty fragments, like every other page. This used to pass `~{:: //script}` - "the script
+  elements of this document" - to hand its own module script up to the layout. That page-local
+  script is gone (the islands are mounted by the bundle, and Bootstrap comes with it), and a
+  selector that matches nothing does not resolve to an empty fragment: Thymeleaf fails the whole
+  render with "Error resolving fragment: ${scripts}".
+-->
+<head th:replace="container::common_headers(~{}, ~{})">
     <title></title>
-    <!--
-      The two hand-mounted POC apps that used to live here are gone. They imported `printer` and
-      `connection` through the import map and passed the whole Descriptor as a props object, which
-      meant every page carried its own mounting code; the bundle in container.html now finds the
-      mount point below and mounts PrinterMonitor into it.
-    -->
-    <script type="module">
-        // The theme's tabs and dropdowns are Bootstrap's, and this is what the POC script was
-        // really doing when it imported it.
-        import 'bootstrap';
-    </script>
 </head>
 
 <body th:replace="container::common_body(~{::#dashboard_form}, ~{})">

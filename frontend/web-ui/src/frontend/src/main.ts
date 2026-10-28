@@ -1,6 +1,17 @@
+// The theme's stylesheet, bundled rather than served from /static. Vite emits it as
+// assets/p3d-ui.css, which is what lets that directory hold nothing but images.
+//
+// The themify icon font that used to be imported beside it is gone: no template or component ever
+// used a `ti-` class, and three of its four font files were committed EMPTY - so the only format
+// with any bytes in it was the SVG font, which browsers dropped support for years ago. It could
+// never have rendered an icon.
+import './theme/style.css'
+
+import * as bootstrap from 'bootstrap'
 import {createApp, type Component} from 'vue'
 import FarmDashboard from './components/FarmDashboard.vue'
 import PrinterMonitor from './components/PrinterMonitor.vue'
+import {startTheme} from './theme'
 
 /**
  * Mounts the interactive parts of server-rendered pages.
@@ -58,8 +69,19 @@ function mountIslands() {
     })
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mountIslands, {once: true})
-} else {
+/**
+ * Bootstrap's own components are bundled, so every page has dropdowns, tabs and collapses.
+ *
+ * They used to come from a 1.6 MB vendor bundle on every page plus an ESM import from a webjar on
+ * one, which meant two copies of Bootstrap could be live at once on the monitor page.
+ */
+function start() {
+    startTheme(bootstrap)
     mountIslands()
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start, {once: true})
+} else {
+    start()
 }

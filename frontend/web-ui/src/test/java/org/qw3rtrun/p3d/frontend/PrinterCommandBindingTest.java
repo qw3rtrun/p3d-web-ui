@@ -30,9 +30,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 /**
  * The JSON the browser posts, and the command it becomes.
  *
- * <p>A contract with code the build does not compile: {@code static/js/lib/client.js} sends
- * {@code {index, temp}}, {@code {temp}}, {@code {period}} and {@code {connect}}, and nothing else
- * in this repository would notice if a field stopped binding. Something already had:
+ * <p>A contract with code the Java build does not compile: {@code src/frontend/src/api/client.ts}
+ * sends {@code {index, temp}}, {@code {temp}}, {@code {period}} and {@code {connect}}, and nothing
+ * else in this repository would notice if a field stopped binding - {@code vue-tsc} checks that
+ * file against itself, not against these records. Something already had:
  * {@code /auto-report-temp} bound `:gcode`'s generated class, whose property is {@code seconds},
  * so the {@code period} the user chose matched no field and every request silently asked for the
  * firmware's default instead.

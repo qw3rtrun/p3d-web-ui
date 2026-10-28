@@ -50,15 +50,15 @@ frontend/web-ui/
     package.json                     vue 3.5, vite 8, typescript 6, vue-tsc
     vite.config.ts                   one entry -> build/dist/assets/p3d-ui.js, names NOT hashed
     src/
-      main.ts                        entry: finds [data-p3d] mount points and mounts islands
+      main.ts                        entry: imports the theme CSS and Bootstrap, then mounts islands
+      theme.ts                       the two sidebar controls nav.html hooks into, without jQuery
+      theme/style.css                the admin theme, bundled into assets/p3d-ui.css
       api/types.ts                   the `api` vocabulary, mirrored in TypeScript
       api/client.ts                  the one place that talks to the server
       components/*.vue               the islands
   src/main/resources/templates/      Thymeleaf pages: container, nav, sidebar, dashboard,
-                                     monitor, add, edit, login
-  src/main/resources/static/         the admin theme (css, vendors, images) and the POC JS
-    js/component/*.js                the POC Vue components, being replaced by src/frontend
-    js/lib/client.js                 the POC client, being replaced by src/frontend/src/client.ts
+                                     monitor, add, edit, login, profile
+  src/main/resources/static/         images/ and NOTHING ELSE - four files the pages link by path
   src/main/java/.../frontend/
     mvc/MvcPrinterController         renders the pages
     *Controller                      REST and SSE - spring-backend-dev's half
@@ -67,8 +67,14 @@ frontend/web-ui/
 
 **The build**: `./gradlew :frontend:web-ui:assembleFrontend` runs Vite, which writes
 `build/dist`; `copyVueFiles` copies that into `build/resources/main/static`, so a built asset is
-served from the same origin as the pages. Nothing in `src/main/resources/static` is generated -
-that is the hand-written theme - so do not write build output there.
+served from the same origin as the pages - which matters, because the session and CSRF cookies are
+same-origin.
+
+**Everything a page loads is either `/assets/**` or a webjar.** Vite emits exactly two files,
+`assets/p3d-ui.js` (Vue, Bootstrap, the islands, the theme behaviour) and `assets/p3d-ui.css`, so
+a template links one stylesheet and one script. `src/main/resources/static` holds four images and
+is otherwise empty; nothing is generated into it, and nothing new should be added to it - a new
+asset belongs in `src/frontend`, where the build can see it.
 
 ## IMPORTANT - the server decides, the UI reflects
 
@@ -274,20 +280,26 @@ value it can carry.
 
 ## Known debt
 
-- **The POC and the real UI exist side by side.** `static/js/component/*.js` and
-  `static/js/lib/client.js` are the POC; `src/frontend` is the replacement. Every **Thymeleaf**
-  page has been ported, so the `printer`/`connection`/`client`/`vue` entries in `container.html`'s
-  import map are dead - but two loose static pages, `static/pages/index_old.html` and
-  `index_new.html`, still `import Printer from 'printer'`. They are POC leftovers of their own and
-  nothing links to them. **Deleting the POC means deciding what those two pages are for first**;
-  until then the import map stays, which costs nothing because an import map only matters to code
-  that imports those specifiers.
+- ~~**The POC and the real UI exist side by side.**~~ **Gone.** `static/js/component/*.js`,
+  `static/js/lib/client.js` and `printer-state.js` are deleted, and the
+  `printer`/`connection`/`client`/`vue` entries are out of `container.html`'s import map, which now
+  carries Bootstrap only. The entry is kept because the *shape* of the mistake is worth
+  remembering: the two static pages that appeared to block removal, `pages/index_old.html` and
+  `pages/index_new.html`, turned out to import `./js/printer.js` and `./js/component/printer.js` -
+  paths that resolve under `/pages/` and **have never existed**. They had been dead since the POC
+  moved, and a grep for the filename made them look like live callers. **Check that a reference
+  resolves before treating it as a dependency.**
 - **There is no test runner for the TypeScript.** `vue-tsc` checks types and nothing checks
   behaviour. A component with real logic in it - unit conversion, a state machine, throttling -
   wants Vitest before that logic grows.
 - **The theme ships a lot of dead markup.** Unused dropdowns, fake notification counts and demo
   charts came with it. Leave them alone unless the task touches them; removing them wholesale is
   its own change.
+- **The bundled theme stylesheet is 598 KB and most of it is unreachable.** It styles an auth
+  flow, a chat panel, a calendar and an email client none of which exist here, and it asks for
+  background images under `/images/auth/` and `/images/dashboard/` that were never shipped - so
+  those `url()`s 404 today exactly as they did when it was served from `/static`. Tree-shaking CSS
+  needs a tool that can see the Thymeleaf templates, which Vite cannot.
 - **No user-management page.** A person can see and change their *own* account at `/profile`, but
   creating an operator or resetting somebody else's password is still `/api-users` over `curl`.
 - **Changing a password does not sign out that user's other sessions.** Sessions are rows now, so

@@ -10,9 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "bootstrap": "5.3.8",
     "vue": "^3.5.43"
   },
   "devDependencies": {
+    "@types/bootstrap": "^5.2.11",
     "@types/node": "^24.0.0",
     "@vitejs/plugin-vue": "^6.0.9",
     "typescript": "^6.0.3",

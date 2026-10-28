@@ -7,26 +7,22 @@
     <title>Print3d</title>
     <link rel="shortcut icon" href="/images/favicon.svg"/>
 
-    <link rel="stylesheet" href="/webjars/bootstrap-icons/1.11.0/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="/webjars/bootstrap-icons/1.13.1/font/bootstrap-icons.min.css">
     <link rel="stylesheet" href="/webjars/mdi/2.1.19/css/materialdesignicons.min.css">
     <link rel="stylesheet" href="/webjars/simple-line-icons/2.4.1/css/simple-line-icons.css">
 
-    <link rel="stylesheet" href="/vendors/ti-icons/css/themify-icons.css">
-    <link rel="stylesheet" href="/css/vertical-layout-light/style.css">
+    <!--
+      The theme's stylesheet and its icon font, built by Vite from src/frontend/src/theme. They
+      used to be two links into /static; bundling them is what lets that directory hold nothing
+      but images.
+    -->
+    <link rel="stylesheet" href="/assets/p3d-ui.css">
 
-    <script type="importmap">
-        {
-            "imports": {
-                "@popperjs/core": "/webjars/popperjs__core/lib/index.js",
-                "bootstrap": "/webjars/bootstrap/dist/js/bootstrap.esm.min.js",
-                "vue": "/webjars/vue/dist/vue.esm-browser.js",
-                "printer": "/js/component/printer.js",
-                "connection": "/js/component/connection.js",
-                "client": "/js/lib/client.js"
-            }
-        }
-    </script>
-
+    <!--
+      No import map any more. It resolved the POC - a Vue and a Bootstrap from webjars, and three
+      hand-written modules under /static/js - and the bundle below now carries Vue, Bootstrap and
+      the theme's own behaviour, so nothing in a page imports a bare specifier.
+    -->
     <th:block th:replace="${links}"/>
 
     <!--
@@ -63,11 +59,12 @@
     </div>
 </div>
 
-<script src="/vendors/js/vendor.bundle.base.js"></script>
-<script src="/vendors/bootstrap-datepicker/bootstrap-datepicker.min.js"></script>
-<script src="/js/off-canvas.js"></script>
-<script src="/js/hoverable-collapse.js"></script>
-<script src="/js/template.js"></script>
+<!--
+  The jQuery vendor bundle, a datepicker no page uses, and the theme's three scripts used to load
+  here. They are in the bundle now - see src/frontend/src/theme.ts, which keeps the two controls
+  nav.html actually hooks into and drops the rest, including a banner whose missing element made
+  template.js throw on every page load.
+-->
 
 <th:block th:replace="${after_scripts}"/>
 

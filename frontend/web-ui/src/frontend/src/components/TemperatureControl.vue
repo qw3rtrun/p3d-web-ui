@@ -4,7 +4,8 @@ import {computed, ref, watch} from 'vue'
 /**
  * One heater: what it reads, what it is aiming at, and the controls to change that.
  *
- * Ported from `static/js/component/temperature-control.js`. Two things changed beyond the syntax:
+ * Ported from the POC's `temperature-control.js`, since deleted. Two things changed beyond the
+ * syntax, and both were bugs the original had:
  *
  * - **The target input no longer fights the machine.** The POC bound the slider straight to a ref
  *   that a `watch` on the incoming target also wrote, so a reading arriving mid-drag yanked the

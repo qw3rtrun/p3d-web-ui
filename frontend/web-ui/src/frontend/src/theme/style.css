@@ -21547,15 +21547,15 @@ code {
 }
 
 .performance-overview-carousel .carousel-inner .item .icon.icon-a::before {
-    content: url("../../images/dashboard/shape-1.svg");
+    content: url("/images/dashboard/shape-1.svg");
 }
 
 .performance-overview-carousel .carousel-inner .item .icon.icon-b::before {
-    content: url("../../images/dashboard/shape-1.svg");
+    content: url("/images/dashboard/shape-1.svg");
 }
 
 .performance-overview-carousel .carousel-inner .item .icon.icon-c::before {
-    content: url("../../images/dashboard/shape-3.svg");
+    content: url("/images/dashboard/shape-3.svg");
 }
 
 .performance-overview-carousel .carousel-control-prev,
@@ -23900,7 +23900,7 @@ code {
 }
 
 .card.table-darkBGImg {
-    background: #1E283D url("../../images/dashboard/darkBG.png") repeat-y right top;
+    background: #1E283D url("/images/dashboard/darkBG.png") repeat-y right top;
 }
 
 .card.tale-bg {
@@ -24119,7 +24119,7 @@ code {
 }
 
 .data-icon-card-primary .background-icon::before {
-    content: url("../../images/dashboard/shape-4.svg");
+    content: url("/images/dashboard/shape-4.svg");
     position: absolute;
 }
 
@@ -24138,7 +24138,7 @@ code {
 }
 
 .data-icon-card-secondary .background-icon::before {
-    content: url("../../images/dashboard/shape-4.svg");
+    content: url("/images/dashboard/shape-4.svg");
     position: absolute;
 }
 
@@ -24157,7 +24157,7 @@ code {
 }
 
 .data-icon-card-success .background-icon::before {
-    content: url("../../images/dashboard/shape-4.svg");
+    content: url("/images/dashboard/shape-4.svg");
     position: absolute;
 }
 
@@ -24176,7 +24176,7 @@ code {
 }
 
 .data-icon-card-info .background-icon::before {
-    content: url("../../images/dashboard/shape-4.svg");
+    content: url("/images/dashboard/shape-4.svg");
     position: absolute;
 }
 
@@ -24195,7 +24195,7 @@ code {
 }
 
 .data-icon-card-warning .background-icon::before {
-    content: url("../../images/dashboard/shape-4.svg");
+    content: url("/images/dashboard/shape-4.svg");
     position: absolute;
 }
 
@@ -24214,7 +24214,7 @@ code {
 }
 
 .data-icon-card-danger .background-icon::before {
-    content: url("../../images/dashboard/shape-4.svg");
+    content: url("/images/dashboard/shape-4.svg");
     position: absolute;
 }
 
@@ -24233,7 +24233,7 @@ code {
 }
 
 .data-icon-card-light .background-icon::before {
-    content: url("../../images/dashboard/shape-4.svg");
+    content: url("/images/dashboard/shape-4.svg");
     position: absolute;
 }
 
@@ -24252,7 +24252,7 @@ code {
 }
 
 .data-icon-card-dark .background-icon::before {
-    content: url("../../images/dashboard/shape-4.svg");
+    content: url("/images/dashboard/shape-4.svg");
     position: absolute;
 }
 
@@ -29879,17 +29879,17 @@ div.tagsinput span.tag a {
 /* === Landing screens === */
 /* Auth */
 .auth .login-half-bg {
-    background: url("../../images/auth/login-bg.jpg");
+    background: url("/images/auth/login-bg.jpg");
     background-size: cover;
 }
 
 .auth .register-half-bg {
-    background: url("../../images/auth/register-bg.jpg");
+    background: url("/images/auth/register-bg.jpg");
     background-size: cover;
 }
 
 .auth.lock-full-bg {
-    background: url("../../images/auth/lockscreen-bg.jpg");
+    background: url("/images/auth/lockscreen-bg.jpg");
     background-size: cover;
 }
 

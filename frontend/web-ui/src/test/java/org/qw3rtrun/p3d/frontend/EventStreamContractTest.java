@@ -19,13 +19,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The JSON the browser actually receives on {@code /api-printer/&#123;id&#125;/stream}.
  *
- * <p>This is a contract with code that is not compiled: {@code static/js/component/printer.js}
- * switches on {@code payload.type} and then reads {@code payload.event.hotend.target}. Nothing
- * else in the build can notice when a rename on this side silently stops matching a string on that
- * side, which is exactly what happened once already - the UI has been checking for
- * {@code "TemperatureReported"} since the {@code marlin/decoder} classes were deleted, while what
- * the stream actually carried was {@code "OkTemperatureRs"}, so every temperature the UI received
- * fell through its {@code if} and the page stopped updating.
+ * <p>This is a contract with code the Java build does not compile: the Vue islands under
+ * {@code src/frontend} switch on {@code message.type} and then read {@code event.hotend.target}.
+ * They are type-checked by {@code vue-tsc}, but <strong>only against their own declarations</strong>
+ * in {@code src/frontend/src/api/types.ts} - nothing on either side can notice when a rename here
+ * stops matching a string there.
+ *
+ * <p>That is not hypothetical: the UI checked for {@code "TemperatureReported"} while the stream
+ * had started carrying {@code "OkTemperatureRs"}, so every temperature fell through its
+ * {@code if} and the page quietly stopped updating. Nothing in the build said a word.
  *
  * <p>It works again because the application now has its own event model and the transport converts
  * into it: {@code TemperatureReported} is a name the host chose, rather than whatever the protocol

@@ -34,10 +34,20 @@ import reactor.core.publisher.Mono;
 @EnableWebFluxSecurity
 public class SecurityConfiguration {
 
-    /** Everything a browser must fetch before anyone can log in. */
+    /**
+     * Everything a browser must fetch before anyone can log in.
+     *
+     * <p><strong>{@code /assets/**} is the built UI bundle and has to be here</strong>, because the
+     * login page itself is styled by {@code /assets/p3d-ui.css}. It carries no data - it is the
+     * same stylesheet and the same JavaScript every visitor would get anyway - and the endpoints
+     * it talks to are each guarded on their own.
+     *
+     * <p>{@code /css/**}, {@code /js/**}, {@code /vendors/**} and {@code /pages/**} used to be
+     * here and are gone with the directories they named: the theme is bundled now, and what
+     * {@code /pages/**} served was dead demo markup nothing linked to.
+     */
     private static final String[] PUBLIC = {
-            "/login", "/css/**", "/js/**", "/images/**", "/vendors/**", "/pages/**", "/webjars/**",
-            "/favicon.ico"
+            "/login", "/assets/**", "/images/**", "/webjars/**", "/favicon.ico"
     };
 
     /** Reading the farm: the dashboard, the monitor page, and every stream and query behind them. */

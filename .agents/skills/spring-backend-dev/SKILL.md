@@ -103,6 +103,28 @@ Three ways out, in order of preference:
 Never `block()` on a pipeline thread, and never `Thread.sleep`. If a test needs time to pass, use
 `VirtualTimeScheduler`.
 
+**A unit test will not catch a `block()` on an event loop, and D2 proved it in production.**
+`FarmEvents` built its snapshot with `reactor.connection().block()`; all nine of its tests passed
+and `GET /api-farm/stream` answered 500 to every browser - *"block()/blockFirst()/blockLast() are
+blocking, which is not supported in thread reactor-http-nio-10"*. The gap is that **a pipeline runs
+on whichever thread subscribed**: a test subscribes on an ordinary thread, where blocking is merely
+rude, and WebFlux subscribes on a netty event loop, where Reactor refuses it outright.
+
+So when a publisher is going to be served over SSE, **subscribe the test on
+`Schedulers.parallel()`** - its workers carry the same `NonBlocking` marker an event loop does, and
+the same check fires:
+
+```java
+StepVerifier.create(Flux.from(farm.updates())
+                .subscribeOn(Schedulers.parallel())   // NonBlocking, like a netty loop
+                .take(1))
+        .assertNext(...)
+        .verifyComplete();
+```
+
+Treat Reactor's refusal as a gift: the alternative to a 500 is not a working farm, it is one that
+stalls an event loop under load with no symptom at all.
+
 ## Spring Modulith - the declared structure
 
 **Eight modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
@@ -440,6 +462,20 @@ show.
   working live channel and the one to extend. **The replay sink is seeded with the current
   connection state**, so a late subscriber learns where a machine is without waiting for something
   to happen to it; `GET /api-printer/{id}/connection` answers the same question without a stream.
+- **The farm-wide stream is `GET /api-farm/stream`** (plan item D2), and it is what a dashboard
+  should hold instead of one `EventSource` per machine. **It opens nothing**: `FarmEvents` listens
+  on the application event bus, where every machine's events already go, rather than subscribing
+  through `PrinterControl.updates(id)` - which instantiates a reactor as a side effect and would
+  dial forty printers to render a page that is only looking. Each message is an `EventMessage`
+  carrying the machine id, so one stream is demultiplexed by the client.
+- **A farm-wide sink must not replay, and must not buffer.** A replaying sink holds the last event
+  for the farm rather than per machine, which is useless - so a new subscriber gets a *built*
+  snapshot (every machine's current state) concatenated with the live sink. And the sink is
+  `Sinks.many().multicast().directBestEffort()`: `onBackpressureBuffer` **warms up**, buffering
+  everything emitted while nothing is subscribed and handing the whole backlog to the first
+  subscriber to arrive. On a farm that runs for days with no dashboard open that is every
+  temperature reading since boot. Lossy is also correct downstream - a browser that stops reading
+  must never stall the reactor feeding it.
 - **There is no WebSocket channel, and that is deliberate.** `WSGPrinterHandler` was deleted in A4:
   it read a session attribute nothing wrote, so its id was always null, and no client ever connected
   to `/ws-printer/*`. If one is wanted later it is a day's work on a *working* SSE contract, and it
@@ -596,6 +632,12 @@ the source, not suspected.
   takes one exact reading when it stops and the checkpoint is monotone rather than state-gated.
   **A "latest wins" checkpoint is a different thing from a "highest wins" one, and only the second
   is safe to resume from.**
+- **An event published while a farm subscriber is mid-snapshot is dropped.** `updates()` is the
+  snapshot `concatWith` the live sink, so the sink is not subscribed until the snapshot completes -
+  and the snapshot is now asynchronous, one `Mono` per machine. The window is milliseconds and the
+  sink is lossy by design, so nothing is *wrong*; but a dashboard can miss a state change that
+  lands exactly as it attaches, and the fix (subscribe the sink first, then prepend the snapshot)
+  wants its own change rather than being smuggled into D2.
 - **First fit does not prefer the least capable machine that fits.** A job with no requirements
   takes the first eligible printer in roster order, so it can occupy the one big machine a
   restricted job was waiting for. Observed live. Fixing it means ranking candidates, which is a

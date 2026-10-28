@@ -27,6 +27,22 @@ function get(uuid, path) {
         .then(response => response.ok ? response.json() : null, () => null);
 }
 
+// One stream for the whole farm - plan item D2. The dashboard used to open one of these per
+// printer, and each one instantiated a runtime on the server as a side effect: at forty machines
+// that is forty sockets opened to render a page that is only looking.
+//
+// It opens with the current state of every machine, so a page can draw itself from the stream
+// alone rather than fetching a list and then subscribing - which has a gap between the two where
+// an event goes missing and a row stays stale until that printer next says something.
+let farm = null;
+const farmListeners = new Map();
+
+function openFarmStream() {
+    const stream = new EventSource("/api-farm/stream");
+    stream.addEventListener("error", () => console.warn("{farm/stream} dropped"));
+    return stream;
+}
+
 function openEventStream(uuid) {
     const stream = new EventSource(`/api-printer/${uuid}/stream`);
     stream.addEventListener("message", e => console.log(`{${uuid}/stream} -> ${e.data}`));
@@ -38,6 +54,29 @@ export default {
         const stream = streams.get(uuid) || openEventStream(uuid);
         streams.set(uuid, stream);
         return stream;
+    },
+
+    // Watch every machine at once. The callback gets the same EventMessage shape the per-printer
+    // stream carries - {id, type, event} - so a dashboard routes on `id` and reads `event` exactly
+    // as a monitor page already does.
+    subscribeToFarm(cb) {
+        if (farmListeners.has(cb)) {
+            console.warn("Callback '" + cb + "' has already subscribed to the farm");
+            return;
+        }
+        farm = farm || openFarmStream();
+        const listener = e => cb(JSON.parse(e.data));
+        farm.addEventListener("message", listener);
+        farmListeners.set(cb, listener);
+        console.log("Callback '" + cb + "' subscribed to the farm");
+    },
+
+    unsubscribeFromFarm(cb) {
+        if (!farmListeners.has(cb)) {
+            return;
+        }
+        farm.removeEventListener("message", farmListeners.get(cb));
+        farmListeners.delete(cb);
     },
 
     subscribe(uuid, cb) {

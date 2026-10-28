@@ -346,8 +346,19 @@ public class PrinterReactor {
                 .then();
     }
 
+    /**
+     * One event from the aggregate: to this machine's own subscribers, to the farm, to the roster.
+     *
+     * <p>The farm hop is the application event bus rather than a second sink handed in here, which
+     * keeps plan item D2's farm view from having to be wired into every reactor as it is built -
+     * and the bus is what this repository's skill calls the one dispatch mechanism. It carries
+     * perhaps one or two messages a second per machine: a temperature auto-report and whatever the
+     * aggregate decided was worth announcing, not every acknowledged block.
+     */
     private void onEvent(GEvent report) {
-        updates.emitNext(new EventMessage(printer.getId(), report), SERIALISE);
+        var message = new EventMessage(printer.getId(), report);
+        updates.emitNext(message, SERIALISE);
+        roster.publishEvent(message);
         report(report);
     }
 

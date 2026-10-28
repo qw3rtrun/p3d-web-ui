@@ -40,6 +40,27 @@ class EventStreamContractTest {
     }
 
     /**
+     * The farm stream's membership events - plan item D2.
+     *
+     * <p>Same envelope as everything else, so a dashboard routes on {@code id} and switches on
+     * {@code type} exactly as a monitor page does. These two are the only events on that stream
+     * that are about the farm rather than about a machine, and a page that misses them shows a
+     * printer that is gone or misses one that arrived until somebody reloads.
+     */
+    @Test
+    void aMachineJoiningOrLeavingTheFarmCarriesTheTypeAndItsName() {
+        var joined = mapper.readTree(streamed(
+                new org.qw3rtrun.p3d.api.msg.MachineJoinedFarm("big-PETG")));
+
+        assertEquals("MachineJoinedFarm", joined.get("type").asString());
+        assertEquals("big-PETG", joined.get("event").get("name").asString());
+        assertTrue(joined.get("id").asString().length() == 36, "the machine it is about");
+
+        var left = mapper.readTree(streamed(new org.qw3rtrun.p3d.api.msg.MachineLeftFarm()));
+        assertEquals("MachineLeftFarm", left.get("type").asString());
+    }
+
+    /**
      * The shape {@code printer.js} reads, field for field.
      *
      * <p>{@code payload.type}, then {@code payload.event.hotend.target} and

@@ -86,6 +86,17 @@ public class PrinterDirectory {
     private final Map<UUID, Entry> known = new ConcurrentHashMap<>();
 
     /**
+     * Every machine this module has been told about.
+     *
+     * <p>A copy, so a caller iterating it cannot be surprised by a printer being registered
+     * halfway through - which plan item D2's snapshot would otherwise be, since it is built on
+     * whatever thread a browser attached on.
+     */
+    public java.util.List<Entry> all() {
+        return java.util.List.copyOf(known.values());
+    }
+
+    /**
      * <p>{@code HIGHEST_PRECEDENCE} because {@link PrinterReactorManager} listens to the same event
      * in order to redial what was connected, and it asks this replica where to dial. Spring runs
      * same-event listeners in an undefined order unless they say otherwise, and "undefined" here

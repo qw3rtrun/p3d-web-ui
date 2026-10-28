@@ -74,6 +74,14 @@ class BootVuejsApplicationTests {
             };
         }
 
+        /** The farm-wide stream, which lives in core - plan item D2. */
+        @Bean
+        org.qw3rtrun.p3d.api.control.FarmView farmView() {
+            return () -> {
+                throw new UnsupportedOperationException("not expected during a context load");
+            };
+        }
+
         @Bean
         MachineManagementService machines() {
             return new MachineManagementService() {

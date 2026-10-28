@@ -85,7 +85,7 @@ Everything in phase B and C needs it; none of them should need WebFlux to get at
 | ~~**C4**~~ | [progress and telemetry](#c4) | ~~Lines accepted, elapsed, estimated remaining — driven by acknowledgements, not by what was sent~~ **done** — blocks and bytes, checkpointed on a timer, with the in-flight gap reported rather than inferred | C5 |
 | ~~**C5**~~ | [pause, cancel, and survive a disconnect](#c5) | ~~The operations an eight-hour print actually needs~~ **done** — pause is a stop, resume is a seek, a dropped link fails the job with its position | D1 |
 | ~~**D1**~~ | [assignment](#d1) | ~~Match a queued job to a capable, idle machine; a farm queue and a per-machine queue~~ **done** — an eighth module that owns nothing, first-fit over three modules' facts | D2 |
-| **D2** | [the farm view](#d2) | One live stream for N printers instead of N streams of one | — |
+| ~~**D2**~~ | [the farm view](#d2) | ~~One live stream for N printers instead of N streams of one~~ **done** — one listener on the event bus, a built snapshot, and nothing opened | — |
 | **D3** | [operations](#d3) | Authentication, a real database, and the observability the dependencies already allow for | — |
 
 ---
@@ -1221,6 +1221,67 @@ single-threaded schedulers to render one page.
 
 **Done when.** The dashboard holds one subscription; per-printer streams still work for the monitor
 page; a printer added or removed while the page is open appears or disappears without a reload.
+
+**Done, and the whole item is one listener rather than a fan-in.** The obvious build - subscribe to
+every machine through `PrinterControl.updates(id)` and merge - is the one thing the item exists to
+stop: `updates(id)` instantiates a reactor as a side effect, so a page that is only *looking* would
+open forty sockets to render itself. `FarmEvents` instead listens where every machine's events
+already go, the application event bus, and opens nothing. Watching forty printers costs forty
+listeners and no connections.
+
+**A new subscriber gets a built snapshot, not a replay.** A replaying sink would hold the last event
+for *the farm* rather than per machine, so the one event it kept would be whichever printer spoke
+most recently - useless for drawing a page. `updates()` is the current state of every machine
+concatenated with everything that happens next, which is what makes one subscription enough: a page
+knows where each printer is the moment it attaches, instead of showing blanks until each machine
+next speaks, which for an idle one could be never.
+
+**The sink is `directBestEffort` and emphatically not `onBackpressureBuffer`.** The latter was the
+obvious choice and leaks: it *warms up*, buffering everything emitted while nothing is subscribed
+and handing the whole backlog to the first subscriber to arrive - on a farm running for days with no
+dashboard open, every temperature reading every machine has produced since boot, held in memory to
+be replayed at a page asking what is happening *now*. Four tests caught it. Lossy is also right at
+the other end: a browser that stops reading must not stall the reactor feeding it. A printer must
+never wait on a dashboard.
+
+**`MRegisteredEvent` is a statement of current fact, not an arrival.** It is re-published for every
+machine at startup and again whenever the roster learns something, so taking each one as a join
+would tell a dashboard a printer had just appeared every time it reported its firmware. `FarmEvents`
+keeps the set it has announced; a machine deleted and registered again is a genuine new arrival.
+
+**One bug, found live and only live, and it is the rule this layer is built on.** The first snapshot
+read each machine's state with `reactor.connection().block()`. Every unit test passed, because a
+test subscribes on an ordinary thread - but a snapshot is built on whichever thread subscribed, and
+for an SSE endpoint that is a netty event loop. `GET /api-farm/stream` answered **500** to every
+browser:
+
+```
+java.lang.IllegalStateException: block()/blockFirst()/blockLast() are blocking,
+  which is not supported in thread reactor-http-nio-10
+  at org.qw3rtrun.p3d.core.FarmEvents.currentStateOf(FarmEvents.java:91)
+```
+
+Reactor's own non-blocking-thread check is the only reason this was a visible failure rather than a
+farm that went quiet under load. The snapshot is now a `concatMap` over `Mono`s and blocks nothing,
+and the gap that hid it is closed by a test that subscribes on `Schedulers.parallel()` - whose
+workers carry the same `NonBlocking` marker an event loop does. That test was confirmed red against
+the old code before the fix was kept.
+
+**Verified by running**, two stand-in printers, one stream, a third printer added and removed while
+it was open - all six messages on the single subscription:
+
+```
+data:{"id":"e6c9c2d0…","type":"ConnectionStateChanged","event":{"from":"IDLE","to":"IDLE",…}}
+data:{"id":"7c2c0db3…","type":"ConnectionStateChanged","event":{"from":"IDLE","to":"IDLE",…}}
+data:{"id":"4274f1ca…","type":"MachineJoinedFarm","event":{"name":"gamma"}}
+data:{"id":"4274f1ca…","type":"MachineLeftFarm","event":{}}
+data:{"id":"7c2c0db3…","type":"TemperatureReported","event":{"hotend":{"current":45.26,…}}}
+data:{"id":"e6c9c2d0…","type":"TemperatureReported","event":{"hotend":{"current":45.26,…}}}
+```
+
+The snapshot reads `IDLE` and not `OFFLINE`, which is the proof the non-blocking read returns live
+state rather than quietly falling back to a default. The per-machine stream still works and still
+carries only its own machine.
 
 ### D3 — operations {#d3}
 

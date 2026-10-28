@@ -77,6 +77,18 @@ public class CoreConfiguration {
         return new JobFeeder(reactors, files, jobs, events);
     }
 
+    /**
+     * The farm-wide stream - plan item D2.
+     *
+     * <p>It opens nothing: it listens where every machine's events already go, so watching forty
+     * printers costs forty listeners rather than forty sockets.
+     */
+    @Bean
+    public org.qw3rtrun.p3d.api.control.FarmView farmView(PrinterDirectory directory,
+                                                          PrinterReactorManager reactors) {
+        return new FarmEvents(directory, reactors);
+    }
+
     @Bean
     public PrinterAggregateManager aggregates(PrinterDirectory directory) {
         return id -> directory.find(id)

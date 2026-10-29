@@ -7,6 +7,7 @@ import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.block.GFramedBlock
 import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
+import org.qw3rtrun.p3d.g.code.core.block.GLineLimit
 import org.qw3rtrun.p3d.g.code.core.command.GCommand
 import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.command.GWord
@@ -368,6 +369,93 @@ class GSendWindowTest {
             val window = GSendWindow(calculator = ::Crc16CheckSum)
 
             assertEquals("N1 G28*14291", window.send("G28"))
+        }
+    }
+
+    /**
+     * Spec 1.3: whether a payload still fits the firmware's buffer once this window has framed it.
+     *
+     * The question only this object can answer, because the answer depends on the line number and
+     * the number is assigned here. Each case below is a payload that fits by one measure and not by
+     * another, which is the whole reason the check cannot be made anywhere else.
+     */
+    @Nested
+    inner class Length {
+
+        @Test
+        fun `an ordinary block fits`() {
+            val window = GSendWindow()
+
+            assertTrue(window.fits("G28"))
+            assertTrue(window.fits("G1 X10.50 Y20.25 Z0.30 E1.5 F1800"))
+            assertTrue(window.fits(""))
+        }
+
+        @Test
+        fun `a payload that fits bare does not always fit framed`() {
+            // 95 bytes is inside Marlin's 96, and `N1 ` plus `*nnn` puts it outside. This is the
+            // shape that strands a host: the firmware truncates it, rejects the checksum, asks for
+            // a resend, and gets the same bytes truncated the same way.
+            val payload = "M117 " + "x".repeat(90)
+            assertEquals(95, payload.length)
+
+            assertTrue(GLineLimit.fits(payload))
+            assertFalse(GSendWindow().fits(payload))
+        }
+
+        @Test
+        fun `the same payload fits at a low line number and not at a high one`() {
+            // `N100000 ` costs five bytes more than `N1 `, so the room a block has shrinks as a
+            // session runs. Nothing holding only the text could know that.
+            val payload = "X".repeat(88)
+
+            assertTrue(GSendWindow(first = 1).fits(payload))
+            assertFalse(GSendWindow(first = 100000).fits(payload))
+        }
+
+        @Test
+        fun `a crc window has less room than an xor one`() {
+            // Spec 8.4's field is five digits where spec 8.2's is at most three, and the difference
+            // comes out of the payload.
+            val payload = "X".repeat(89)
+
+            assertTrue(GSendWindow().fits(payload))
+            assertFalse(GSendWindow(calculator = ::Crc16CheckSum).fits(payload))
+        }
+
+        @Test
+        fun `the limit is the window's, so a roomier firmware is told so`() {
+            val payload = "X".repeat(150)
+
+            assertFalse(GSendWindow().fits(payload))
+            assertTrue(GSendWindow(limit = GLineLimit.REPRAP_FIRMWARE).fits(payload))
+        }
+
+        @Test
+        fun `asking does not number, frame or remember anything`() {
+            // `fits` frames a copy to measure it. If that leaked into the window's state it would
+            // burn a line number per question asked, and a gap is what the firmware rejects.
+            val window = GSendWindow()
+
+            assertTrue(window.fits("G28"))
+            assertFalse(window.fits("X".repeat(200)))
+
+            assertEquals(1, window.next)
+            assertEquals(0, window.inFlight)
+            assertEquals("N1 G28*18", window.send("G28"))
+        }
+
+        @Test
+        fun `send does not consult it, because null already means something else`() {
+            // Stated as a test because it is a deliberate gap, not an omission: the transport reads
+            // null as back-pressure and retries, and retrying will not shorten a line. The decision
+            // belongs to a caller that can fail the command.
+            val window = GSendWindow()
+            val payload = "X".repeat(200)
+
+            assertFalse(window.fits(payload))
+            assertNotNull(window.send(payload))
+            assertEquals(2, window.next)
         }
     }
 }

@@ -2,7 +2,6 @@ package org.qw3rtrun.p3d.terminal;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
-import org.qw3rtrun.p3d.api.msg.GEvent;
 import org.qw3rtrun.p3d.g.code.core.session.GSendWindow;
 import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
 import org.qw3rtrun.p3d.g.protocol.AdvancedOkRs;
@@ -92,7 +91,7 @@ public class HostTerminal {
      * as {@code FAIL_NON_SERIALIZED} to {@link #emit}, which logs it, instead of quietly corrupting
      * the subscriber list.
      */
-    private final Sinks.Many<GEvent> replays = Sinks.many().replay().latest();
+    private final Sinks.Many<Object> replays = Sinks.many().replay().latest();
 
     private CommandProcessor outSide;
     private ReplaySubscriber inSide;
@@ -126,6 +125,13 @@ public class HostTerminal {
      * format in three places, and {@code PrinterReactor} was decoding the text a second time
      * anyway, so every line was being read by two parsers that disagreed.
      *
+     * <p><strong>Propagated, not translated.</strong> A reply leaves here as the {@code GRs} the
+     * decoder produced. There used to be a {@code ReplyEvents} on this boundary turning each one
+     * into an {@code api.msg} record of its own - {@code TemperatureRs} into
+     * {@code TemperatureReported}, nullable {@code BigDecimal} into zero-filled {@code double} -
+     * which is a second model of one machine's replies, kept in step by hand and lossy on purpose.
+     * This farm drives Marlin, so what a Marlin said is what a subscriber gets.
+     *
      * <p>Not every received line reaches here as itself. The ones that drive the protocol are
      * consumed by the send window: a bare and an advanced {@code ok}, {@code wait}, and
      * {@code Resend}. Everything else is published - except a line no decoder claimed, which is
@@ -144,7 +150,7 @@ public class HostTerminal {
      * the printer reported a fault. A printer fault is an {@code ErrorRs} value like any other
      * reply; see {@link ReplaySubscriber#onNext}.
      */
-    public Flux<GEvent> messageFlux() {
+    public Flux<Object> messageFlux() {
         return replays.asFlux();
     }
 
@@ -176,7 +182,7 @@ public class HostTerminal {
         if (ok instanceof SimpleOkRs || ok instanceof AdvancedOkRs) {
             return;
         }
-        emit(ReplyEvents.of(ok));
+        emit(ok);
     }
 
     /**
@@ -191,7 +197,7 @@ public class HostTerminal {
      */
     void onBusy(BusyRs<?> busy) {
         outSide.clearInFlight();
-        emit(ReplyEvents.of(busy));
+        emit(busy);
     }
 
     /**
@@ -222,7 +228,7 @@ public class HostTerminal {
      * not {@code OK} - a dropped reply here is a temperature reading that never reaches the UI, so
      * it is worth a line in the log rather than nothing at all.
      */
-    private void emit(GEvent reply) {
+    private void emit(Object reply) {
         Sinks.EmitResult result = replays.tryEmitNext(reply);
         if (result.isFailure()) {
             log.warn("IN: reply dropped ({}): {}", result, reply);
@@ -914,7 +920,7 @@ public class HostTerminal {
                 case BusyRs<?> busy -> onBusy(busy);
                 case WaitRs _ -> onWait();
                 case ResendRs resend -> onResend(resend.getLineNumber());
-                default -> emit(ReplyEvents.of(reply));
+                default -> emit(reply);
             }
         }
 

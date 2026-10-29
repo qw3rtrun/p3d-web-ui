@@ -37,7 +37,7 @@ boundary matters: see *The one thing you must not do* below.
 | Authority | Where | Covers |
 |---|---|---|
 | Style and contracts | `vue-ui-dev` skill | What you may write in the UI, and what the browser owes the server. |
-| The vocabulary | `:backend:api` | `Descriptor`, `EventMessage`, the `GEvent` types, the `PrinterCommand` records. The UI mirrors these; it never invents a parallel model. |
+| The vocabulary | `:backend:api` and `:gcode` | `Descriptor` and `EventMessage` from `api`, and the replies (`TemperatureRs`, `PositionRs`, `ErrorRs`) under `:gcode`'s own names. The UI mirrors these in `types.ts`; it never invents a parallel model. |
 | What the UI is for | `doc/ui.txt` | The iteration being built and what counts as done. |
 
 The backend's own rules live in `spring-backend-dev`. Read it when you need to know *why* an
@@ -67,15 +67,14 @@ from here.
 
 **Do not add an endpoint that accepts G-code text, and do not ask for one.**
 
-The chain for every control is a `PrinterCommand` record in `api::msg`, a `POST` on
-`PrinterController`, and an arm in `PrinterState.onCommand` that translates it into a `:gcode`
-command. Today that model covers temperature only. Homing, moving an axis, fan speed and saving
-settings all exist in `:gcode` but have no application command yet - so a detail page that needs
-them needs the backend built first.
+The chain for every control is a request-body record in `frontend/command` that builds the `:gcode`
+command itself, a `POST` on `PrinterController`, and an arm in `PrinterState.onCommand` that sends
+it. A control whose command is not in that package needs the backend built first - `:gcode` almost
+certainly has the command already; the endpoint and the aggregate's arm are what is missing.
 
 A "send raw G-code" endpoint would look like a shortcut and would hand any operator arbitrary
-control of a heater, past every check the command model exists to make. When you hit this, say
-which commands are missing and stop; building them is `backend-dev`'s work.
+control of a heater, past every check the endpoints exist to make. When you hit this, say which
+commands are missing and stop; building them is `backend-dev`'s work.
 
 ## Verifying
 

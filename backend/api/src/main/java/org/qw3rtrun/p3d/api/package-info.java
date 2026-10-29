@@ -19,10 +19,18 @@
  *
  * <p><strong>No Spring, and no framework.</strong> The Modulith annotation below is
  * {@code compileOnly} - the declaration is read out of the bytecode by
- * {@code ApplicationModulesTest} in {@code :app} - and the module's one real dependency is
- * {@code org.reactivestreams}, the interop SPI that {@code Mono} and {@code Flux} implement. That
- * is deliberate rather than frugal: this is the vocabulary both the web side and the persistence
- * side are written in, so anything dragged in here is dragged into both.
+ * {@code ApplicationModulesTest} in {@code :app} - and the two dependencies it does have are not
+ * frameworks: {@code org.reactivestreams}, the interop SPI that {@code Mono} and {@code Flux}
+ * implement, and {@code :gcode}. That is deliberate rather than frugal: this is the vocabulary both
+ * the web side and the persistence side are written in, so anything dragged in here is dragged into
+ * both.
+ *
+ * <p><strong>Why {@code :gcode} is the exception.</strong> The dependency rule is
+ * {@code backend -> terminal -> gcode}, and this module is where that chain surfaces: a reply
+ * reaches a subscriber as the {@code GRs} the protocol decoded and a command leaves as a
+ * {@code GRq}, rather than as a hand-maintained copy of each under a different name. {@code :gcode}
+ * itself depends on nothing at all - it is a protocol library, not a framework, and it is the one
+ * module here with no Spring anywhere near it.
  */
 @org.springframework.modulith.ApplicationModule(displayName = "Shared API")
 package org.qw3rtrun.p3d.api;

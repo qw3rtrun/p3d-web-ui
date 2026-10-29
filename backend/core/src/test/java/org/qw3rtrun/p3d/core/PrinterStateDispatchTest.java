@@ -3,16 +3,17 @@ package org.qw3rtrun.p3d.core;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
-import org.qw3rtrun.p3d.api.msg.BusyReport;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
-import org.qw3rtrun.p3d.api.msg.ErrorReport;
-import org.qw3rtrun.p3d.api.msg.CapabilityReport;
-import org.qw3rtrun.p3d.api.msg.FirmwareReport;
-import org.qw3rtrun.p3d.api.msg.GEvent;
-import org.qw3rtrun.p3d.api.msg.TemperatureReport;
-import org.qw3rtrun.p3d.api.msg.TemperatureReported;
-import org.qw3rtrun.p3d.api.msg.UnknownReply;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
+import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
+import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
+import org.qw3rtrun.p3d.g.protocol.DebugRs;
+import org.qw3rtrun.p3d.g.protocol.ErrorPrefix;
+import org.qw3rtrun.p3d.g.protocol.ErrorRs;
+import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
@@ -37,11 +38,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * handler is a compile error. What is left for a test is the thing a compiler still cannot check:
  * that the arms route where they claim to, and that an unhandled message is survived rather than
  * thrown on.
+ *
+ * <p><strong>The replies here are {@code :gcode}'s own.</strong> They used to be {@code api.msg}
+ * records that {@code ReplyEvents} built from them - a second model of a Marlin's replies - so what
+ * these tests fed the aggregate was a translation rather than a reply. They are the decoded values
+ * now, which is also what a live machine produces.
  */
 class PrinterStateDispatchTest {
 
     private final List<String> sent = new ArrayList<>();
-    private final List<GEvent> emitted = new ArrayList<>();
+    private final List<Object> emitted = new ArrayList<>();
 
     /** A method reference, not a lambda - {@link GSender} has two single-argument constructors. */
     private void capture(String gcode) {
@@ -57,17 +63,40 @@ class PrinterStateDispatchTest {
         return printer;
     }
 
+    private static BareTemperatureRs temperatures(HeaterReading hotend, HeaterReading bed) {
+        return new BareTemperatureRs(hotend, bed, null, null, null, null, null, Map.of());
+    }
+
     @Test
     void aTemperatureEventReachesTheAggregate() {
         var printer = online();
 
-        printer.onEvent(new TemperatureReported(
-                new TemperatureReport(210.0, 205.0, 127),
-                new TemperatureReport(60.0, 55.0, 80)));
+        printer.onEvent(temperatures(
+                new HeaterReading(new BigDecimal("210.0"), new BigDecimal("205.0"), 127),
+                new HeaterReading(new BigDecimal("60.0"), new BigDecimal("55.0"), 80)));
 
-        assertEquals(210.0, printer.getTemperature().current());
-        assertEquals(205.0, printer.getTemperature().target());
-        assertEquals(127, printer.getTemperature().power());
+        assertEquals(new BigDecimal("210.0"), printer.getTemperature().getCurrent());
+        assertEquals(new BigDecimal("205.0"), printer.getTemperature().getTarget());
+        assertEquals(127, printer.getTemperature().getPower());
+    }
+
+    /**
+     * A target the firmware did not state stays absent.
+     *
+     * <p>The record this replaced had no way to say "not reported" - an absent target arrived as
+     * {@code 0.0}, which is indistinguishable from a hotend that has been told to cool down. One of
+     * those is a machine nobody has asked for anything and the other is a machine on its way off,
+     * and a page drawing both the same way is wrong about one of them.
+     */
+    @Test
+    void aReadingWithNoTargetKeepsSayingSo() {
+        var printer = online();
+
+        printer.onEvent(temperatures(new HeaterReading(new BigDecimal("24.5"), null, null), null));
+
+        assertEquals(new BigDecimal("24.5"), printer.getTemperature().getCurrent());
+        assertEquals(null, printer.getTemperature().getTarget());
+        assertEquals(null, printer.getTemperature().getPower());
     }
 
     /**
@@ -81,10 +110,10 @@ class PrinterStateDispatchTest {
     void firmwareAndCapabilityEventsReachItToo() {
         var printer = online();
 
-        printer.onEvent(new FirmwareReport(Map.of("FIRMWARE_NAME", "Marlin 2.1.2", "EXTRUDER_COUNT", "2")));
-        printer.onEvent(new CapabilityReport("Cap:EEPROM:1", "EEPROM", true));
+        printer.onEvent(new FirmwareInfoRs(Map.of("FIRMWARE_NAME", "Marlin 2.1.2", "EXTRUDER_COUNT", "2")));
+        printer.onEvent(new CapabilityRs("EEPROM", true));
 
-        assertEquals(List.of(FirmwareReport.class, CapabilityReport.class),
+        assertEquals(List.of(FirmwareInfoRs.class, CapabilityRs.class),
                 emitted.stream()
                         .filter(event -> !(event instanceof ConnectionStateChanged))
                         .map(Object::getClass).toList(),
@@ -95,12 +124,12 @@ class PrinterStateDispatchTest {
     /**
      * A reply nothing claims is survived, sends nothing, and moves the connection nowhere.
      *
-     * <p>A reply with no application event at all - a position report, an echo, half of an
-     * {@code M503} dump - falls to the default arm and sends nothing, as it always has. What it no
-     * longer does is advance the connection: B3 put <em>any</em> reply on the {@code ONLINE} to
-     * {@code IDLE} arrow on the grounds that it proved a firmware was there, and a live run proved
-     * that it does not. Auto-report traffic an earlier session left running arrives at a host whose
-     * outbound half is dead, and reads exactly like this.
+     * <p>A reply with no arm at all - an echo, a debug line, half of an {@code M503} dump - falls to
+     * the default arm and sends nothing, as it always has. What it no longer does is advance the
+     * connection: B3 put <em>any</em> reply on the {@code ONLINE} to {@code IDLE} arrow on the
+     * grounds that it proved a firmware was there, and a live run proved that it does not.
+     * Auto-report traffic an earlier session left running arrives at a host whose outbound half is
+     * dead, and reads exactly like this.
      *
      * <p>Nothing may throw here either way: the event stream has to survive a message nobody wanted.
      */
@@ -108,7 +137,7 @@ class PrinterStateDispatchTest {
     void aReplyWithNoArmSendsNothingAndProvesNothingEither() {
         var printer = online();
 
-        printer.onEvent(new UnknownReply("X:0.00 Y:0.00 Z:5.00"));
+        printer.onEvent(new DebugRs("busy heating"));
 
         assertEquals(List.of(), sent);
         assertEquals(MachineConnectionState.ONLINE, printer.getConnection().state());
@@ -147,10 +176,10 @@ class PrinterStateDispatchTest {
     void aBusyNoticeAndAnErrorAreStatesRatherThanNoise() {
         var printer = online();
 
-        printer.onEvent(new BusyReport("processing"));
+        printer.onEvent(new SimpleBusyRs("processing"));
         assertEquals(MachineConnectionState.BUSY, printer.getConnection().state());
 
-        printer.onEvent(new ErrorReport("checksum mismatch, Last Line: 2", 2));
+        printer.onEvent(new ErrorRs(ErrorPrefix.ERROR, "checksum mismatch, Last Line: 2"));
         assertEquals(MachineConnectionState.ERROR, printer.getConnection().state());
         assertEquals("checksum mismatch, Last Line: 2", printer.getConnection().reason());
 
@@ -196,7 +225,7 @@ class PrinterStateDispatchTest {
     /**
      * A command with no arm is a warning and not a crash.
      *
-     * <p>The REST surface accepts any Marlin command class and this aggregate acts on four, so an
+     * <p>{@code PrinterControl} accepts any {@code GRq} and this aggregate acts on a dozen, so an
      * unhandled command is a gap in this layer. It must still not take the caller's request down
      * with it - and nothing is sent, which is the honest outcome rather than a half-executed one.
      */
@@ -213,29 +242,30 @@ class PrinterStateDispatchTest {
      * A position report reaches whoever is watching.
      *
      * <p><strong>This is a regression test for a silent drop.</strong> The transport decoded
-     * {@code M114}'s answer and converted it to a {@link org.qw3rtrun.p3d.api.msg.PositionReported}
-     * correctly, and it still never appeared in a browser: the aggregate republishes only what it
-     * has an arm for, and everything else reaches {@code default}, which logs at debug and stops.
-     * Every layer in between looked right, which is why it took a live run to find.
+     * {@code M114}'s answer correctly and it still never appeared in a browser: the aggregate
+     * republishes only what it has an arm for, and everything else reaches {@code default}, which
+     * logs at debug and stops. Every layer in between looked right, which is why it took a live run
+     * to find.
      *
-     * <p>So the rule for any new reply is two changes, not one: map it in {@code ReplyEvents}
-     * <em>and</em> give the aggregate a case for it.
+     * <p>Adding a reply is one change fewer than it was - the transport propagates whatever
+     * {@code :gcode} decoded, so there is nothing to map - but it is still a change here: a reply
+     * the aggregate has no case for reaches nobody.
      */
     @Test
     void aPositionReportIsRepublishedToSubscribers() {
         var printer = online();
 
-        printer.onEvent(new org.qw3rtrun.p3d.api.msg.PositionReported(
-                Map.of("X", 15.0, "Y", 20.0)));
+        printer.onEvent(new PositionRs(
+                Map.of('X', new BigDecimal("15.0"), 'Y', new BigDecimal("20.0")), Map.of()));
 
         var published = emitted.stream()
-                .filter(org.qw3rtrun.p3d.api.msg.PositionReported.class::isInstance)
-                .map(org.qw3rtrun.p3d.api.msg.PositionReported.class::cast)
+                .filter(PositionRs.class::isInstance)
+                .map(PositionRs.class::cast)
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(
                         "the position never reached a subscriber; emitted " + emitted));
 
-        assertEquals(15.0, published.axes().get("X"));
-        assertEquals(20.0, published.axes().get("Y"));
+        assertEquals(new BigDecimal("15.0"), published.getAxes().get('X'));
+        assertEquals(new BigDecimal("20.0"), published.getAxes().get('Y'));
     }
 }

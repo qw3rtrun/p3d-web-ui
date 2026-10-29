@@ -16,9 +16,11 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.reactive.function.BodyInserters;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -192,10 +194,10 @@ class FarmSecurityTest {
                 .expectBody(String.class).returnResult().getResponseBody();
 
         assertNotNull(body);
-        org.junit.jupiter.api.Assertions.assertTrue(body.contains("operator"), body);
-        org.junit.jupiter.api.Assertions.assertFalse(body.contains("$2a$"),
+        assertTrue(body.contains("operator"), body);
+        assertFalse(body.contains("$2a$"),
                 "a BCrypt hash must never leave the server: " + body);
-        org.junit.jupiter.api.Assertions.assertFalse(body.toLowerCase().contains("passwordhash"),
+        assertFalse(body.toLowerCase().contains("passwordhash"),
                 "nor a field that would carry one: " + body);
     }
 
@@ -297,7 +299,7 @@ class FarmSecurityTest {
     void theProfilePageRendersWithAndWithoutAResult() {
         var session = new Session().signIn("operator");
 
-        for (var uri : java.util.List.of(
+        for (var uri : List.of(
                 "/profile", "/profile?changed",
                 "/profile?error=wrong", "/profile?error=mismatch", "/profile?error=empty")) {
             var body = session.get(uri)

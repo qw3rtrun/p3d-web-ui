@@ -5,11 +5,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.jobs.Job;
+import org.qw3rtrun.p3d.api.jobs.JobFeedCompleted;
+import org.qw3rtrun.p3d.api.jobs.JobFeedFailed;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
+import org.qw3rtrun.p3d.api.jobs.JobProgressed;
+import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.qw3rtrun.p3d.api.jobs.JobState;
+import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.jobs.model.JobEntity;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.modulith.events.ApplicationModuleListener;
@@ -54,7 +60,7 @@ public class JobServiceImpl implements JobService {
      */
     @Override
     @Transactional
-    public JobOutcome queue(UUID fileId, org.qw3rtrun.p3d.api.jobs.JobRequirements requires) {
+    public JobOutcome queue(UUID fileId, JobRequirements requires) {
         Optional<GcodeFile> found = files.fetch(fileId);
         if (found.isEmpty()) {
             return new JobOutcome.Refused(null, null, JobState.QUEUED,
@@ -63,7 +69,7 @@ public class JobServiceImpl implements JobService {
         var file = found.get();
         var job = repo.save(new JobEntity(UUID.randomUUID(), file.id(), file.name(), now(), requires));
         log.info("queued {} to print {}", job.getId(), file.name());
-        events.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobStateChanged(
+        events.publishEvent(new JobStateChanged(
                 job.getId(), file.id(), null, JobState.QUEUED, null, null, job.getCreatedAt()));
         return new JobOutcome.Done(job.describe());
     }
@@ -168,7 +174,7 @@ public class JobServiceImpl implements JobService {
      */
     @EventListener
     @Transactional
-    public void onFeedCompleted(org.qw3rtrun.p3d.api.jobs.JobFeedCompleted event) {
+    public void onFeedCompleted(JobFeedCompleted event) {
         log.info("job {} was fed {} blocks and is done", event.jobId(), event.lines());
         complete(event.jobId());
     }
@@ -192,7 +198,7 @@ public class JobServiceImpl implements JobService {
      * block it stopped at is in the checkpoint, so resuming it after a restart works exactly as
      * resuming it before one does.
      */
-    @EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    @EventListener(ApplicationReadyEvent.class)
     @Transactional
     public void failWhatTheRestartInterrupted() {
         var interrupted = repo.findByStateOrderByCreatedAtAsc(JobState.RUNNING);
@@ -218,7 +224,7 @@ public class JobServiceImpl implements JobService {
      */
     @EventListener
     @Transactional
-    public void onProgress(org.qw3rtrun.p3d.api.jobs.JobProgressed event) {
+    public void onProgress(JobProgressed event) {
         repo.findById(event.jobId()).ifPresent(job -> {
             job.progressed(event.progress());
             repo.save(job);
@@ -228,7 +234,7 @@ public class JobServiceImpl implements JobService {
     /** The feed stopped before the file did - see {@link #onFeedCompleted} for why this is plain. */
     @EventListener
     @Transactional
-    public void onFeedFailed(org.qw3rtrun.p3d.api.jobs.JobFeedFailed event) {
+    public void onFeedFailed(JobFeedFailed event) {
         fail(event.jobId(), event.reason() + " (after " + event.lines() + " blocks)");
     }
 

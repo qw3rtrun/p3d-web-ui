@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.files.SliceInfo;
+import org.qw3rtrun.p3d.files.model.GcodeFileEntity;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -14,6 +15,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -59,7 +61,7 @@ public class GcodeFileServiceImpl implements GcodeFileService {
                     name, existing.get().getName());
             return existing.get().describe();
         }
-        var entity = new org.qw3rtrun.p3d.files.model.GcodeFileEntity(
+        var entity = new GcodeFileEntity(
                 UUID.randomUUID(), name, stored.contentHash(), stored.sizeBytes(),
                 stored.lineCount(), LocalDateTime.now(), readSlice(stored.contentHash()));
         log.info("stored {} as {} ({} bytes, {} lines)",
@@ -78,7 +80,7 @@ public class GcodeFileServiceImpl implements GcodeFileService {
     }
 
     @Override
-    public java.util.Optional<GcodeFile> fetch(UUID id) {
+    public Optional<GcodeFile> fetch(UUID id) {
         return repo.findById(id).map(e -> e.describe());
     }
 

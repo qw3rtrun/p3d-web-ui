@@ -5,12 +5,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.ReactiveAuthenticationManager;
 import org.springframework.security.authentication.UserDetailsRepositoryReactiveAuthenticationManager;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.core.userdetails.ReactiveUserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.ServerAuthenticationEntryPoint;
 import org.springframework.security.web.server.authentication.HttpStatusServerEntryPoint;
 import org.springframework.security.web.server.csrf.CookieServerCsrfTokenRepository;
 import org.springframework.security.web.server.csrf.CsrfToken;
@@ -115,7 +117,7 @@ public class SecurityConfiguration {
      * expired session shows up in the UI as a parse error rather than as "you are logged out", and
      * a test asserting "this endpoint is protected" passes against a 200.
      */
-    private static org.springframework.security.web.server.ServerAuthenticationEntryPoint entryPoint() {
+    private static ServerAuthenticationEntryPoint entryPoint() {
         var unauthorized = new HttpStatusServerEntryPoint(HttpStatus.UNAUTHORIZED);
         var toLogin = new org.springframework.security.web.server.authentication
                 .RedirectServerAuthenticationEntryPoint("/login");
@@ -141,7 +143,7 @@ public class SecurityConfiguration {
      * hashes. That is the point: one encoder, declared once, so the farm cannot end up writing
      * passwords with one scheme and checking them with another.
      */
-    private static org.springframework.security.authentication.ReactiveAuthenticationManager
+    private static ReactiveAuthenticationManager
             authentication(ReactiveUserDetailsService users, PasswordEncoder encoder) {
         var manager = new UserDetailsRepositoryReactiveAuthenticationManager(users);
         manager.setPasswordEncoder(encoder);

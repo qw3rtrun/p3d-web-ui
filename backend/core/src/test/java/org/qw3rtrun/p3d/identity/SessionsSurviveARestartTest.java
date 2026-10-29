@@ -16,6 +16,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.time.Duration;
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -116,7 +117,7 @@ class SessionsSurviveARestartTest {
         // A *negative* interval means "never expires" in Spring Session, not "already expired" -
         // so the way to age a session out is a short interval and a last-accessed time in the past.
         session.setMaxInactiveInterval(Duration.ofSeconds(30));
-        session.setLastAccessedTime(java.time.Instant.now().minus(Duration.ofHours(1)));
+        session.setLastAccessedTime(Instant.now().minus(Duration.ofHours(1)));
         save(sessions, session).block();
 
         StepVerifier.create(afterARestart().findById(session.getId()))

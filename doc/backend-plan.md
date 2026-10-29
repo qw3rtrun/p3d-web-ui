@@ -509,6 +509,52 @@ the JSON shape is pinned by test rather than observed on the wire.
 
 ---
 
+## One model, and no bridge
+
+A correction to the correction above, taken after *it* landed:
+**the dependency direction was right and the second model was not.**
+The rule is now `backend -> terminal -> gcode`, written up as rules 6-8 of
+`doc/sub_boundaries.txt`: `:gcode` still depends on nothing, `:backend:terminal` may propagate its
+models to the backend, and `api` does not mirror them.
+
+What the split had become. Every reply had two classes and every command had two: `TemperatureRs`
+and `TemperatureReported`, `marlin.command.SetFanSpeed` and `api.msg.SetFanSpeed`, with
+`ReplyEvents` converting inbound and `PrinterControlService.toMarlin` outbound. Adding a reply was
+three edits; adding a command was four; and a `SetFanSpeed` that meant one of two things depending
+on the import is the kind of collision that gets noticed only when it is written down.
+
+Why it is not worth it here. The premise of an anti-corruption layer is that the domain might be
+expressed differently from the protocol. This farm drives **Marlin** machines, and a Marlin *is*
+G-code - there is no second kind of printer to abstract over, so the second model was not insulating
+the application from anything, only from itself. The translation also lost information in the one
+direction that mattered: an absent target and a target of zero both arrived as `0.0`, which a page
+cannot tell apart and which the protocol had been careful to distinguish.
+
+What it is now:
+
+| | holds | because |
+|---|---|---|
+| `:gcode` `GRq`/`GRs` | everything a Marlin can be told or can say | it is the protocol, and it depends on nothing |
+| `api.msg` | only what no firmware has a word for: `ConnectionStateChanged`, `BlockAcknowledged`, `MachineJoinedFarm`/`LeftFarm`, `ConnectCmd`, the `M`-prefixed roster events | they are facts about the host, which `:gcode` cannot state |
+| `frontend/command` | the shape a browser posts, each record with a `toMarlin()` | an HTTP contract is not a command set, and it belongs to the surface that receives it |
+
+`api` now has `api project(':gcode')`, `PrinterControl.send` takes `List<GRq<?>>`, `state` answers a
+`HeaterReading`, `EventMessage.event` is an `Object` (either a `GRs` or one of the farm's own
+events - no interface spans both without `:gcode` implementing an application type, which is the
+one thing that stays forbidden), and `ReplyEvents`, `GEvent` and 28 `api.msg` records are deleted.
+
+**What it costs, and the cost is real.** The SSE `type` string is the protocol's class name again,
+so the browser sees `BareTemperatureRs` and `OkTemperatureRs` where it saw `TemperatureReported` -
+the exact drift that broke the page before. The answer is not another model: `types.ts` matches a
+reply **family** through `isTemperature(type)` rather than one name, and `EventStreamContractTest`
+pins both strings. A rename in `:gcode` is now a browser-visible change, which is a thing to know
+rather than a thing to prevent.
+
+Verified by running: `gradlew cleanTest test` green across every module, and `vue-tsc` green as
+part of the frontend build. Not run against a real printer.
+
+---
+
 ### B1 — the aggregate leaves the web module {#b1}
 
 **Goal.** `PrinterState`, `TemperatureControl`, `FirmwareInfo` and `CapabilitiesInfo` move into a

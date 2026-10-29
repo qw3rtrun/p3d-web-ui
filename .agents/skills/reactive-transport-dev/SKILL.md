@@ -224,14 +224,14 @@ exception for a retransmission. `canProcess()` is zero while a replay is waiting
 
 ### `messageFlux()` carries one thing that is not a reply
 
-Everything else on that flux is something the machine said, translated by `ReplyEvents`.
+Everything else on that flux is something the machine said, as `:gcode` decoded it.
 `BlockAcknowledged` is something the transport knows - see *An acknowledged block is announced*
 above. Anything else added to the bus that is not a decoded reply wants the same justification: a
 fact the layer above needs and genuinely cannot see from here.
 
 ### `messageFlux()` terminates when the connection does, and at no other time
 
-A firmware error is a **value**. It goes down the flux as an `ErrorReport` like any other event,
+A firmware error is a **value**. It goes down the flux as the `ErrorRs` it is, like any other reply,
 because on a Marlin an error is routine protocol traffic that the printer recovers from by itself:
 
 ```
@@ -263,7 +263,7 @@ purpose, and the host is the layer that judges them.
 one-way in `build.gradle` and must stay that way: the core's whole claim is that it ports to JS/TS,
 C and Rust, and nothing that imports Reactor ports anywhere.
 
-## IMPORTANT - one parser, two models, and this module is the bridge
+## IMPORTANT - one parser, one model, and this module propagates it
 
 A firmware reply is decoded **once**, by `MarlinRsDecoder`, in `ReplyFlux`. From there the transport
 routes typed `GRs` values and never looks at the text again.
@@ -272,23 +272,29 @@ routes typed `GRs` values and never looks at the text again.
 change belongs in `:gcode`'s `protocol/` or `marlin/event/`, where the corpus and ~170 tests are -
 not here.
 
-**But `GRs` is not what leaves this module.** `messageFlux()` is `Flux<GEvent>` - the `api`
-submodel's event model - and `ReplyEvents` converts. The two models are separate on purpose:
+**And `GRs` is what leaves this module.** `messageFlux()` carries the decoded reply itself. There
+used to be a `ReplyEvents` bridge here turning each one into an `api.msg` record - `TemperatureRs`
+into `TemperatureReported`, nullable `BigDecimal` into zero-filled `double` - and that whole
+parallel model is deleted. The dependency rule is `backend -> terminal -> gcode`, and this module
+is the "propagate" in it: a Marlin farm has no use for a second vocabulary for what a Marlin said,
+and the translation only ever lost information (an absent target and a target of zero arrived
+identical).
+
+What has *not* changed is the direction of the dependency, which is the thing that matters:
 
 | | models | because |
 |---|---|---|
 | `:gcode` `GRs` | what the wire can say: seven sensor kinds, a map of hotends, nullable targets, `BigDecimal` | it is what a printer sends, and the module must port to JS, C and Rust |
-| `api` `GEvent` | what the application decided to care about: one hotend, one bed, no nulls, `double` | it is the host's vocabulary, and it changes when the product does |
+| `api.msg` | only what no firmware has a word for: a connection moving, a block acknowledged | it is about the host, and `:gcode` could not state it |
 
-They used to be one: `GRs extended GEvent`, `OkRs extended OKReceivedEvent`, and `TemperatureRs`
-carried `hotend()`/`bed()` methods that existed only to satisfy an interface two modules away. That
-made `:gcode` - whose whole claim is that it depends on nothing - depend on the application's
-vocabulary, and every change to what the host cares about reached into the protocol.
+`GRs` must never implement an `api` type to make this work. It did once - `GRs extended GEvent`,
+`OkRs extended OKReceivedEvent` - which made the one module that depends on nothing depend on the
+application's vocabulary. Publishing it *as* `GRs` is what makes the bridge unnecessary rather than
+inverted.
 
-So: **route on `GRs` inside, publish `GEvent` outside.** The send window still matches `OkRs<?>`,
-`BusyRs<?>` and `ResendRs`; what those say to a subscriber is decided by `ReplyEvents`, and a reply
-no arm there claims becomes an `UnknownReply` rather than vanishing - seeing one is the signal that
-a reply has earned a typed event.
+So: **route on `GRs` inside, publish `GRs` outside.** The send window still matches `OkRs<?>`,
+`BusyRs<?>` and `ResendRs`; everything else goes on the bus as itself, and a line no decoder claims
+is dropped at `ReplyFlux` with a `#traffic` debug line.
 
 This module ran a second parser (`terminal.msg.Replay`) until it was deleted, and the cost is worth
 remembering, because every item was invisible until something was measured against a real printer:

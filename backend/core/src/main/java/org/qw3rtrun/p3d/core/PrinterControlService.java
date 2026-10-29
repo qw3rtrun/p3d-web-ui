@@ -5,18 +5,7 @@ import org.qw3rtrun.p3d.api.control.PrinterControl;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
-import org.qw3rtrun.p3d.api.msg.PrinterCommand;
-import org.qw3rtrun.p3d.api.msg.RequestTemperatureReport;
-import org.qw3rtrun.p3d.api.msg.SetBedTarget;
-import org.qw3rtrun.p3d.api.msg.SetHotendTarget;
-import org.qw3rtrun.p3d.api.msg.SetTemperatureAutoReport;
-import org.qw3rtrun.p3d.api.msg.HomeAxes;
-import org.qw3rtrun.p3d.api.msg.MoveAxes;
-import org.qw3rtrun.p3d.api.msg.RequestPosition;
-import org.qw3rtrun.p3d.api.msg.SetFanSpeed;
-import org.qw3rtrun.p3d.api.msg.StoreSettings;
-import org.qw3rtrun.p3d.api.msg.TemperatureReport;
-import org.qw3rtrun.p3d.g.marlin.MarlinG;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -30,15 +19,14 @@ import java.util.UUID;
  *
  * <p>It exists so that {@code frontend} can stop naming {@code PrinterReactorManager}. A submodel
  * depending on another submodel is rule 1 of {@code doc/sub_boundaries.txt}, and the boundary check
- * could report that crossing but not prevent it, because the alternative - an interface in
- * {@code api} - needed an application command model first. That model is
- * {@link PrinterCommand}, and this is what reads it.
+ * could report that crossing but not prevent it.
  *
- * <p><strong>Where the outbound translation happens.</strong> {@code ReplyEvents} in
- * {@code :backend:terminal} turns the wire's reply model into the application's; this does the same
- * thing in the other direction, turning the application's commands into Marlin's. The REST surface
- * no longer binds generated `:gcode` classes, so a renamed parameter in Marlin's documentation is
- * no longer a breaking HTTP contract.
+ * <p><strong>Nothing is translated here any more.</strong> This class used to hold a
+ * {@code toMarlin} switch over a sealed {@code api.msg.PrinterCommand}, the outbound half of a
+ * mirror of {@code :gcode} that {@code ReplyEvents} kept on the inbound side. Both are gone: a
+ * command arrives as the {@code GRq} it is, and the one place that still turns a browser's words
+ * into Marlin's is the controller that received them, because a request body is the web surface's
+ * business and not the runtime's.
  */
 @RequiredArgsConstructor
 public class PrinterControlService implements PrinterControl {
@@ -59,7 +47,7 @@ public class PrinterControlService implements PrinterControl {
     }
 
     @Override
-    public Mono<TemperatureReport> state(UUID id) {
+    public Mono<HeaterReading> state(UUID id) {
         return reactor(id).flatMap(PrinterReactor::state);
     }
 
@@ -69,8 +57,8 @@ public class PrinterControlService implements PrinterControl {
     }
 
     @Override
-    public Mono<Void> send(UUID id, PrinterCommand command) {
-        return reactor(id).flatMap(r -> r.handle(toMarlin(command)));
+    public Mono<Void> send(UUID id, List<GRq<?>> commands) {
+        return reactor(id).flatMap(r -> r.handle(commands));
     }
 
     @Override
@@ -81,80 +69,5 @@ public class PrinterControlService implements PrinterControl {
     @Override
     public Mono<ConnectionStatus> connection(UUID id) {
         return reactor(id).flatMap(PrinterReactor::connection);
-    }
-
-    /**
-     * One application command as the Marlin command that carries it.
-     *
-     * <p><strong>Exhaustive, with no default arm</strong>, because {@link PrinterCommand} is sealed
-     * and this module owns every case. Adding a command to the application's vocabulary without
-     * teaching this method to send it fails the build - which is the property plan item A5 wanted
-     * for the inbound dispatch and could not have, since neither {@code GEvent} nor `:gcode`'s
-     * {@code GRq} can be closed.
-     *
-     * <p>The scale of a temperature is the caller's to choose and reaches the wire as written;
-     * {@code PrinterState} is what rounds it, because the wire format of a temperature is that
-     * layer's business.
-     */
-    static List<GRq<?>> toMarlin(PrinterCommand command) {
-        return switch (command) {
-            case SetHotendTarget c ->
-                    List.of(MarlinG.INSTANCE.m104(c.temp(), c.index() == null ? 0 : c.index()));
-            case SetBedTarget c -> List.of(MarlinG.INSTANCE.m140(c.temp()));
-            case RequestTemperatureReport c -> List.of(MarlinG.INSTANCE.m105(c.index()));
-            case SetTemperatureAutoReport c -> List.of(MarlinG.INSTANCE.m155(c.period()));
-
-            case HomeAxes c -> List.of(c.all()
-                    ? new org.qw3rtrun.p3d.g.marlin.command.AutoHome()
-                    : new org.qw3rtrun.p3d.g.marlin.command.AutoHome(
-                            false, null, false, null,
-                            Boolean.TRUE.equals(c.x()),
-                            Boolean.TRUE.equals(c.y()),
-                            Boolean.TRUE.equals(c.z()),
-                            false, false, false, false, false, false));
-
-            case MoveAxes c -> move(c);
-
-            // The fan index goes in P and not in I. Marlin's own documentation lists both as
-            // "index" and the generated class carries both fields, but P is the one mainline
-            // firmware reads as the fan number - and it is what M107 uses, so the pair stays
-            // consistent. A null index sends no index word at all, which means fan 0.
-            case SetFanSpeed c -> List.of(c.off()
-                    ? new org.qw3rtrun.p3d.g.marlin.command.FanOff(c.index())
-                    : new org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed(
-                            null, c.speed(), c.index(), null));
-
-            case StoreSettings ignored ->
-                    List.of(new org.qw3rtrun.p3d.g.marlin.command.SaveSettings());
-
-            case RequestPosition ignored ->
-                    List.of(new org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition(
-                            false, false, false));
-        };
-    }
-
-    /**
-     * A move, and the mode switch a relative one needs around it.
-     *
-     * <p>Marlin has no per-command relative flag: {@code G91} puts the machine in relative mode
-     * and it <strong>stays there</strong> until {@code G90} puts it back. So a relative jog is
-     * three commands, and leaving the machine in relative mode by forgetting the third would make
-     * every later absolute move - including a print's - land somewhere else entirely.
-     *
-     * <p>That is also why they are returned together rather than sent as three requests:
-     * {@code PrinterReactor.handle} applies the whole list as one task on the aggregate's thread,
-     * so no other command can be interpreted while the machine is in the wrong mode.
-     */
-    private static List<GRq<?>> move(MoveAxes c) {
-        var g1 = new org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1(
-                c.x(), c.y(), c.z(), null, null, null, null, null, null,
-                c.e(), c.feedRate(), null);
-        if (!c.isRelative()) {
-            return List.of(g1);
-        }
-        return List.of(
-                new org.qw3rtrun.p3d.g.marlin.command.RelativePositioning(),
-                g1,
-                new org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning());
     }
 }

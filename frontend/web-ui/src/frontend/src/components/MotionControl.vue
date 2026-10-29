@@ -18,7 +18,7 @@ import {computed, ref} from 'vue'
  * with a print for the planner. This asks once after a move and whenever a person presses refresh.
  */
 const props = withDefaults(defineProps<{
-    /** Keyed by axis letter, from `PositionReported`. Empty until the machine is asked. */
+    /** Keyed by axis letter, from `PositionRs`. Empty until the machine is asked. */
     position?: Record<string, number>
     canControl?: boolean
 }>(), {position: () => ({}), canControl: false})

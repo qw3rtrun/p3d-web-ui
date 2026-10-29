@@ -8,3 +8,20 @@ Submodel Boundaries
     The static data about printers, but not live-data during communications with printers
 4) frontend - the submodel that manages tree parts: rests/ws server APIs, thymeleaf templates for server rendering, vue.js frontend.
 5) app - assembly of the frontend and backend parts. Only. The app ships as a single jar.
+
+The protocol libraries
+6) The dependency rule is: backend -> terminal -> gcode.
+    :gcode is the protocol - the G-code tokenizer, the Marlin command classes and the decoded
+    replies. It depends on nothing, and nothing below is allowed to make it depend on anything.
+    :backend:terminal is the transport, and it may propagate :gcode's models to the backend: a
+    reply reaches a subscriber as the GRs the decoder produced.
+7) The backend does not mirror the :gcode model.
+    This farm drives Marlin machines, and a Marlin is G-code - there is no second kind of printer
+    to abstract over, so there is no second vocabulary for what one says or is told. A command is a
+    GRq and a reply is a GRs, through api, core and terminal alike.
+    api carries only what no firmware has a word for: a connection moving, a block acknowledged, a
+    machine joining the farm, the roster news.
+8) An HTTP payload is not part of that model.
+    The shape a browser posts belongs to the surface that receives it, so the request bodies are
+    records in :frontend:web-ui (frontend/command) and each translates itself into G-code. That is
+    one translation, at the edge, rather than a mirror of the protocol in the middle.

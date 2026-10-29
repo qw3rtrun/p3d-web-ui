@@ -1,7 +1,12 @@
 package org.qw3rtrun.p3d.core;
 
+import org.qw3rtrun.p3d.api.control.FarmView;
+import org.qw3rtrun.p3d.api.files.GcodeFileService;
+import org.qw3rtrun.p3d.api.jobs.JobService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * The core submodel's beans: the per-printer runtime and what it is built from.
@@ -15,7 +20,7 @@ import org.springframework.context.annotation.Configuration;
  * restart; that is plan item B2.
  */
 @Configuration
-@org.springframework.scheduling.annotation.EnableScheduling
+@EnableScheduling
 public class CoreConfiguration {
 
     @Bean
@@ -36,7 +41,7 @@ public class CoreConfiguration {
 
     @Bean
     public PrinterReactorManager printer(PrinterDirectory directory, PrinterAggregateManager aggregates,
-                                         org.springframework.context.ApplicationEventPublisher roster,
+                                         ApplicationEventPublisher roster,
                                          ConnectionPolicy policy) {
         return new PrinterReactorManager(directory, aggregates, roster, policy);
     }
@@ -71,9 +76,9 @@ public class CoreConfiguration {
      */
     @Bean
     public JobFeeder jobFeeder(PrinterReactorManager reactors,
-                               org.qw3rtrun.p3d.api.files.GcodeFileService files,
-                               org.qw3rtrun.p3d.api.jobs.JobService jobs,
-                               org.springframework.context.ApplicationEventPublisher events) {
+                               GcodeFileService files,
+                               JobService jobs,
+                               ApplicationEventPublisher events) {
         return new JobFeeder(reactors, files, jobs, events);
     }
 
@@ -84,7 +89,7 @@ public class CoreConfiguration {
      * printers costs forty listeners rather than forty sockets.
      */
     @Bean
-    public org.qw3rtrun.p3d.api.control.FarmView farmView(PrinterDirectory directory,
+    public FarmView farmView(PrinterDirectory directory,
                                                           PrinterReactorManager reactors) {
         return new FarmEvents(directory, reactors);
     }

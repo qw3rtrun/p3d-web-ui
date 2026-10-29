@@ -163,6 +163,19 @@ page simply stopped updating. Nothing in the build noticed.
 **Add a case to that test whenever the UI starts depending on a new `type` string.** It is the only
 thing that will fail when somebody renames an event class.
 
+**A reply arrives under `:gcode`'s own class name, and one reading can have two of them.** The
+server stopped keeping a parallel event model, so the stream carries `BareTemperatureRs` (an
+`M155` auto-report) and `OkTemperatureRs` (the answer to an `M105`) for the same thing, plus
+`PositionRs`, `ErrorRs` and so on. Match a family with a helper - `isTemperature(type)` in
+`types.ts` - rather than writing one of the names, which is the exact shape of the bug above. The
+farm's own events are still named by the application: `ConnectionStateChanged`,
+`MachineJoinedFarm`, `MachineLeftFarm`.
+
+**A reading's `target` and `power` are nullable, and null is not zero.** A build that reports no
+target has not been asked for one; a target of zero is a heater on its way off. The server used to
+flatten the first into the second before the browser saw it and no longer does, so a control that
+renders `target` has to handle null itself.
+
 ## The controls that exist
 
 `client.ts` carries the whole command surface, and it is the application's vocabulary rather than
@@ -178,7 +191,7 @@ Three things a control has to get right, because the browser is where the unit i
 - **`relative: true` is what a jog button means.** The operator knows nothing about where the
   machine is, and the server sends the mode switch around the move so the browser never has to.
 
-**The answer to `requestPosition` arrives on the event stream** as `PositionReported`, not from the
+**The answer to `requestPosition` arrives on the event stream** as `PositionRs`, not from the
 call. There is no auto-report for position the way `M155` auto-reports temperature, so ask on
 demand and after a move - never on a timer, which fills a busy printer's command queue with
 questions while it is trying to print.
@@ -202,24 +215,25 @@ changing.
 The detail page's controls - homing, moving an axis, a fan, saving settings - are **application
 commands**, not raw G-code. A browser never sends G-code text.
 
-The chain is: a `PrinterCommand` record in `api::msg` -> a `POST` endpoint on `PrinterController`
--> an arm in `PrinterState.onCommand` that translates it into a `:gcode` command -> the transport.
+The chain is: a request-body record in `frontend/command` whose `toMarlin()` builds the `:gcode`
+command -> a `POST` endpoint on `PrinterController` -> an arm in `PrinterState.onCommand` that
+actually sends it -> the transport.
 
-`api::msg` carries temperature, homing, moves, the fan, `M500` and a position request. **Anything
-beyond that needs the backend chain built first**, and `:gcode` almost certainly already has the
-command - what is missing is the application model in between.
+`frontend/command` carries temperature, homing, moves, the fan, `M500` and a position request.
+**Anything beyond that needs the backend chain built first**, and `:gcode` almost certainly already
+has the command - what is missing is the endpoint and the aggregate's arm.
 
-Note that the chain has **four** links and the compiler only guards two of them: `PrinterCommand`
-is sealed so a record without a translation fails the build, but a translation without an arm in
-`PrinterState.onCommand` compiles and is dropped at runtime with one WARN line. The same is true
-inbound: a reply mapped in `ReplyEvents` still never reaches a browser unless the aggregate has a
-case for it. Both are written up in `spring-backend-dev`.
+Note that nothing in the chain is compiler-checked end to end: a payload that translates correctly
+but hits no arm in `PrinterState.onCommand` compiles and is dropped at runtime with one WARN line.
+The same is true inbound - a reply the transport propagates still never reaches a browser unless
+the aggregate has a case for it. Both are written up in `spring-backend-dev`.
 
 **Do not work around this in the browser.** There is no endpoint that accepts G-code text and there
 must not be one: it would hand any operator the ability to send arbitrary commands to a heater,
-bypassing every check the command model exists to make, and it would put a second command vocabulary
-in front of the one `api` defines. If a control needs a command that does not exist, say so and
-build it on the backend - that is `spring-backend-dev`'s work.
+bypassing every check the endpoints exist to make. The payload records are the browser's shape on
+purpose - the server speaks G-code behind them, and the browser does not. If a control needs a
+command that does not exist, say so and build it on the backend - that is `spring-backend-dev`'s
+work.
 
 ## TypeScript and Vue rules
 

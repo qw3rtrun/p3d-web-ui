@@ -9,9 +9,9 @@ import type {
     EventMessage,
     FarmRole,
     MachineJoinedFarm,
-    TemperatureReported,
+    TemperatureRs,
 } from '../api/types'
-import {isUsable} from '../api/types'
+import {isTemperature, isUsable} from '../api/types'
 
 /**
  * Every printer in the farm, live, on **one** subscription - plan item D2.
@@ -79,6 +79,16 @@ function adopt(machine: Descriptor) {
 }
 
 function onMessage(message: EventMessage) {
+    if (isTemperature(message.type)) {
+        // A machine with no bed sensor reports none, so this is the one place that has to say
+        // "unknown" rather than read `.current` off a null - which is what the old flattened
+        // record hid by sending zeroes.
+        const event = message.event as TemperatureRs
+        const row = rowFor(message.id)
+        row.hotend = event.hotend?.current ?? null
+        row.bed = event.bed?.current ?? null
+        return
+    }
     switch (message.type) {
         case 'ConnectionStateChanged': {
             const event = message.event as ConnectionStateChanged
@@ -86,13 +96,6 @@ function onMessage(message: EventMessage) {
             row.state = event.to
             row.attempt = event.attempt
             row.reason = event.reason
-            break
-        }
-        case 'TemperatureReported': {
-            const event = message.event as TemperatureReported
-            const row = rowFor(message.id)
-            row.hotend = event.hotend.current
-            row.bed = event.bed.current
             break
         }
         case 'MachineJoinedFarm': {

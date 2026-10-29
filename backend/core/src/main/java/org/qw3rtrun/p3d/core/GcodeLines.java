@@ -5,10 +5,14 @@ import org.qw3rtrun.p3d.g.code.core.block.GMeaninglessBlock;
 import org.qw3rtrun.p3d.g.code.core.token.GComment;
 import org.qw3rtrun.p3d.g.code.core.token.GLineBreak;
 import org.qw3rtrun.p3d.g.code.core.token.GToken;
+import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A stored G-code file as the blocks a printer should be sent, read lazily and without holding it.
@@ -58,7 +62,7 @@ final class GcodeLines {
      * but each would spend a line number and a slot in the printer's buffer to say nothing - and a
      * sliced file is perhaps a tenth comments, so it is a tenth of the session spent on them.
      */
-    static Flux<String> blocksOf(org.reactivestreams.Publisher<ByteBuffer> content) {
+    static Flux<String> blocksOf(Publisher<ByteBuffer> content) {
         return feedOf(content).map(Fed::block);
     }
 
@@ -74,8 +78,8 @@ final class GcodeLines {
      * <p>A file from a slicer that announces nothing simply never reports a layer, which is a fact
      * rather than a gap.
      */
-    static Flux<Fed> feedOf(org.reactivestreams.Publisher<ByteBuffer> content) {
-        var layer = new java.util.concurrent.atomic.AtomicReference<Integer>();
+    static Flux<Fed> feedOf(Publisher<ByteBuffer> content) {
+        var layer = new AtomicReference<Integer>();
         return lines(content)
                 .handle((line, sink) -> {
                     var declared = layerOf(line);
@@ -131,7 +135,7 @@ final class GcodeLines {
      * flushed on completion - and {@code concatWith} over a {@code defer} is what makes that happen
      * after the last chunk rather than when the pipeline is assembled.
      */
-    private static Flux<String> lines(org.reactivestreams.Publisher<ByteBuffer> content) {
+    private static Flux<String> lines(Publisher<ByteBuffer> content) {
         var remainder = new StringBuilder();
         return Flux.from(content)
                 .concatMap(chunk -> Flux.fromIterable(split(remainder, chunk)), 1)
@@ -152,8 +156,8 @@ final class GcodeLines {
      * Windows carries one before every terminator, and a block that reached the transport with it
      * still attached would be framed into the checksum and rejected by the firmware.
      */
-    private static java.util.List<String> split(StringBuilder remainder, ByteBuffer chunk) {
-        var lines = new java.util.ArrayList<String>();
+    private static List<String> split(StringBuilder remainder, ByteBuffer chunk) {
+        var lines = new ArrayList<String>();
         var decoded = StandardCharsets.UTF_8.decode(chunk.duplicate());
         while (decoded.hasRemaining()) {
             char c = decoded.get();

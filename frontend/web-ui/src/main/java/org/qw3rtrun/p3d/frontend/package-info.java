@@ -13,12 +13,14 @@
  * {@code printer-management} is named anywhere here, and the Gradle build does not even put them on
  * this module's compile path.
  *
- * <p>Closing that took an application command model. The obvious interface - "give me the runtime"
- * - could not be written, because what a controller wanted to send was a `:gcode` command class and
- * {@code api} must not depend on `:gcode`. So the request bodies are {@code PrinterCommand} records
- * now and {@code core} translates them into Marlin's, which is the outbound twin of the reply
- * bridge in {@code :backend:terminal}. The field names are the ones the browser already sent, so
- * the HTTP contract did not move - it merely stopped being defined by a code generator.
+ * <p><strong>The request bodies live here, and they are the only thing that does.</strong>
+ * {@code PrinterControl} speaks {@code :gcode} - a Marlin farm is coupled to G-code by
+ * construction, so the runtime has no use for a second set of names for one set of facts - but an
+ * HTTP contract is not a command set. What the browser posts to {@code /move} should go on being
+ * {@code {"x":10,"relative":true}} whatever {@code G1}'s parameter list looks like this year, so
+ * the {@code command} package below holds those shapes and each one translates itself. That is one
+ * translation at the edge that receives the request, in place of the mirror of the whole protocol
+ * that {@code api} used to carry.
  *
  * <p>{@code api::identity} joined with plan item D3, and it is the narrowest of the lot: this
  * submodel is the only place in the application where a request is authenticated, because it is the

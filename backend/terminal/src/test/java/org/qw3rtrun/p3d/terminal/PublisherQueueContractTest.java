@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.terminal;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.terminal.msg.Priority;
+import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 import reactor.core.publisher.Flux;
@@ -68,7 +69,7 @@ class PublisherQueueContractTest {
      * {@code onSubscribe} to arrive whenever the publisher likes, and a subscriber that assumes
      * otherwise is correct only by the grace of its sources.
      */
-    private static final class LateSubscription implements org.reactivestreams.Publisher<String> {
+    private static final class LateSubscription implements Publisher<String> {
         private final CompletableFuture<String> value;
 
         LateSubscription(CompletableFuture<String> value) {

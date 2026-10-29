@@ -21,11 +21,17 @@ dependencies {
     // The `frontend` submodel: REST and SSE, the Thymeleaf controllers, and the Vue build below.
     implementation project(':backend:api')
 
+    // The protocol. The controllers translate a request body into Marlin commands before handing
+    // them to PrinterControl - see frontend/command - so this module names :gcode on purpose. It
+    // arrives transitively through :backend:api as well; it is declared here because code in this
+    // module imports it, and an import should be a dependency you can see in the build file.
+    //
+    // Nothing here *binds* a :gcode class from JSON: the request bodies are this module's own
+    // records, so there is still no jackson-module-kotlin on this classpath.
+    implementation project(':gcode')
+
     // :backend:core is deliberately absent. The controllers reach the printer runtime through
-    // PrinterControl, an interface in :backend:api - rule 1 of doc/sub_boundaries.txt. :gcode is
-    // absent for the same reason: the request bodies are the application's own command records now,
-    // not Marlin's generated classes, so nothing here binds a Kotlin data class and the
-    // jackson-module-kotlin that needed is gone with them.
+    // PrinterControl, an interface in :backend:api - rule 1 of doc/sub_boundaries.txt.
 
     // Only for the @ApplicationModule in package-info.java - see backend/api/build.gradle.
     compileOnly 'org.springframework.modulith:spring-modulith-api'

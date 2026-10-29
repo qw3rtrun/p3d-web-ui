@@ -52,8 +52,9 @@ backend/terminal/src/main/java/.../terminal/
     ReplyFlux             FluxOperator<String,GRs<?>> - line framing (still char by char),
                           then MarlinRsDecoder via handle()
     ReplaySubscriber      Subscriber<GRs<?>> - routes ok/busy/resend/error back into the window
-  ReplyEvents.java        the bridge: GRs -> api GEvent. messageFlux() is Flux<GEvent>,
-                          so :gcode's model stops here and never reaches the application
+                          messageFlux() carries the decoded GRs itself - the ReplyEvents bridge
+                          that turned each one into an api.msg record is deleted; terminal
+                          propagates :gcode's model to the backend (doc/sub_boundaries.txt 6-8)
   PublisherQueue.java     Publisher<T> + Subscription - priority merge of command sources
   TerminalManager.java    reactor-netty TcpClient -> Mono<HostTerminal>
   GFlux.java              Flux.create sink paired with a GSender

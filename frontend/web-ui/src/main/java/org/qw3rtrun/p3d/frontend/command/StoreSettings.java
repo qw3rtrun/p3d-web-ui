@@ -1,4 +1,9 @@
-package org.qw3rtrun.p3d.api.msg;
+package org.qw3rtrun.p3d.frontend.command;
+
+import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
+import org.qw3rtrun.p3d.g.protocol.GRq;
+
+import java.util.List;
 
 /**
  * Write the machine's current settings to its EEPROM - {@code M500}.
@@ -13,4 +18,9 @@ package org.qw3rtrun.p3d.api.msg;
  * to change a setting would send that setting's own command first; this only makes it stick.
  */
 public record StoreSettings() implements PrinterCommand {
+
+    @Override
+    public List<GRq<?>> toMarlin() {
+        return List.of(new SaveSettings());
+    }
 }

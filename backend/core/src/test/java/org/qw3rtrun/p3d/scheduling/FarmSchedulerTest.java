@@ -16,9 +16,11 @@ import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
+import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
-import org.qw3rtrun.p3d.api.msg.PrinterCommand;
-import org.qw3rtrun.p3d.api.msg.TemperatureReport;
+import org.qw3rtrun.p3d.api.service.MachineManagementService;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
@@ -178,7 +180,7 @@ class FarmSchedulerTest {
         return new MachineManagementStub();
     }
 
-    private class MachineManagementStub implements org.qw3rtrun.p3d.api.service.MachineManagementService {
+    private class MachineManagementStub implements MachineManagementService {
         @Override
         public Descriptor fetch(UUID uuid) {
             return farm.get(uuid);
@@ -208,7 +210,7 @@ class FarmSchedulerTest {
     private PrinterControl printers() {
         return new PrinterControl() {
             @Override
-            public Publisher<TemperatureReport> state(UUID id) {
+            public Publisher<HeaterReading> state(UUID id) {
                 return Mono.empty();
             }
 
@@ -218,12 +220,12 @@ class FarmSchedulerTest {
             }
 
             @Override
-            public Publisher<Void> send(UUID id, PrinterCommand command) {
+            public Publisher<Void> send(UUID id, List<GRq<?>> commands) {
                 return Mono.empty();
             }
 
             @Override
-            public Publisher<Void> connect(UUID id, org.qw3rtrun.p3d.api.msg.ConnectCmd command) {
+            public Publisher<Void> connect(UUID id, ConnectCmd command) {
                 return Mono.empty();
             }
 

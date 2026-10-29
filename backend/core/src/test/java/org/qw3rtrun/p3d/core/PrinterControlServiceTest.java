@@ -5,94 +5,27 @@ import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
-import org.qw3rtrun.p3d.api.msg.RequestTemperatureReport;
-import org.qw3rtrun.p3d.api.msg.SetBedTarget;
-import org.qw3rtrun.p3d.api.msg.SetHotendTarget;
-import org.qw3rtrun.p3d.api.msg.SetTemperatureAutoReport;
-import org.qw3rtrun.p3d.g.code.core.GEncoder;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The outbound translation, and the thread it happens on.
+ * This module's side of {@link org.qw3rtrun.p3d.api.control.PrinterControl}, and the thread it
+ * answers on.
  *
- * <p>This is the twin of {@code ReplyEvents} in {@code :backend:terminal}: that one turns the
- * wire's reply model into the application's, and {@code PrinterControlService} turns the
- * application's commands into Marlin's. Having both is what lets {@code frontend} speak only
- * {@code api} - its request bodies used to be `:gcode`'s generated classes, which made the HTTP
- * contract follow a code generator.
- *
- * <p>The mapping is asserted as <strong>the G-code that comes out</strong> rather than as the
- * command object, because the bytes are what a printer sees and the object is an implementation
- * detail of getting there.
+ * <p><strong>There is no translation left here to assert.</strong> The {@code toMarlin} switch this
+ * class used to hold - the outbound half of a hand-written mirror of `:gcode`, with
+ * {@code ReplyEvents} on the inbound side - is gone with the mirror. A command arrives as the
+ * {@code GRq} it is, and the one place a browser's words become Marlin's is the controller that
+ * received them; those assertions are {@code PrinterCommandTranslationTest} in
+ * {@code :frontend:web-ui}.
  */
 class PrinterControlServiceTest {
-
-    /**
-     * The one Marlin command this application command becomes.
-     *
-     * <p>{@code toMarlin} returns a list because one intent is sometimes several commands - a
-     * relative move is {@code G91}, the move, then {@code G90}. Every command asserted in this
-     * class is a single one, and saying so here means a change that quietly made one of them
-     * multiple would fail rather than assert against the first element.
-     */
-    private String marlin(org.qw3rtrun.p3d.api.msg.PrinterCommand command) {
-        var commands = PrinterControlService.toMarlin(command);
-        assertEquals(1, commands.size(), () -> command + " became " + commands);
-        return GEncoder.INSTANCE.encode(commands.getFirst().encode());
-    }
-
-    @Test
-    void aHotendTargetBecomesM104WithItsTool() {
-        assertEquals("M104 S60.0 T0", marlin(new SetHotendTarget(0, new BigDecimal("60.0"))));
-        assertEquals("M104 S210.5 T1", marlin(new SetHotendTarget(1, new BigDecimal("210.5"))));
-    }
-
-    /**
-     * No tool means the first one.
-     *
-     * <p>The browser sends {@code {index, temp}} and has always been able to leave {@code index}
-     * out. Defaulting here rather than leaving a null to travel keeps the aggregate's
-     * extruder-count check meaningful.
-     */
-    @Test
-    void aHotendTargetWithNoToolMeansTheFirst() {
-        assertEquals("M104 S60.0 T0", marlin(new SetHotendTarget(null, new BigDecimal("60.0"))));
-    }
-
-    @Test
-    void aBedTargetBecomesM140() {
-        assertEquals("M140 S60.0", marlin(new SetBedTarget(new BigDecimal("60.0"))));
-    }
-
-    @Test
-    void aTemperatureRequestBecomesM105() {
-        assertEquals("M105", marlin(new RequestTemperatureReport(null)));
-        assertEquals("M105 T2", marlin(new RequestTemperatureReport(2)));
-    }
-
-    /**
-     * Auto-reporting becomes {@code M155}, carrying the period the user actually chose.
-     *
-     * <p>It did not, before this. The browser posts {@code {period}}, the endpoint bound `:gcode`'s
-     * generated class whose property is {@code seconds}, so the field matched nothing and every
-     * request silently asked for the firmware's default. The application naming its own commands is
-     * what fixes it: {@code period} is now a field that exists.
-     */
-    @Test
-    void autoReportingCarriesThePeriod() {
-        assertEquals("M155 S1", marlin(new SetTemperatureAutoReport(1)));
-        assertEquals("M155 S0", marlin(new SetTemperatureAutoReport(0)));
-        assertEquals("M155", marlin(new SetTemperatureAutoReport(null)));
-    }
 
     /**
      * Opening a runtime happens off the caller's thread.

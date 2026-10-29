@@ -10,12 +10,14 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 
 /**
  * Where the bytes actually live: a content-addressed directory of files, and nothing else.
@@ -194,7 +196,7 @@ public class GcodeBlobStore {
             Files.createDirectories(target.getParent());
             try {
                 Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.FileAlreadyExistsException raced) {
+            } catch (FileAlreadyExistsException raced) {
                 log.info("{} was stored by somebody else while this upload was in flight",
                         stored.contentHash());
             }
@@ -272,7 +274,7 @@ public class GcodeBlobStore {
         while (buffer.hasRemaining() && channel.read(buffer, position + buffer.position()) >= 0) {
             // read until the window is full or the file ends
         }
-        return java.util.Arrays.copyOf(buffer.array(), buffer.position());
+        return Arrays.copyOf(buffer.array(), buffer.position());
     }
 
     /**

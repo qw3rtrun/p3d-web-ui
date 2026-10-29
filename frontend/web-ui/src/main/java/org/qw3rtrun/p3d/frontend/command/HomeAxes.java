@@ -1,4 +1,9 @@
-package org.qw3rtrun.p3d.api.msg;
+package org.qw3rtrun.p3d.frontend.command;
+
+import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
+import org.qw3rtrun.p3d.g.protocol.GRq;
+
+import java.util.List;
 
 /**
  * Send the named axes to their endstops - {@code G28}.
@@ -10,12 +15,24 @@ package org.qw3rtrun.p3d.api.msg;
  *
  * <p>Homing is a <em>move</em>, and a slow one: the machine is unresponsive for several seconds
  * and will drag the nozzle across whatever is on the bed. That is the operator's call to make, not
- * something to issue automatically - see the note on cancel in the backend skill's debt list.
+ * something to issue automatically.
  */
 public record HomeAxes(Boolean x, Boolean y, Boolean z) implements PrinterCommand {
 
     /** True when the request named no axis, which Marlin reads as "home everything". */
     public boolean all() {
         return !Boolean.TRUE.equals(x) && !Boolean.TRUE.equals(y) && !Boolean.TRUE.equals(z);
+    }
+
+    @Override
+    public List<GRq<?>> toMarlin() {
+        return List.of(all()
+                ? new AutoHome()
+                : new AutoHome(
+                        false, null, false, null,
+                        Boolean.TRUE.equals(x),
+                        Boolean.TRUE.equals(y),
+                        Boolean.TRUE.equals(z),
+                        false, false, false, false, false, false));
     }
 }

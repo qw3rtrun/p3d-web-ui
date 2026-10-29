@@ -3,8 +3,9 @@ package org.qw3rtrun.p3d.api.msg;
 /**
  * The firmware accepted a block this session sent - the one thing a host can measure progress by.
  *
- * <p><strong>Not a reply.</strong> Every other {@link GEvent} on the bus is something the machine
- * said, translated; this is something the transport knows and nothing else can see. An {@code ok}
+ * <p><strong>Not a reply.</strong> Almost everything else on the bus is a {@code :gcode} reply -
+ * something the machine said - while this is something the transport knows and nothing else can
+ * see, which is why it is one of the few events this package declares itself. An {@code ok}
  * is consumed by the send window on the way in, and no subscriber can look inside a send window, so
  * until this existed the acknowledgement - the single most informative thing on the inbound half -
  * reached nobody.
@@ -28,5 +29,5 @@ package org.qw3rtrun.p3d.api.msg;
  *                 stopping is ambiguous between "nothing was sent" and "nothing is coming back",
  *                 and that distinction is what a stalled machine looks like from up here
  */
-public record BlockAcknowledged(int lineNumber, int inFlight) implements GEvent {
+public record BlockAcknowledged(int lineNumber, int inFlight) {
 }

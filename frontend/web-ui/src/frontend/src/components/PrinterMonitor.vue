@@ -10,10 +10,11 @@ import type {
     ConnectionStateChanged,
     EventMessage,
     FarmRole,
-    PositionReported,
-    TemperatureReported,
+    HeaterReading,
+    PositionRs,
+    TemperatureRs,
 } from '../api/types'
-import {isUsable} from '../api/types'
+import {isTemperature, isUsable} from '../api/types'
 
 /**
  * One machine: where its connection is, what it is reading, and the controls that change that.
@@ -35,8 +36,15 @@ const state = ref<ConnectionState>('OFFLINE')
 const attempt = ref(0)
 const reason = ref<string | null>(null)
 
-const hotend = ref({current: 0, target: 0, power: 0})
-const bed = ref({current: 0, target: 0, power: 0})
+/**
+ * The last reading of each sensor, or nulls until the machine reports one.
+ *
+ * `target` and `power` are nullable in a reading, so the controls render "-" rather than a zero
+ * the firmware never claimed - see `HeaterReading`.
+ */
+const unknown: HeaterReading = {current: 0, target: null, power: null}
+const hotend = ref<HeaterReading>(unknown)
+const bed = ref<HeaterReading>(unknown)
 const position = ref<Record<string, number>>({})
 
 /**
@@ -76,6 +84,12 @@ function onMessage(message: EventMessage) {
     if (message.id !== props.uuid) {
         return
     }
+    if (isTemperature(message.type)) {
+        const event = message.event as TemperatureRs
+        hotend.value = event.hotend ?? unknown
+        bed.value = event.bed ?? unknown
+        return
+    }
     switch (message.type) {
         case 'ConnectionStateChanged': {
             const event = message.event as ConnectionStateChanged
@@ -90,14 +104,8 @@ function onMessage(message: EventMessage) {
             }
             break
         }
-        case 'TemperatureReported': {
-            const event = message.event as TemperatureReported
-            hotend.value = {...event.hotend}
-            bed.value = {...event.bed}
-            break
-        }
-        case 'PositionReported': {
-            position.value = {...(message.event as PositionReported).axes}
+        case 'PositionRs': {
+            position.value = {...(message.event as PositionRs).axes}
             break
         }
         default:

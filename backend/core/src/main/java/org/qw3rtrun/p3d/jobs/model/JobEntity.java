@@ -13,8 +13,11 @@ import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
+import org.qw3rtrun.p3d.api.model.BedVolume;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -99,7 +102,7 @@ public class JobEntity {
     @Column(name = "requires_extruders")
     Integer requiresExtruders;
     @Column(name = "requires_nozzle")
-    java.math.BigDecimal requiresNozzle;
+    BigDecimal requiresNozzle;
     @Column(name = "requires_material")
     String requiresMaterial;
     @Column(name = "requires_tag")
@@ -140,7 +143,7 @@ public class JobEntity {
     public JobRequirements requires() {
         var bed = requiresBedX == null || requiresBedY == null || requiresBedZ == null
                 ? null
-                : new org.qw3rtrun.p3d.api.model.BedVolume(requiresBedX, requiresBedY, requiresBedZ);
+                : new BedVolume(requiresBedX, requiresBedY, requiresBedZ);
         return new JobRequirements(requiresMachine, bed, requiresExtruders, requiresNozzle,
                 requiresMaterial, requiresTag);
     }
@@ -152,7 +155,7 @@ public class JobEntity {
 
     /** Whether the stated reason has changed, so a scheduler only writes when it has something new. */
     public boolean blockedReasonIs(String why) {
-        return java.util.Objects.equals(blockedReason, why);
+        return Objects.equals(blockedReason, why);
     }
 
     /**

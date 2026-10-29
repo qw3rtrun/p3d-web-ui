@@ -12,6 +12,7 @@ import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 /**
  * Several sources of G-code, drained highest priority first into one subscriber.
@@ -215,7 +216,7 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
      * the subscriber asked to stop and Reactive Streams rule 2.4 says it is not to be signalled
      * afterwards.
      */
-    private void terminate(java.util.function.Consumer<Subscriber<? super T>> signal) {
+    private void terminate(Consumer<Subscriber<? super T>> signal) {
         if (!terminated.compareAndSet(false, true)) {
             return;
         }

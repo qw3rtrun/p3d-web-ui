@@ -7,20 +7,27 @@ import org.qw3rtrun.p3d.api.jobs.JobFeedCompleted;
 import org.qw3rtrun.p3d.api.jobs.JobFeedFailed;
 import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobProgressed;
+import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
+import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
+import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Scheduled;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
+import java.nio.ByteBuffer;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Feeds a running job's file to the machine it was assigned to - plan item C3.
@@ -48,7 +55,7 @@ public class JobFeeder {
 
     private final PrinterReactorManager reactors;
     private final GcodeFileService files;
-    private final org.qw3rtrun.p3d.api.jobs.JobService jobs;
+    private final JobService jobs;
     private final ApplicationEventPublisher events;
 
     /** What is being fed right now, so that a cancel has something to stop. */
@@ -89,9 +96,9 @@ public class JobFeeder {
     private Disposable watchTheLink(JobStateChanged event, PrinterReactor reactor,
                                     AtomicLong sent, AtomicBoolean cancelled) {
         return reactor.updates()
-                .map(org.qw3rtrun.p3d.api.msg.EventMessage::event)
-                .filter(org.qw3rtrun.p3d.api.msg.ConnectionStateChanged.class::isInstance)
-                .cast(org.qw3rtrun.p3d.api.msg.ConnectionStateChanged.class)
+                .map(EventMessage::event)
+                .filter(ConnectionStateChanged.class::isInstance)
+                .cast(ConnectionStateChanged.class)
                 .filter(change -> !change.to().isLinked())
                 .next()
                 .subscribe(lost -> {
@@ -199,8 +206,8 @@ public class JobFeeder {
         private final LocalDateTime startedAt;
         private final AtomicLong bytesSent = new AtomicLong();
         private final AtomicLong blocks = new AtomicLong();
-        private final java.util.concurrent.atomic.AtomicReference<Integer> layer =
-                new java.util.concurrent.atomic.AtomicReference<>();
+        private final AtomicReference<Integer> layer =
+                new AtomicReference<>();
         private volatile int inFlight;
 
         Progress(long bytesTotal, LocalDateTime startedAt) {
@@ -208,7 +215,7 @@ public class JobFeeder {
             this.startedAt = startedAt;
         }
 
-        void read(java.nio.ByteBuffer chunk) {
+        void read(ByteBuffer chunk) {
             bytesSent.addAndGet(chunk.remaining());
         }
 
@@ -237,7 +244,7 @@ public class JobFeeder {
      * hundred thousand writes - to answer a question a page asks about once a second and a restart
      * asks once. A second is fast enough for a human and slow enough for a database.
      */
-    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${p3d.jobs.progress-interval:1000}")
+    @Scheduled(fixedDelayString = "${p3d.jobs.progress-interval:1000}")
     public void reportProgress() {
         feeding.values().forEach(feed -> {
             var reactor = reactors.runtimeOf(feed.machineId());
@@ -319,7 +326,7 @@ public class JobFeeder {
             return;
         }
         log.info("cooling {} down after a stopped print", machineId);
-        reactor.interject(java.util.List.of(
+        reactor.interject(List.of(
                 "M107",
                 "M104 S0",
                 "M140 S0",

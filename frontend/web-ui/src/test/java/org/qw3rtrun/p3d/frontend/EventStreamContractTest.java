@@ -2,15 +2,23 @@ package org.qw3rtrun.p3d.frontend;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
-import org.qw3rtrun.p3d.api.msg.BusyReport;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
-import org.qw3rtrun.p3d.api.msg.ErrorReport;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
-import org.qw3rtrun.p3d.api.msg.TemperatureReport;
-import org.qw3rtrun.p3d.api.msg.TemperatureReported;
+import org.qw3rtrun.p3d.api.msg.MachineJoinedFarm;
+import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
+import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.marlin.event.OkTemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
+import org.qw3rtrun.p3d.g.protocol.ErrorPrefix;
+import org.qw3rtrun.p3d.g.protocol.ErrorRs;
+import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.math.BigDecimal;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,19 +34,31 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * stops matching a string there.
  *
  * <p>That is not hypothetical: the UI checked for {@code "TemperatureReported"} while the stream
- * had started carrying {@code "OkTemperatureRs"}, so every temperature fell through its
- * {@code if} and the page quietly stopped updating. Nothing in the build said a word.
+ * had started carrying {@code "OkTemperatureRs"}, so every temperature fell through its {@code if}
+ * and the page quietly stopped updating. Nothing in the build said a word.
  *
- * <p>It works again because the application now has its own event model and the transport converts
- * into it: {@code TemperatureReported} is a name the host chose, rather than whatever the protocol
- * happened to call its decoded reply. These assertions are what keeps the two sides agreeing.
+ * <p><strong>The names are the protocol's again, deliberately.</strong> A reply travels as the
+ * {@code GRs} {@code :gcode} decoded, because a Marlin farm has no use for a second model of what a
+ * Marlin says - so {@code type} is {@code BareTemperatureRs} or {@code OkTemperatureRs}, and the UI
+ * matches the family rather than one name. That is a contract that can still drift, which is
+ * exactly why these assertions exist; what changed is that there is no longer a translation layer
+ * to drift as well.
  */
 class EventStreamContractTest {
 
     private final ObjectMapper mapper = JsonMapper.builder().build();
 
     private String streamed(Object event) {
-        return mapper.writeValueAsString(new EventMessage(UUID.randomUUID(), (org.qw3rtrun.p3d.api.msg.GEvent) event));
+        return mapper.writeValueAsString(new EventMessage(UUID.randomUUID(), event));
+    }
+
+    private static BareTemperatureRs temperatures(HeaterReading hotend, HeaterReading bed) {
+        return new BareTemperatureRs(hotend, bed, null, null, null, null, null, Map.of());
+    }
+
+    private static HeaterReading reading(String current, String target, Integer power) {
+        return new HeaterReading(new BigDecimal(current),
+                target == null ? null : new BigDecimal(target), power);
     }
 
     /**
@@ -52,32 +72,33 @@ class EventStreamContractTest {
     @Test
     void aMachineJoiningOrLeavingTheFarmCarriesTheTypeAndItsName() {
         var joined = mapper.readTree(streamed(
-                new org.qw3rtrun.p3d.api.msg.MachineJoinedFarm("big-PETG")));
+                new MachineJoinedFarm("big-PETG")));
 
         assertEquals("MachineJoinedFarm", joined.get("type").asString());
         assertEquals("big-PETG", joined.get("event").get("name").asString());
         assertTrue(joined.get("id").asString().length() == 36, "the machine it is about");
 
-        var left = mapper.readTree(streamed(new org.qw3rtrun.p3d.api.msg.MachineLeftFarm()));
+        var left = mapper.readTree(streamed(new MachineLeftFarm()));
         assertEquals("MachineLeftFarm", left.get("type").asString());
     }
 
     /**
-     * The shape {@code printer.js} reads, field for field.
+     * The shape the temperature controls read, field for field.
      *
      * <p>{@code payload.type}, then {@code payload.event.hotend.target} and
-     * {@code payload.event.bed.current}. Change any of those names and this fails here rather than
-     * in a browser.
+     * {@code payload.event.bed.current}. Those two field names survived the move to the protocol's
+     * own reply - {@code TemperatureRs} calls them the same thing - so what moved for the browser
+     * is the type string and the nullability.
      */
     @Test
     void aTemperatureCarriesTheTypeAndTheFieldsTheUiReads() {
-        var json = streamed(new TemperatureReported(
-                new TemperatureReport(210.0, 205.0, 127),
-                new TemperatureReport(60.0, 55.0, 80)));
+        var json = streamed(temperatures(
+                reading("210.0", "205.0", 127),
+                reading("60.0", "55.0", 80)));
 
         var payload = mapper.readTree(json);
 
-        assertEquals("TemperatureReported", payload.get("type").asString());
+        assertEquals("BareTemperatureRs", payload.get("type").asString());
         assertEquals(210.0, payload.get("event").get("hotend").get("current").asDouble());
         assertEquals(205.0, payload.get("event").get("hotend").get("target").asDouble());
         assertEquals(127, payload.get("event").get("hotend").get("power").asInt());
@@ -86,23 +107,56 @@ class EventStreamContractTest {
     }
 
     /**
+     * A temperature answered on an {@code ok} is a <strong>different type string</strong>.
+     *
+     * <p>{@code M105} answers on the {@code ok} itself and an {@code M155} auto-report arrives on a
+     * line of its own, so one reading has two classes - and both reach the browser. This is the
+     * exact drift that broke the page: the UI matched one name and every reading of the other kind
+     * fell through its {@code if}. The TypeScript side matches the family with {@code isTemperature}
+     * rather than a name, and these two strings are what that function lists.
+     */
+    @Test
+    void aTemperatureOnAnOkIsTheOtherTypeString() {
+        var payload = mapper.readTree(streamed(new OkTemperatureRs(
+                reading("45.26", "45.00", 3), null, null, null, null, null, null, Map.of())));
+
+        assertEquals("OkTemperatureRs", payload.get("type").asString());
+        assertEquals(45.26, payload.get("event").get("hotend").get("current").asDouble());
+    }
+
+    /**
      * A reply with no bed sensor serialises the bed as null rather than as zeroes.
      *
      * <p>Worth pinning because the two statements are different - a printer with no bed is not a
-     * printer with a cold bed - and because {@code printer.js} reads {@code bedReport.current}
-     * without checking, so a bedless machine is a live bug on that side. Recorded here rather than
-     * fixed: the JSON is right and the UI is what needs the guard.
+     * printer with a cold bed - and the UI reads {@code bed.current}, so a bedless machine needs a
+     * guard on that side.
      */
     @Test
     void anAbsentBedIsNullAndNotZero() {
         var payload = mapper.readTree(
-                streamed(new TemperatureReported(new TemperatureReport(24.31, 0.0, 0), null)));
+                streamed(temperatures(reading("24.31", "0.00", 0), null)));
 
         assertTrue(payload.get("event").get("bed").isNull());
     }
 
     /**
-     * The connection event, field for field, as {@code connection.js} reads it.
+     * A target the firmware did not state is null, and that is new.
+     *
+     * <p>The record this replaced had no way to say "not reported": an absent target arrived as
+     * {@code 0.0}, which a page cannot tell from a hotend that has been told to cool to zero. The
+     * UI has to treat null as unknown rather than as a number.
+     */
+    @Test
+    void anUnstatedTargetIsNullRatherThanZero() {
+        var payload = mapper.readTree(
+                streamed(temperatures(reading("24.31", null, null), null)));
+
+        assertTrue(payload.get("event").get("hotend").get("target").isNull());
+        assertTrue(payload.get("event").get("hotend").get("power").isNull());
+    }
+
+    /**
+     * The connection event, field for field, as the UI reads it.
      *
      * <p>A contract that was <strong>four</strong> event names until plan item B3:
      * {@code ConnectedEvent}, {@code DisconnectedEvent}, {@code MachineOnlineEvent} and
@@ -110,6 +164,9 @@ class EventStreamContractTest {
      * in step - a printer that was connected but quiet read as offline, because the only thing that
      * ever set {@code online} was the arrival of some unrelated event. One event carrying one state
      * is what replaced them, and these assertions are what keep the two sides agreeing.
+     *
+     * <p>It is one of the farm's own events rather than a reply, so no firmware has a word for it
+     * and it is still named by this application.
      */
     @Test
     void aConnectionChangeCarriesTheStateTheUiSwitchesOn() {
@@ -134,13 +191,24 @@ class EventStreamContractTest {
         assertTrue(payload.get("event").get("reason").isNull());
     }
 
+    /**
+     * An error and a busy notice, as the protocol names them.
+     *
+     * <p>{@code ErrorRs} carries the firmware's own words in {@code message} and the line a resend
+     * refers to in {@code lastLine}, which is what the old {@code ErrorReport} carried - under the
+     * same two names, because that record was copied from this one.
+     */
     @Test
-    void theOtherEventsTheStreamCarriesAreNamedAfterTheirRecord() {
-        assertEquals("ErrorReport",
-                mapper.readTree(streamed(new ErrorReport("checksum mismatch, Last Line: 2", 2)))
-                        .get("type").asString());
-        assertEquals("BusyReport",
-                mapper.readTree(streamed(new BusyReport("processing"))).get("type").asString());
+    void theOtherEventsTheStreamCarriesAreNamedAfterTheirReply() {
+        var error = mapper.readTree(
+                streamed(new ErrorRs(ErrorPrefix.ERROR, "checksum mismatch, Last Line: 2")));
+        assertEquals("ErrorRs", error.get("type").asString());
+        assertEquals("checksum mismatch, Last Line: 2", error.get("event").get("message").asString());
+        assertEquals(2, error.get("event").get("lastLine").asInt());
+
+        var busy = mapper.readTree(streamed(new SimpleBusyRs("processing")));
+        assertEquals("SimpleBusyRs", busy.get("type").asString());
+        assertEquals("processing", busy.get("event").get("reason").asString());
     }
 
     /**
@@ -150,14 +218,21 @@ class EventStreamContractTest {
      * business: a delta reports X/Y/Z, an IDEX reports two carriages. A page renders what it was
      * given, so the shape must stay a map rather than becoming four named fields the day a
      * five-axis machine appears.
+     *
+     * <p>The values are {@code BigDecimal} and reach the browser as JSON numbers with the scale the
+     * firmware wrote - {@code 0.00} rather than {@code 0}. That is a string-formatting matter for
+     * whoever renders it, and it is why this asserts the parsed number rather than the text.
      */
     @Test
     void aPositionReportCarriesItsAxesByLetter() {
-        var json = streamed(new org.qw3rtrun.p3d.api.msg.PositionReported(
-                new java.util.LinkedHashMap<>(java.util.Map.of("X", 0.0, "Y", 10.5))));
+        var axes = new LinkedHashMap<Character, BigDecimal>();
+        axes.put('X', new BigDecimal("0.00"));
+        axes.put('Y', new BigDecimal("10.50"));
 
-        assertTrue(json.contains("\"type\":\"PositionReported\""), json);
-        assertTrue(json.contains("\"X\":0.0"), json);
-        assertTrue(json.contains("\"Y\":10.5"), json);
+        var payload = mapper.readTree(streamed(new PositionRs(axes, Map.of())));
+
+        assertEquals("PositionRs", payload.get("type").asString());
+        assertEquals(0.0, payload.get("event").get("axes").get("X").asDouble());
+        assertEquals(10.5, payload.get("event").get("axes").get("Y").asDouble());
     }
 }

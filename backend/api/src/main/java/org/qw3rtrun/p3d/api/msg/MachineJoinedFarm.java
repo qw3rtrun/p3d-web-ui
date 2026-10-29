@@ -10,5 +10,5 @@ package org.qw3rtrun.p3d.api.msg;
  *
  * @param name what a human calls it
  */
-public record MachineJoinedFarm(String name) implements GEvent {
+public record MachineJoinedFarm(String name) {
 }

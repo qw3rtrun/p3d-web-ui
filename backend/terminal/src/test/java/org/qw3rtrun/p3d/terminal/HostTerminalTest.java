@@ -2,11 +2,10 @@ package org.qw3rtrun.p3d.terminal;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
-import org.qw3rtrun.p3d.api.msg.BusyReport;
-import org.qw3rtrun.p3d.api.msg.ErrorReport;
-import org.qw3rtrun.p3d.api.msg.GEvent;
-import org.qw3rtrun.p3d.api.msg.TemperatureReport;
-import org.qw3rtrun.p3d.api.msg.TemperatureReported;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
+import org.qw3rtrun.p3d.g.protocol.BusyRs;
+import org.qw3rtrun.p3d.g.protocol.ErrorRs;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -14,9 +13,11 @@ import reactor.core.publisher.Signal;
 import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -44,13 +45,13 @@ class HostTerminalTest {
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
 
     private final Sinks.Many<String> wire = Sinks.many().multicast().onBackpressureBuffer();
-    private final List<GEvent> published = new ArrayList<>();
+    private final List<Object> published = new ArrayList<>();
 
     /** Every {@code request(n)} the send window made of the G-code source. */
     private final List<Long> pulled = new ArrayList<>();
 
     /** Whatever terminated the reply bus, which in a healthy session is nothing. */
-    private final AtomicReference<Signal<GEvent>> busEnd = new AtomicReference<>();
+    private final AtomicReference<Signal<Object>> busEnd = new AtomicReference<>();
 
     private HostTerminal terminal;
 
@@ -127,8 +128,12 @@ class HostTerminalTest {
         wire.tryEmitNext(line + "\n");
     }
 
-    private TemperatureReported firstTemperature() {
-        return assertInstanceOf(TemperatureReported.class, published.getFirst());
+    private TemperatureRs<?> firstTemperature() {
+        return (TemperatureRs<?>) assertInstanceOf(TemperatureRs.class, published.getFirst());
+    }
+
+    private static HeaterReading reading(String current, String target, Integer power) {
+        return new HeaterReading(new BigDecimal(current), new BigDecimal(target), power);
     }
 
     /**
@@ -157,8 +162,8 @@ class HostTerminalTest {
         receive("ok T:45.26 /45.00 B:25.00 /0.00 @:3 B@:0");
 
         assertEquals(1, published.size());
-        assertEquals(new TemperatureReport(45.26, 45.00, 3), firstTemperature().hotend());
-        assertEquals(new TemperatureReport(25.00, 0.00, 0), firstTemperature().bed());
+        assertEquals(reading("45.26", "45.00", 3), firstTemperature().getHotend());
+        assertEquals(reading("25.00", "0.00", 0), firstTemperature().getBed());
     }
 
     @Test
@@ -194,8 +199,8 @@ class HostTerminalTest {
 
         receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0");
 
-        assertEquals(new TemperatureReport(24.31, 0.00, 0), firstTemperature().hotend());
-        assertEquals(new TemperatureReport(23.87, 0.00, 0), firstTemperature().bed());
+        assertEquals(reading("24.31", "0.00", 0), firstTemperature().getHotend());
+        assertEquals(reading("23.87", "0.00", 0), firstTemperature().getBed());
     }
 
     /**
@@ -247,7 +252,7 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
 
         assertEquals(List.of(1L, 1L), pulled);
-        assertEquals(new BusyReport("processing"), published.getFirst());
+        assertEquals("processing", assertInstanceOf(BusyRs.class, published.getFirst()).getReason());
     }
 
     /** The RepRap spelling does the same thing, through the same {@code BusyRs} interface. */
@@ -267,7 +272,7 @@ class HostTerminalTest {
                 .thenCancel()
                 .verify(TIMEOUT);
 
-        assertEquals(new BusyReport("paused for user"), published.getFirst());
+        assertEquals("paused for user", assertInstanceOf(BusyRs.class, published.getFirst()).getReason());
     }
 
     /**
@@ -387,8 +392,10 @@ class HostTerminalTest {
         receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0");
 
         assertEquals(2, published.size());
-        assertEquals(new ErrorReport("checksum mismatch, Last Line: 2", 2), published.getFirst());
-        assertInstanceOf(TemperatureReported.class, published.get(1));
+        var mismatch = assertInstanceOf(ErrorRs.class, published.getFirst());
+        assertEquals("checksum mismatch, Last Line: 2", mismatch.getMessage());
+        assertEquals(2, mismatch.getLastLine().intValue());
+        assertInstanceOf(TemperatureRs.class, published.get(1));
         assertNull(busEnd.get(), "the reply bus terminated");
     }
 
@@ -399,9 +406,9 @@ class HostTerminalTest {
 
         receive("Error:Line Number is not Last Line Number+1, Last Line: 7");
 
-        var error = assertInstanceOf(ErrorReport.class, published.getFirst());
-        assertEquals("Line Number is not Last Line Number+1, Last Line: 7", error.message());
-        assertEquals(7, error.lastLine().intValue());
+        var error = assertInstanceOf(ErrorRs.class, published.getFirst());
+        assertEquals("Line Number is not Last Line Number+1, Last Line: 7", error.getMessage());
+        assertEquals(7, error.getLastLine().intValue());
     }
 
     /**
@@ -417,7 +424,7 @@ class HostTerminalTest {
         receive("Error:checksum mismatch, Last Line: 2");
 
         StepVerifier.create(terminal.messageFlux())
-                .expectNextMatches(ErrorReport.class::isInstance)
+                .expectNextMatches(ErrorRs.class::isInstance)
                 .then(() -> receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0"))
                 .expectNextCount(1)
                 .thenCancel()
@@ -608,7 +615,7 @@ class HostTerminalTest {
     @Test
     void aCancelIsNotACompletion() {
         var out = sendWindow();
-        var completions = new java.util.concurrent.atomic.AtomicInteger();
+        var completions = new AtomicInteger();
 
         StepVerifier.create(Flux.from(out).doOnComplete(completions::incrementAndGet), 0)
                 .thenRequest(1)

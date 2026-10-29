@@ -10,6 +10,7 @@ import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
 import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -209,7 +210,7 @@ public class FarmScheduler {
 
     /** One machine as the scheduler sees it. */
     private record Candidate(UUID id, String name, MachineConnectionState state, boolean held,
-                             org.qw3rtrun.p3d.api.model.MachineSpec spec) {
+                             MachineSpec spec) {
 
         /** Idle and nobody's - see the class note on why {@code IDLE} and not merely connected. */
         boolean free() {

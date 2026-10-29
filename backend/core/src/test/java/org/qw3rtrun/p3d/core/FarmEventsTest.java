@@ -12,14 +12,21 @@ import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.api.msg.MachineJoinedFarm;
 import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
-import org.qw3rtrun.p3d.api.msg.TemperatureReport;
-import org.qw3rtrun.p3d.api.msg.TemperatureReported;
+import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 import reactor.test.StepVerifier;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * One stream for the whole farm - plan item D2.
@@ -75,14 +82,13 @@ class FarmEventsTest {
     }
 
     private static void assertKnown(EventMessage message, UUID first, UUID second) {
-        org.junit.jupiter.api.Assertions.assertTrue(
-                message.id().equals(first) || message.id().equals(second),
+        assertTrue(message.id().equals(first) || message.id().equals(second),
                 "the snapshot should only carry machines the farm has: " + message.id());
     }
 
     private static void assertState(EventMessage message) {
-        org.junit.jupiter.api.Assertions.assertInstanceOf(ConnectionStateChanged.class, message.event());
-        org.junit.jupiter.api.Assertions.assertEquals(MachineConnectionState.OFFLINE,
+        assertInstanceOf(ConnectionStateChanged.class, message.event());
+        assertEquals(MachineConnectionState.OFFLINE,
                 ((ConnectionStateChanged) message.event()).to(),
                 "nothing has dialled it, so there is nothing it could be doing");
     }
@@ -103,11 +109,11 @@ class FarmEventsTest {
         StepVerifier.create(Flux.from(farm.updates()).skip(2).take(2))
                 .then(() -> farm.onMachineEvent(new EventMessage(alpha, temperature(210))))
                 .assertNext(message -> {
-                    org.junit.jupiter.api.Assertions.assertEquals(alpha, message.id());
-                    org.junit.jupiter.api.Assertions.assertEquals("TemperatureReported", message.type());
+                    assertEquals(alpha, message.id());
+                    assertEquals("BareTemperatureRs", message.type());
                 })
                 .then(() -> farm.onMachineEvent(new EventMessage(beta, temperature(60))))
-                .assertNext(message -> org.junit.jupiter.api.Assertions.assertEquals(beta, message.id()))
+                .assertNext(message -> assertEquals(beta, message.id()))
                 .verifyComplete();
     }
 
@@ -119,9 +125,9 @@ class FarmEventsTest {
         StepVerifier.create(Flux.from(farm.updates()).take(1))
                 .then(() -> theFarmHas("latecomer"))
                 .assertNext(message -> {
-                    var joined = org.junit.jupiter.api.Assertions.assertInstanceOf(
+                    var joined = assertInstanceOf(
                             MachineJoinedFarm.class, message.event());
-                    org.junit.jupiter.api.Assertions.assertEquals("latecomer", joined.name());
+                    assertEquals("latecomer", joined.name());
                 })
                 .verifyComplete();
     }
@@ -134,8 +140,8 @@ class FarmEventsTest {
         StepVerifier.create(Flux.from(farm.updates()).skip(1).take(1))
                 .then(() -> farm.onDeleted(new MDeletedEvent(doomed, LocalDateTime.now())))
                 .assertNext(message -> {
-                    org.junit.jupiter.api.Assertions.assertEquals(doomed, message.id());
-                    org.junit.jupiter.api.Assertions.assertInstanceOf(MachineLeftFarm.class, message.event());
+                    assertEquals(doomed, message.id());
+                    assertInstanceOf(MachineLeftFarm.class, message.event());
                 })
                 .verifyComplete();
     }
@@ -159,8 +165,8 @@ class FarmEventsTest {
         StepVerifier.create(Flux.from(farm.updates()).skip(1).take(1))
                 .then(() -> farm.onRegistered(announcement))
                 .then(() -> farm.onMachineEvent(new EventMessage(id, temperature(210))))
-                .assertNext(message -> org.junit.jupiter.api.Assertions.assertEquals(
-                        "TemperatureReported", message.type(),
+                .assertNext(message -> assertEquals(
+                        "BareTemperatureRs", message.type(),
                         "the re-announcement should not have produced a join"))
                 .verifyComplete();
     }
@@ -177,7 +183,7 @@ class FarmEventsTest {
 
         StepVerifier.create(Flux.from(farm.updates()).take(1))
                 .then(() -> farm.onRegistered(announcement))
-                .assertNext(message -> org.junit.jupiter.api.Assertions.assertInstanceOf(
+                .assertNext(message -> assertInstanceOf(
                         MachineJoinedFarm.class, message.event()))
                 .verifyComplete();
     }
@@ -218,14 +224,18 @@ class FarmEventsTest {
         reactors.openReactor(id);
 
         StepVerifier.create(Flux.from(farm.updates())
-                        .subscribeOn(reactor.core.scheduler.Schedulers.parallel())
+                        .subscribeOn(Schedulers.parallel())
                         .take(1))
                 .assertNext(FarmEventsTest::assertState)
                 .verifyComplete();
     }
 
-    private static TemperatureReported temperature(double hotend) {
-        return new TemperatureReported(new TemperatureReport(hotend, hotend, 100),
-                new TemperatureReport(60, 60, 50));
+    private static BareTemperatureRs temperature(double hotend) {
+        return new BareTemperatureRs(
+                reading(hotend), reading(60), null, null, null, null, null, Map.of());
+    }
+
+    private static HeaterReading reading(double current) {
+        return new HeaterReading(BigDecimal.valueOf(current), BigDecimal.valueOf(current), 100);
     }
 }

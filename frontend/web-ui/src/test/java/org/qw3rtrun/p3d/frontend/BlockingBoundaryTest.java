@@ -3,7 +3,9 @@ package org.qw3rtrun.p3d.frontend;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.frontend.mvc.MvcPrinterController;
 import org.springframework.test.web.reactive.server.WebTestClient;
@@ -56,8 +58,8 @@ class BlockingBoundaryTest {
 
     private final Descriptor descriptor =
             new Descriptor(UUID.randomUUID(), "a printer", new ConnectionDetails("localhost", 1),
-                    org.qw3rtrun.p3d.api.model.MachineConnectionState.OFFLINE,
-                    MachineProfile.unknown(), org.qw3rtrun.p3d.api.model.MachineSpec.undeclared());
+                    MachineConnectionState.OFFLINE,
+                    MachineProfile.unknown(), MachineSpec.undeclared());
 
     /** A management service that does nothing but remember which thread asked. */
     private MachineManagementService recordingService() {
@@ -70,14 +72,14 @@ class BlockingBoundaryTest {
 
             @Override
             public Descriptor add(String name, ConnectionDetails connection,
-                                  org.qw3rtrun.p3d.api.model.MachineSpec spec) {
+                                  MachineSpec spec) {
                 record();
                 return descriptor;
             }
 
             @Override
             public Descriptor update(UUID uuid, String name, ConnectionDetails connection,
-                                     org.qw3rtrun.p3d.api.model.MachineSpec spec) {
+                                     MachineSpec spec) {
                 record();
                 return descriptor;
             }

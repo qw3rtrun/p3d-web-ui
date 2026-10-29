@@ -1,20 +1,38 @@
 package org.qw3rtrun.p3d.frontend;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.control.FarmView;
 import org.qw3rtrun.p3d.api.control.PrinterControl;
+import org.qw3rtrun.p3d.api.files.GcodeFile;
+import org.qw3rtrun.p3d.api.files.GcodeFileService;
+import org.qw3rtrun.p3d.api.identity.FarmUserDirectory;
+import org.qw3rtrun.p3d.api.jobs.Job;
+import org.qw3rtrun.p3d.api.jobs.JobOutcome;
+import org.qw3rtrun.p3d.api.jobs.JobRequirements;
+import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
+import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.model.Descriptor;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
-import org.qw3rtrun.p3d.api.msg.PrinterCommand;
-import org.qw3rtrun.p3d.api.msg.TemperatureReport;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.reactivestreams.Publisher;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.session.ReactiveMapSessionRepository;
+import org.springframework.session.ReactiveSessionRepository;
 
+import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 @SpringBootTest
@@ -48,7 +66,7 @@ class BootVuejsApplicationTests {
         PrinterControl printers() {
             return new PrinterControl() {
                 @Override
-                public Publisher<TemperatureReport> state(UUID id) {
+                public Publisher<HeaterReading> state(UUID id) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
@@ -58,7 +76,7 @@ class BootVuejsApplicationTests {
                 }
 
                 @Override
-                public Publisher<Void> send(UUID id, PrinterCommand command) {
+                public Publisher<Void> send(UUID id, List<GRq<?>> commands) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
@@ -68,7 +86,7 @@ class BootVuejsApplicationTests {
                 }
 
                 @Override
-                public Publisher<org.qw3rtrun.p3d.api.model.ConnectionStatus> connection(UUID id) {
+                public Publisher<ConnectionStatus> connection(UUID id) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
             };
@@ -84,9 +102,9 @@ class BootVuejsApplicationTests {
          * Spring Boot does not do for a JDBC store, and silently.
          */
         @Bean
-        org.springframework.session.ReactiveSessionRepository<?> sessions() {
-            return new org.springframework.session.ReactiveMapSessionRepository(
-                    new java.util.concurrent.ConcurrentHashMap<>());
+        ReactiveSessionRepository<?> sessions() {
+            return new ReactiveMapSessionRepository(
+                    new ConcurrentHashMap<>());
         }
 
         /**
@@ -96,8 +114,8 @@ class BootVuejsApplicationTests {
          * why the real application declares exactly one and this test double matches it.
          */
         @Bean
-        org.springframework.security.crypto.password.PasswordEncoder passwordEncoder() {
-            return new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        PasswordEncoder passwordEncoder() {
+            return new BCryptPasswordEncoder();
         }
 
         /**
@@ -107,13 +125,13 @@ class BootVuejsApplicationTests {
          * for why this one is the exception.
          */
         @Bean
-        org.qw3rtrun.p3d.api.identity.FarmUserDirectory farmUsers() {
+        FarmUserDirectory farmUsers() {
             return new InMemoryFarmUsers();
         }
 
         /** The farm-wide stream, which lives in core - plan item D2. */
         @Bean
-        org.qw3rtrun.p3d.api.control.FarmView farmView() {
+        FarmView farmView() {
             return () -> {
                 throw new UnsupportedOperationException("not expected during a context load");
             };
@@ -129,13 +147,13 @@ class BootVuejsApplicationTests {
 
                 @Override
                 public Descriptor add(String name, ConnectionDetails connection,
-                                      org.qw3rtrun.p3d.api.model.MachineSpec spec) {
+                                      MachineSpec spec) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
                 public Descriptor update(UUID uuid, String name, ConnectionDetails connection,
-                                         org.qw3rtrun.p3d.api.model.MachineSpec spec) {
+                                         MachineSpec spec) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
@@ -161,26 +179,26 @@ class BootVuejsApplicationTests {
          * library to a user with a full one.
          */
         @Bean
-        org.qw3rtrun.p3d.api.files.GcodeFileService gcodeFiles() {
-            return new org.qw3rtrun.p3d.api.files.GcodeFileService() {
+        GcodeFileService gcodeFiles() {
+            return new GcodeFileService() {
                 @Override
-                public org.reactivestreams.Publisher<org.qw3rtrun.p3d.api.files.GcodeFile> store(
-                        String name, org.reactivestreams.Publisher<java.nio.ByteBuffer> content) {
+                public Publisher<GcodeFile> store(
+                        String name, Publisher<ByteBuffer> content) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public java.util.Optional<org.qw3rtrun.p3d.api.files.GcodeFile> fetch(UUID id) {
+                public Optional<GcodeFile> fetch(UUID id) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public Stream<org.qw3rtrun.p3d.api.files.GcodeFile> fetchAll() {
+                public Stream<GcodeFile> fetchAll() {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.reactivestreams.Publisher<java.nio.ByteBuffer> read(UUID id) {
+                public Publisher<ByteBuffer> read(UUID id) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
@@ -193,76 +211,76 @@ class BootVuejsApplicationTests {
 
         /** The print queue, which lives in a module this one must not depend on. */
         @Bean
-        org.qw3rtrun.p3d.api.jobs.JobService jobs() {
-            return new org.qw3rtrun.p3d.api.jobs.JobService() {
+        JobService jobs() {
+            return new JobService() {
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome queue(UUID fileId,
-                        org.qw3rtrun.p3d.api.jobs.JobRequirements requires) {
+                public JobOutcome queue(UUID fileId,
+                        JobRequirements requires) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome blocked(UUID jobId, String why) {
+                public JobOutcome blocked(UUID jobId, String why) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public java.util.List<org.qw3rtrun.p3d.api.jobs.Job> queued() {
+                public List<Job> queued() {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome assign(UUID jobId, UUID machineId) {
+                public JobOutcome assign(UUID jobId, UUID machineId) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome unassign(UUID jobId, String reason) {
+                public JobOutcome unassign(UUID jobId, String reason) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome start(UUID jobId) {
+                public JobOutcome start(UUID jobId) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome pause(UUID jobId) {
+                public JobOutcome pause(UUID jobId) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome resume(UUID jobId) {
+                public JobOutcome resume(UUID jobId) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome complete(UUID jobId) {
+                public JobOutcome complete(UUID jobId) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome fail(UUID jobId, String reason) {
+                public JobOutcome fail(UUID jobId, String reason) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public org.qw3rtrun.p3d.api.jobs.JobOutcome cancel(UUID jobId, String reason) {
+                public JobOutcome cancel(UUID jobId, String reason) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public java.util.Optional<org.qw3rtrun.p3d.api.jobs.Job> fetch(UUID jobId) {
+                public Optional<Job> fetch(UUID jobId) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public java.util.List<org.qw3rtrun.p3d.api.jobs.Job> fetchAll() {
+                public List<Job> fetchAll() {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public java.util.List<org.qw3rtrun.p3d.api.jobs.Job> forMachine(UUID machineId) {
+                public List<Job> forMachine(UUID machineId) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
             };

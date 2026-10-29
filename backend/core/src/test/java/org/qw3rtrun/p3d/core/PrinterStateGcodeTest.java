@@ -2,15 +2,15 @@ package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
-import org.qw3rtrun.p3d.api.msg.FirmwareInfoReportEvent;
-import org.qw3rtrun.p3d.api.msg.GEvent;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
+import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class PrinterStateGcodeTest {
 
     private final List<String> sent = new ArrayList<>();
-    private final List<GEvent> events = new ArrayList<>();
+    private final List<Object> events = new ArrayList<>();
 
     /**
      * An exact {@code void} method reference, not {@code sent::add}: {@code List.add} is overloaded,
@@ -163,13 +163,14 @@ class PrinterStateGcodeTest {
      * What an {@code M115} saying "this many extruders" looks like by the time it reaches the
      * aggregate.
      *
-     * <p>The real one is {@code FirmwareReport}, a record over the key-values the firmware sent;
-     * this is the same shape built by hand, so the aggregate reads the count the way it does in
-     * production - out of the map, rather than from a named accessor that only a test implements.
+     * <p>The real one is {@code FirmwareInfoRs} as `:gcode` decoded it, a value over the key-values
+     * the firmware sent; this is the same thing built by hand, so the aggregate reads the count the
+     * way it does in production - out of the map, rather than from a named accessor that only a test
+     * implements.
      */
-    private static FirmwareInfoReportEvent firmwareReporting(int extruderCount) {
-        return new org.qw3rtrun.p3d.api.msg.FirmwareReport(
-                java.util.Map.of("FIRMWARE_NAME", "Test", "EXTRUDER_COUNT", String.valueOf(extruderCount)));
+    private static FirmwareInfoRs firmwareReporting(int extruderCount) {
+        return new FirmwareInfoRs(
+                Map.of("FIRMWARE_NAME", "Test", "EXTRUDER_COUNT", String.valueOf(extruderCount)));
     }
 
 }

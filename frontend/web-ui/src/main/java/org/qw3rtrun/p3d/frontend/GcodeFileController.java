@@ -25,6 +25,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.nio.ByteBuffer;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Upload, download and list stored G-code.
@@ -90,7 +91,7 @@ public class GcodeFileController {
     }
 
     /** The blocking boundary, in one place - the same shape FDMPrinterManagementController uses. */
-    private <T> Mono<T> offLoop(java.util.function.Supplier<T> blocking) {
+    private <T> Mono<T> offLoop(Supplier<T> blocking) {
         return Mono.fromSupplier(blocking).subscribeOn(Schedulers.boundedElastic());
     }
 

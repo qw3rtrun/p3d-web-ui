@@ -25,16 +25,23 @@ const props = withDefaults(defineProps<{
     name: string
     /** What the sensor reads now. */
     current: number
-    /** What the machine is aiming at. 0 means off. */
-    target: number
-    /** Marlin's PWM scale, 0..127. */
-    power?: number
+    /**
+     * What the machine is aiming at. 0 means off, and **null means it did not say**.
+     *
+     * The two are different and the firmware distinguishes them: a build that reports no target at
+     * all is not a heater that has been told to cool. The reading this binds to is `:gcode`'s, which
+     * keeps the distinction; the record it replaced flattened null to zero before the browser ever
+     * saw it.
+     */
+    target: number | null
+    /** Marlin's PWM scale, 0..127. Null when the firmware does not report it. */
+    power?: number | null
     presets?: Preset[]
     max?: number
     /** An operator may heat; a viewer may only watch. The server enforces this regardless. */
     canControl?: boolean
 }>(), {
-    power: 0,
+    power: null,
     presets: () => [],
     max: 350,
     canControl: false,
@@ -42,7 +49,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ change: [target: number] }>()
 
-const input = ref(props.target)
+const input = ref(props.target ?? 0)
 const editing = ref(false)
 
 /**
@@ -53,14 +60,14 @@ const editing = ref(false)
  */
 watch(() => props.target, (next) => {
     if (!editing.value) {
-        input.value = next
+        input.value = next ?? 0
     }
 })
 
-const heating = computed(() => props.target > 0)
+const heating = computed(() => (props.target ?? 0) > 0)
 
 /** Marlin reports 0..127; a percentage is what a person reads. */
-const powerPercent = computed(() => Math.round((props.power / 127) * 100))
+const powerPercent = computed(() => Math.round(((props.power ?? 0) / 127) * 100))
 
 function apply(value: number) {
     const clamped = Math.min(Math.max(Math.round(value), 0), props.max)
@@ -83,7 +90,7 @@ function off() {
       </h4>
       <p class="card-subtitle mb-0">
         {{ name }}
-        <span v-if="power > 0" class="badge bg-warning text-dark ms-1">{{ powerPercent }}%</span>
+        <span v-if="(power ?? 0) > 0" class="badge bg-warning text-dark ms-1">{{ powerPercent }}%</span>
       </p>
     </div>
 

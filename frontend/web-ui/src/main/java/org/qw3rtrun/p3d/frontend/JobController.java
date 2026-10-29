@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
+import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -123,9 +124,9 @@ public class JobController {
      * not null, so a caller that just wants something printed sends {@code {"fileId": "..."}} and
      * the scheduler puts it on the first idle printer.
      */
-    public record QueuePayload(UUID fileId, org.qw3rtrun.p3d.api.jobs.JobRequirements requires) {
+    public record QueuePayload(UUID fileId, JobRequirements requires) {
         public QueuePayload {
-            requires = requires == null ? org.qw3rtrun.p3d.api.jobs.JobRequirements.any() : requires;
+            requires = requires == null ? JobRequirements.any() : requires;
         }
     }
 

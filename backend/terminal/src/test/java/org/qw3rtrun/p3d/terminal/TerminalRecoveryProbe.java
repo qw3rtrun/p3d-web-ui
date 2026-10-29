@@ -1,10 +1,9 @@
 package org.qw3rtrun.p3d.terminal;
 
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
-import org.qw3rtrun.p3d.api.msg.BusyReport;
-import org.qw3rtrun.p3d.api.msg.ErrorReport;
-import org.qw3rtrun.p3d.api.msg.GEvent;
-import org.qw3rtrun.p3d.api.msg.TemperatureReported;
+import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
+import org.qw3rtrun.p3d.g.protocol.BusyRs;
+import org.qw3rtrun.p3d.g.protocol.ErrorRs;
 import org.qw3rtrun.p3d.terminal.msg.Priority;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
@@ -44,7 +43,8 @@ import java.util.function.Consumer;
  *   <li><strong>{@code echo:busy:} reaches the send window.</strong> {@code G28} takes seconds and
  *       Marlin fills the wait with it. Before the fix only the bare {@code busy:} was recognised,
  *       so the window was never told the machine had stalled. Both spellings arrive here as one
- *       {@link BusyReport}, which is what the bridge in {@code ReplyEvents} is for.</li>
+ *       {@link BusyRs}, because both are that interface in `:gcode` - the transport matches the
+ *       family rather than one concrete spelling.</li>
  * </ul>
  *
  * <p>It builds its own connection rather than going through {@link TerminalManager}, because
@@ -80,7 +80,7 @@ public final class TerminalRecoveryProbe {
         var queue = new PublisherQueue<String, Priority>();
         Consumer<String> sink = gcode -> queue.addPublisher(Priority.REGULAR, Mono.just(gcode));
 
-        List<GEvent> seen = new CopyOnWriteArrayList<>();
+        List<Object> seen = new CopyOnWriteArrayList<>();
         List<String> busEnded = new CopyOnWriteArrayList<>();
 
         Disposable replies = terminal.messageFlux().subscribe(
@@ -152,7 +152,7 @@ public final class TerminalRecoveryProbe {
         return after.stream().anyMatch(b -> after.stream().filter(b::equals).count() > 1);
     }
 
-    private static void report(List<GEvent> seen, List<String> busEnded,
+    private static void report(List<Object> seen, List<String> busEnded,
                                int before, int after, int errors, int writtenBefore) {
         System.out.println();
         System.out.println("=== what reached messageFlux() ===");
@@ -166,7 +166,7 @@ public final class TerminalRecoveryProbe {
             System.out.printf("  %s", block);
         }
 
-        var busies = seen.stream().filter(BusyReport.class::isInstance).count();
+        var busies = seen.stream().filter(BusyRs.class::isInstance).count();
         var replayed = replayed(writtenBefore);
         var acked = acknowledged(seen);
         var ackNumbers = acked.stream().map(BlockAcknowledged::lineNumber).toList();
@@ -200,7 +200,7 @@ public final class TerminalRecoveryProbe {
      * block twice. Counting what came back here must not, and that is only demonstrable against
      * something that actually rejects a block.
      */
-    private static List<BlockAcknowledged> acknowledged(List<GEvent> seen) {
+    private static List<BlockAcknowledged> acknowledged(List<Object> seen) {
         return seen.stream()
                 .filter(BlockAcknowledged.class::isInstance)
                 .map(BlockAcknowledged.class::cast)
@@ -211,12 +211,12 @@ public final class TerminalRecoveryProbe {
         return block.startsWith("N") && block.lastIndexOf('*') > 0;
     }
 
-    private static int countTemperatures(List<GEvent> seen) {
-        return (int) seen.stream().filter(TemperatureReported.class::isInstance).count();
+    private static int countTemperatures(List<Object> seen) {
+        return (int) seen.stream().filter(TemperatureRs.class::isInstance).count();
     }
 
-    private static int countErrors(List<GEvent> seen) {
-        return (int) seen.stream().filter(ErrorReport.class::isInstance).count();
+    private static int countErrors(List<Object> seen) {
+        return (int) seen.stream().filter(ErrorRs.class::isInstance).count();
     }
 
     private static void settle(Duration d) throws InterruptedException {

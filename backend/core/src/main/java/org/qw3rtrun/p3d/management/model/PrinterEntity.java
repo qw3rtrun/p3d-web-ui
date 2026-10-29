@@ -6,6 +6,7 @@ import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.MapKeyColumn;
@@ -71,14 +72,14 @@ public class PrinterEntity {
      * would mean this module parsing something. {@code EAGER} because a {@code Descriptor} always
      * carries the profile and the farm is tens of rows, not millions.
      */
-    @ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "printer_firmware", joinColumns = @JoinColumn(name = "printer_id"))
     @MapKeyColumn(name = "key_name")
     @Column(name = "key_value")
     Map<String, String> firmware = new HashMap<>();
 
     /** Each {@code Cap:} line the machine declared, by name. */
-    @ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "printer_capability", joinColumns = @JoinColumn(name = "printer_id"))
     @MapKeyColumn(name = "capability")
     @Column(name = "enabled")
@@ -122,20 +123,20 @@ public class PrinterEntity {
      * a G-code file's {@code T} commands mean. "This machine has a 0.4 and a 0.6" without saying
      * which one is {@code T0} answers nothing a slicer asked.
      */
-    @ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "printer_nozzle", joinColumns = @JoinColumn(name = "printer_id"))
     @OrderColumn(name = "tool_index")
     @Column(name = "diameter")
     List<Double> nozzleDiameters = new ArrayList<>();
 
     /** What this machine is set up to print. Unordered, because no material is the first one. */
-    @ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "printer_material", joinColumns = @JoinColumn(name = "printer_id"))
     @Column(name = "material")
     Set<String> materials = new HashSet<>();
 
     /** Free-form labels, which is also how this farm expresses groups - see {@link MachineSpec}. */
-    @ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "printer_tag", joinColumns = @JoinColumn(name = "printer_id"))
     @Column(name = "tag")
     Set<String> tags = new HashSet<>();

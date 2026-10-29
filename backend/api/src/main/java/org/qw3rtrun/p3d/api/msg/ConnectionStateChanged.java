@@ -29,5 +29,5 @@ import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 public record ConnectionStateChanged(MachineConnectionState from,
                                      MachineConnectionState to,
                                      int attempt,
-                                     String reason) implements GEvent {
+                                     String reason) {
 }

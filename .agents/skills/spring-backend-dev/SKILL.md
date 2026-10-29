@@ -57,12 +57,24 @@ realised. **Rule 1 is that every submodel depends on `api` and on no other submo
 `api` must stay free of WebFlux, JPA, Reactor and Spring itself. It is the vocabulary both the web
 side and the persistence side are written in, and a framework dragged in through it reaches both.
 
-**`api` and `:gcode` do not know about each other, in either direction.** The protocol models what
-the wire can say; `api` models what the application decided to care about; `:backend:terminal`
-converts, in `ReplyEvents`. They were one model until the protocol's `GRs` stopped extending `api`'s
-`GEvent` - which had made the one module that depends on nothing depend on the application's
-vocabulary. If a new reply needs to reach the host, the change is an event in `api` and an arm in
-the bridge, never an `api` interface implemented inside `:gcode`.
+**`api` depends on `:gcode`, and `:gcode` depends on nothing.** The dependency rule is
+`backend -> terminal -> gcode` (`doc/sub_boundaries.txt` rules 6-8), and the direction is the whole
+of it: `api` may name a `GRq` or a `GRs`, and nothing may make the protocol name an application
+type. An `api` interface implemented inside `:gcode` is the one thing that is never the answer -
+that was the state the modules were rescued from once, when `GRs` extended `api`'s `GEvent`.
+
+**The backend does not mirror the `:gcode` model.** There used to be an `api.msg` record for every
+reply and every command - `TemperatureReported` beside `TemperatureRs`, `api.msg.SetFanSpeed`
+beside `marlin.command.SetFanSpeed` - with `ReplyEvents` translating inbound and
+`PrinterControlService.toMarlin` outbound. All of it is deleted. This farm drives Marlin machines
+and a Marlin *is* G-code, so there is no second kind of printer to abstract over and no second
+vocabulary to keep in step. A new reply that needs to reach the host is now one change (an arm in
+`PrinterState.onEvent`) rather than three.
+
+**What `api.msg` still holds is what no firmware has a word for**: `ConnectionStateChanged`,
+`BlockAcknowledged`, `MachineJoinedFarm`/`MachineLeftFarm`, `ConnectCmd` and the `M`-prefixed
+roster events. If a new message is a fact about the host rather than something a machine said, it
+belongs there; otherwise it is already a `GRs`.
 
 **`api` is the only place a type crosses submodels.** A `PrinterEntity` must not leave
 `printer-management`, and the aggregate must not leave `core`.
@@ -222,12 +234,12 @@ Two others existed and are gone:
 **Routing a message is the business of whatever acts on it.** The reactor's job is to carry
 messages, not to work out who wants them, and moving the switch into the aggregate is what made it
 checkable: a handler that is renamed or deleted now fails the build (`no suitable method found for
-on(TemperatureReportedEvent)`), where the reflective version compiled happily and went quiet at
-WARN level.
+on(TemperatureRs)`), where the reflective version compiled happily and went quiet at WARN level.
 
-**The switches are not exhaustive in the compiler's sense, deliberately.** `GEvent` is not sealed,
-and sealing it would close the application's event vocabulary to the modules that are going to add
-to it - plan item C2 adds job events. `GRq` cannot be sealed at all: it has 295 implementations in
+**The switches are not exhaustive in the compiler's sense, deliberately.** `onEvent` takes an
+`Object`, because what travels is either a `:gcode` reply or one of the farm's own events and no
+type spans both - inventing one would mean `:gcode` implementing an application interface, which is
+the dependency that is never for sale. `GRq` cannot be sealed either: it has 295 implementations in
 `:gcode`. So each switch carries a `default`, and the two defaults differ on purpose: an unhandled
 **event** is a debug line, because most replies genuinely are not the aggregate's business; an
 unhandled **command** is a warning, because a user asked for it and nothing happened.
@@ -622,38 +634,43 @@ broken.
   it read a session attribute nothing wrote, so its id was always null, and no client ever connected
   to `/ws-printer/*`. If one is wanted later it is a day's work on a *working* SSE contract, and it
   should be written against the farm-wide stream of plan item D2 rather than the per-printer one.
-- **A request body is an `api` record, never a `:gcode` command class.** The REST contract used to
-  follow the Marlin command set, so a rename by the generator was a breaking API change - and one
-  had already happened silently, with `/auto-report-temp` binding a `seconds` field while the browser
-  sent `period`. `PrinterCommand` is sealed and `core` translates it.
+- **A request body is a `frontend/command` record, never a `:gcode` command class.** The REST
+  contract used to follow the Marlin command set, so a rename by the generator was a breaking API
+  change - and one had already happened silently, with `/auto-report-temp` binding a `seconds` field
+  while the browser sent `period`. The payload records live in the web module and translate
+  themselves; everything behind `PrinterControl` is `GRq`.
 - **The browser's contracts are pinned by test, because the build does not compile the browser.**
   `PrinterCommandBindingTest` for what it posts and `EventStreamContractTest` for what it reads. A
   renamed field or event name on this side fails there rather than in a browser.
 
 ## The command model, end to end
 
-A control on a page becomes bytes on a serial link through four places, and **a change that misses
+A control on a page becomes bytes on a serial link through three places, and **a change that misses
 one of them fails silently**. In order:
 
 | Step | Where | What it is |
 |---|---|---|
-| 1 | `api::msg` | a `PrinterCommand` record - the application's word for the intent |
+| 1 | `frontend/command` | a record in the browser's shape, with a `toMarlin()` of its own |
 | 2 | `frontend` | a `@PostMapping` under `/api-printer/{id}` binding that record |
-| 3 | `core` | an arm in `PrinterControlService.toMarlin` turning it into `:gcode` commands |
-| 4 | `core` | an arm in `PrinterState.onCommand` that actually sends them |
+| 3 | `core` | an arm in `PrinterState.onCommand` that actually sends the `GRq` |
 
-**`PrinterCommand` is sealed and `toMarlin` has no `default`**, so steps 1 and 3 cannot diverge:
-adding a record without translating it fails the build. **Steps 3 and 4 have no such protection** -
-`PrinterState.onCommand` switches on `:gcode`'s `GRq`, which cannot be sealed (295 implementations)
-and therefore carries a `default` that logs a warning. A command that translates but has no handler
-reaches the aggregate and is dropped, and the only trace is one WARN line.
+It was four places, with an `api::msg` command model and a `toMarlin` switch in `core` between
+them. That step is gone: `PrinterControl.send` takes `List<GRq<?>>`, so a command crosses the
+boundary as itself.
+
+**Step 3 has no compiler protection.** `PrinterState.onCommand` switches on `:gcode`'s `GRq`, which
+cannot be sealed (295 implementations) and therefore carries a `default` that logs a warning. A
+command that is built correctly but has no handler reaches the aggregate and is dropped, and the
+only trace is one WARN line.
 
 That is not hypothetical: it is the red the motion commands were written against. The endpoints
-answered 200, the translation was correct, and nothing reached the printer.
+answered 200, the translation was correct, and nothing reached the printer. The two halves are
+tested either side of the boundary - `PrinterCommandTranslationTest` in `:frontend:web-ui` for what
+a payload becomes, `PrinterStateMotionTest` in `:backend:core` for what the aggregate does with it.
 
 ### One intent is sometimes several commands
 
-`toMarlin` returns a **`List<GRq<?>>`**, because Marlin has no per-command relative flag: a
+`toMarlin()` returns a **`List<GRq<?>>`**, because Marlin has no per-command relative flag: a
 relative move is `G91`, the move, then `G90`. Two consequences:
 
 - **`G91` is modal.** Forgetting the trailing `G90` leaves the machine in relative mode, so every
@@ -670,15 +687,20 @@ relative move is `G91`, the move, then `G90`. Two consequences:
 reply reach a browser:
 
 1. `:gcode` decodes it - already true for everything in `marlin/event/`;
-2. `ReplyEvents.of` in `:backend:terminal` maps it to an `api` `GEvent`;
-3. **`PrinterState.onEvent` needs a case for it.**
+2. **`PrinterState.onEvent` needs a case for it.**
 
-Step 3 is the one that gets missed. The aggregate republishes only what it has an arm for;
-everything else reaches `default`, which logs at debug and stops. `PositionReported` was mapped
-correctly all the way through the transport - the log showed
+It was three steps; the mapping in the middle is gone, because `:backend:terminal` propagates the
+decoded `GRs` as it is. Step 2 is the one that gets missed. The aggregate republishes only what it
+has an arm for; everything else reaches `default`, which logs at debug and stops. A position report
+was decoded correctly all the way through the transport - the log showed
 `IN: onNext(PositionRs(axes={X=15.00, ...}))` - and never appeared in a browser, because the
 aggregate had nothing to say about it and therefore said nothing. Every layer looked right, which
 is why it took a live run to find.
+
+**A new reply type also reaches the browser under its own class name.** `EventMessage.type` is the
+event's simple class name, so adding an arm is visible to the UI as a new string - and a reply with
+two concrete classes (`BareTemperatureRs` and `OkTemperatureRs` are one reading) is two strings the
+TypeScript side has to match as a family. `EventStreamContractTest` pins them.
 
 **Republishing is not the same as keeping.** The position arm emits and stores nothing: there is no
 rule the aggregate enforces with it and no handler that reads it, and a stored field with no reader
@@ -687,8 +709,9 @@ when something reads it.
 
 ### What the farm can tell a machine to do
 
-`HomeAxes`, `MoveAxes`, `SetFanSpeed`, `StoreSettings`, `RequestPosition`, and the four temperature
-commands. Three notes that are easy to get wrong and were verified on the wire:
+Homing, moving, the fan, `M500`, a position request and the four temperature commands - the
+payload records in `frontend/command`, one endpoint each. Three notes that are easy to get wrong
+and were verified on the wire:
 
 - **A fan index travels in `P`, not `I`.** Marlin's documentation lists both as "index" and the
   generated command class carries both fields; `P` is what mainline firmware reads as the fan
@@ -700,8 +723,9 @@ commands. Three notes that are easy to get wrong and were verified on the wire:
   defaulted null to zero would turn a single-axis jog into a move of everything.
 
 **There is deliberately no endpoint that accepts G-code text**, and there must not be. It would
-hand any operator arbitrary control of a heater past every check the command model exists to make,
-and it would put a second command vocabulary in front of the one `api` defines.
+hand any operator arbitrary control of a heater past every check the endpoints exist to make. Note
+that this is a rule about the *HTTP surface* - inside the application G-code is exactly what
+travels, and that is rule 7 of `doc/sub_boundaries.txt`.
 
 ## Persistence
 

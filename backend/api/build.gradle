@@ -3,10 +3,13 @@ import org.springframework.boot.gradle.plugin.SpringBootPlugin
 /**
  * The `api` submodel: the shared vocabulary every other submodel is written in.
  *
- * It depends on nothing but the JDK. That is the point of it - both the web side and the
- * persistence side depend on this module, and neither should reach the other's framework through
- * it. The one Spring reference is the Modulith annotation in package-info.java, and it is
- * compileOnly.
+ * It names no framework. That is the point of it - both the web side and the persistence side
+ * depend on this module, and neither should reach the other's framework through it. The one Spring
+ * reference is the Modulith annotation in package-info.java, and it is compileOnly.
+ *
+ * `:gcode` is the one project dependency, and it is `api` rather than `implementation` so that it
+ * travels with this module: the dependency rule is backend -> terminal -> gcode, and the
+ * vocabulary of a Marlin farm *is* G-code. See the note in api/package-info.java.
  */
 plugins {
     id 'p3d.java-conventions'
@@ -27,6 +30,12 @@ dependencyManagement {
 }
 
 dependencies {
+    // The protocol, and the model this module's messages are written in. `api` because
+    // PrinterControl's signatures are GRq and HeaterReading: every module that depends on this one
+    // needs them on its own compile path, which is what "terminal may propagate gcode's models to
+    // backend" means in a build file.
+    api project(':gcode')
+
     // The interop SPI that Mono and Flux implement - not a framework, and the only way to say
     // "asynchronous" in this module's signatures without putting Reactor on every dependent's
     // compile path. See api/control/PrinterControl.

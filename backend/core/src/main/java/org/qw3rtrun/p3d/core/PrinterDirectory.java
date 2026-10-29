@@ -11,6 +11,7 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.context.event.EventListener;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -92,8 +93,8 @@ public class PrinterDirectory {
      * halfway through - which plan item D2's snapshot would otherwise be, since it is built on
      * whatever thread a browser attached on.
      */
-    public java.util.List<Entry> all() {
-        return java.util.List.copyOf(known.values());
+    public List<Entry> all() {
+        return List.copyOf(known.values());
     }
 
     /**

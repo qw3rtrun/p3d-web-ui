@@ -6,6 +6,7 @@ import org.qw3rtrun.p3d.identity.service.ExpiredSessionSweeper;
 import org.qw3rtrun.p3d.identity.service.InitialAdmin;
 import org.qw3rtrun.p3d.identity.service.ReactiveJdbcSessions;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.session.ReactiveSessionRepository;
 import org.springframework.session.jdbc.JdbcIndexedSessionRepository;
 import org.qw3rtrun.p3d.identity.service.UserRepository;
@@ -14,6 +15,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.time.Duration;
 
 @Configuration
 @EnableJpaRepositories
@@ -49,9 +55,9 @@ public class IdentityModule {
      */
     @Bean
     public JdbcIndexedSessionRepository jdbcSessions(
-            org.springframework.jdbc.core.JdbcOperations jdbc,
-            org.springframework.transaction.PlatformTransactionManager transactions,
-            @Value("${p3d.security.session-timeout:8h}") java.time.Duration timeout) {
+            JdbcOperations jdbc,
+            PlatformTransactionManager transactions,
+            @Value("${p3d.security.session-timeout:8h}") Duration timeout) {
         var sessions = new JdbcIndexedSessionRepository(jdbc, transactionsFor(transactions));
         sessions.setDefaultMaxInactiveInterval(timeout);
         return sessions;
@@ -65,11 +71,11 @@ public class IdentityModule {
      * that unrelated work commits. A user staying signed in should not depend on whether the
      * command they just sent succeeded.
      */
-    private static org.springframework.transaction.support.TransactionTemplate transactionsFor(
-            org.springframework.transaction.PlatformTransactionManager manager) {
-        var template = new org.springframework.transaction.support.TransactionTemplate(manager);
+    private static TransactionTemplate transactionsFor(
+            PlatformTransactionManager manager) {
+        var template = new TransactionTemplate(manager);
         template.setPropagationBehavior(
-                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         template.afterPropertiesSet();
         return template;
     }
@@ -102,9 +108,9 @@ public class IdentityModule {
     @Bean
     public InitialAdmin initialAdmin(
             FarmUserDirectory users,
-            @org.springframework.beans.factory.annotation.Value(
+            @Value(
                     "${p3d.security.initial-admin.username:admin}") String username,
-            @org.springframework.beans.factory.annotation.Value(
+            @Value(
                     "${p3d.security.initial-admin.password:}") String password) {
         return new InitialAdmin(users, username, password);
     }

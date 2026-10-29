@@ -122,10 +122,10 @@ export const farm = {
 /**
  * The commands one printer accepts.
  *
- * Every one of these is an application command in `api::msg`, not G-code: the browser never sends
- * a Marlin line. There is deliberately no "send raw G-code" escape hatch - it would hand any
- * operator arbitrary control of a heater past every check the command model exists to make - so a
- * control that needs something not listed here needs a backend change rather than a workaround.
+ * Every one of these posts a small JSON body that the server turns into G-code - the browser never
+ * sends a Marlin line itself. There is deliberately no "send raw G-code" escape hatch: it would
+ * hand any operator arbitrary control of a heater past every check the endpoints exist to make, so
+ * a control that needs something not listed here needs a backend change rather than a workaround.
  */
 export function printer(uuid: string) {
     const at = (path: string) => `/api-printer/${uuid}${path}`
@@ -197,7 +197,7 @@ export function printer(uuid: string) {
         /**
          * Ask where the toolhead is (M114).
          *
-         * The answer arrives on the event stream as `PositionReported`, not from this call. There
+         * The answer arrives on the event stream as `PositionRs`, not from this call. There
          * is no auto-report for position the way M155 auto-reports temperature, so ask on demand
          * and after a move - never on a timer, which fills a busy printer's command queue with
          * questions.

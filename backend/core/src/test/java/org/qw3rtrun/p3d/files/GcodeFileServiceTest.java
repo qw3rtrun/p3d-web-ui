@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.files;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
+import org.qw3rtrun.p3d.files.service.GcodeBlobStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -193,7 +194,7 @@ class GcodeFileServiceTest {
      * disk those bytes live is {@code GcodeBlobStoreTest}'s business, not this one's.
      */
     @Test
-    void theRowAndTheBlobAgree(@Autowired org.qw3rtrun.p3d.files.service.GcodeBlobStore blobs) {
+    void theRowAndTheBlobAgree(@Autowired GcodeBlobStore blobs) {
         var stored = store("addressed.gcode", contentOf("80"));
 
         assertTrue(blobs.holds(stored.contentHash()));

@@ -6,10 +6,13 @@ import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.files.SliceInfo;
 import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
+import org.qw3rtrun.p3d.api.jobs.JobProgress;
+import org.qw3rtrun.p3d.api.jobs.JobProgressed;
 import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
+import org.qw3rtrun.p3d.jobs.service.JobServiceImpl;
 import org.reactivestreams.Publisher;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -18,6 +21,8 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.event.EventListener;
+import org.springframework.modulith.events.CompletedEventPublications;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;
@@ -115,7 +120,7 @@ class JobServiceTest {
     private JobService jobs;
 
     @Autowired
-    private org.qw3rtrun.p3d.jobs.service.JobServiceImpl roster;
+    private JobServiceImpl roster;
 
     @Autowired
     private StubFiles files;
@@ -127,10 +132,10 @@ class JobServiceTest {
     private ApplicationEventPublisher publisher;
 
     @Autowired
-    private org.springframework.transaction.support.TransactionTemplate transactions;
+    private TransactionTemplate transactions;
 
     @Autowired
-    private org.springframework.modulith.events.CompletedEventPublications completed;
+    private CompletedEventPublications completed;
 
     private Job queued(String name) {
         var file = files.add(name);
@@ -384,8 +389,8 @@ class JobServiceTest {
         jobs.assign(job.id(), machine);
         jobs.start(job.id());
 
-        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
-                new org.qw3rtrun.p3d.api.jobs.JobProgress(4200, 3, 150_000, 1_000_000, 12,
+        publisher.publishEvent(new JobProgressed(job.id(), machine,
+                new JobProgress(4200, 3, 150_000, 1_000_000, 12,
                         LocalDateTime.now().minusMinutes(2), LocalDateTime.now())));
 
         var read = jobs.fetch(job.id()).orElseThrow().progress();
@@ -410,13 +415,13 @@ class JobServiceTest {
         var job = queued("late-progress.gcode");
         jobs.assign(job.id(), machine);
         jobs.start(job.id());
-        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
-                new org.qw3rtrun.p3d.api.jobs.JobProgress(100, 0, 1000, 10_000, 1,
+        publisher.publishEvent(new JobProgressed(job.id(), machine,
+                new JobProgress(100, 0, 1000, 10_000, 1,
                         LocalDateTime.now(), LocalDateTime.now())));
         jobs.cancel(job.id(), "stopped");
 
-        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
-                new org.qw3rtrun.p3d.api.jobs.JobProgress(40, 0, 400, 10_000, 1,
+        publisher.publishEvent(new JobProgressed(job.id(), machine,
+                new JobProgress(40, 0, 400, 10_000, 1,
                         LocalDateTime.now(), LocalDateTime.now())));
 
         var read = jobs.fetch(job.id()).orElseThrow().progress();
@@ -436,13 +441,13 @@ class JobServiceTest {
         var job = queued("exact-pause.gcode");
         jobs.assign(job.id(), machine);
         jobs.start(job.id());
-        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
-                new org.qw3rtrun.p3d.api.jobs.JobProgress(38419, 0, 500_000, 8_000_000, 95,
+        publisher.publishEvent(new JobProgressed(job.id(), machine,
+                new JobProgress(38419, 0, 500_000, 8_000_000, 95,
                         LocalDateTime.now(), LocalDateTime.now())));
         jobs.pause(job.id());
 
-        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
-                new org.qw3rtrun.p3d.api.jobs.JobProgress(41996, 0, 546_000, 8_000_000, 104,
+        publisher.publishEvent(new JobProgressed(job.id(), machine,
+                new JobProgress(41996, 0, 546_000, 8_000_000, 104,
                         LocalDateTime.now(), LocalDateTime.now())));
 
         assertEquals(41996, jobs.fetch(job.id()).orElseThrow().progress().blocksSent(),
@@ -472,8 +477,8 @@ class JobServiceTest {
         var job = queued("interrupted.gcode");
         jobs.assign(job.id(), machine);
         jobs.start(job.id());
-        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
-                new org.qw3rtrun.p3d.api.jobs.JobProgress(7400, 2, 90_000, 500_000, 18,
+        publisher.publishEvent(new JobProgressed(job.id(), machine,
+                new JobProgress(7400, 2, 90_000, 500_000, 18,
                         LocalDateTime.now(), LocalDateTime.now())));
 
         roster.failWhatTheRestartInterrupted();
@@ -498,8 +503,8 @@ class JobServiceTest {
         var job = queued("paused-over-restart.gcode");
         jobs.assign(job.id(), machine);
         jobs.start(job.id());
-        publisher.publishEvent(new org.qw3rtrun.p3d.api.jobs.JobProgressed(job.id(), machine,
-                new org.qw3rtrun.p3d.api.jobs.JobProgress(5000, 0, 60_000, 500_000, 10,
+        publisher.publishEvent(new JobProgressed(job.id(), machine,
+                new JobProgress(5000, 0, 60_000, 500_000, 10,
                         LocalDateTime.now(), LocalDateTime.now())));
         jobs.pause(job.id());
 

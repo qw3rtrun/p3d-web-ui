@@ -4,7 +4,19 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.control.PrinterControl;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
-import org.qw3rtrun.p3d.api.msg.*;
+import org.qw3rtrun.p3d.api.msg.ConnectCmd;
+import org.qw3rtrun.p3d.api.msg.EventMessage;
+import org.qw3rtrun.p3d.frontend.command.HomeAxes;
+import org.qw3rtrun.p3d.frontend.command.MoveAxes;
+import org.qw3rtrun.p3d.frontend.command.PrinterCommand;
+import org.qw3rtrun.p3d.frontend.command.RequestPosition;
+import org.qw3rtrun.p3d.frontend.command.RequestTemperatureReport;
+import org.qw3rtrun.p3d.frontend.command.SetBedTarget;
+import org.qw3rtrun.p3d.frontend.command.SetFanSpeed;
+import org.qw3rtrun.p3d.frontend.command.SetHotendTarget;
+import org.qw3rtrun.p3d.frontend.command.SetTemperatureAutoReport;
+import org.qw3rtrun.p3d.frontend.command.StoreSettings;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -22,10 +34,13 @@ import java.util.UUID;
  * first: the interface could not take a `:gcode` command class without {@code api} depending on
  * `:gcode`.
  *
- * <p><strong>The request bodies are the application's records now, not Marlin's.</strong> They were
- * `:gcode`'s generated command classes, which made this HTTP contract follow the Marlin command set
- * - a field the generator renamed was a breaking API change. The field names here are the ones the
- * browser already sends, so nothing on the other side moved.
+ * <p><strong>The request bodies are this module's records, and they translate themselves.</strong>
+ * They are not a model of what a printer can do - that is `:gcode`'s, and the runtime speaks it
+ * directly now - they are the shape the browser posts, which is a property of this surface. Binding
+ * `:gcode`'s generated classes here instead would make the HTTP contract follow the Marlin command
+ * set, where a field the generator renames is a breaking API change; keeping a second command model
+ * in `api` for it, which is what this used to do, made the whole application carry a hand-written
+ * mirror of the protocol. See {@link PrinterCommand}.
  *
  * <p>The scheduling that used to live here moved with the lookup, into
  * {@code PrinterControlService}: which thread a runtime is opened on is that module's business, not
@@ -40,7 +55,7 @@ public class PrinterController {
     private final PrinterControl printers;
 
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<TemperatureReport> getState(@PathVariable UUID id) {
+    public Mono<HeaterReading> getState(@PathVariable UUID id) {
         return Mono.from(printers.state(id));
     }
 
@@ -79,7 +94,7 @@ public class PrinterController {
 
     @PostMapping("/report-temp")
     public Mono<Void> reportTemp(@PathVariable UUID id) {
-        return Mono.from(printers.send(id, new RequestTemperatureReport(null)));
+        return send(id, new RequestTemperatureReport(null));
     }
 
     /**
@@ -134,7 +149,7 @@ public class PrinterController {
      */
     @PostMapping("/position")
     public Mono<Void> position(@PathVariable UUID id) {
-        return Mono.from(printers.send(id, new RequestPosition()));
+        return send(id, new RequestPosition());
     }
 
     @PostMapping("/connect")
@@ -144,6 +159,17 @@ public class PrinterController {
     }
 
     private Mono<Void> send(UUID id, Mono<? extends PrinterCommand> command) {
-        return command.flatMap(c -> Mono.from(printers.send(id, c)));
+        return command.flatMap(c -> send(id, c));
+    }
+
+    /**
+     * Where a request body becomes G-code, and the only place in this application that still does.
+     *
+     * <p>One command can be several: {@link MoveAxes#toMarlin()} answers a relative jog with
+     * {@code G91}, the move and {@code G90}, and {@code PrinterControl.send} takes the list as a
+     * unit so nothing can land between them.
+     */
+    private Mono<Void> send(UUID id, PrinterCommand command) {
+        return Mono.from(printers.send(id, command.toMarlin()));
     }
 }

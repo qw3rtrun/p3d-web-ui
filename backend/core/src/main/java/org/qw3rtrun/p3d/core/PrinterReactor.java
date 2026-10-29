@@ -4,8 +4,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.reactivestreams.Publisher;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
-import org.qw3rtrun.p3d.api.msg.*;
+import org.qw3rtrun.p3d.api.msg.ConnectCmd;
+import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
+import org.qw3rtrun.p3d.api.msg.EventMessage;
+import org.qw3rtrun.p3d.api.msg.MCapabilityReportedEvent;
+import org.qw3rtrun.p3d.api.msg.MConnectionChangedEvent;
+import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
 import org.springframework.context.ApplicationEventPublisher;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
+import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.terminal.GSender;
 import org.qw3rtrun.p3d.terminal.HostTerminal;
@@ -22,6 +30,7 @@ import reactor.util.retry.Retry;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Slf4j
 public class PrinterReactor {
@@ -295,7 +304,7 @@ public class PrinterReactor {
      * host decided on and has to be able to send as a unit. Bare blocks, per the transport's
      * contract - no numbering, no checksum, no comment.
      */
-    public void interject(java.util.List<String> blocks) {
+    public void interject(List<String> blocks) {
         var queue = commandQueue;
         if (queue == null || terminal == null) {
             log.warn("{} is not connected, so {} was not sent", printer.getId(), blocks);
@@ -323,8 +332,16 @@ public class PrinterReactor {
         printer.declared(spec);
     }
 
-    public Mono<TemperatureReport> state() {
-        return Mono.defer(() -> Mono.just(printer.getTemperature())).publishOn(executor);
+    /**
+     * The last hotend reading, or nothing at all.
+     *
+     * <p><strong>Empty is an answer.</strong> A machine nothing has connected to has not reported a
+     * temperature, and this used to say so with {@code (-1, -1, -1)} - a reading that cannot be told
+     * apart from one the firmware really sent, in a record that had no way to say "unknown". The
+     * reply model from {@code :gcode} does have one, so the absence travels as an absence.
+     */
+    public Mono<HeaterReading> state() {
+        return Mono.defer(() -> Mono.justOrEmpty(printer.getTemperature())).publishOn(executor);
     }
 
     /** Where the machine's connection is, answered without opening the stream. */
@@ -347,7 +364,7 @@ public class PrinterReactor {
      * between them and be interpreted in relative mode. One {@code doOnNext} over the list makes
      * the batch atomic with respect to everything else this printer is asked to do.
      */
-    public Mono<Void> handle(java.util.List<GRq<?>> commands) {
+    public Mono<Void> handle(List<GRq<?>> commands) {
         return Mono.just(commands)
                 .publishOn(executor)
                 .doOnNext(batch -> batch.forEach(cmd -> log.info("-> {}", cmd)))
@@ -364,7 +381,7 @@ public class PrinterReactor {
      * perhaps one or two messages a second per machine: a temperature auto-report and whatever the
      * aggregate decided was worth announcing, not every acknowledged block.
      */
-    private void onEvent(GEvent report) {
+    private void onEvent(Object report) {
         var message = new EventMessage(printer.getId(), report);
         updates.emitNext(message, SERIALISE);
         roster.publishEvent(message);
@@ -383,12 +400,12 @@ public class PrinterReactor {
      * column <em>derived</em> rather than a second opinion. Nothing else can tell the roster this:
      * knowing whether a machine is connected means holding the socket, which only this module does.
      */
-    private void report(GEvent event) {
+    private void report(Object event) {
         switch (event) {
-            case FirmwareInfoReportEvent firmware -> roster.publishEvent(new MFirmwareReportedEvent(
-                    printer.getId(), firmware.keyValues(), LocalDateTime.now()));
-            case CapabilityReportEvent capability -> roster.publishEvent(new MCapabilityReportedEvent(
-                    printer.getId(), capability.capability(), capability.enabled(), LocalDateTime.now()));
+            case FirmwareInfoRs firmware -> roster.publishEvent(new MFirmwareReportedEvent(
+                    printer.getId(), firmware.getKeyValues(), LocalDateTime.now()));
+            case CapabilityRs capability -> roster.publishEvent(new MCapabilityReportedEvent(
+                    printer.getId(), capability.getCapability(), capability.getEnabled(), LocalDateTime.now()));
             case ConnectionStateChanged change -> roster.publishEvent(new MConnectionChangedEvent(
                     printer.getId(), change.to(), change.reason(), LocalDateTime.now()));
             default -> {

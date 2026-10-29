@@ -3,10 +3,20 @@ package org.qw3rtrun.p3d.core;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
-import org.qw3rtrun.p3d.api.msg.*;
+import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
+import org.qw3rtrun.p3d.api.msg.ConnectCmd;
+import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
+import org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
+import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
+import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
+import org.qw3rtrun.p3d.g.protocol.BusyRs;
+import org.qw3rtrun.p3d.g.protocol.ErrorRs;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
@@ -157,7 +167,7 @@ public class PrinterState implements PrinterAggregate {
      * <p>A no-op until {@link #setEmitter} replaces it, because an aggregate can now be built and
      * seeded before its reactor exists - and one that cannot announce itself yet should not throw.
      */
-    private Consumer<GEvent> emitter = event -> {
+    private Consumer<Object> emitter = event -> {
     };
     private GSender g;
 
@@ -187,28 +197,34 @@ public class PrinterState implements PrinterAggregate {
      * listening, both arrive at a host whose outbound half is dead. That arrow belongs to
      * {@link BlockAcknowledged}, which names a block this session put on the wire and got back.
      *
-     * <p>Not exhaustive in the compiler's sense: {@code GEvent} is not sealed, and sealing it would
-     * close the application's event vocabulary to the modules that are going to add to it. What the
-     * switch does buy is that every arm is type-checked and a handler that is renamed or removed
-     * breaks the build instead of going quiet.
+     * <p><strong>Matched on {@code :gcode}'s own reply types.</strong> A reply arrives here as the
+     * {@code GRs} the protocol decoded - there is no longer an {@code api.msg} record standing in
+     * for each one - and the family interfaces are what the arms name: {@link TemperatureRs} covers
+     * the unsolicited auto-report and the one carried on an {@code ok}, {@link BusyRs} covers the
+     * bare {@code busy:} and Marlin's {@code echo:busy:}.
+     *
+     * <p>Not exhaustive in the compiler's sense: a reply may be anything {@code :gcode} can decode,
+     * and the farm's own events are not {@code GRs} at all. What the switch does buy is that every
+     * arm is type-checked and a handler that is renamed or removed breaks the build instead of
+     * going quiet.
      */
-    public void onEvent(GEvent event) {
+    public void onEvent(Object event) {
         switch (event) {
             case BlockAcknowledged ack -> {
                 blocksInFlight = ack.inFlight();
                 transition(connection.blockAcknowledged());
             }
-            case MachineBusyEvent e -> transition(connection.busyReported(e.reason()));
-            case ErrorReportEvent e -> transition(connection.faulted(e.message()));
-            case TemperatureReportedEvent e -> {
+            case BusyRs<?> e -> transition(connection.busyReported(e.getReason()));
+            case ErrorRs e -> transition(connection.faulted(e.getMessage()));
+            case TemperatureRs<?> e -> {
                 heard();
                 on(e);
             }
-            case FirmwareInfoReportEvent e -> {
+            case FirmwareInfoRs e -> {
                 heard();
                 on(e);
             }
-            case CapabilityReportEvent e -> {
+            case CapabilityRs e -> {
                 heard();
                 on(e);
             }
@@ -224,7 +240,7 @@ public class PrinterState implements PrinterAggregate {
              * reply that is mapped all the way through the transport can still never appear in a
              * browser - which is exactly how this one behaved until this case existed.
              */
-            case PositionReported e -> {
+            case PositionRs e -> {
                 heard();
                 emitter.accept(e);
             }
@@ -245,9 +261,9 @@ public class PrinterState implements PrinterAggregate {
      * useful place it could have pointed.
      *
      * <p>Unhandled is a <em>warning</em> here, unlike {@link #onEvent}: a command is something a
-     * user asked for, and silently doing nothing about it is the failure. The REST surface accepts
-     * any Marlin command class, and this is the short list the aggregate actually acts on - the
-     * rest are a gap in this layer rather than noise from the machine.
+     * user asked for, and silently doing nothing about it is the failure. {@code PrinterControl}
+     * takes any {@link GRq}, and this is the short list the aggregate actually sends - the rest are
+     * a gap in this layer rather than noise from the machine.
      */
     public void onCommand(GRq<?> command) {
         if (!connection.linked()) {
@@ -269,7 +285,7 @@ public class PrinterState implements PrinterAggregate {
             case LinearMoveG1 c -> passThrough(c);
             case RelativePositioning c -> passThrough(c);
             case AbsolutePositioning c -> passThrough(c);
-            case org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed c -> passThrough(c);
+            case SetFanSpeed c -> passThrough(c);
             case FanOff c -> passThrough(c);
             case SaveSettings c -> passThrough(c);
             case GetCurrentPosition c -> passThrough(c);
@@ -278,7 +294,7 @@ public class PrinterState implements PrinterAggregate {
         }
     }
 
-    public TemperatureReport getTemperature() {
+    public HeaterReading getTemperature() {
         return temperatureControl.getHotend();
     }
 
@@ -415,14 +431,14 @@ public class PrinterState implements PrinterAggregate {
         transition(connection.gaveUp(why));
     }
 
-    public void on(TemperatureReportedEvent tempEvent) {
+    public void on(TemperatureRs<?> tempEvent) {
         if (temperatureControl.on(tempEvent)) {
             emitter.accept(tempEvent);
         }
     }
 
-    public void on(FirmwareInfoReportEvent report) {
-        var updated = new MachineProfile(report.keyValues(), profile.capabilities(), LocalDateTime.now());
+    public void on(FirmwareInfoRs report) {
+        var updated = new MachineProfile(report.getKeyValues(), profile.capabilities(), LocalDateTime.now());
         if (updated.firmware().equals(profile.firmware())) {
             return;
         }
@@ -430,18 +446,18 @@ public class PrinterState implements PrinterAggregate {
         emitter.accept(report);
     }
 
-    public void on(CapabilityReportEvent report) {
-        var previous = profile.capabilities().get(report.capability());
-        if (previous != null && previous == report.enabled()) {
+    public void on(CapabilityRs report) {
+        var previous = profile.capabilities().get(report.getCapability());
+        if (previous != null && previous == report.getEnabled()) {
             return;
         }
         var merged = new HashMap<>(profile.capabilities());
-        merged.put(report.capability(), report.enabled());
+        merged.put(report.getCapability(), report.getEnabled());
         profile = new MachineProfile(profile.firmware(), Map.copyOf(merged), LocalDateTime.now());
         emitter.accept(report);
     }
 
-    protected void setEmitter(Consumer<GEvent> emitter) {
+    protected void setEmitter(Consumer<Object> emitter) {
         this.emitter = emitter;
     }
 

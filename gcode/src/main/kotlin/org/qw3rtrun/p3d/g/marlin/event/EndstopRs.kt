@@ -1,12 +1,13 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import java.util.regex.Pattern
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.asciiTrim
+import org.qw3rtrun.p3d.g.protocol.blanksEnd
 import org.qw3rtrun.p3d.g.protocol.equalsAscii
 import org.qw3rtrun.p3d.g.protocol.sameAscii
+import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
  * `M119`'s answer, which is **several lines**:
@@ -68,16 +69,58 @@ data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<Endsto
         private const val TRIGGERED = "TRIGGERED"
         private const val OPEN = "open"
 
-        private val PATTERN = Pattern.compile(
-            "^([a-z][a-z0-9]?_(?>min|max)|z_probe|probe_en|filament):[ \t]*(TRIGGERED|open)$",
-            Pattern.CASE_INSENSITIVE
-        )
+        /** The three endstops Marlin names outright, rather than by axis. */
+        private val FIXED = arrayOf("z_probe", "probe_en", "filament")
 
+        private const val MIN = "_min"
+        private const val MAX = "_max"
+
+        /**
+         * `<name>: <state>`, or null when the line is not one.
+         *
+         * The name is checked against the shapes Marlin writes, not against "a word", because
+         * `<word>: <word>` is far too common on this wire to claim - `busy: processing` fits it and
+         * is somebody else's reply.
+         */
         override fun decode(line: String): EndstopStateRs? {
-            val matcher = PATTERN.matcher(line.asciiTrim())
-            if (!matcher.matches()) return null
-            return EndstopStateRs(matcher.group(1), matcher.group(2).sameAscii(TRIGGERED))
+            val text = line.asciiTrim()
+
+            val nameEnd = nameEnd(text)
+            if (nameEnd < 0) return null
+            if (nameEnd >= text.length || text[nameEnd] != ':') return null
+
+            val state = text.substring(text.blanksEnd(nameEnd + 1))
+            val triggered = when {
+                state.sameAscii(TRIGGERED) -> true
+                state.sameAscii(OPEN) -> false
+                else -> return null
+            }
+            return EndstopStateRs(text.substring(0, nameEnd), triggered)
         }
+
+        /**
+         * Where the endstop's name ends, or -1 when [text] does not open with one.
+         *
+         * Two shapes, the fixed names first because `z_probe` would otherwise be read as axis `z`
+         * and fail on the suffix. The axis form is a letter, **one** optional character, and
+         * `_min` or `_max`: that covers `x_min`, the duplicates `x2`, `z3`, `z4`, and whatever
+         * `a`..`w` a delta or an IDEX reports. Two extra characters is not a name Marlin writes.
+         */
+        private fun nameEnd(text: String): Int {
+            for (fixed in FIXED) {
+                if (text.startsWithAscii(fixed)) return fixed.length
+            }
+
+            if (text.isEmpty() || !isLetter(text[0])) return -1
+            var i = 1
+            if (i < text.length && (isLetter(text[i]) || isDigit(text[i]))) i++
+            if (text.startsWithAscii(MIN, i) || text.startsWithAscii(MAX, i)) return i + MIN.length
+            return -1
+        }
+
+        private fun isLetter(c: Char) = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+
+        private fun isDigit(c: Char) = c >= '0' && c <= '9'
     }
 }
 

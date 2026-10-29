@@ -1,7 +1,9 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
+import org.qw3rtrun.p3d.g.protocol.sameAscii
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
@@ -66,22 +68,22 @@ data class DebugLevelRs(val flags: Set<String>) : EchoRs<DebugLevelRs> {
          * flags - and a trailing comma does not invent one.
          */
         override fun decode(line: String): DebugLevelRs? {
-            val text = line.trim()
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
 
             val at = text.blanksEnd(EchoMessage.PREFIX.length)
             if (!text.startsWithAscii(BODY, at)) return null
 
-            val list = text.substring(at + BODY.length).trim()
+            val list = text.substring(at + BODY.length).asciiTrim()
             if (list.isEmpty()) return null
-            if (list.equals(OFF, ignoreCase = true)) return DebugLevelRs(emptySet())
+            if (list.sameAscii(OFF)) return DebugLevelRs(emptySet())
 
             val flags = LinkedHashSet<String>()
             var i = 0
             while (i < list.length) {
                 var end = i
                 while (end < list.length && list[end] != ',') end++
-                val name = list.substring(i, end).trim()
+                val name = list.substring(i, end).asciiTrim()
                 if (name.isNotEmpty()) flags.add(name)
                 i = end + 1
             }

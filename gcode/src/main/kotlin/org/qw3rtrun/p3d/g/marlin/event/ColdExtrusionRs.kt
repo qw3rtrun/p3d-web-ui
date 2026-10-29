@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
 import org.qw3rtrun.p3d.g.protocol.digitsEnd
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
@@ -53,7 +54,7 @@ data class ColdExtrusionRs(val enabled: Boolean, val minTempC: Int) : EchoRs<Col
          * would otherwise decode to a threshold it never mentioned.
          */
         override fun decode(line: String): ColdExtrusionRs? {
-            val text = line.trim()
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
 
             // Marlin writes some of these with a blank after the colon and some without, since the
@@ -109,7 +110,7 @@ object ColdExtrusionPrevented : EchoRs<ColdExtrusionPrevented>, GRsDecoder<ColdE
     override fun encode(): String = EchoMessage.PREFIX + " " + BODY
 
     override fun decode(line: String): ColdExtrusionPrevented? {
-        val text = line.trim()
+        val text = line.asciiTrim()
         if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
         // The firmware writes a blank after the colon here and none before `Cold extrudes are`;
         // the live sweep read this one as prose until the blank was crossed.

@@ -1,9 +1,12 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.g.protocol.GEventRs
-import org.qw3rtrun.p3d.g.protocol.GRsDecoder
-import org.qw3rtrun.p3d.g.protocol.GRs
 import java.util.regex.Pattern
+import org.qw3rtrun.p3d.g.protocol.GEventRs
+import org.qw3rtrun.p3d.g.protocol.GRs
+import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
+import org.qw3rtrun.p3d.g.protocol.equalsAscii
+import org.qw3rtrun.p3d.g.protocol.sameAscii
 
 /**
  * `M119`'s answer, which is **several lines**:
@@ -35,7 +38,7 @@ object EndstopReportHeader : GEventRs<EndstopReportHeader>, GRsDecoder<EndstopRe
     override fun encode(): String = "Reporting endstop status"
 
     override fun decode(line: String): EndstopReportHeader? =
-        if (line.trim().equals("Reporting endstop status", ignoreCase = true)) this else null
+        if (line.equalsAscii("Reporting endstop status")) this else null
 }
 
 /**
@@ -71,9 +74,9 @@ data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<Endsto
         )
 
         override fun decode(line: String): EndstopStateRs? {
-            val matcher = PATTERN.matcher(line.trim())
+            val matcher = PATTERN.matcher(line.asciiTrim())
             if (!matcher.matches()) return null
-            return EndstopStateRs(matcher.group(1), matcher.group(2).equals(TRIGGERED, ignoreCase = true))
+            return EndstopStateRs(matcher.group(1), matcher.group(2).sameAscii(TRIGGERED))
         }
     }
 }

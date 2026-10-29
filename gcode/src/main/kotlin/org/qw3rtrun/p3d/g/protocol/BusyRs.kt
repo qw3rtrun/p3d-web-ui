@@ -87,7 +87,7 @@ data class SimpleBusyRs(override val reason: String) : BusyRs<SimpleBusyRs>, GPr
          * `paused for user`, and whatever a fork invents next.
          */
         override fun decode(line: String): SimpleBusyRs? {
-            val text = line.trim()
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(PREFIX)) return null
 
             var i = text.blanksEnd(PREFIX.length)

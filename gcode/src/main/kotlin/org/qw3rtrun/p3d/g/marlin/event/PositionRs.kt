@@ -1,10 +1,11 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.g.protocol.GEventRs
-import org.qw3rtrun.p3d.g.protocol.GRsDecoder
-import org.qw3rtrun.p3d.g.protocol.GRs
 import java.math.BigDecimal
 import java.util.regex.Pattern
+import org.qw3rtrun.p3d.g.protocol.GEventRs
+import org.qw3rtrun.p3d.g.protocol.GRs
+import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
 
 /**
  * The position report - `M114`'s answer and `M154`'s auto-report.
@@ -71,7 +72,7 @@ data class PositionRs(
         private val FIELD = Pattern.compile("([XYZIJKUVWEABC]):[ \t]*([-+]?(?>[0-9]*\\.)?[0-9]+)")
 
         override fun decode(line: String): PositionRs? {
-            val rest = line.trim()
+            val rest = line.asciiTrim()
             if (rest.isEmpty()) return null
             val axes = LinkedHashMap<Char, BigDecimal>()
             val counts = LinkedHashMap<Char, Int>()

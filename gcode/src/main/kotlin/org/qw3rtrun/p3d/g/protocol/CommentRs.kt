@@ -53,10 +53,10 @@ data class DebugRs(val text: String) : CommentRs<DebugRs> {
          * first.
          */
         override fun decode(line: String): DebugRs? {
-            val trimmed = line.trim()
+            val trimmed = line.asciiTrim()
             if (!trimmed.startsWith("//")) return null
             if (ActionRs.match(line)) return null
-            return DebugRs(trimmed.substring(2).trim())
+            return DebugRs(trimmed.substring(2).asciiTrim())
         }
     }
 }
@@ -97,7 +97,7 @@ data class ActionRs(val action: String, val argument: String? = null) : CommentR
         )
 
         override fun decode(line: String): ActionRs? {
-            val matcher = ACTION_PATTERN.matcher(line.trim())
+            val matcher = ACTION_PATTERN.matcher(line.asciiTrim())
             if (!matcher.matches()) return null
             return ActionRs(matcher.group(1), matcher.group(2))
         }

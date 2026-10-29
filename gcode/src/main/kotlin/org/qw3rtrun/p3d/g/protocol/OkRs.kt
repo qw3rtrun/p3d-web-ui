@@ -28,7 +28,7 @@ interface OkRs<D : OkRs<D>> : GProtoRs<D>
 object SimpleOkRs : OkRs<SimpleOkRs>, GRsDecoder<SimpleOkRs> {
     override fun encode(): String = "ok"
     override fun decode(line: String): SimpleOkRs? =
-        if (line.trim().equals("ok", ignoreCase = true)) this else null
+        if (line.equalsAscii("ok")) this else null
 }
 
 /**
@@ -76,11 +76,11 @@ data class AdvancedOkRs(
          * answers null, and the extraction that used to re-match reads the same matcher.
          */
         override fun decode(line: String): AdvancedOkRs? {
-            val matcher = ADVANCED_OK_PATTERN.matcher(line.trim())
+            val matcher = ADVANCED_OK_PATTERN.matcher(line.asciiTrim())
             if (!matcher.matches()) return null
 
             // The two counts have to name different fields: `ok P15 P3` is not an advanced ok.
-            if (matcher.group(3).equals(matcher.group(5), ignoreCase = true)) return null
+            if (matcher.group(3).sameAscii(matcher.group(5))) return null
 
             // spec 9: a digit run too wide for an `Int` is malformed input off the wire, not a
             // crash - so it is a line this decoder declines rather than one it throws on. The

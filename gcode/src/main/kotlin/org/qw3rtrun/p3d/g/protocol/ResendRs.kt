@@ -48,7 +48,7 @@ data class ResendRs(val lineNumber: Int) : GProtoRs<ResendRs> {
          * A number too wide for an `Int` is absence, not a throw.
          */
         override fun decode(line: String): ResendRs? {
-            val text = line.trim()
+            val text = line.asciiTrim()
             var i = when {
                 text.startsWithAscii("resend") -> 6
                 text.startsWithAscii("rs") -> 2

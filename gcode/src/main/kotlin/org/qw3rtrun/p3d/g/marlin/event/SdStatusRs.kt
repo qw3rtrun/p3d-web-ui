@@ -3,8 +3,10 @@ package org.qw3rtrun.p3d.g.marlin.event
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
 import org.qw3rtrun.p3d.g.protocol.digitsEnd
+import org.qw3rtrun.p3d.g.protocol.equalsAscii
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
@@ -52,7 +54,7 @@ data class SdPrinting(val position: Long, val size: Long) : SdStatusRs<SdPrintin
          * sent and does not get to crash over it.
          */
         override fun decode(line: String): SdPrinting? {
-            val text = line.trim()
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(PREFIX)) return null
 
             var i = text.blanksEnd(PREFIX.length)
@@ -85,7 +87,7 @@ object SdNotPrinting : SdStatusRs<SdNotPrinting>, GRsDecoder<SdNotPrinting> {
     override fun encode(): String = "Not SD printing"
 
     override fun decode(line: String): SdNotPrinting? =
-        if (line.trim().equals("Not SD printing", ignoreCase = true)) this else null
+        if (line.equalsAscii("Not SD printing")) this else null
 }
 
 /**
@@ -118,10 +120,10 @@ data class SdCurrentFile(val file: String?) : SdStatusRs<SdCurrentFile> {
 
         /** The filename behind the prefix, or null when the line is not this reply. */
         override fun decode(line: String): SdCurrentFile? {
-            val text = line.trim()
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(PREFIX)) return null
 
-            val name = text.substring(PREFIX.length).trim()
+            val name = text.substring(PREFIX.length).asciiTrim()
             if (name.isEmpty()) return null
             return SdCurrentFile(if (name == NO_FILE) null else name)
         }

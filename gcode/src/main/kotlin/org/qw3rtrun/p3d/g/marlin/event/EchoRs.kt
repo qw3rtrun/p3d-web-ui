@@ -1,14 +1,15 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
+import java.util.regex.Pattern
 import org.qw3rtrun.p3d.g.protocol.BusyRs
 import org.qw3rtrun.p3d.g.protocol.GEventRs
-import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
-import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.GRs
+import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
 import org.qw3rtrun.p3d.g.protocol.digitsEnd
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
-import java.util.regex.Pattern
 
 /**
  * The `echo:` family - Marlin's channel for anything it wants to say in words.
@@ -58,7 +59,7 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
          * never reaching this one for a line they claim.
          */
         override fun decode(line: String): EchoMessage? {
-            val text = line.trim()
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(PREFIX)) return null
             if (UnknownCommand.match(line)) return null
             if (BusyNotice.match(line)) return null
@@ -66,7 +67,7 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
             if (ColdExtrusionRs.match(line)) return null
             if (ColdExtrusionPrevented.match(line)) return null
             if (InvalidExtruder.match(line)) return null
-            return EchoMessage(text.substring(PREFIX.length).trim())
+            return EchoMessage(text.substring(PREFIX.length).asciiTrim())
         }
 
         internal const val PREFIX = "echo:"
@@ -97,7 +98,7 @@ data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
         )
 
         override fun decode(line: String): UnknownCommand? {
-            val matcher = PATTERN.matcher(line.trim())
+            val matcher = PATTERN.matcher(line.asciiTrim())
             if (!matcher.matches()) return null
             return UnknownCommand(matcher.group(1))
         }
@@ -142,7 +143,7 @@ data class InvalidExtruder(val command: String, val index: Int) : EchoRs<Invalid
          * number behind it, which is the part a host reads.
          */
         override fun decode(line: String): InvalidExtruder? {
-            val text = line.trim()
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
 
             val from = text.blanksEnd(EchoMessage.PREFIX.length)
@@ -201,7 +202,7 @@ data class BusyNotice(override val reason: String) : BusyRs<BusyNotice>, EchoRs<
 
         /** `echo:` then `busy`, a `:`, and a non-empty reason, or null when the line is not one. */
         override fun decode(line: String): BusyNotice? {
-            val text = line.trim()
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
 
             var i = text.blanksEnd(EchoMessage.PREFIX.length)

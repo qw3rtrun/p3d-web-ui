@@ -1,10 +1,12 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
+import java.math.BigDecimal
+import java.util.regex.Pattern
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.OkRs
-import java.math.BigDecimal
-import java.util.regex.Pattern
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
+import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
  * One sensor's line in a temperature report: where it is, where it is going, how hard it is driven.
@@ -276,7 +278,7 @@ internal object TemperatureFields {
         for ((index, reading) in rs.hotends.entries.sortedBy { it.key }) {
             appendPower(out, "@$index", reading.power)
         }
-        return out.toString().trim()
+        return out.toString().asciiTrim()
     }
 
     private fun appendTemp(out: StringBuilder, letter: Char, reading: HeaterReading?, index: Int? = null) {
@@ -313,8 +315,8 @@ internal object TemperatureFields {
      * @return the scanned fields, or null when the line is not wholly a temperature report
      */
     fun scan(line: String): Fields? {
-        var rest = line.trim()
-        val ok = rest.startsWith("ok", ignoreCase = true) &&
+        var rest = line.asciiTrim()
+        val ok = rest.startsWithAscii("ok") &&
                 (rest.length == 2 || !rest[2].isLetterOrDigit())
         if (ok) rest = rest.substring(2)
 

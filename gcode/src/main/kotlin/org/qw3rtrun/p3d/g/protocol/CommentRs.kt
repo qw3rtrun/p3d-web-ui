@@ -1,7 +1,5 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import java.util.regex.Pattern
-
 /**
  * The `//` family - a line the machine may send at any time, not in answer to anything.
  *
@@ -91,16 +89,45 @@ data class ActionRs(val action: String, val argument: String? = null) : CommentR
 
     companion object : GRsDecoder<ActionRs> {
 
-        private val ACTION_PATTERN = Pattern.compile(
-            "^//[ \t]*action[ \t]*:[ \t]*(\\S+)(?>[ \t]+(.*))?$",
-            Pattern.CASE_INSENSITIVE
-        )
+        private const val PREFIX = "//"
 
+        private const val KEYWORD = "action"
+
+        /**
+         * `//action:<command>` and its optional rest-of-line argument, or null when the line is not
+         * one.
+         *
+         * **The action word ends at a blank and may hold anything else.** That is what `\S+` said,
+         * and it is the right rule for a word the firmware chooses: an action this host has never
+         * heard of is a firmware newer than this host, and punctuation in it is not this layer's
+         * business. The argument needs at least one blank in front of it and then runs to the end,
+         * blanks inside it included - `prompt_begin Continue with the next layer?` is one argument.
+         *
+         * Only space and tab end the word, rather than `\S`'s six whitespace characters: a received
+         * line has no terminator left in it by the time a decoder sees one (spec 1.2, and
+         * [asciiTrim] besides), and spec 2.1 names these two as the separators.
+         */
         override fun decode(line: String): ActionRs? {
-            val matcher = ACTION_PATTERN.matcher(line.asciiTrim())
-            if (!matcher.matches()) return null
-            return ActionRs(matcher.group(1), matcher.group(2))
+            val text = line.asciiTrim()
+            if (!text.startsWithAscii(PREFIX)) return null
+
+            var i = text.blanksEnd(PREFIX.length)
+            if (!text.startsWithAscii(KEYWORD, i)) return null
+            i = text.blanksEnd(i + KEYWORD.length)
+            if (i >= text.length || text[i] != ':') return null
+            i = text.blanksEnd(i + 1)
+
+            val wordFrom = i
+            while (i < text.length && !isBlank(text[i])) i++
+            if (i == wordFrom) return null
+            val action = text.substring(wordFrom, i)
+
+            val argumentFrom = text.blanksEnd(i)
+            if (argumentFrom >= text.length) return ActionRs(action)
+            return ActionRs(action, text.substring(argumentFrom))
         }
+
+        private fun isBlank(c: Char) = c == ' ' || c == '\t'
     }
 }
 

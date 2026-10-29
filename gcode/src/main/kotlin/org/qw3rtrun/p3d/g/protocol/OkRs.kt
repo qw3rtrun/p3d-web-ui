@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.g.protocol
 
-import java.util.regex.Pattern
 
 /**
  * `ok` - the machine has accepted the last line into its queue. The acknowledgement a host's send
@@ -67,46 +66,75 @@ data class AdvancedOkRs(
         "ok" + (if (lineNumber != null) " N$lineNumber" else "") + " P$planner B$blockQueue"
 
     companion object : GRsDecoder<AdvancedOkRs> {
-        private val ADVANCED_OK_PATTERN = Pattern.compile(
-            "^[oO][kK](?> +([Nn])([0-9]+))? +([PpBb])([0-9]+) +([PpBb])([0-9]+)"
-        )
+        private const val OK = "ok"
 
         /**
-         * One matcher, one pass: the checks that used to decide [match] are now the places this
-         * answers null, and the extraction that used to re-match reads the same matcher.
+         * `ok [N<n>] <P|B><n> <P|B><n>`, in one pass, or null when the line is not one.
+         *
+         * Four rules the pattern stated and this states in order:
+         *
+         * - **the separator is a space, not a blank.** ` +` admitted no tab, and a tab between
+         *   these fields is not something a firmware writes - [spaces] keeps that narrow rather
+         *   than widening it to spec 2.1's pair by accident.
+         * - **`N` comes first or not at all.** `ok B3 N100 P15` is not this reply.
+         * - **the two counts name different fields.** `ok P15 P3` says nothing: one of the two
+         *   numbers would have no home, and the record cannot represent it.
+         * - **nothing follows the second count.** The pattern was read with `matches()`, so the
+         *   line ends there.
+         *
+         * spec 9 throughout: a digit run too wide for an `Int` is malformed input off the wire, so
+         * every conversion is `toIntOrNull` and a line this decoder declines rather than throws on.
          */
         override fun decode(line: String): AdvancedOkRs? {
-            val matcher = ADVANCED_OK_PATTERN.matcher(line.asciiTrim())
-            if (!matcher.matches()) return null
+            val text = line.asciiTrim()
+            if (!text.startsWithAscii(OK)) return null
 
-            // The two counts have to name different fields: `ok P15 P3` is not an advanced ok.
-            if (matcher.group(3).sameAscii(matcher.group(5))) return null
+            var i = spaces(text, OK.length)
+            if (i == OK.length) return null
 
-            // spec 9: a digit run too wide for an `Int` is malformed input off the wire, not a
-            // crash - so it is a line this decoder declines rather than one it throws on. The
-            // extraction below used `toInt()` and was safe only because `match` had already run
-            // these three conversions and thrown the line away.
-            val first = matcher.group(4).toIntOrNull() ?: return null
-            val second = matcher.group(6).toIntOrNull() ?: return null
-            val lineNumber = if (matcher.group(1) != null) {
-                matcher.group(2).toIntOrNull() ?: return null
+            var lineNumber: Int? = null
+            if (i < text.length && (text[i] == 'N' || text[i] == 'n')) {
+                val end = text.digitsEnd(i + 1)
+                if (end == i + 1) return null
+                lineNumber = text.substring(i + 1, end).toIntOrNull() ?: return null
+                val next = spaces(text, end)
+                if (next == end) return null
+                i = next
+            }
+
+            if (i >= text.length) return null
+            val firstIsPlanner = isPlanner(text[i])
+            if (!firstIsPlanner && !isQueue(text[i])) return null
+            var end = text.digitsEnd(i + 1)
+            if (end == i + 1) return null
+            val first = text.substring(i + 1, end).toIntOrNull() ?: return null
+
+            i = spaces(text, end)
+            if (i == end || i >= text.length) return null
+            val secondIsPlanner = isPlanner(text[i])
+            if (!secondIsPlanner && !isQueue(text[i])) return null
+            if (firstIsPlanner == secondIsPlanner) return null
+            end = text.digitsEnd(i + 1)
+            if (end == i + 1 || end != text.length) return null
+            val second = text.substring(i + 1, end).toIntOrNull() ?: return null
+
+            return if (firstIsPlanner) {
+                AdvancedOkRs(first, second, lineNumber)
             } else {
-                null
+                AdvancedOkRs(second, first, lineNumber)
             }
-
-            var planner = -1
-            var blockQueue = -1
-            when (matcher.group(3)) {
-                "P", "p" -> planner = first
-                "B", "b" -> blockQueue = first
-            }
-            when (matcher.group(5)) {
-                "B", "b" -> blockQueue = second
-                "P", "p" -> planner = second
-            }
-
-            return AdvancedOkRs(planner, blockQueue, lineNumber)
         }
+
+        /** The index past the run of **spaces** at [from] - the pattern's ` +`, tab excluded. */
+        private fun spaces(text: String, from: Int): Int {
+            var i = from
+            while (i < text.length && text[i] == ' ') i++
+            return i
+        }
+
+        private fun isPlanner(c: Char) = c == 'P' || c == 'p'
+
+        private fun isQueue(c: Char) = c == 'B' || c == 'b'
     }
 }
 
@@ -115,14 +143,14 @@ data class AdvancedOkRs(
  *
  * ```
  * OkRsDecoder.decode("ok")                // SimpleOkRs
- * OkRsDecoder.decode("ok P15 B3 N100")    // AdvancedOkRs(15, 3, 100)
+ * OkRsDecoder.decode("ok N100 P15 B3")    // AdvancedOkRs(15, 3, 100)
  * ```
  */
 object OkRsDecoder : GRsDecoder<OkRs<*>> {
 
     /**
      * The bare `ok` first, because it is by far the commonest line on the link and the cheapest to
-     * decide - a trim and a comparison, against the advanced form's regex.
+     * decide - a trim and a comparison, against the advanced form's field walk.
      *
      * This used to ask [SimpleOkRs] three times for a bare `ok`: twice in `match` through the `||`
      * and once more in `decodeParams`.

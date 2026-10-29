@@ -70,15 +70,7 @@ data class PositionRs(
 
         private val FIELD = Pattern.compile("([XYZIJKUVWEABC]):[ \t]*([-+]?(?>[0-9]*\\.)?[0-9]+)")
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): PositionRs {
-            val scanned = scan(line)
-            require(scanned != null) { "not a position report: $line" }
-            return scanned
-        }
-
-        private fun scan(line: String): PositionRs? {
+        override fun decode(line: String): PositionRs? {
             val rest = line.trim()
             if (rest.isEmpty()) return null
             val axes = LinkedHashMap<Char, BigDecimal>()

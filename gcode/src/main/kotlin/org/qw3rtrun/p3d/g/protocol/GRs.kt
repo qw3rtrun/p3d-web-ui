@@ -32,9 +32,23 @@ interface GRs<T : GRs<T>> {
  * Reads one kind of reply off a received line. Every reply type's companion - or the reply object
  * itself, for one that carries nothing - implements it.
  *
- * [decode] is the entry point: a line that is not this kind of reply is `null`, never an error,
- * because a reply stream mixes many kinds. [decodeParams] assumes the line has already matched and
- * throws `IllegalArgumentException` when it has not.
+ * [decode] is **the primitive**: one pass over the line, answering with the reply or with `null`,
+ * because a reply stream mixes many kinds and a line that is some other kind is not an error.
+ * [match] and [decodeParams] are derived from it.
+ *
+ * **It was the other way round, and the full work happened twice.** `match` and `decodeParams` were
+ * the abstract members and `decode` was `if (match(line)) decodeParams(line) else null`, so every
+ * line a decoder claimed was read, decided, and then read again - worst exactly where the work is
+ * largest, and on the one path that runs for every line a printer sends. Two things fall out of the
+ * inversion besides the pass:
+ *
+ * - **A decoder can no longer disagree with itself.** `decodeParams` re-validated with `require`
+ *   after `match` had already said yes; the day the two disagreed, the result was an exception out
+ *   of the middle of the transport's pipeline rather than the `null` it is written to handle.
+ * - **The cheap boolean is gone**, and that is the trade. A caller that only wants [match] now pays
+ *   for the whole read. The only callers that do are the partition tests in `MarlinRsTest` and
+ *   `BaseRsTest`; if a hot one ever appears, the answer is a prefix check on that decoder, not a
+ *   second full parse.
  *
  * ```
  * ResendRs.decode("rs N12")   // ResendRs(12)
@@ -44,33 +58,7 @@ interface GRs<T : GRs<T>> {
 interface GRsDecoder<out T : GRs<out T>> {
 
     /**
-     * Whether [line] is this kind of reply.
-     *
-     * ```
-     * ResendRs.match("Resend: 123")   // true
-     * ResendRs.match("ok")            // false
-     * ```
-     *
-     * @param line one received line, with or without surrounding whitespace
-     * @return true when [decodeParams] would read it
-     */
-    fun match(line: String): Boolean
-
-    /**
-     * Reads [line], which must already [match]; throws `IllegalArgumentException` otherwise.
-     *
-     * ```
-     * ResendRs.decodeParams("Resend: N123")   // ResendRs(123)
-     * ResendRs.decodeParams("ok")             // throws IllegalArgumentException
-     * ```
-     *
-     * @param line one received line of this kind
-     * @return the typed reply
-     */
-    fun decodeParams(line: String): T
-
-    /**
-     * Reads [line] if it is this kind of reply.
+     * Reads [line] if it is this kind of reply, in one pass.
      *
      * ```
      * ResendRs.decode("rs:123")   // ResendRs(123)
@@ -80,9 +68,37 @@ interface GRsDecoder<out T : GRs<out T>> {
      * @param line one received line
      * @return the typed reply, or null when [line] is some other kind
      */
-    fun decode(line: String): T? {
-        return if (match(line)) decodeParams(line) else null
-    }
+    fun decode(line: String): T?
+
+    /**
+     * Whether [line] is this kind of reply - [decode] answering something rather than nothing.
+     *
+     * ```
+     * ResendRs.match("Resend: 123")   // true
+     * ResendRs.match("ok")            // false
+     * ```
+     *
+     * @param line one received line, with or without surrounding whitespace
+     * @return true when [decode] reads it
+     */
+    fun match(line: String): Boolean = decode(line) != null
+
+    /**
+     * Reads [line], which must be this kind of reply; throws `IllegalArgumentException` otherwise.
+     *
+     * For a caller that has already established the kind by some other means - a command decoder
+     * whose head has resolved, a test naming the reply it wrote. Everything else wants [decode].
+     *
+     * ```
+     * ResendRs.decodeParams("Resend: N123")   // ResendRs(123)
+     * ResendRs.decodeParams("ok")             // throws IllegalArgumentException
+     * ```
+     *
+     * @param line one received line of this kind
+     * @return the typed reply
+     */
+    fun decodeParams(line: String): T =
+        requireNotNull(decode(line)) { "not this kind of reply: $line" }
 }
 
 /**

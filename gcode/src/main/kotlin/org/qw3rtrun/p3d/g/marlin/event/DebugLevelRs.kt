@@ -57,11 +57,6 @@ data class DebugLevelRs(val flags: Set<String>) : EchoRs<DebugLevelRs> {
 
         private const val OFF = "off"
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): DebugLevelRs =
-            requireNotNull(scan(line)) { "not a debug level report: $line" }
-
         /**
          * The flags behind `echo:DEBUG:`, or null when the line is not one.
          *
@@ -70,7 +65,7 @@ data class DebugLevelRs(val flags: Set<String>) : EchoRs<DebugLevelRs> {
          * `" ERRORS"` that compares equal to nothing. An empty list, or the word `off`, is no
          * flags - and a trailing comma does not invent one.
          */
-        private fun scan(line: String): DebugLevelRs? {
+        override fun decode(line: String): DebugLevelRs? {
             val text = line.trim()
             if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
 

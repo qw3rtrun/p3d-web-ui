@@ -37,11 +37,6 @@ data class ResendRs(val lineNumber: Int) : GProtoRs<ResendRs> {
 
     companion object : GRsDecoder<ResendRs> {
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): ResendRs =
-            requireNotNull(scan(line)) { "not a resend request: $line" }
-
         /**
          * `rs` or `resend`, then the line number, or null when the line is not a resend request.
          *
@@ -52,7 +47,7 @@ data class ResendRs(val lineNumber: Int) : GProtoRs<ResendRs> {
          *
          * A number too wide for an `Int` is absence, not a throw.
          */
-        private fun scan(line: String): ResendRs? {
+        override fun decode(line: String): ResendRs? {
             val text = line.trim()
             var i = when {
                 text.startsWithAscii("resend") -> 6

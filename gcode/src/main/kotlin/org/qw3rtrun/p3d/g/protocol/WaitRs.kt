@@ -18,7 +18,6 @@ object WaitRs : GProtoRs<WaitRs>, GRsDecoder<WaitRs> {
 
     override fun encode(): String = "wait"
 
-    override fun match(line: String): Boolean = line.trim().equals("wait", ignoreCase = true)
-
-    override fun decodeParams(line: String): WaitRs = this
+    override fun decode(line: String): WaitRs? =
+        if (line.trim().equals("wait", ignoreCase = true)) this else null
 }

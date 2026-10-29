@@ -111,14 +111,10 @@ data class BareTemperatureRs(
 
     companion object : GRsDecoder<BareTemperatureRs> {
 
-        override fun match(line: String): Boolean {
-            val scanned = TemperatureFields.scan(line)
-            return scanned != null && !scanned.ok
-        }
-
-        override fun decodeParams(line: String): BareTemperatureRs {
-            val scanned = TemperatureFields.scan(line)
-            require(scanned != null && !scanned.ok) { "not a bare temperature report: $line" }
+        /** One scan: a report that arrived on an `ok` is [OkTemperatureRs] and not this. */
+        override fun decode(line: String): BareTemperatureRs? {
+            val scanned = TemperatureFields.scan(line) ?: return null
+            if (scanned.ok) return null
             return scanned.toBare()
         }
     }
@@ -149,14 +145,10 @@ data class OkTemperatureRs(
 
     companion object : GRsDecoder<OkTemperatureRs> {
 
-        override fun match(line: String): Boolean {
-            val scanned = TemperatureFields.scan(line)
-            return scanned != null && scanned.ok
-        }
-
-        override fun decodeParams(line: String): OkTemperatureRs {
-            val scanned = TemperatureFields.scan(line)
-            require(scanned != null && scanned.ok) { "not an ok temperature report: $line" }
+        /** One scan: a report on its own line is [BareTemperatureRs] and not this. */
+        override fun decode(line: String): OkTemperatureRs? {
+            val scanned = TemperatureFields.scan(line) ?: return null
+            if (!scanned.ok) return null
             return scanned.toOk()
         }
     }
@@ -172,11 +164,16 @@ data class OkTemperatureRs(
  */
 object TemperatureRsDecoder : GRsDecoder<TemperatureRs<*>> {
 
-    override fun match(line: String): Boolean = TemperatureFields.scan(line) != null
-
-    override fun decodeParams(line: String): TemperatureRs<*> {
-        val scanned = TemperatureFields.scan(line)
-        require(scanned != null) { "not a temperature report: $line" }
+    /**
+     * One scan for either kind - the `ok` prefix decides which class it becomes, and the scanner
+     * has already read it.
+     *
+     * This was the worst of the double reads: `TemperatureFields.scan` builds two maps, a `Pair`
+     * and a `BigDecimal` per field and runs a `Matcher` across the line, and a line reaching here
+     * through `match`-then-`decodeParams` paid for all of it twice.
+     */
+    override fun decode(line: String): TemperatureRs<*>? {
+        val scanned = TemperatureFields.scan(line) ?: return null
         return if (scanned.ok) scanned.toOk() else scanned.toBare()
     }
 }

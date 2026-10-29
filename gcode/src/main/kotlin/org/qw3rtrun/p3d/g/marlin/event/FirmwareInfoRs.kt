@@ -79,15 +79,7 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
 
         private val KEY = Pattern.compile("([A-Z][A-Z_0-9]*):")
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): FirmwareInfoRs {
-            val scanned = scan(line)
-            require(scanned != null) { "not a firmware info report: $line" }
-            return scanned
-        }
-
-        private fun scan(line: String): FirmwareInfoRs? {
+        override fun decode(line: String): FirmwareInfoRs? {
             val text = line.trim()
             if (!text.startsWith("$REQUIRED_KEY:")) return null
             val matcher = KEY.matcher(text)
@@ -140,11 +132,9 @@ data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<Capa
             Pattern.CASE_INSENSITIVE
         )
 
-        override fun match(line: String): Boolean = PATTERN.matcher(line.trim()).matches()
-
-        override fun decodeParams(line: String): CapabilityRs {
+        override fun decode(line: String): CapabilityRs? {
             val matcher = PATTERN.matcher(line.trim())
-            require(matcher.matches()) { "not a capability report: $line" }
+            if (!matcher.matches()) return null
             return CapabilityRs(matcher.group(1), readEnabled(matcher.group(2)))
         }
 

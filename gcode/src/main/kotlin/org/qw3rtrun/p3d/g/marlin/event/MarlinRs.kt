@@ -54,13 +54,13 @@ object MarlinRsDecoder : GRsDecoder<GRs<*>> {
         BaseRsDecoder,
     )
 
-    override fun match(line: String): Boolean = decoders.any { it.match(line) }
-
-    override fun decodeParams(line: String): GRs<*> {
-        val decoded = decode(line)
-        require(decoded != null) { "not a Marlin reply: $line" }
-        return decoded
-    }
-
+    /**
+     * One pass down the list - the whole chain, for one line, exactly once.
+     *
+     * This is the live path: `HostTerminal.ReplyFlux` runs it for every line a printer sends. It
+     * used to carry a `match` that walked all eight decoders asking each to decide - and the two
+     * dispatchers below it did the same to their own - so asking "is this anything?" before asking
+     * "what is it?" read a line on the order of fifteen times.
+     */
     override fun decode(line: String): GRs<*>? = decoders.firstNotNullOfOrNull { it.decode(line) }
 }

@@ -34,10 +34,8 @@ object EndstopReportHeader : GEventRs<EndstopReportHeader>, GRsDecoder<EndstopRe
 
     override fun encode(): String = "Reporting endstop status"
 
-    override fun match(line: String): Boolean =
-        line.trim().equals("Reporting endstop status", ignoreCase = true)
-
-    override fun decodeParams(line: String): EndstopReportHeader = this
+    override fun decode(line: String): EndstopReportHeader? =
+        if (line.trim().equals("Reporting endstop status", ignoreCase = true)) this else null
 }
 
 /**
@@ -72,11 +70,9 @@ data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<Endsto
             Pattern.CASE_INSENSITIVE
         )
 
-        override fun match(line: String): Boolean = PATTERN.matcher(line.trim()).matches()
-
-        override fun decodeParams(line: String): EndstopStateRs {
+        override fun decode(line: String): EndstopStateRs? {
             val matcher = PATTERN.matcher(line.trim())
-            require(matcher.matches()) { "not an endstop state: $line" }
+            if (!matcher.matches()) return null
             return EndstopStateRs(matcher.group(1), matcher.group(2).equals(TRIGGERED, ignoreCase = true))
         }
     }
@@ -91,9 +87,6 @@ data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<Endsto
  */
 object EndstopRsDecoder : GRsDecoder<GRs<*>> {
 
-    override fun match(line: String): Boolean =
-        EndstopReportHeader.match(line) || EndstopStateRs.match(line)
-
-    override fun decodeParams(line: String): GRs<*> =
-        if (EndstopReportHeader.match(line)) EndstopReportHeader else EndstopStateRs.decodeParams(line)
+    override fun decode(line: String): GRs<*>? =
+        EndstopReportHeader.decode(line) ?: EndstopStateRs.decode(line)
 }

@@ -77,10 +77,6 @@ data class SimpleBusyRs(override val reason: String) : BusyRs<SimpleBusyRs>, GPr
 
         private const val PREFIX = "busy"
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): SimpleBusyRs =
-            requireNotNull(scan(line)) { "not a busy reply: $line" }
 
         /**
          * `busy: <reason>`, or null when the line is not one.
@@ -90,7 +86,7 @@ data class SimpleBusyRs(override val reason: String) : BusyRs<SimpleBusyRs>, GPr
          * to the end of the line and is taken verbatim, blanks inside included: `processing`,
          * `paused for user`, and whatever a fork invents next.
          */
-        private fun scan(line: String): SimpleBusyRs? {
+        override fun decode(line: String): SimpleBusyRs? {
             val text = line.trim()
             if (!text.startsWithAscii(PREFIX)) return null
 

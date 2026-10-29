@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
 import org.qw3rtrun.p3d.g.protocol.digitsEnd
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
@@ -45,11 +46,6 @@ data class ColdExtrusionRs(val enabled: Boolean, val minTempC: Int) : EchoRs<Col
 
         private const val SUFFIX = "C)"
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): ColdExtrusionRs =
-            requireNotNull(scan(line)) { "not a cold extrusion report: $line" }
-
         /**
          * The state and the threshold, or null when the line is not this report.
          *
@@ -57,8 +53,8 @@ data class ColdExtrusionRs(val enabled: Boolean, val minTempC: Int) : EchoRs<Col
          * only number on it, but a reply that said something else entirely about cold extrusion
          * would otherwise decode to a threshold it never mentioned.
          */
-        private fun scan(line: String): ColdExtrusionRs? {
-            val text = line.trim()
+        override fun decode(line: String): ColdExtrusionRs? {
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
 
             // Marlin writes some of these with a blank after the colon and some without, since the
@@ -113,17 +109,13 @@ object ColdExtrusionPrevented : EchoRs<ColdExtrusionPrevented>, GRsDecoder<ColdE
 
     override fun encode(): String = EchoMessage.PREFIX + " " + BODY
 
-    override fun match(line: String): Boolean {
-        val text = line.trim()
-        if (!text.startsWithAscii(EchoMessage.PREFIX)) return false
+    override fun decode(line: String): ColdExtrusionPrevented? {
+        val text = line.asciiTrim()
+        if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
         // The firmware writes a blank after the colon here and none before `Cold extrudes are`;
         // the live sweep read this one as prose until the blank was crossed.
         val i = text.blanksEnd(EchoMessage.PREFIX.length)
-        return text.length - i == BODY.length && text.startsWithAscii(BODY, i)
-    }
-
-    override fun decodeParams(line: String): ColdExtrusionPrevented {
-        require(match(line)) { "not a cold extrusion notice: $line" }
+        if (text.length - i != BODY.length || !text.startsWithAscii(BODY, i)) return null
         return this
     }
 }

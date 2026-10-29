@@ -90,13 +90,10 @@ data class ErrorRs(val prefix: ErrorPrefix, val message: String) : GProtoRs<Erro
 
         private const val LAST_LINE = "last line"
 
-        override fun match(line: String): Boolean = prefixOf(line.trim()) != null
-
-        override fun decodeParams(line: String): ErrorRs {
-            val trimmed = line.trim()
-            val prefix = prefixOf(trimmed)
-            require(prefix != null) { "not an error reply: $line" }
-            return ErrorRs(prefix, trimmed.substring(prefix.lexeme.length).trim())
+        override fun decode(line: String): ErrorRs? {
+            val trimmed = line.asciiTrim()
+            val prefix = prefixOf(trimmed) ?: return null
+            return ErrorRs(prefix, trimmed.substring(prefix.lexeme.length).asciiTrim())
         }
 
         private fun prefixOf(trimmed: String): ErrorPrefix? = ErrorPrefix.entries.firstOrNull {

@@ -1,10 +1,12 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.g.protocol.GEventRs
-import org.qw3rtrun.p3d.g.protocol.GRsDecoder
-import org.qw3rtrun.p3d.g.protocol.GRs
 import java.util.UUID
 import java.util.regex.Pattern
+import org.qw3rtrun.p3d.g.protocol.GEventRs
+import org.qw3rtrun.p3d.g.protocol.GRs
+import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
+import org.qw3rtrun.p3d.g.protocol.sameAscii
 
 /**
  * `M115`'s first line - what the firmware is.
@@ -71,7 +73,7 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
      *
      * @return the `EXTRUDER_COUNT` field as an integer, or 0
      */
-    fun extruderCount(): Int = keyValues["EXTRUDER_COUNT"]?.trim()?.toIntOrNull() ?: 0
+    fun extruderCount(): Int = keyValues["EXTRUDER_COUNT"]?.asciiTrim()?.toIntOrNull() ?: 0
 
     companion object : GRsDecoder<FirmwareInfoRs> {
 
@@ -79,16 +81,8 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
 
         private val KEY = Pattern.compile("([A-Z][A-Z_0-9]*):")
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): FirmwareInfoRs {
-            val scanned = scan(line)
-            require(scanned != null) { "not a firmware info report: $line" }
-            return scanned
-        }
-
-        private fun scan(line: String): FirmwareInfoRs? {
-            val text = line.trim()
+        override fun decode(line: String): FirmwareInfoRs? {
+            val text = line.asciiTrim()
             if (!text.startsWith("$REQUIRED_KEY:")) return null
             val matcher = KEY.matcher(text)
             if (!matcher.find()) return null
@@ -96,11 +90,11 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
             var key = matcher.group(1)
             var valueFrom = matcher.end()
             while (matcher.find()) {
-                values[key] = text.substring(valueFrom, matcher.start()).trim()
+                values[key] = text.substring(valueFrom, matcher.start()).asciiTrim()
                 key = matcher.group(1)
                 valueFrom = matcher.end()
             }
-            values[key] = text.substring(valueFrom).trim()
+            values[key] = text.substring(valueFrom).asciiTrim()
             return FirmwareInfoRs(values)
         }
     }
@@ -140,17 +134,15 @@ data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<Capa
             Pattern.CASE_INSENSITIVE
         )
 
-        override fun match(line: String): Boolean = PATTERN.matcher(line.trim()).matches()
-
-        override fun decodeParams(line: String): CapabilityRs {
-            val matcher = PATTERN.matcher(line.trim())
-            require(matcher.matches()) { "not a capability report: $line" }
+        override fun decode(line: String): CapabilityRs? {
+            val matcher = PATTERN.matcher(line.asciiTrim())
+            if (!matcher.matches()) return null
             return CapabilityRs(matcher.group(1), readEnabled(matcher.group(2)))
         }
 
         private fun readEnabled(value: String): Boolean =
-            if (value.equals("true", ignoreCase = true)) true
-            else if (value.equals("false", ignoreCase = true)) false
+            if (value.sameAscii("true")) true
+            else if (value.sameAscii("false")) false
             else (value.toIntOrNull() ?: 0) > 0
     }
 }

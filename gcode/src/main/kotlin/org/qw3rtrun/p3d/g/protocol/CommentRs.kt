@@ -45,12 +45,18 @@ data class DebugRs(val text: String) : CommentRs<DebugRs> {
 
     companion object : GRsDecoder<DebugRs> {
 
-        override fun match(line: String): Boolean =
-            line.trim().startsWith("//") && !ActionRs.match(line)
-
-        override fun decodeParams(line: String): DebugRs {
-            require(match(line)) { "not a debug line: $line" }
-            return DebugRs(line.trim().substring(2).trim())
+        /**
+         * The `//` test is cheap and comes first, so the [ActionRs] read below happens only for a
+         * line that really is a `//` one - and those are rare on a link. It is kept because this
+         * decoder is also called directly, and an action line is not a debug line whichever way it
+         * is reached; [CommentRsDecoder] answers the same question by trying the specific one
+         * first.
+         */
+        override fun decode(line: String): DebugRs? {
+            val trimmed = line.asciiTrim()
+            if (!trimmed.startsWith("//")) return null
+            if (ActionRs.match(line)) return null
+            return DebugRs(trimmed.substring(2).asciiTrim())
         }
     }
 }
@@ -90,11 +96,9 @@ data class ActionRs(val action: String, val argument: String? = null) : CommentR
             Pattern.CASE_INSENSITIVE
         )
 
-        override fun match(line: String): Boolean = ACTION_PATTERN.matcher(line.trim()).matches()
-
-        override fun decodeParams(line: String): ActionRs {
-            val matcher = ACTION_PATTERN.matcher(line.trim())
-            require(matcher.matches()) { "not an action command: $line" }
+        override fun decode(line: String): ActionRs? {
+            val matcher = ACTION_PATTERN.matcher(line.asciiTrim())
+            if (!matcher.matches()) return null
             return ActionRs(matcher.group(1), matcher.group(2))
         }
     }
@@ -109,8 +113,7 @@ data class ActionRs(val action: String, val argument: String? = null) : CommentR
  */
 object CommentRsDecoder : GRsDecoder<CommentRs<*>> {
 
-    override fun match(line: String): Boolean = ActionRs.match(line) || DebugRs.match(line)
-
-    override fun decodeParams(line: String): CommentRs<*> =
-        if (ActionRs.match(line)) ActionRs.decodeParams(line) else DebugRs.decodeParams(line)
+    /** Most specific first, so the general one never has to be asked to stand aside. */
+    override fun decode(line: String): CommentRs<*>? =
+        ActionRs.decode(line) ?: DebugRs.decode(line)
 }

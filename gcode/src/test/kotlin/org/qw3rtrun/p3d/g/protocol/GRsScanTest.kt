@@ -16,6 +16,67 @@ import org.junit.jupiter.api.Test
 class GRsScanTest {
 
     @Nested
+    inner class Trimming {
+
+        @Test
+        fun `the edges are blanks and terminators, and nothing else`() {
+            assertEquals("ok", " ok".asciiTrim())
+            assertEquals("ok", "ok\r\n".asciiTrim())
+            assertEquals("ok", "\t ok \r\n".asciiTrim())
+            assertEquals("busy: paused for user", " busy: paused for user\n".asciiTrim())
+        }
+
+        @Test
+        fun `a line of nothing but edges trims to nothing`() {
+            assertEquals("", "".asciiTrim())
+            assertEquals("", " \t\r\n".asciiTrim())
+        }
+
+        /**
+         * The deliberate difference from `trim()`, and the reason this exists.
+         *
+         * `trim()` strips the whole Unicode space category - a form feed, a vertical tab, a
+         * non-breaking space, U+2028 LINE SEPARATOR. Spec 1.1's wire is 7-bit and spec 2.1 names two
+         * separators; spec 1.2 names the terminators. A byte outside that set is **content** here,
+         * and a port written against four named characters reproduces this where one written against
+         * "whitespace" would not.
+         */
+        @Test
+        fun `other Unicode spaces are content, not edges`() {
+            // U+000C form feed, U+00A0 no-break space, U+2028 line separator: trim() strips
+            // all three, and none of them is an edge here - they survive as content.
+            assertEquals("\u000Cok\u00A0", "\u000Cok\u00A0".asciiTrim())
+            assertEquals("\u2028ok", " \u2028ok\r\n".asciiTrim())
+
+            // Which is the point at which this stops agreeing with the stdlib - stated rather
+            // than implied, because it is the whole reason the helper exists.
+            assertEquals("ok", "\u000Cok\u00A0".trim())
+        }
+
+        @Test
+        fun `a keyword line is recognised without allocating a trim`() {
+            assertTrue(" OK\r\n".equalsAscii("ok"))
+            assertTrue("\twait ".equalsAscii("WAIT"))
+            assertTrue("Not SD printing".equalsAscii("not sd printing"))
+
+            assertFalse("ok P15 B3".equalsAscii("ok"))
+            assertFalse("".equalsAscii("ok"))
+            assertFalse("okay".equalsAscii("ok"))
+        }
+
+        @Test
+        fun `two cut fields compare by ASCII case alone`() {
+            assertTrue("TRIGGERED".sameAscii("triggered"))
+            assertTrue("true".sameAscii("TRUE"))
+
+            assertFalse("open".sameAscii("TRIGGERED"))
+            assertFalse("ok".sameAscii("ok "))
+            // U+212A again: not an ASCII letter, so not folded.
+            assertFalse("Ko".sameAscii("ko"))
+        }
+    }
+
+    @Nested
     inner class StartsWithAscii {
 
         @Test

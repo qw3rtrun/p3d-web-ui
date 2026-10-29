@@ -27,8 +27,8 @@ interface OkRs<D : OkRs<D>> : GProtoRs<D>
  */
 object SimpleOkRs : OkRs<SimpleOkRs>, GRsDecoder<SimpleOkRs> {
     override fun encode(): String = "ok"
-    override fun match(line: String): Boolean = line.trim().equals("ok", ignoreCase = true)
-    override fun decodeParams(line: String): SimpleOkRs = this
+    override fun decode(line: String): SimpleOkRs? =
+        if (line.equalsAscii("ok")) this else null
 }
 
 /**
@@ -71,23 +71,31 @@ data class AdvancedOkRs(
             "^[oO][kK](?> +([Nn])([0-9]+))? +([PpBb])([0-9]+) +([PpBb])([0-9]+)"
         )
 
-        override fun match(line: String): Boolean {
-            val matcher = ADVANCED_OK_PATTERN.matcher(line.trim())
-            if (!matcher.matches()) return false
-            if (matcher.group(3).equals(matcher.group(5), ignoreCase = true)) return false
-            if (matcher.group(4).toIntOrNull() == null) return false
-            if (matcher.group(6).toIntOrNull() == null) return false
-            if (matcher.group(1) != null && matcher.group(2).toIntOrNull() == null) return false
-            return true
-        }
+        /**
+         * One matcher, one pass: the checks that used to decide [match] are now the places this
+         * answers null, and the extraction that used to re-match reads the same matcher.
+         */
+        override fun decode(line: String): AdvancedOkRs? {
+            val matcher = ADVANCED_OK_PATTERN.matcher(line.asciiTrim())
+            if (!matcher.matches()) return null
 
-        override fun decodeParams(line: String): AdvancedOkRs {
-            val matcher = ADVANCED_OK_PATTERN.matcher(line.trim())
-            require(matcher.matches())
+            // The two counts have to name different fields: `ok P15 P3` is not an advanced ok.
+            if (matcher.group(3).sameAscii(matcher.group(5))) return null
+
+            // spec 9: a digit run too wide for an `Int` is malformed input off the wire, not a
+            // crash - so it is a line this decoder declines rather than one it throws on. The
+            // extraction below used `toInt()` and was safe only because `match` had already run
+            // these three conversions and thrown the line away.
+            val first = matcher.group(4).toIntOrNull() ?: return null
+            val second = matcher.group(6).toIntOrNull() ?: return null
+            val lineNumber = if (matcher.group(1) != null) {
+                matcher.group(2).toIntOrNull() ?: return null
+            } else {
+                null
+            }
+
             var planner = -1
             var blockQueue = -1
-            val first = matcher.group(4).toInt()
-            val second = matcher.group(6).toInt()
             when (matcher.group(3)) {
                 "P", "p" -> planner = first
                 "B", "b" -> blockQueue = first
@@ -95,11 +103,6 @@ data class AdvancedOkRs(
             when (matcher.group(5)) {
                 "B", "b" -> blockQueue = second
                 "P", "p" -> planner = second
-            }
-            val lineNumber = if (matcher.group(1) != null) {
-                matcher.group(2).toInt()
-            } else {
-                null
             }
 
             return AdvancedOkRs(planner, blockQueue, lineNumber)
@@ -116,8 +119,14 @@ data class AdvancedOkRs(
  * ```
  */
 object OkRsDecoder : GRsDecoder<OkRs<*>> {
-    override fun match(line: String) = SimpleOkRs.match(line) || AdvancedOkRs.match(line)
 
-    override fun decodeParams(line: String) =
-        if (SimpleOkRs.match(line)) SimpleOkRs else AdvancedOkRs.decodeParams(line)
+    /**
+     * The bare `ok` first, because it is by far the commonest line on the link and the cheapest to
+     * decide - a trim and a comparison, against the advanced form's regex.
+     *
+     * This used to ask [SimpleOkRs] three times for a bare `ok`: twice in `match` through the `||`
+     * and once more in `decodeParams`.
+     */
+    override fun decode(line: String): OkRs<*>? =
+        SimpleOkRs.decode(line) ?: AdvancedOkRs.decode(line)
 }

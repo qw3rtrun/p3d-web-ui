@@ -45,13 +45,13 @@ object BaseRsDecoder : GRsDecoder<GRs<*>> {
         StartRs,
     )
 
-    override fun match(line: String): Boolean = decoders.any { it.match(line) }
-
-    override fun decodeParams(line: String): GRs<*> {
-        val decoded = decoders.firstNotNullOfOrNull { it.decode(line) }
-        require(decoded != null) { "not a base protocol reply: $line" }
-        return decoded
-    }
-
+    /**
+     * One pass down the list, stopping at the first decoder that claims the line.
+     *
+     * The two overrides that used to sit beside this are gone with the inversion: `match` walked
+     * the whole list asking each decoder to decide, and `decodeParams` then walked it again to get
+     * the value - so a line reaching here through `match`-then-`decodeParams` was read by every
+     * decoder twice.
+     */
     override fun decode(line: String): GRs<*>? = decoders.firstNotNullOfOrNull { it.decode(line) }
 }

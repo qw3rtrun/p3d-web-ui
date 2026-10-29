@@ -3,8 +3,10 @@ package org.qw3rtrun.p3d.g.marlin.event
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
 import org.qw3rtrun.p3d.g.protocol.digitsEnd
+import org.qw3rtrun.p3d.g.protocol.equalsAscii
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
@@ -43,11 +45,6 @@ data class SdPrinting(val position: Long, val size: Long) : SdStatusRs<SdPrintin
 
         private const val PREFIX = "SD printing byte"
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): SdPrinting =
-            requireNotNull(scan(line)) { "not an SD status line: $line" }
-
         /**
          * `SD printing byte <position>/<size>`, or null when the line is not one.
          *
@@ -56,8 +53,8 @@ data class SdPrinting(val position: Long, val size: Long) : SdStatusRs<SdPrintin
          * count too wide for a `Long` is *absence*, not a throw: a host reads what the printer
          * sent and does not get to crash over it.
          */
-        private fun scan(line: String): SdPrinting? {
-            val text = line.trim()
+        override fun decode(line: String): SdPrinting? {
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(PREFIX)) return null
 
             var i = text.blanksEnd(PREFIX.length)
@@ -89,10 +86,8 @@ object SdNotPrinting : SdStatusRs<SdNotPrinting>, GRsDecoder<SdNotPrinting> {
 
     override fun encode(): String = "Not SD printing"
 
-    override fun match(line: String): Boolean =
-        line.trim().equals("Not SD printing", ignoreCase = true)
-
-    override fun decodeParams(line: String): SdNotPrinting = this
+    override fun decode(line: String): SdNotPrinting? =
+        if (line.equalsAscii("Not SD printing")) this else null
 }
 
 /**
@@ -123,17 +118,12 @@ data class SdCurrentFile(val file: String?) : SdStatusRs<SdCurrentFile> {
 
         private const val NO_FILE = "(no file)"
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): SdCurrentFile =
-            requireNotNull(scan(line)) { "not a current-file reply: $line" }
-
         /** The filename behind the prefix, or null when the line is not this reply. */
-        private fun scan(line: String): SdCurrentFile? {
-            val text = line.trim()
+        override fun decode(line: String): SdCurrentFile? {
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(PREFIX)) return null
 
-            val name = text.substring(PREFIX.length).trim()
+            val name = text.substring(PREFIX.length).asciiTrim()
             if (name.isEmpty()) return null
             return SdCurrentFile(if (name == NO_FILE) null else name)
         }
@@ -150,12 +140,6 @@ data class SdCurrentFile(val file: String?) : SdStatusRs<SdCurrentFile> {
  */
 object SdStatusRsDecoder : GRsDecoder<SdStatusRs<*>> {
 
-    override fun match(line: String): Boolean =
-        SdPrinting.match(line) || SdNotPrinting.match(line) || SdCurrentFile.match(line)
-
-    override fun decodeParams(line: String): SdStatusRs<*> = when {
-        SdPrinting.match(line) -> SdPrinting.decodeParams(line)
-        SdCurrentFile.match(line) -> SdCurrentFile.decodeParams(line)
-        else -> SdNotPrinting
-    }
+    override fun decode(line: String): SdStatusRs<*>? =
+        SdPrinting.decode(line) ?: SdCurrentFile.decode(line) ?: SdNotPrinting.decode(line)
 }

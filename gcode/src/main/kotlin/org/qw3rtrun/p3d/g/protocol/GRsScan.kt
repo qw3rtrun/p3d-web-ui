@@ -70,6 +70,118 @@ internal fun String.blanksEnd(from: Int): Int {
 }
 
 /**
+ * Whether [this] and [other] are the same text, comparing ASCII letters case-insensitively.
+ *
+ * The two-sided form of [startsWithAscii], for comparing fields a scan has already cut out -
+ * `TRIGGERED` against what the line said, `true` against a capability's value. It does **not**
+ * trim; [equalsAscii] is the whole-line form that does.
+ *
+ * ```
+ * "TRIGGERED".sameAscii("triggered")   // true
+ * ```
+ *
+ * @receiver one of the two texts
+ * @param other the other
+ * @return true when they differ only in the case of ASCII letters
+ */
+internal fun String.sameAscii(other: String): Boolean {
+    if (length != other.length) return false
+    var i = 0
+    while (i < length) {
+        if (asciiFold(this[i]) != asciiFold(other[i])) return false
+        i++
+    }
+    return true
+}
+
+/**
+ * The index of the first character at or after [from] that is neither a blank nor a terminator.
+ *
+ * Spec 2.1's space and tab, and spec 1.2's `CR` and `LF`. Those four and nothing else: `trim()`
+ * strips the whole Unicode space category, which on a 7-bit wire (spec 1.1) is a promise about
+ * bytes a printer cannot send and a difference a port would have to reproduce.
+ *
+ * ```
+ * " \tok\r\n".edgeEnd(0)   // 2
+ * ```
+ *
+ * @receiver the line being scanned
+ * @param from where to start skipping
+ * @return the index past the run, which is [from] when there is none
+ */
+internal fun String.edgeEnd(from: Int): Int {
+    var i = from
+    while (i < length && isEdge(this[i])) i++
+    return i
+}
+
+/**
+ * The index just past the last character that is neither a blank nor a terminator - [edgeEnd]
+ * from the other end.
+ *
+ * @receiver the line being scanned
+ * @return the exclusive end of the line's content, which is 0 for a line of nothing else
+ */
+internal fun String.edgeStart(): Int {
+    var i = length
+    while (i > 0 && isEdge(this[i - 1])) i--
+    return i
+}
+
+private fun isEdge(c: Char) = c == ' ' || c == '\t' || c == '\r' || c == '\n'
+
+/**
+ * [this] without the blanks and terminators at either end - spec 2.1 and 1.2, and no other
+ * character.
+ *
+ * **It still allocates**, like the `trim()` it replaces, and that is the half of this not yet
+ * fixed: a decoder that trimmed and then scanned indices could do both in one walk, and eight
+ * decoders in a chain each trim the same line. The correctness half - *which* characters count -
+ * is what this settles. Recorded rather than left to be rediscovered.
+ *
+ * ```
+ * " ok\r\n".asciiTrim()   // "ok"
+ * ```
+ *
+ * @receiver the line being scanned
+ * @return the line's content, or an empty string when it has none
+ */
+internal fun String.asciiTrim(): String {
+    val from = edgeEnd(0)
+    val to = edgeStart()
+    return if (from >= to) "" else substring(from, to)
+}
+
+/**
+ * Whether [this], trimmed per [asciiTrim], is exactly [word] - the shape of every reply that *is*
+ * a keyword: `ok`, `wait`, `start`, `Not SD printing`, `Reporting endstop status`.
+ *
+ * Walks the line in place rather than trimming it, so deciding that a line is not the keyword
+ * costs no allocation at all - which matters because every one of those decoders is asked about
+ * every line that arrives.
+ *
+ * ```
+ * " OK\r\n".equalsAscii("ok")   // true
+ * "ok P15 B3".equalsAscii("ok") // false
+ * ```
+ *
+ * @receiver the line being scanned
+ * @param word the keyword to compare against
+ * @return true when the line carries that word and nothing else
+ */
+internal fun String.equalsAscii(word: String): Boolean {
+    val from = edgeEnd(0)
+    val to = edgeStart()
+    if (to - from != word.length) return false
+    var i = 0
+    while (i < word.length) {
+        if (asciiFold(this[from + i]) != asciiFold(word[i])) return false
+        i++
+    }
+    return true
+}
+
+/**
  * The index of the first character at or after [from] that is not an ASCII digit.
  *
  * `0`-`9` by explicit comparison: `Char.isDigit()` accepts every Unicode decimal digit, which is

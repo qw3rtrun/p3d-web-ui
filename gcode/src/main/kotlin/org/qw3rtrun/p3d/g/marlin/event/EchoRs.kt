@@ -1,14 +1,15 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
+import java.util.regex.Pattern
 import org.qw3rtrun.p3d.g.protocol.BusyRs
 import org.qw3rtrun.p3d.g.protocol.GEventRs
-import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
-import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.GRs
+import org.qw3rtrun.p3d.g.protocol.GRsDecoder
+import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
+import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
 import org.qw3rtrun.p3d.g.protocol.digitsEnd
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
-import java.util.regex.Pattern
 
 /**
  * The `echo:` family - Marlin's channel for anything it wants to say in words.
@@ -48,18 +49,25 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
 
     companion object : GRsDecoder<EchoMessage> {
 
-        override fun match(line: String): Boolean =
-            line.trim().startsWithAscii(PREFIX) &&
-                !UnknownCommand.match(line) &&
-                !BusyNotice.match(line) &&
-                !DebugLevelRs.match(line) &&
-                !ColdExtrusionRs.match(line) &&
-                !ColdExtrusionPrevented.match(line) &&
-                !InvalidExtruder.match(line)
-
-        override fun decodeParams(line: String): EchoMessage {
-            require(match(line)) { "not an echo line: $line" }
-            return EchoMessage(line.trim().substring(PREFIX.length).trim())
+        /**
+         * The general `echo:` line - everything on that channel that is not one of the six kinds
+         * with a class of its own.
+         *
+         * The `echo:` test comes first and is cheap, so the six reads below happen only for a line
+         * that really is an echo. They are kept for a **direct** call, which has no other way to
+         * know; [EchoRsDecoder] answers the same question by trying the specific decoders first and
+         * never reaching this one for a line they claim.
+         */
+        override fun decode(line: String): EchoMessage? {
+            val text = line.asciiTrim()
+            if (!text.startsWithAscii(PREFIX)) return null
+            if (UnknownCommand.match(line)) return null
+            if (BusyNotice.match(line)) return null
+            if (DebugLevelRs.match(line)) return null
+            if (ColdExtrusionRs.match(line)) return null
+            if (ColdExtrusionPrevented.match(line)) return null
+            if (InvalidExtruder.match(line)) return null
+            return EchoMessage(text.substring(PREFIX.length).asciiTrim())
         }
 
         internal const val PREFIX = "echo:"
@@ -89,11 +97,9 @@ data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
             Pattern.CASE_INSENSITIVE
         )
 
-        override fun match(line: String): Boolean = PATTERN.matcher(line.trim()).matches()
-
-        override fun decodeParams(line: String): UnknownCommand {
-            val matcher = PATTERN.matcher(line.trim())
-            require(matcher.matches()) { "not an unknown-command line: $line" }
+        override fun decode(line: String): UnknownCommand? {
+            val matcher = PATTERN.matcher(line.asciiTrim())
+            if (!matcher.matches()) return null
             return UnknownCommand(matcher.group(1))
         }
     }
@@ -129,11 +135,6 @@ data class InvalidExtruder(val command: String, val index: Int) : EchoRs<Invalid
 
         private const val BODY = " Invalid extruder "
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): InvalidExtruder =
-            requireNotNull(scan(line)) { "not an invalid-extruder line: $line" }
-
         /**
          * The command and the extruder index, or null when the line is not one of these.
          *
@@ -141,8 +142,8 @@ data class InvalidExtruder(val command: String, val index: Int) : EchoRs<Invalid
          * that quotes more than the code still decodes; what is pinned is the message and the
          * number behind it, which is the part a host reads.
          */
-        private fun scan(line: String): InvalidExtruder? {
-            val text = line.trim()
+        override fun decode(line: String): InvalidExtruder? {
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
 
             val from = text.blanksEnd(EchoMessage.PREFIX.length)
@@ -199,14 +200,9 @@ data class BusyNotice(override val reason: String) : BusyRs<BusyNotice>, EchoRs<
 
         private const val BUSY = "busy"
 
-        override fun match(line: String): Boolean = scan(line) != null
-
-        override fun decodeParams(line: String): BusyNotice =
-            requireNotNull(scan(line)) { "not a busy notice: $line" }
-
         /** `echo:` then `busy`, a `:`, and a non-empty reason, or null when the line is not one. */
-        private fun scan(line: String): BusyNotice? {
-            val text = line.trim()
+        override fun decode(line: String): BusyNotice? {
+            val text = line.asciiTrim()
             if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
 
             var i = text.blanksEnd(EchoMessage.PREFIX.length)
@@ -237,22 +233,22 @@ data class BusyNotice(override val reason: String) : BusyRs<BusyNotice>, EchoRs<
  */
 object EchoRsDecoder : GRsDecoder<EchoRs<*>> {
 
-    override fun match(line: String): Boolean =
-        UnknownCommand.match(line) ||
-            InvalidExtruder.match(line) ||
-            BusyNotice.match(line) ||
-            DebugLevelRs.match(line) ||
-            ColdExtrusionRs.match(line) ||
-            ColdExtrusionPrevented.match(line) ||
-            EchoMessage.match(line)
+    /**
+     * One pass down the list, most specific first and the general `echo:` last.
+     *
+     * It was a `when` over seven `match` calls followed by a `decodeParams` that read the claimed
+     * line again - and each of those `match`es was itself a full read, so an `echo:` line the last
+     * arm claimed had been read eight times by the time it became a value.
+     */
+    private val decoders: List<GRsDecoder<EchoRs<*>>> = listOf(
+        UnknownCommand,
+        InvalidExtruder,
+        BusyNotice,
+        DebugLevelRs,
+        ColdExtrusionRs,
+        ColdExtrusionPrevented,
+        EchoMessage,
+    )
 
-    override fun decodeParams(line: String): EchoRs<*> = when {
-        UnknownCommand.match(line) -> UnknownCommand.decodeParams(line)
-        InvalidExtruder.match(line) -> InvalidExtruder.decodeParams(line)
-        BusyNotice.match(line) -> BusyNotice.decodeParams(line)
-        DebugLevelRs.match(line) -> DebugLevelRs.decodeParams(line)
-        ColdExtrusionRs.match(line) -> ColdExtrusionRs.decodeParams(line)
-        ColdExtrusionPrevented.match(line) -> ColdExtrusionPrevented
-        else -> EchoMessage.decodeParams(line)
-    }
+    override fun decode(line: String): EchoRs<*>? = decoders.firstNotNullOfOrNull { it.decode(line) }
 }

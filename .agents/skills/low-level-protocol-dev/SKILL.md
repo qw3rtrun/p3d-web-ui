@@ -252,12 +252,16 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   `ErrorRs`) have been converted to explicit scans over `protocol/GRsScan.kt`'s primitives; that
   file is the worked example, and `TemperatureRs`'s multi-branch field scan is the one left that
   is real work rather than transcription.
-- **`ignoreCase = true` at 11 sites in 8 files**, and `.trim()` at 32 sites in 13.
-  Locale-dependent — a Turkish locale changes `i`/`I` — and `trim()` strips the whole Unicode
-  space category rather than the characters
-  [§2.1](../../../doc/specs/GCODE_spec.md#21-whitespace) defines. `GRsScan.kt`'s
-  `startsWithAscii` is what to reach for instead; it folds through the token layer's `asciiFold`,
-  which is the module's one copy of that rule.
+- ~~**`ignoreCase = true` at 11 sites in 8 files**, and `.trim()` at 32 sites in 13.~~ **Done** —
+  both are zero in this module's code now; what is left of them is the prose in `GTokens.kt`,
+  `GHead.kt` and `GRsScan.kt` saying why they are not used. `GRsScan.kt` is the one copy of the
+  rule: `startsWithAscii`, `sameAscii` and `equalsAscii` fold through the token layer's
+  `asciiFold`, and `asciiTrim`/`edgeEnd`/`edgeStart` strip [§2.1](../../../doc/specs/GCODE_spec.md#21-whitespace)'s
+  two blanks and [§1.2](../../../doc/specs/GCODE_spec.md#12-end-of-line)'s two terminators and
+  nothing else. `GRsScanTest` pins the difference from `trim()` on U+000C, U+00A0 and U+2028.
+  **`asciiTrim` still allocates**, which is the half not fixed: a decoder that scanned indices
+  instead of trimming first would do both in one walk, and eight decoders in a chain each trim the
+  same line.
 - `code/core/token/GTokens.kt`, `GTokenizer.kt` — `java.math.BigDecimal` is the core's only external
   type, and it is in the hot path.
 

@@ -20,7 +20,6 @@ object StartRs : GProtoRs<StartRs>, GRsDecoder<StartRs> {
 
     override fun encode(): String = "start"
 
-    override fun match(line: String): Boolean = line.trim().equals("start", ignoreCase = true)
-
-    override fun decodeParams(line: String): StartRs = this
+    override fun decode(line: String): StartRs? =
+        if (line.equalsAscii("start")) this else null
 }

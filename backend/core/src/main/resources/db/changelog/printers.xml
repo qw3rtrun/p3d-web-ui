@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The printer roster's own changesets.
+
+  logicalFilePath pins the name Liquibase records against every changeset here, and it is the old
+  file's name on purpose: a changeset's identity is (id, author, filename), so renaming this file
+  without it would make every existing database think changesets 1 to 4 had never run and try them
+  again. The path is a historical fact now rather than a location.
+-->
+<databaseChangeLog
+        logicalFilePath="db/changelog/db.changelog-master.xml"
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+    <changeSet id="1" author="Liquibase">
+        <createTable tableName="printer_entity" ifNotExists="true">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="name" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="host" type="varchar">
+                <constraints nullable="false"/>
+            </column>
+            <column name="port" type="number">
+                <constraints nullable="false"/>
+            </column>
+            <column name="connected" type="boolean" defaultOnNull="false"/>
+        </createTable>
+    </changeSet>
+
+    <!--
+      What a machine turned out to be: M115's key-values and the Cap: lines after it.
+
+      Two tables rather than two columns, because what the firmware reports differs between builds -
+      a schema that named only the keys we know today would drop whatever a later Marlin adds, and a
+      JSON blob would make this module parse something it has no business parsing.
+
+      profile_learned_at is on the printer because the profile is a cache of something only the
+      machine knows. A printer reflashed while the farm was down reports differently next time it
+      connects, so a reader has to be able to tell how old this is rather than assume it is current.
+    -->
+    <changeSet id="2" author="agentic">
+        <addColumn tableName="printer_entity">
+            <column name="profile_learned_at" type="timestamp"/>
+        </addColumn>
+
+        <createTable tableName="printer_firmware" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="key_name" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <!-- key_value, not value: `value` is a reserved word in SQL and H2 rejects it unquoted. -->
+            <column name="key_value" type="varchar(1024)"/>
+        </createTable>
+        <addPrimaryKey tableName="printer_firmware" columnNames="printer_id, key_name"
+                       constraintName="pk_printer_firmware"/>
+        <addForeignKeyConstraint baseTableName="printer_firmware" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_firmware_printer"
+                                 onDelete="CASCADE"/>
+
+        <createTable tableName="printer_capability" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="capability" type="varchar(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="enabled" type="boolean"/>
+        </createTable>
+        <addPrimaryKey tableName="printer_capability" columnNames="printer_id, capability"
+                       constraintName="pk_printer_capability"/>
+        <addForeignKeyConstraint baseTableName="printer_capability" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_capability_printer"
+                                 onDelete="CASCADE"/>
+    </changeSet>
+
+    <!--
+      The connection lifecycle, as one column (plan item B3).
+
+      It replaces `connected`, which was a parallel truth: nothing in production ever wrote it, so
+      every row said false from registration onwards while the machine it described might have been
+      printing. The state is now reported by `core` - the only module that can know it, since
+      knowing it means holding the socket - and `connected` is derived from this rather than stored
+      beside it.
+
+      Stored as the enum's name and not its ordinal: an ordinal re-points every existing row at a
+      different state the first time a constant is inserted into the middle of the enum.
+
+      The existing rows are migrated rather than defaulted, even though the flag they carry is known
+      to be false everywhere - a migration that reads the old column is right whatever the data
+      turns out to be, and costs one statement.
+    -->
+    <changeSet id="3" author="agentic">
+        <addColumn tableName="printer_entity">
+            <column name="connection_state" type="varchar(32)" defaultValue="OFFLINE">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+        <update tableName="printer_entity">
+            <column name="connection_state" value="IDLE"/>
+            <where>connected = TRUE</where>
+        </update>
+        <dropColumn tableName="printer_entity" columnName="connected"/>
+    </changeSet>
+
+    <!--
+      What a human declared about a machine (plan item B4): bed volume, tools, nozzles, materials
+      and tags.
+
+      Kept apart from printer_firmware and printer_capability on purpose. Those two hold what the
+      machine said about itself and are rewritten from firmware reports; these hold what a person
+      typed and are only ever written by the management API. Neither can overwrite the other, which
+      is how "what was discovered is distinguishable from what was typed" is expressed in the
+      schema rather than with a flag beside each field.
+
+      Columns for the single-valued facts, tables for the repeating ones - the same division the
+      profile uses, and for a duller reason: a bed has exactly one size, and a machine has as many
+      nozzles as it has tools.
+
+      Nullable throughout. For bed_x/y/z and declared_extruder_count, "nobody said" is a real third
+      state and not a zero: a bed of zero is not a bed, and an extruder count of zero would refuse
+      every command rather than deferring to what M115 reported.
+
+      Groups are tags. B4 offered "free-form tags or a group id"; a group is a tag a reader filters
+      on, costs the same to store, and lets a machine belong to two of them.
+    -->
+    <changeSet id="4" author="agentic">
+        <addColumn tableName="printer_entity">
+            <column name="bed_x" type="number"/>
+            <column name="bed_y" type="number"/>
+            <column name="bed_z" type="number"/>
+            <column name="declared_extruder_count" type="number"/>
+        </addColumn>
+
+        <!--
+          Ordered, because a nozzle belongs to a tool and tool order is what a G-code file's T
+          commands mean. An unordered set would say the machine has a 0.4 and a 0.6 without saying
+          which one T0 is.
+        -->
+        <createTable tableName="printer_nozzle" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tool_index" type="number">
+                <constraints nullable="false"/>
+            </column>
+            <column name="diameter" type="numeric(6,3)"/>
+        </createTable>
+        <addPrimaryKey tableName="printer_nozzle" columnNames="printer_id, tool_index"
+                       constraintName="pk_printer_nozzle"/>
+        <addForeignKeyConstraint baseTableName="printer_nozzle" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_nozzle_printer"
+                                 onDelete="CASCADE"/>
+
+        <createTable tableName="printer_material" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="material" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="printer_material" columnNames="printer_id, material"
+                       constraintName="pk_printer_material"/>
+        <addForeignKeyConstraint baseTableName="printer_material" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_material_printer"
+                                 onDelete="CASCADE"/>
+
+        <createTable tableName="printer_tag" ifNotExists="true">
+            <column name="printer_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tag" type="varchar(64)">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+        <addPrimaryKey tableName="printer_tag" columnNames="printer_id, tag"
+                       constraintName="pk_printer_tag"/>
+        <addForeignKeyConstraint baseTableName="printer_tag" baseColumnNames="printer_id"
+                                 referencedTableName="printer_entity" referencedColumnNames="id"
+                                 constraintName="fk_printer_tag_printer"
+                                 onDelete="CASCADE"/>
+    </changeSet>
+
+</databaseChangeLog>
+

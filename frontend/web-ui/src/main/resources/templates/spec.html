@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<!--
+  The declared half of a machine's description, as form fields (plan item B4).
+
+  One fragment so the add page and the edit page cannot drift: a field added to one and not the
+  other is the sort of thing nothing fails on.
+-->
+<body>
+
+<div th:fragment="declared_fields" th:remove="tag">
+    <div class="form-group">
+        <label>Build volume (mm)</label>
+        <div class="row">
+            <div class="col">
+                <input type="number" class="form-control" th:field="*{bedX}" placeholder="X e.g. 220">
+            </div>
+            <div class="col">
+                <input type="number" class="form-control" th:field="*{bedY}" placeholder="Y e.g. 220">
+            </div>
+            <div class="col">
+                <input type="number" class="form-control" th:field="*{bedZ}" placeholder="Z e.g. 250">
+            </div>
+        </div>
+        <small class="form-text text-muted">Leave blank if you would rather not say.</small>
+    </div>
+    <div class="form-group">
+        <label>Extruders</label>
+        <input type="number" class="form-control" th:field="*{extruderCount}" placeholder="blank = ask the firmware">
+        <small class="form-text text-muted">
+            Overrides what M115 reports. Fill this in only when the firmware has it wrong.
+        </small>
+    </div>
+    <div class="form-group">
+        <label>Nozzle diameters</label>
+        <input type="text" class="form-control" th:field="*{nozzleDiameters}" placeholder="0.4, 0.6">
+        <small class="form-text text-muted">Comma separated, in tool order: the first is T0.</small>
+    </div>
+    <div class="form-group">
+        <label>Materials</label>
+        <input type="text" class="form-control" th:field="*{materials}" placeholder="PLA, PETG">
+        <small class="form-text text-muted">What this machine is set up to print.</small>
+    </div>
+    <div class="form-group">
+        <label>Tags</label>
+        <input type="text" class="form-control" th:field="*{tags}" placeholder="prusa-shelf, prototyping">
+        <small class="form-text text-muted">Free-form labels. A group is a tag.</small>
+    </div>
+</div>
+
+<!--
+  What the machine said about itself. Read-only on purpose: it is written from firmware reports and
+  nothing a person types here could be true.
+-->
+<div th:fragment="discovered_card(discovered)" th:remove="tag">
+    <div class="card">
+        <div class="card-body">
+            <h4 class="card-title">What the machine reported</h4>
+            <p class="card-description" th:if="${!discovered.known}">
+                Nothing yet - this machine has not been connected to.
+            </p>
+            <p class="card-description" th:if="${discovered.known}">
+                Learned <span th:text="${discovered.learnedAt}">never</span>. Read only: this is
+                what the firmware said, not what you declared.
+            </p>
+            <table class="table table-sm" th:if="${discovered.known}">
+                <tbody>
+                <tr th:each="entry : ${discovered.firmware}">
+                    <td th:text="${entry.key}">KEY</td>
+                    <td th:text="${entry.value}">value</td>
+                </tr>
+                </tbody>
+            </table>
+            <p th:if="${discovered.known and !discovered.capabilities.isEmpty()}">
+                <span class="badge badge-secondary me-1"
+                      th:each="cap : ${discovered.capabilities}"
+                      th:text="${cap.key} + (${cap.value} ? '' : ' (off)')">CAP</span>
+            </p>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

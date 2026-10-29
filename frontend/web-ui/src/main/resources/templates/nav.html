@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+
+<body>
+<div class="container-scroller">
+    <!-- partial:../../partials/_navbar.html -->
+    <nav th:fragment="common_nav(name)"
+         class="navbar default-layout col-lg-12 col-12 p-0 fixed-top d-flex align-items-top flex-row">
+        <div class="text-center navbar-brand-wrapper d-flex align-items-center justify-content-start">
+            <div class="me-3">
+                <button class="navbar-toggler navbar-toggler align-self-center" type="button" data-bs-toggle="minimize">
+                    <span class="icon-menu"></span>
+                </button>
+            </div>
+            <div>
+                <a class="navbar-brand brand-logo" th:href="@{/dashboard.html}">
+                    <img src="/images/logo.svg" alt="logo"/>
+                </a>
+                <a class="navbar-brand brand-logo-mini" th:href="@{/dashboard.html}">
+                    <img src="/images/logo-mini.svg" alt="logo"/>
+                </a>
+            </div>
+        </div>
+        <div class="navbar-menu-wrapper d-flex align-items-top">
+            <ul class="navbar-nav">
+                <li class="nav-item font-weight-semibold d-none d-lg-block ms-0">
+                    <h1 class="welcome-text"><span class="text-black fw-bold"
+                                                   th:text="${printer?.name ?: 'Good morning!'}">Unknown</span>, Marlin
+                        2.0.1</h1>
+                    <h3 class="welcome-sub-text"
+                        th:text="${printer?.connection ?: 'Your Machine-controlling panel is ready!'}">Your performance
+                        summary this week </h3>
+                </li>
+            </ul>
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item dropdown d-none d-lg-block user-dropdown">
+                    <a class="nav-link" id="UserDropdown" href="#" data-bs-toggle="dropdown" aria-expanded="false">
+                        <img class="img-xs rounded-circle" src="/images/face1.jpg" alt="Profile image"> </a>
+                    <div class="dropdown-menu dropdown-menu-right navbar-dropdown" aria-labelledby="UserDropdown">
+                        <div class="dropdown-header text-center">
+                            <img class="img-md rounded-circle" src="/images/face1.jpg" alt="Profile image">
+                            <p class="mb-1 mt-3 font-weight-semibold" th:text="${currentUser}">signed in</p>
+                            <p class="fw-light text-muted mb-0" th:text="${currentRole}">role</p>
+                        </div>
+                        <a class="dropdown-item" th:href="@{/profile}"><i
+                                class="dropdown-item-icon mdi mdi-account-outline text-primary me-2"></i> My Profile</a>
+                        <a class="dropdown-item"><i
+                                class="dropdown-item-icon mdi mdi-message-text-outline text-primary me-2"></i> Messages</a>
+                        <a class="dropdown-item"><i
+                                class="dropdown-item-icon mdi mdi-calendar-check-outline text-primary me-2"></i>
+                            Activity</a>
+                        <a class="dropdown-item"><i
+                                class="dropdown-item-icon mdi mdi-help-circle-outline text-primary me-2"></i> FAQ</a>
+                        <!--
+                          A form and not a link - plan item D3. Spring Security only accepts a
+                          POST for /logout, because a GET would let any page on the internet sign a
+                          user out by embedding an image tag pointing at it.
+                        -->
+                        <form method="post" th:action="@{/logout}" class="m-0">
+                            <input type="hidden" th:if="${_csrf != null}"
+                                   th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+                            <button type="submit" class="dropdown-item border-0 bg-transparent w-100 text-start">
+                                <i class="dropdown-item-icon mdi mdi-power text-primary me-2"></i>Sign Out
+                            </button>
+                        </form>
+                    </div>
+                </li>
+            </ul>
+            <button class="navbar-toggler navbar-toggler-right d-lg-none align-self-center" type="button"
+                    data-bs-toggle="offcanvas">
+                <span class="mdi mdi-menu"></span>
+            </button>
+        </div>
+    </nav>
+</div>
+</body>
+
+</html>

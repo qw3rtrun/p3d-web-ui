@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+      Print jobs (plan item C2).
+
+      file_name is a copy of what the file store calls the file, and it is safe to copy because a
+      stored file is immutable: a re-upload of the same bytes returns the existing record rather
+      than renaming it, so the copy cannot go stale. What it buys is a job listing that does not
+      query the file store once per row.
+
+      No foreign key to gcode_file, deliberately. The two live in different modules and a database
+      constraint between them would be a dependency the module boundary says does not exist - and
+      the behaviour it would buy is wrong anyway: deleting a file that a finished job printed must
+      not delete the record that it printed.
+
+      machine_id is nullable because a queued job has no machine yet, and is not a foreign key for
+      the same reason.
+
+      state is the enum's name, not its ordinal: an ordinal re-points every stored row at a
+      different state the first time a constant is inserted into the middle of the enum.
+    -->
+    <changeSet id="1" author="agentic">
+        <createTable tableName="print_job">
+            <column name="id" type="uuid">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="file_id" type="uuid">
+                <constraints nullable="false"/>
+            </column>
+            <column name="file_name" type="varchar(512)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="machine_id" type="uuid"/>
+            <column name="state" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="reason" type="varchar(1024)"/>
+            <column name="created_at" type="timestamp">
+                <constraints nullable="false"/>
+            </column>
+            <column name="started_at" type="timestamp"/>
+            <column name="finished_at" type="timestamp"/>
+        </createTable>
+
+        <!-- The two questions anything asks of this table: what is queued, and what is on a machine. -->
+        <createIndex tableName="print_job" indexName="ix_print_job_state">
+            <column name="state"/>
+        </createIndex>
+        <createIndex tableName="print_job" indexName="ix_print_job_machine">
+            <column name="machine_id"/>
+        </createIndex>
+    </changeSet>
+
+    <!--
+      Where a print had got to, checkpointed (plan item C4).
+
+      Written on a timer rather than per block: a hundred-thousand-block job would otherwise be a
+      hundred thousand writes to answer a question a restart asks once. So these columns are
+      "within one checkpoint" rather than exact, which is what the plan item asks for and what the
+      column names should not be read as promising.
+
+      blocks_sent is what the feed handed to the machine; blocks_in_flight is how many of those the
+      firmware had not acknowledged. The difference is bounded by the send window and is kept
+      because on a *failed* job it is the difference between what was sent and what was printed -
+      which is what plan item C5 has to reason about.
+
+      Progress is by bytes because that fraction is exact and free: the file's size is known before
+      anything starts. A block count of the file is not known without reading it, since a tenth of
+      a sliced file is comments that are never sent.
+    -->
+    <changeSet id="2" author="agentic">
+        <addColumn tableName="print_job">
+            <column name="blocks_sent" type="bigint"/>
+            <column name="blocks_in_flight" type="int"/>
+            <column name="bytes_sent" type="bigint"/>
+            <column name="bytes_total" type="bigint"/>
+            <column name="layer" type="int"/>
+            <column name="progress_at" type="timestamp"/>
+        </addColumn>
+    </changeSet>
+
+    <!--
+      What a job needs of a machine (plan item D1), matched against B4's declared spec.
+
+      Columns rather than a table, because every one of them is single-valued and optional: a job
+      states what it cares about and nothing else. Null means "do not care" throughout, which is
+      why they are all nullable and why none has a default - a default would turn "did not say"
+      into a requirement nobody asked for.
+
+      requires_machine is the manual override: a job that names a machine waits for that machine
+      however free the rest of the farm is. It is not a foreign key, for the same reason file_id is
+      not - the machine lives in another module, and a printer deleted while a job named it should
+      leave the job for the scheduler to report on rather than deleting it.
+
+      blocked_reason is why a queued job has not been given a machine. Not a state: a farm that
+      gains a capable printer a minute later should just start it.
+    -->
+    <changeSet id="3" author="agentic">
+        <addColumn tableName="print_job">
+            <column name="requires_machine" type="uuid"/>
+            <column name="requires_bed_x" type="number"/>
+            <column name="requires_bed_y" type="number"/>
+            <column name="requires_bed_z" type="number"/>
+            <column name="requires_extruders" type="number"/>
+            <column name="requires_nozzle" type="numeric(6,3)"/>
+            <column name="requires_material" type="varchar(64)"/>
+            <column name="requires_tag" type="varchar(64)"/>
+            <column name="blocked_reason" type="varchar(1024)"/>
+        </addColumn>
+    </changeSet>
+
+</databaseChangeLog>

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The people roster - plan item D3.
+
+  Its own fragment, included by :app's master changelog, for the reason every other module has one:
+  the module that owns a table owns its schema. A farm's users have no business being created by
+  the printer roster's changelog.
+
+  logicalFilePath pins the name Liquibase records against these changesets, so moving this file
+  later never re-runs them - a changeset's identity is (id, author, filename).
+-->
+<databaseChangeLog
+        logicalFilePath="db/changelog/identity.xml"
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <changeSet id="identity-1" author="p3d">
+        <comment>
+            Who may use this farm. The username is the key, folded to lower case by the directory so
+            that Alice and alice cannot become two accounts - revoking one of which would leave the
+            other working.
+
+            password_hash is 256 characters rather than BCrypt's 60: the column should not have to
+            change the day somebody moves to Argon2 or raises the cost factor, and a wrong guess
+            here is a migration on a table holding credentials.
+        </comment>
+        <createTable tableName="app_user">
+            <column name="username" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="password_hash" type="varchar(256)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="role" type="varchar(32)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="enabled" type="boolean" defaultValueBoolean="true">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+
+</databaseChangeLog>

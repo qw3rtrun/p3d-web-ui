@@ -1,0 +1,251 @@
+package org.qw3rtrun.p3d.g.code.core
+
+import org.qw3rtrun.p3d.g.code.core.block.CheckSumCalculator
+import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
+import org.qw3rtrun.p3d.g.code.core.command.GBlockDraft
+import org.qw3rtrun.p3d.g.code.core.command.GBlockPart
+import org.qw3rtrun.p3d.g.code.core.command.GCommand
+import org.qw3rtrun.p3d.g.code.core.command.GCommentPart
+import org.qw3rtrun.p3d.g.code.core.command.GFlagWord
+import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.command.GUnnamedStr
+import org.qw3rtrun.p3d.g.code.core.command.GWord
+
+/**
+ * Emits wire-ready text: a command (GCODE_spec.md section 4), and the `N`/`*` framing around it
+ * (sections 7 and 8).
+ *
+ * **It produces a `String`, not a `List<GToken>`, and that is the design.** The checksum covers the
+ * bytes as transmitted (section 8.3), so whitespace is part of the output rather than something a
+ * later stage inserts. The encoder this replaces - `GCommand.print()` - returned tokens and let its
+ * caller join them, which is why it could emit a block whose bytes depended on the values happening
+ * to be self-delimiting (finding 1.10). A byte-oriented encoder cannot have that bug, and it is also
+ * the only shape a checksum can be computed over.
+ *
+ * **Not driven by a descriptor.** *Which* fields a command should carry, and what they default to,
+ * is a validation question and belongs one layer above this. Emitting bytes is a separate job, and
+ * keeping it separate is what lets the encoder write a command nothing has described. A `GDescriptor`
+ * type was carried here for a while against a defaulting layer that was never built and a Java
+ * consumer that no longer exists; it is deleted, and git history has it if that layer arrives.
+ *
+ * **One framer, and its primitive takes text.** [frame] over a `String` payload is where sections 7
+ * and 8 are implemented; the command and draft overloads render their bytes and hand them to it. The
+ * text entry point exists because a sender that has already rendered a block - the transport assigns
+ * the line number last, after its priority queue has reordered, and by then it holds only a
+ * `String` - would otherwise have to re-parse those bytes to get a `GCommand` back, which is a
+ * second parser of text this module already owns.
+ *
+ * **The text payload is transmitted verbatim and is never inspected.** That is section 8.3 taken
+ * literally: the covered range is the bytes as transmitted, nothing normalised first, so the framer's
+ * whole job is to produce the bytes and checksum exactly those. Validating would mean parsing, and
+ * reading text is `GBlockReader`'s job, not this one's. Two consequences the caller owns: a payload
+ * must be **one line**, because a terminator inside it splits the block and leaves the `N` on one
+ * side of the break and the `*` on the other; and it must not **open a comment it does not close**,
+ * because a trailing `;` or an unterminated `(` swallows the checksum field that follows it. A
+ * payload that already carries a `*` is fine - section 8.3's last-`*`-wins rule makes the framer's
+ * own marker the one that counts. A caller who wants the check can run the result back through
+ * `GBlockReader.blocks(...)` and ask whether it is a `GFramedBlock`.
+ *
+ * Stateless and allocation-light: one `StringBuilder` per block.
+ *
+ * ```
+ * val g28 = GCommand(GLetter('G'), GInt(28))
+ * GEncoder.encode(g28)       // "G28"
+ * GEncoder.frame(1, g28)     // "N1 G28*18"
+ * GEncoder.frame(1, "G28")   // "N1 G28*18" - the same bytes, from rendered text
+ * ```
+ */
+object GEncoder {
+
+    /**
+     * One command as text: the command word, then each parameter, **separated by a single space**.
+     *
+     * Canonical, not reproductive. A parsed word carries the exact bytes it was read from in its
+     * `raw` - `X  10` is one word holding two spaces - and this deliberately ignores that and
+     * renders the field instead. An encoder that reproduced input spacing would emit a different
+     * number of bytes for the same command depending on where it came from, and the checksum would
+     * follow. Use `GBlock.raw()` when the original bytes are what is wanted.
+     *
+     * Within a word there is no separator: the identifier is followed immediately by its value, so
+     * a value's lexeme is what reaches the wire (`X10.50` stays `X10.50`, see `GNumber`).
+     *
+     * A [GUnnamedStr] has no identifier to write - it is not a `GNamedWord` - and its value is
+     * spec 3.4a's bare rest-of-line string, so it reaches the wire undelimited and, being the rest
+     * of the line, only ever last. Nothing here enforces that position: a command carrying one is
+     * built by the command that documents it, and the single space before each field is what
+     * separates it from the lettered parameters in front.
+     *
+     * ```
+     * val x = GParameterWord(GLetter('X'), GFloat("10.50"))
+     * GEncoder.encode(GCommand(GLetter('G'), GInt(1), listOf(x)))   // "G1 X10.50"
+     * ```
+     *
+     * @param command the command to render
+     * @return the command's text, without a terminator
+     */
+    fun encode(command: GCommand): String {
+        val out = StringBuilder()
+        appendCommand(out, command)
+        return out.toString()
+    }
+
+    /**
+     * A whole block: every part in order, **separated by a single space**, per spec section 5.
+     *
+     * A `GCommentPart` renders through its comment's own `rawText()`, so the caller's choice of `;`
+     * or `( )` and of whether to leave a space after the marker is preserved - `GTailComment(" move")`
+     * is `; move` and `GTailComment("move")` is `;move`. Both are legal (section 6) and the
+     * difference is the author's, not the encoder's.
+     *
+     * ```
+     * val g1 = GCommand(GLetter('G'), GInt(1), listOf(GParameterWord(GLetter('X'), GFloat("10.50"))))
+     * GEncoder.encode(GBlockDraft(g1, GCommentPart(GTailComment(" move"))))   // "G1 X10.50 ; move"
+     * GEncoder.encode(GBlockDraft(g1, GCommentPart(GTailComment("move"))))    // "G1 X10.50 ;move"
+     * ```
+     *
+     * @param draft the block's parts, in order
+     * @return the block's text, unframed and without a terminator
+     */
+    fun encode(draft: GBlockDraft): String {
+        val out = StringBuilder()
+        for (i in draft.parts.indices) {
+            if (i > 0) out.append(' ')
+            appendPart(out, draft.parts[i])
+        }
+        return out.toString()
+    }
+
+    /**
+     * A framed block built from a whole [draft]: `N<number> <payload>*<checksum> <trailing comment>`.
+     *
+     * **A trailing comment goes after the checksum and is not covered by it** (section 5 puts the
+     * `*` field last before any comment, and section 8.3 excludes what follows it). A comment that
+     * is *not* trailing - one sitting between two commands - is part of the payload and **is**
+     * covered, because those are the bytes that get transmitted before the `*`.
+     *
+     * So the split is positional: everything up to and including the last non-comment part is
+     * payload, and only the run of comments after it is appended past the marker. A block that is
+     * nothing but comments has no payload and cannot be framed - there is nothing to acknowledge or
+     * resend - so it comes back as its own text, unnumbered.
+     *
+     * ```
+     * val g28 = GCommand(GLetter('G'), GInt(28))
+     * GEncoder.frame(1, GBlockDraft(g28, GCommentPart(GTailComment(" home"))))   // "N1 G28*18 ; home"
+     * GEncoder.frame(1, GBlockDraft(GCommentPart(GTailComment(" only"))))        // "; only" - nothing to frame
+     * ```
+     *
+     * @param number the line number to put in the `N` field
+     * @param draft the block's parts, in order
+     * @param checksum a fresh calculator for the algorithm to use; [org.qw3rtrun.p3d.g.code.core.block.XorCheckSum] by default
+     * @return the framed block, without a terminator
+     */
+    fun frame(number: Int, draft: GBlockDraft, checksum: CheckSumCalculator = XorCheckSum()): String {
+        var lastPayload = -1
+        for (i in draft.parts.indices) if (draft.parts[i] !is GCommentPart) lastPayload = i
+        if (lastPayload < 0) return encode(draft)
+
+        val payload = StringBuilder()
+        for (i in 0..lastPayload) {
+            if (i > 0) payload.append(' ')
+            appendPart(payload, draft.parts[i])
+        }
+
+        val framed = frame(number, payload.toString(), checksum)
+        if (lastPayload == draft.parts.size - 1) return framed
+
+        val out = StringBuilder(framed)
+        for (i in lastPayload + 1 until draft.parts.size) {
+            out.append(' ')
+            appendPart(out, draft.parts[i])
+        }
+        return out.toString()
+    }
+
+    /**
+     * The framer itself, over bytes a caller has already rendered: `N<number> <payload>*<checksum>`,
+     * sections 7 and 8.
+     *
+     * Three steps in the order section 8.3 fixes: prepend `N<number>` and one space, checksum
+     * **exactly** the bytes produced so far - the `N`, the digits and that space are all covered -
+     * then append `*` and the value. Nothing is added or removed after the value is computed, and the
+     * space before `*` the convention omits is omitted here too.
+     *
+     * [payload] is **not validated and not parsed**; it reaches the wire byte for byte. See this
+     * object's own documentation for what that makes the caller responsible for - one line, and no
+     * comment left open - and for why a payload that already carries a `*` is nonetheless framed
+     * correctly. An empty payload is framed like any other, as `N<number> *<checksum>`, which is a
+     * numbered block commanding nothing rather than an error.
+     *
+     * ```
+     * GEncoder.frame(3, "T0")                    // "N3 T0*57"
+     * GEncoder.frame(3, "T0", Crc16CheckSum())   // "N3 T0*06939"
+     * ```
+     *
+     * @param number the line number to put in the `N` field
+     * @param payload the block's bytes, as they are to be transmitted
+     * @param checksum a fresh calculator for the algorithm to use; [XorCheckSum] by default
+     * @return the framed block, without a terminator
+     */
+    fun frame(number: Int, payload: String, checksum: CheckSumCalculator = XorCheckSum()): String {
+        val out = StringBuilder(payload.length + 18)
+        out.append('N').append(number).append(' ').append(payload)
+
+        val covered = out.toString()
+        checksum.add(covered)
+        out.append('*').append(checksum.get().lexeme)
+        return out.toString()
+    }
+
+    private fun appendPart(out: StringBuilder, part: GBlockPart) {
+        when (part) {
+            is GCommand -> appendCommand(out, part)
+            is GCommentPart -> out.append(part.comment.rawText())
+        }
+    }
+
+    private fun appendCommand(out: StringBuilder, command: GCommand) {
+        appendWord(out, command.head)
+        for (i in command.params.indices) {
+            out.append(' ')
+            appendWord(out, command.params[i])
+        }
+    }
+
+    /**
+     * A framed block around one command: `N<number> <command>*<checksum>`, sections 7 and 8.
+     *
+     * The common case, and **the same function** as [frame] over a payload string - the command is
+     * rendered by [encode] and framed there, where section 8.3's order of operations is stated and
+     * implemented once. It was implemented twice until this became a delegation, which is two copies
+     * of the most order-sensitive code in the encoder and a silent divergence waiting to happen.
+     *
+     * The algorithm is the caller's to choose by passing the calculator: [XorCheckSum] (section 8.2,
+     * the default and what Marlin expects) or [org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum] (section 8.4, five digits, stronger).
+     * A calculator carries the state of one block, so a fresh one is needed per call.
+     *
+     * ```
+     * val g28 = GCommand(GLetter('G'), GInt(28))
+     * GEncoder.frame(1, g28)                    // "N1 G28*18"
+     * GEncoder.frame(1, g28, Crc16CheckSum())   // "N1 G28*14291"
+     * ```
+     *
+     * @param number the line number to put in the `N` field
+     * @param command the command to frame
+     * @param checksum a fresh calculator for the algorithm to use; [XorCheckSum] by default
+     * @return the framed block, without a terminator
+     */
+    fun frame(number: Int, command: GCommand, checksum: CheckSumCalculator = XorCheckSum()): String =
+        frame(number, encode(command), checksum)
+
+    private fun appendWord(out: StringBuilder, word: GWord) {
+        when (word) {
+            is GParameterWord<*> -> {
+                out.append(word.id.rawText())
+                out.append(word.value.rawText())
+            }
+
+            is GFlagWord -> out.append(word.id.rawText())
+            is GUnnamedStr -> out.append(word.str.rawText())
+        }
+    }
+}

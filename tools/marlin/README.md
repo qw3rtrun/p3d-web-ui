@@ -1,0 +1,102 @@
+# Marlin command generation
+
+Everything under `gcode/src/main/kotlin/.../marlin/command/` is **generated** — all 295 command
+classes, one file per class, named after the class it holds — and so are `MarlinRQ.kt`, which holds
+the `MarlinCommands` registry and the `MarlinG` shortcuts, the generated test, and the doc-example
+fixture. Nothing here runs during the Gradle build; the output is checked in and the build only
+compiles it.
+
+`command/` is emptied on every run, so a class that loses its name upstream cannot leave a stale
+file behind to be compiled next to its replacement.
+
+## Why generated
+
+Marlin documents 287 distinct codes with 1044 parameter slots between them. Hand-writing that is
+about 14,000 lines in which a single transposed parameter letter is invisible until a printer
+rejects the command. Generating it from Marlin's own documentation means the parameter sets are
+never guessed, and a Marlin release is a re-run rather than a re-read.
+
+## Regenerating
+
+```bash
+# 1. fetch the upstream documentation
+curl -sSL -o docs.tar.gz \
+  https://codeload.github.com/MarlinFirmware/MarlinDocumentation/tar.gz/refs/heads/master
+tar xzf docs.tar.gz
+
+# 2. distil it into the vendored data file (pass the commit you fetched, for provenance)
+python3 tools/marlin/extract_marlin_docs.py MarlinDocumentation-master/_gcode <commit-sha>
+
+# 3. generate the Kotlin and the tests
+python3 tools/marlin/gen_mcommands.py
+
+# 4. the generated tests are the check
+./gradlew :gcode:test
+```
+
+Step 2 writes `doc/marlin-gcode/commands.json`; step 3 writes the four Kotlin files above,
+`MarlinCommandsTest.kt` and `gcode/src/test/resources/marlin-doc-examples.txt`. Review the JSON
+diff first — it is the reviewable artifact, and a surprise there is a doc change worth
+understanding before it becomes 14,000 lines of Kotlin.
+
+Both scripts run on a bare Python 3 (no `pip`, no PyYAML): the front matter is regular enough to
+read directly, and a hand-rolled reader keeps the tool usable on a machine with nothing installed.
+
+## What is taken, and what is not
+
+Only **interface facts**: the code, each parameter's letter, its type, whether it is optional, and
+the doc's short name for its value. Descriptions, notes and article bodies are *not* copied — the
+Marlin documentation is GPL-3.0, this repository publishes a Maven artifact, and the prose is not
+needed to know that `M105` takes `R` and `T`. Every generated class links to its upstream page
+instead. The example command lines *are* taken, as a test fixture: they are the independent check
+that the extracted letters match what Marlin's own authors write.
+
+## Decisions worth knowing
+
+- **Every parameter is nullable and absent by default.** 831 of 882 documented parameters are
+  optional, and `M105` and `M105 T0` are different commands, so an unset parameter must not reach
+  the wire. Flags are `Boolean = false` rather than nullable, because absent and false are the same
+  thing for a letter that carries no value.
+- **The reading half is a `companion object : GRqDecoder<T>`, and it carries the metadata too.**
+  `head()`, `decodeParams()`, `letters` and `bareString` describe the command *type*, not one
+  command, so they sit on the companion and a call site reads
+  `ReportHotendTemperature.decode(cmd)` with no instance. `MarlinCommands.decoders` lists the 295
+  companions and is the **only** list the generator emits: `byHead` is built from it, and
+  `MarlinCommands.all` - the bare-instance enumeration the tests sweep - is
+  `decoders.map { it.decodeParams(emptyList()) }`, which is what each decoder reads from no tokens
+  at all. There used to be three lists here (`all`, `info`, `decoders`), index-aligned by
+  convention, with `info` repeating each command's letters as a fourth copy of data the class
+  already held and its class name as a string that survived renames.
+- **The 93 parameterless classes keep a hand-rolled `equals`/`hashCode`.** They are `class X`, not
+  `object`, because `X()` call sites exist in the facade and in hand-written tests, and their
+  companion's `decodeParams` therefore has to return `X()` rather than `this`. The `hashCode`
+  literal is `zlib.crc32(name)`, **not** Python's `hash()` — string hashing is salted per process,
+  so `hash()` made every regeneration emit 93 different constants and a diff of pure churn. The
+  generator now aborts if two class names collide on that literal.
+- **A code can be documented more than once.** Marlin has six `G29` pages, one per bed-leveling
+  system, and two each for `G34`, `M665` and `M666`. Each becomes its own class, named from its
+  title (`BedLevelingUnified`, `BedLevelingBilinear`), so none is lost. `MarlinCommands.decode`
+  can only pick one of them and says so — build with the variant you mean.
+- **Property names come from the doc's value name when it is usable and unique, else the letter.**
+  `M105 T<index>` gives `index`; `M204`'s four parameters are all named `accel` upstream, so they
+  fall back to `p`, `r`, `t`, `s`.
+- **Four irregular codes are skipped**: `M43 T`, `T?`, `Tc`, `Tx`. None is a letter plus a number,
+  so no builder in this project can express one. The extractor prints every skip.
+
+## Known gaps
+
+`MarlinDocExamplesTest` pins these against Marlin's own examples rather than hiding them:
+
+- **A valued parameter sent bare** — `M104 F`, `G61 S0 XY`, `M919 XYZE` — cannot be read back,
+  because `null` on a `BigDecimal?` already means absent. Building the valued form always works.
+- **Rest-of-line strings** — `M117 Hello`, `M23 file.gco`, `M810`'s macro bodies — are modelled:
+  each of the 22 commands that takes one gets a letterless `String?` property (`message`, or
+  `filename`/`path`/`gcode` where that reads better), written last through `bareString()` and read
+  back through `stringArg(<the command's letters>)` - where the string starts is a per-command
+  question, so the decoder passes its own letters and reads the lettered ones from
+  `beforeStringArg()`. `MarlinDocExamplesTest` still skips these lines when counting letters,
+  because the token layer splits them letter by letter and those letters mean nothing.
+- **Dotted quads** — `M552 P192.168.1.55` is not a number and not a quoted string.
+- **Undocumented upstream** — `M569 S`, `M123 S`, `M672 S`, `M919 E` appear in examples but not in
+  their pages' parameter lists, and `G92.1` is used in an example but missing from `G092.md`'s
+  `codes:`. Report upstream rather than guessing a type here.

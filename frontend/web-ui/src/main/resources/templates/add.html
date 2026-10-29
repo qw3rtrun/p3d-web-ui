@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+
+<head th:replace="container::common_headers(~{}, ~{})">
+    <title></title>
+</head>
+
+<body th:replace="container::common_body(~{::#add_form}, ~{})">
+<div class="content-wrapper" id="add_form">
+    <div class="row">
+        <div class="col-md-8 grid-margin stretch-card">
+            <div class="card">
+                <div class="card-body">
+                    <h4 class="card-title">New Machine connection</h4>
+                    <p class="card-description">
+                        In order to initialize a new machine, fill out the form below.
+                    </p>
+                    <!--/*@thymesVar id="machine" type="org.qw3rtrun.p3d.frontend.mvc.MvcPrinterController.MachineInfo"*/-->
+                    <form class="forms-sample" th:action="@{/printers/add.html}" th:object="${machine}" method="post">
+                        <input type="hidden" th:if="${_csrf != null}"
+                               th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+                        <div class="form-group">
+                            <label>Machine Name</label>
+                            <input type="text" class="form-control" th:field="*{name}"
+                                   placeholder="Generic Machine">
+                        </div>
+                        <div class="form-group">
+                            <label>Host</label>
+                            <input type="text" class="form-control" th:field="*{host}"
+                                   placeholder="localhost">
+                        </div>
+                        <div class="form-group">
+                            <label>Port</label>
+                            <input type="number" class="form-control" th:field="*{port}"
+                                   placeholder="8099">
+                        </div>
+                        <hr/>
+                        <h5>What it is</h5>
+                        <p class="card-description">
+                            All optional. Anything left blank can be filled in later, and anything
+                            the machine reports for itself is kept separately.
+                        </p>
+                        <div th:replace="spec::declared_fields"></div>
+                        <button type="submit" class="btn btn-primary me-2">Submit</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+</body>
+
+</html>

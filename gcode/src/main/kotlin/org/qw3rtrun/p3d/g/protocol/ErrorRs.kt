@@ -1,0 +1,106 @@
+package org.qw3rtrun.p3d.g.protocol
+
+
+/**
+ * The three prefixes an error reply is written with, and the lexeme each one writes:
+ *
+ * - `BANGS` - `!!`, the original two-character error prefix.
+ * - `ERROR` - `Error:`, what Marlin and RepRapFirmware send.
+ * - `FATAL` - `fatal:`, Repetier Firmware.
+ *
+ * ```
+ * ErrorPrefix.ERROR.lexeme   // "Error:"
+ * ```
+ *
+ * @property lexeme the prefix exactly as it is written on the wire
+ */
+enum class ErrorPrefix(val lexeme: String) {
+    BANGS("!!"),
+
+    ERROR("Error:"),
+
+    FATAL("fatal:"),
+}
+
+/**
+ * `!!` / `Error:` / `fatal:` - something went wrong, with the machine's own words for it.
+ *
+ * ```
+ * Error:checksum mismatch, Last Line: 66555
+ * !! hardware fault
+ * ```
+ *
+ * **The message is kept as text and is not classified here.** The spec sorts errors into
+ * recoverable communication errors (followed immediately by a [ResendRs]), non-fatal errors such
+ * as `Unknown command` and the SD card family, and everything else - which it says to treat as a
+ * hardware fault that shuts the machine down. That is a decision with real consequences either
+ * way, it is made on prose the spec only gives as examples, and it belongs to the host and not to
+ * a decoder. What this class does promise is [lastLine], because the resend protocol of spec 8.5
+ * is addressed by line number and the number is right there in the text.
+ *
+ * On the way out, `!!` is a two-character prefix and takes a space before the message, the way `//`
+ * does; `Error:` and `fatal:` end in their own separator, and the spec's example has nothing after
+ * it.
+ *
+ * ```
+ * ErrorRs.decode("Error:checksum mismatch, Last Line: 66555")?.lastLine   // 66555
+ * ErrorRs(ErrorPrefix.BANGS, "hw").encode()                               // "!! hw"
+ * ```
+ *
+ * @property prefix which of the three prefixes the line was written with
+ * @property message the machine's own words, after the prefix, trimmed
+ * @property lastLine the line number in a `Last Line: <n>` message, or null when the message does not
+ *   name one. Only the `Last Line:` spelling is read. `expected line <n1> got <n2>` names two numbers
+ *   with no marker saying which is which, so reading it would be a guess. Spec 9: a number too wide
+ *   for `Int` is malformed input, so the field reads as absent.
+ * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
+ */
+data class ErrorRs(val prefix: ErrorPrefix, val message: String) : GProtoRs<ErrorRs> {
+
+    val lastLine: Int?
+        get() {
+            // A search, not a match: Marlin writes the counter at the end of a message whose front
+            // half differs per error ("checksum mismatch, Last Line: 7"), so the scan walks to the
+            // first `last line` and reads the number behind it.
+            var at = 0
+            while (at + LAST_LINE.length <= message.length) {
+                if (!message.startsWithAscii(LAST_LINE, at)) {
+                    at++
+                    continue
+                }
+                var i = message.blanksEnd(at + LAST_LINE.length)
+                // The `:` is required, as it was in the pattern this replaced: `Last Line 7` with
+                // no colon is not Marlin's wording and is not read as the counter.
+                if (i < message.length && message[i] == ':') {
+                    i = message.blanksEnd(i + 1)
+                    val end = message.digitsEnd(i)
+                    if (end > i) return message.substring(i, end).toIntOrNull()
+                }
+                at++
+            }
+            return null
+        }
+
+    override fun encode(): String = when (prefix) {
+        ErrorPrefix.BANGS -> if (message.isEmpty()) prefix.lexeme else prefix.lexeme + " " + message
+        else -> prefix.lexeme + message
+    }
+
+    companion object : GRsDecoder<ErrorRs> {
+
+        private const val LAST_LINE = "last line"
+
+        override fun match(line: String): Boolean = prefixOf(line.trim()) != null
+
+        override fun decodeParams(line: String): ErrorRs {
+            val trimmed = line.trim()
+            val prefix = prefixOf(trimmed)
+            require(prefix != null) { "not an error reply: $line" }
+            return ErrorRs(prefix, trimmed.substring(prefix.lexeme.length).trim())
+        }
+
+        private fun prefixOf(trimmed: String): ErrorPrefix? = ErrorPrefix.entries.firstOrNull {
+            trimmed.startsWithAscii(it.lexeme)
+        }
+    }
+}

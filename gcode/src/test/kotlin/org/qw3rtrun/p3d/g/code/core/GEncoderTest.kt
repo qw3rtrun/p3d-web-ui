@@ -1,0 +1,358 @@
+package org.qw3rtrun.p3d.g.code.core
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
+import org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum
+import org.qw3rtrun.p3d.g.code.core.command.GCommand
+import org.qw3rtrun.p3d.g.code.core.command.GBlockDraft
+import org.qw3rtrun.p3d.g.code.core.command.GCommentPart
+import org.qw3rtrun.p3d.g.code.core.command.GFlagWord
+import org.qw3rtrun.p3d.g.code.core.block.GFramedBlock
+import org.qw3rtrun.p3d.g.code.core.block.GMissingChecksum
+import org.qw3rtrun.p3d.g.code.core.block.GMissingLineNumber
+import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
+import org.qw3rtrun.p3d.g.code.core.command.GWord
+import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
+import org.qw3rtrun.p3d.g.code.core.token.*
+import org.qw3rtrun.p3d.g.code.core.command.GWordReader
+
+/**
+ * Tests for the encoder: GCODE_spec.md section 4 for a command's text, sections 7 and 8 for the
+ * framing around it.
+ *
+ * The rule the whole thing turns on is [spec 8.3]: the checksum covers the bytes as transmitted, so
+ * the encoder has to build the final byte string and only then checksum it. That is why these
+ * assertions are on strings rather than on token lists - a token list has no whitespace in it, and
+ * whitespace changes the answer.
+ */
+class GEncoderTest {
+
+    private fun cmd(letter: Char, number: Int, vararg params: GWord) =
+        GCommand(GLetter(letter), GInt(number), params.toList())
+
+    @Nested
+    inner class Commands {
+
+        @Test
+        fun `a bare command is its letter and its number`() {
+            assertEquals("G28", GEncoder.encode(cmd('G', 28)))
+            assertEquals("T0", GEncoder.encode(cmd('T', 0)))
+            assertEquals("M105", GEncoder.encode(cmd('M', 105)))
+        }
+
+        @Test
+        fun `parameters are separated from the command and from each other`() {
+            assertEquals("G1 X10 F1800", GEncoder.encode(
+                cmd('G', 1, GParameterWord(GLetter('X'), GInt(10)), GParameterWord(GLetter('F'), GInt(1800)))))
+        }
+
+        @Test
+        fun `adjacent words never fuse`() {
+            // Finding 1.10: `GCommand.print()` concatenated rawText() with no separator, so the
+            // bytes it produced depended on the values being self-delimiting. The exact reproducer
+            // from that finding - a command built from a bare list of values - stopped compiling
+            // when 03 gave GCommand its head/params shape, so this is the live equivalent: two
+            // number-bearing words in a row, asserted to stay two words.
+            val encoded = GEncoder.encode(
+                cmd('G', 1, GParameterWord(GLetter('X'), GInt(2))))
+
+            assertEquals("G1 X2", encoded)
+            assert(!encoded.contains("G1X2"))
+        }
+
+        @Test
+        fun `a flag parameter carries no value`() {
+            assertEquals("G28 X Y", GEncoder.encode(
+                cmd('G', 28, GFlagWord(GLetter('X')), GFlagWord(GLetter('Y')))))
+        }
+
+        @Test
+        fun `a subcode is part of the command word`() {
+            // spec 4.1: `G29.1` is one word whose value is a decimal, and the lexeme is what keeps
+            // it from re-emitting as `29` followed by `.1`.
+            val command = GCommand(GParameterWord(GLetter('G'), GFloat("29.1")))
+
+            assertEquals("G29.1", GEncoder.encode(command))
+        }
+
+        @Test
+        fun `a decimal parameter keeps the digits it was given`() {
+            // The lexeme is the value's identity (see GNumber): an encoder that re-rendered from
+            // the number would turn `X10.50` into `X10.5` and change the checksum with it.
+            assertEquals("G1 X10.50", GEncoder.encode(
+                cmd('G', 1, GParameterWord(GLetter('X'), GFloat("10.50")))))
+        }
+
+        @Test
+        fun `a quoted string parameter is re-quoted`() {
+            assertEquals("M117 S\"Hello!\"", GEncoder.encode(
+                cmd('M', 117, GParameterWord(GLetter('S'), GQuotedString("Hello!")))))
+        }
+
+        @Test
+        fun `encoding is canonical and does not inherit the spacing a block was parsed with`() {
+            // A parsed word carries its original bytes in `raw` - `X  10` is one word with two
+            // spaces inside it. The encoder renders the field, not the bytes it came from, so that
+            // what it emits is always the same shape and can be checksummed predictably.
+            val parsed = GBlockReader.blocks("G1  X  10").first()
+            val command = GWordReader.parse(parsed).single()
+
+            assertEquals("G1 X10", GEncoder.encode(command))
+        }
+    }
+
+    @Nested
+    inner class Framing {
+
+        @Test
+        fun `the spec worked example round-trips both ways`() {
+            // spec 8.3's example, in both directions: encoding T0 as line 3 yields N3 T0*57, and
+            // parsing N3 T0*57 yields a verified framed block.
+            val encoded = GEncoder.frame(3, cmd('T', 0))
+
+            assertEquals("N3 T0*57", encoded)
+            assertInstanceOf(
+                GFramedBlock::class.java,
+                GBlockReader.blocks(encoded).first()
+            )
+        }
+
+        @Test
+        fun `the line number prefix is inside the checksum`() {
+            // spec 8.3: the N and its digits are covered, so the checksum must be computed after
+            // the prefix is prepended, not over the payload alone.
+            assertEquals("N1 G28*18", GEncoder.frame(1, cmd('G', 28)))
+            assertEquals("N2 G28*17", GEncoder.frame(2, cmd('G', 28)))
+        }
+
+        @Test
+        fun `there is no space before the marker`() {
+            // spec 8.3: the convention, and it is a byte decision - a space before `*` would be
+            // covered and would change the value.
+            val framed = GEncoder.frame(1, cmd('G', 28))
+
+            assertEquals("N1 G28*18", framed)
+            assert(!framed.contains(" *"))
+        }
+
+        @Test
+        fun `a crc can be asked for instead`() {
+            // spec 8.4, same bytes, the other algorithm - and five digits, zero-padded.
+            assertEquals("N3 T0*06939", GEncoder.frame(3, cmd('T', 0), Crc16CheckSum()))
+            assertEquals("N1 G28*14291", GEncoder.frame(1, cmd('G', 28), Crc16CheckSum()))
+        }
+
+        @Test
+        fun `everything the encoder frames parses back as a verified framed block`() {
+            // The property that matters: encode then parse is the identity on commands, and the
+            // checksum the encoder computed is the one the verifier recomputes. If the encoder and
+            // the verifier ever disagree about the covered byte range, this is what says so.
+            val commands = listOf(
+                cmd('G', 28),
+                cmd('T', 0),
+                cmd('G', 1, GParameterWord(GLetter('X'), GFloat("10.5")), GParameterWord(GLetter('F'), GInt(1800))),
+                cmd('G', 28, GFlagWord(GLetter('X')), GFlagWord(GLetter('Y'))),
+                cmd('M', 117, GParameterWord(GLetter('S'), GQuotedString("Hello World!")))
+            )
+
+            for (number in commands.indices) {
+                for (calculator in listOf(XorCheckSum(), Crc16CheckSum())) {
+                    val command = commands[number]
+                    val framed = GEncoder.frame(number, command, calculator)
+                    val block = GBlockReader.blocks(framed).first()
+
+                    assertInstanceOf(GFramedBlock::class.java, block, "did not verify: $framed")
+                    assertEquals(GInt(number), (block as GFramedBlock).number)
+                    assertEquals(
+                        GEncoder.encode(command),
+                        GWordReader.parse(block).joinToString(" ") { GEncoder.encode(it) },
+                        "command did not survive: $framed"
+                    )
+                }
+            }
+        }
+
+        @Test
+        fun `parsing then encoding is the identity on bytes the encoder could have produced`() {
+            for (gcode in listOf("N0 G28*19", "N1 G28*18", "N3 T0*57", "N7 G1 X10 F1800*57")) {
+                val block = GBlockReader.blocks(gcode).first()
+
+                assertInstanceOf(GFramedBlock::class.java, block, "fixture is not framed: $gcode")
+                val framed = block as GFramedBlock
+                val command = GWordReader.parse(framed).single()
+
+                assertEquals(gcode, GEncoder.frame(framed.number.int, command))
+            }
+        }
+
+        @Test
+        fun `a one byte change anywhere before the marker is caught`() {
+            val good = GEncoder.frame(1, cmd('G', 28))
+
+            for (i in 0 until good.indexOf('*')) {
+                val corrupted = good.substring(0, i) + corrupt(good[i]) + good.substring(i + 1)
+                val block = GBlockReader.blocks(corrupted).first()
+
+                assert(block !is GFramedBlock) { "corruption at $i survived verification: $corrupted" }
+            }
+        }
+
+        /** Flips a character to another legal one, so the block stays lexically well formed. */
+        private fun corrupt(ch: Char): Char = when {
+            ch in '0'..'8' -> ch + 1
+            ch == '9' -> '0'
+            ch == ' ' -> '\t'
+            ch in 'A'..'Y' -> ch + 1
+            else -> 'Z'
+        }
+    }
+
+    /**
+     * Framing bytes a caller has already rendered - spec 8.3 taken literally, since the covered
+     * range is the bytes as transmitted and the framer never has to know what they mean.
+     *
+     * The contract under test is that the payload is **transmitted verbatim and never inspected**.
+     * Three of these are therefore characterisation points rather than wishes: a payload that opens a
+     * comment, and one carrying a line terminator, come out broken, and that is the documented
+     * consequence of not parsing. They are here so the cost of the contract stays visible.
+     */
+    @Nested
+    inner class TextPayloads {
+
+        @Test
+        fun `the spec worked example frames from text as well as from a command`() {
+            // spec 8.3's example again, this time with T0 handed over as bytes.
+            assertEquals("N3 T0*57", GEncoder.frame(3, "T0"))
+            assertInstanceOf(GFramedBlock::class.java, GBlockReader.blocks(GEncoder.frame(3, "T0")).first())
+        }
+
+        @Test
+        fun `framing text and framing the command that renders it are the same bytes`() {
+            // The delegation itself: frame(n, command) is frame(n, encode(command)). If these ever
+            // differ there are two implementations of sections 7 and 8 again.
+            val commands = listOf(
+                cmd('G', 28),
+                cmd('T', 0),
+                cmd('G', 1, GParameterWord(GLetter('X'), GFloat("10.50")), GParameterWord(GLetter('F'), GInt(1800))),
+                cmd('G', 28, GFlagWord(GLetter('X')), GFlagWord(GLetter('Y'))),
+                cmd('M', 117, GParameterWord(GLetter('S'), GQuotedString("Hello World!")))
+            )
+
+            for (number in commands.indices) {
+                val command = commands[number]
+
+                assertEquals(
+                    GEncoder.frame(number, command),
+                    GEncoder.frame(number, GEncoder.encode(command))
+                )
+                assertEquals(
+                    GEncoder.frame(number, command, Crc16CheckSum()),
+                    GEncoder.frame(number, GEncoder.encode(command), Crc16CheckSum())
+                )
+            }
+        }
+
+        @Test
+        fun `a crc can be asked for over text too`() {
+            assertEquals("N3 T0*06939", GEncoder.frame(3, "T0", Crc16CheckSum()))
+        }
+
+        @Test
+        fun `the payload reaches the wire verbatim`() {
+            // Not normalised, not re-spaced, not case-folded: spec 8.3 covers the bytes as
+            // transmitted, so anything the framer changed here would change the checksum with it.
+            assertEquals("N1 g28  x*74", GEncoder.frame(1, "g28  x"))
+            assertEquals("N1 M117 S\"a;b\"*110", GEncoder.frame(1, "M117 S\"a;b\""))
+        }
+
+        @Test
+        fun `a payload that already carries a marker still verifies, because the last marker wins`() {
+            // spec 8.3: Marlin takes the last `*` on the line (strrchr), and this module's reader
+            // agrees - so the framer's own marker is the one that counts and the inner one is just
+            // more covered bytes.
+            val framed = GEncoder.frame(1, "G28*12")
+
+            assertEquals("N1 G28*12*59", framed)
+            val block = GBlockReader.blocks(framed).first()
+            assertInstanceOf(GFramedBlock::class.java, block)
+            assertEquals(GInt(59), (block as GFramedBlock).checksum)
+        }
+
+        @Test
+        fun `a payload that already carries a line number is framed in front of it`() {
+            // The framer's N is first and is the one the reader takes; the payload's becomes an
+            // ordinary parameter word. Nonsense, but well-defined nonsense.
+            val framed = GEncoder.frame(1, "N5 G28")
+
+            assertEquals("N1 N5 G28*73", framed)
+            val block = GBlockReader.blocks(framed).first()
+            assertInstanceOf(GFramedBlock::class.java, block)
+            assertEquals(GInt(1), (block as GFramedBlock).number)
+        }
+
+        @Test
+        fun `an empty payload is a numbered block commanding nothing`() {
+            // No special case: the space after the number is always written and is always covered.
+            val framed = GEncoder.frame(1, "")
+
+            assertEquals("N1 *95", framed)
+            assertInstanceOf(GFramedBlock::class.java, GBlockReader.blocks(framed).first())
+        }
+
+        @Test
+        fun `a payload that opens a comment swallows the checksum field`() {
+            // Characterisation point, and the caller's precondition: a trailing comment belongs
+            // after the `*` (spec 5), which only the draft overload can place, because only it can
+            // see where the payload ends. Handed over as text the comment runs to end of line and
+            // takes the checksum with it.
+            assertEquals("N1 G28 ; c*74", GEncoder.frame(1, "G28 ; c"))
+            assertInstanceOf(GMissingChecksum::class.java, GBlockReader.blocks(GEncoder.frame(1, "G28 ; c")).first())
+            assertInstanceOf(GMissingChecksum::class.java, GBlockReader.blocks(GEncoder.frame(1, "G28 (c")).first())
+        }
+
+        @Test
+        fun `a payload carrying a line terminator splits the block in two`() {
+            // The other characterisation point: one call frames one line (spec 5), and a terminator
+            // inside the payload leaves the N on one side of the break and the `*` on the other -
+            // spec 7.3's pairing broken in both directions at once.
+            val blocks = GBlockReader.blocks(GEncoder.frame(1, "G28\nG90")).toList()
+
+            assertEquals(2, blocks.size)
+            assertInstanceOf(GMissingChecksum::class.java, blocks[0])
+            assertInstanceOf(GMissingLineNumber::class.java, blocks[1])
+        }
+    }
+
+    @Nested
+    inner class CommentParts {
+
+        private val g28 = GCommand(GLetter('G'), GInt(28))
+
+        private val g90 = GCommand(GLetter('G'), GInt(90))
+
+        @Test
+        fun `a comment part renders through its comment`() {
+            assertEquals("G28 ; note", GEncoder.encode(GBlockDraft(g28, GCommentPart(GTailComment(" note")))))
+        }
+
+        @Test
+        fun `a trailing comment part sits after the checksum and is not covered by it`() {
+            assertEquals("N1 G28*18 ; home", GEncoder.frame(1, GBlockDraft(g28, GCommentPart(GTailComment(" home")))))
+        }
+
+        @Test
+        fun `a block of nothing but a comment part is not framed`() {
+            assertEquals("; only", GEncoder.frame(1, GBlockDraft(GCommentPart(GTailComment(" only")))))
+        }
+
+        @Test
+        fun `a comment part between two commands is covered by the checksum`() {
+            val block = GBlockDraft(g28, GCommentPart(GInlineComment("x")), g90)
+
+            assertEquals("N1 G28 (x) G90*37", GEncoder.frame(1, block))
+        }
+    }
+}

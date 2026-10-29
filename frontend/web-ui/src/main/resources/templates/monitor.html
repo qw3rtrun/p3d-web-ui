@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+
+<!--
+  Two empty fragments, like every other page. This used to pass `~{:: //script}` - "the script
+  elements of this document" - to hand its own module script up to the layout. That page-local
+  script is gone (the islands are mounted by the bundle, and Bootstrap comes with it), and a
+  selector that matches nothing does not resolve to an empty fragment: Thymeleaf fails the whole
+  render with "Error resolving fragment: ${scripts}".
+-->
+<head th:replace="container::common_headers(~{}, ~{})">
+    <title></title>
+</head>
+
+<body th:replace="container::common_body(~{::#dashboard_form}, ~{})">
+<div class="content-wrapper" id="dashboard_form">
+    <div class="row">
+        <div class="col-sm-12">
+            <div class="home-tab">
+                <div class="d-sm-flex align-items-center justify-content-between border-bottom">
+                    <ul class="nav nav-tabs" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active ps-0" id="home-tab" data-bs-toggle="tab" href="#overview"
+                               role="tab" aria-controls="overview" aria-selected="true">Monitor</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="profile-tab" data-bs-toggle="tab" href="#audiences" role="tab"
+                               aria-selected="false">Storage</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="contact-tab" data-bs-toggle="tab" href="#demographics" role="tab"
+                               aria-selected="false">Firmware</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link border-0" id="more-tab" data-bs-toggle="tab" href="#more" role="tab"
+                               aria-selected="false">Calibration</a>
+                        </li>
+                    </ul>
+                    <!-- The connection badge and buttons are part of PrinterMonitor now. -->
+                </div>
+                <div class="tab-content tab-content-basic">
+                    <!--
+                      What the machine is - rendered by Thymeleaf and not by a Vue island.
+
+                      Firmware, capabilities and the declared spec are true at request time and do
+                      not keep changing, which is the whole test for which side of this
+                      architecture a thing belongs on. An island here would open a fetch to
+                      re-learn what the server already knew when it rendered the page.
+
+                      The cost is that it goes stale: the profile is learned when a machine first
+                      connects, so connecting while this page is open leaves the panel empty until
+                      a reload. Recorded as debt rather than solved with a poll.
+                    -->
+                    <div class="tab-pane fade" id="demographics" role="tabpanel"
+                         aria-labelledby="contact-tab">
+                        <div class="row pt-3">
+                            <div class="col-md-6">
+                                <h4 class="card-title">Firmware</h4>
+                                <p class="text-muted" th:if="${!printer.profile.isKnown()}">
+                                    This machine has not reported yet. Connect it and reload.
+                                </p>
+                                <table class="table table-sm" th:if="${printer.profile.isKnown()}">
+                                    <tbody>
+                                    <tr th:each="entry : ${printer.profile.firmware()}">
+                                        <td class="text-muted" th:text="${entry.key}">KEY</td>
+                                        <td th:text="${entry.value}">value</td>
+                                    </tr>
+                                    </tbody>
+                                </table>
+                                <p class="text-muted small" th:if="${printer.profile.learnedAt() != null}"
+                                   th:text="'Reported ' + ${printer.profile.learnedAt()}">when</p>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h4 class="card-title">Capabilities</h4>
+                                <p class="text-muted"
+                                   th:if="${printer.profile.capabilities().isEmpty()}">
+                                    None reported.
+                                </p>
+                                <table class="table table-sm">
+                                    <tbody>
+                                    <tr th:each="cap : ${printer.profile.capabilities()}">
+                                        <td class="text-muted" th:text="${cap.key}">CAP</td>
+                                        <td>
+                                            <span class="badge"
+                                                  th:classappend="${cap.value} ? 'bg-success' : 'bg-secondary'"
+                                                  th:text="${cap.value} ? 'yes' : 'no'">yes</span>
+                                        </td>
+                                    </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="row pt-3 border-top">
+                            <div class="col-12">
+                                <h4 class="card-title">Declared</h4>
+                                <p class="text-muted" th:if="${!printer.spec.isDeclared()}">
+                                    Nobody has described this machine yet.
+                                </p>
+                            </div>
+                            <div class="col-md-3" th:if="${printer.spec.bedVolume() != null}">
+                                <p class="text-muted mb-0">Bed</p>
+                                <strong th:text="${printer.spec.bedVolume().x()} + ' x ' +
+                                                 ${printer.spec.bedVolume().y()} + ' x ' +
+                                                 ${printer.spec.bedVolume().z()} + ' mm'">bed</strong>
+                            </div>
+                            <div class="col-md-3">
+                                <p class="text-muted mb-0">Extruders</p>
+                                <strong th:text="${printer.extruderCount()}">1</strong>
+                            </div>
+                            <div class="col-md-3" th:if="${!printer.spec.nozzleDiameters().isEmpty()}">
+                                <p class="text-muted mb-0">Nozzles</p>
+                                <strong th:text="${#strings.listJoin(printer.spec.nozzleDiameters(), ', ')}">0.4</strong>
+                            </div>
+                            <div class="col-md-3" th:if="${!printer.spec.materials().isEmpty()}">
+                                <p class="text-muted mb-0">Materials</p>
+                                <strong th:text="${#strings.setJoin(printer.spec.materials(), ', ')}">PLA</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade show active" id="overview" role="tabpanel" aria-labelledby="overview">
+                        <div class="row">
+                            <div class="col-lg-8 d-flex flex-column">
+                                <div class="row flex-grow">
+                                    <div class="col-12 grid-margin stretch-card">
+                                        <div class="card card-rounded printer"
+                                             data-p3d="printer-monitor"
+                                             th:attr="data-uuid=${printer.uuid},
+                                                      data-name=${printer.name},
+                                                      data-role=${currentRole}"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+</body>
+
+</html>

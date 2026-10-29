@@ -1,0 +1,288 @@
+package org.qw3rtrun.p3d.g.code.core.block
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Nested
+import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.token.GComment
+import org.qw3rtrun.p3d.g.code.core.token.GFloat
+import org.qw3rtrun.p3d.g.code.core.token.GInt
+import org.qw3rtrun.p3d.g.code.core.token.GLetter
+import org.qw3rtrun.p3d.g.code.core.token.GLineBreak
+import org.qw3rtrun.p3d.g.code.core.token.GQuotedString
+import org.qw3rtrun.p3d.g.code.core.token.GTailComment
+import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
+import org.qw3rtrun.p3d.g.code.core.token.GUnknown
+
+/**
+ * Corpus level tests over `src/test/resources/marlin.gcode` - 300+ blocks of real Marlin flavoured
+ * G-code. These guard the lexer and the reader against regressions on realistic input rather than on
+ * hand-written snippets.
+ *
+ * The corpus is parsed exactly as it is checked out - LF or CRLF - so these tests also guard the
+ * line-ending handling on realistic input.
+ */
+class GCorpusTest {
+
+
+    private val corpus: String = requireNotNull(javaClass.getResourceAsStream("/marlin.gcode")) {
+        "marlin.gcode fixture is missing from the test resources"
+    }.readBytes().decodeToString()
+
+    private val blocks: List<String> = corpus.lines().let {
+        if (it.last().isEmpty()) it.dropLast(1) else it
+    }
+
+    @Test
+    fun `the corpus is big enough to be worth testing`() {
+        assertTrue(blocks.size > 300) { "expected a corpus of 300+ blocks, got ${blocks.size}" }
+    }
+
+    @Test
+    fun `the whole corpus tokenizes without failing`() {
+        val tokens = GTokenizer.parse(corpus).toList()
+
+        assertTrue(tokens.size > 2500) { "expected 2500+ tokens, got ${tokens.size}" }
+        assertTrue(tokens.none { it is GUnknown && it.str.isEmpty() })
+    }
+
+    @Test
+    fun `every block tokenizes into at least one token`() {
+        blocks.filter { it.isNotEmpty() }.forEach { block ->
+            val tokens = GTokenizer.parse(block).toList()
+
+            assertTrue(tokens.isNotEmpty()) { "block [$block] produced no tokens" }
+        }
+    }
+
+    @Test
+    fun `the corpus contains the token kinds it is meant to exercise`() {
+        val tokens = GTokenizer.parse(corpus).toList()
+
+        assertTrue(tokens.any { it is GLetter }) { "no command letters in the corpus" }
+        assertTrue(tokens.any { it is GInt }) { "no integers in the corpus" }
+        assertTrue(tokens.any { it is GFloat }) { "no decimals in the corpus" }
+        assertTrue(tokens.any { it is GTailComment }) { "no tail comments in the corpus" }
+        assertTrue(tokens.any { it is GQuotedString }) { "no quoted strings in the corpus" }
+        assertTrue(tokens.any { it is GLineBreak }) { "no line breaks in the corpus" }
+    }
+
+    @Test
+    fun `the reader splits the corpus into one block per line break`() {
+        val parsed = GBlockReader.blocks(corpus).toList()
+
+        assertEquals(blocks.size, parsed.size)
+        assertTrue(parsed.all { it.raw.isNotEmpty() }) { "a parsed block has no tokens" }
+    }
+
+    @Test
+    fun `no line break is counted twice`() {
+        val breaks = GTokenizer.parse(corpus).count { it is GLineBreak }
+
+        assertEquals(corpus.count { it == '\n' }, breaks)
+    }
+
+    @Test
+    fun `only the documented lexer gaps produce unknown tokens`() {
+        // Characters the lexer does not understand yet. Each entry is a documented gap:
+        // '.' from file extensions, '/' '\' '~' '!' ':' '|' from paths, '#' from RS274 parameters,
+        // ''' and ',' from prose in bare rest-of-line strings (GCODE_spec.md section 3.4a).
+        // The set is expected to shrink as those are implemented.
+        //
+        // All ASCII: narrowing the character classes to 7-bit ASCII (spec section 1.1) added nothing
+        // here, which is what proves the change is scoped - the corpus does have non-ASCII, but only
+        // inside comments and quoted strings, where it stays content. See the two tests below.
+        val expected = listOf("!", "#", "'", ",", ".", "/", ":", "\\", "|", "~")
+
+        val actual = GTokenizer.parse(corpus)
+            .filterIsInstance<GUnknown>()
+            .map { it.str }
+            .distinct()
+            .sorted()
+            .toList()
+
+        assertEquals(expected, actual)
+    }
+
+    @Test
+    fun `no token outside a comment or a string carries a non ascii character`() {
+        // GCODE_spec.md section 1.1 confines non-ASCII to comments and quoted strings. The corpus has
+        // Cyrillic in both, so this is the test that separates "reclassified" from "broken".
+        val offenders = GTokenizer.parse(corpus)
+            .filter { it !is GComment && it !is GQuotedString }
+            .map { it.rawText() }
+            .filter { text -> text.any { it.code > 127 } }
+            .distinct()
+            .toList()
+
+        assertEquals(emptyList<String>(), offenders)
+    }
+
+    @Test
+    fun `the corpus still carries the non ascii characters of its comments`() {
+        // U+2019 on line 140 and U+00B5 on lines 380-382. The fixture has no non-ASCII quoted string,
+        // so the string half of the section 1.1 carve-out is pinned in GTokenizerTest instead.
+        val nonAscii = GTokenizer.parse(corpus)
+            .filterIsInstance<GComment>()
+            .flatMap { comment -> comment.string.asSequence() }
+            .filter { it.code > 127 }
+            .distinct()
+            .sorted()
+            .toList()
+
+        assertEquals(listOf('\u00B5', '\u2019'), nonAscii)
+    }
+
+    @Test
+    fun `no comment text carries a stray carriage return`() {
+        // The fixture is CRLF. GCODE_spec.md section 1.2 makes both characters of a CRLF part of the
+        // terminator, so neither belongs to the comment text; the CR is emitted by GLineBreak.
+        val withCr = GTokenizer.parse(corpus)
+            .filterIsInstance<GTailComment>()
+            .filter { it.string.contains('\r') }
+            .map { it.string }
+            .toList()
+
+        assertEquals(0, withCr.size) {
+            "${withCr.size} comments still carry a CR, e.g. [${withCr.firstOrNull()}]"
+        }
+    }
+
+    @Test
+    fun `the whole corpus round trips byte for byte including its terminators`() {
+        // The per-block test below strips terminators, so it cannot see a CR moving between a comment
+        // and its line break. This one parses the file exactly as checked out.
+        assertEquals(corpus, GTokenizer.parse(corpus).joinToString("") { it.rawText() })
+    }
+
+    @Test
+    fun `each block round trips through the token stream`() {
+        val failing = blocks.filter { block ->
+            runCatching { GTokenizer.parse(block).joinToString("") { it.rawText() } }.getOrNull() != block
+        }
+
+        // No quarantine: number tokens carry their original lexeme, so every block of the corpus
+        // reproduces itself byte for byte.
+        assertEquals(emptyList<String>(), failing)
+    }
+    @Test
+    fun `the reader classifies every corpus block and loses nothing`() {
+        val parsed = GBlockReader.blocks(corpus).toList()
+        val kinds = parsed.groupingBy { it::class.simpleName!! }.eachCount()
+
+        // The corpus is a file, not a serial capture: it has commands, blank/comment-only blocks,
+        // and exactly two `N` blocks with no checksum. GCODE_spec.md section 7.3 makes the last pair
+        // a structural error over a link; in a file it is benign, which is why the reader reports
+        // the structure rather than refusing the block. Pinned so the ratio cannot drift silently.
+        assertEquals(setOf("GPlainBlock", "GMeaninglessBlock", "GMissingChecksum"), kinds.keys)
+        assertEquals(2, kinds["GMissingChecksum"])
+        assertEquals(blocks.size, parsed.size)
+        assertTrue(parsed.none { it is GFramedBlock }) { "the corpus has no checksummed blocks" }
+    }
+
+    @Test
+    fun `the two unchecksummed line numbers are the ones the fixture actually contains`() {
+        val parsed = GBlockReader.blocks(corpus).toList()
+
+        assertEquals(
+            listOf("line number 100 has no checksum", "line number 101 has no checksum"),
+            parsed.filterIsInstance<GError>().map { it.msg }
+        )
+    }
+
+    /**
+     * The second corpus: `marlin-framed.gcode`, a host-to-firmware session with every block framed
+     * per GCODE_spec.md sections 7 and 8. The file corpus above deliberately has no checksummed
+     * blocks at all - it is a sliced file, not a serial capture - which left sections 7 and 8 with no
+     * realistic regression net once verification started happening.
+     *
+     * **Its checksums were computed outside this module**, from the spec, not by `XorCheckSum` or
+     * `Crc16CheckSum`. A fixture generated by `GEncoder` would agree with the verifier by
+     * construction and would go on agreeing with it through a shared bug.
+     */
+    @Nested
+    inner class FramedCorpus {
+
+        private val framed: String = requireNotNull(javaClass.getResourceAsStream("/marlin-framed.gcode")) {
+            "marlin-framed.gcode fixture is missing from the test resources"
+        }.readBytes().decodeToString()
+
+        private val framedLines: List<String> = framed.lines().let {
+            if (it.last().isEmpty()) it.dropLast(1) else it
+        }
+
+        private fun parse(text: String): List<GBlock> =
+            GBlockReader.blocks(text).toList()
+
+        @Test
+        fun `every block verifies`() {
+            val parsed = parse(framed)
+            val notFramed = parsed.filter { it !is GFramedBlock }
+
+            assertEquals(emptyList<GBlock>(), notFramed) {
+                "these did not verify: " + notFramed.joinToString("; ") { block ->
+                    block.raw.joinToString("") { it.rawText() }.trim()
+                }
+            }
+            assertEquals(framedLines.size, parsed.size)
+        }
+
+        @Test
+        fun `the corpus exercises both algorithms`() {
+            // Otherwise a CRC regression could hide behind 28 passing XOR blocks.
+            val widths = parse(framed)
+                .filterIsInstance<GFramedBlock>()
+                .groupingBy { it.checksum.lexeme.length }
+                .eachCount()
+
+            assertTrue(widths.keys.any { it in 1..3 }) { "no XOR-checksummed blocks: $widths" }
+            assertEquals(6, widths[5]) { "expected 6 CRC blocks, got $widths" }
+        }
+
+        @Test
+        fun `the line numbers are contiguous from zero`() {
+            val numbers = parse(framed).filterIsInstance<GFramedBlock>().map { it.number.int }
+
+            assertEquals((0 until framedLines.size).toList(), numbers)
+        }
+
+        @Test
+        fun `the framed corpus round-trips byte for byte`() {
+            // A GFramedBlock decomposes its block, so it is the type that can silently lose the `N`
+            // field, the `*` field or the terminator.
+            val reassembled = parse(framed).joinToString("") { block ->
+                block.raw.joinToString("") { it.rawText() }
+            }
+
+            assertEquals(framed, reassembled)
+        }
+
+        @Test
+        fun `corrupting any single byte of any block is caught`() {
+            // The property the whole of section 8 exists for, run over realistic traffic rather
+            // than one hand-written block: every byte of every covered range, one at a time.
+            for (block in framedLines) {
+                val star = block.lastIndexOf('*')
+                for (i in 0 until star) {
+                    val corrupted = block.substring(0, i) + flip(block[i]) + block.substring(i + 1)
+                    val parsed = parse(corrupted).single()
+
+                    assertTrue(parsed !is GFramedBlock) {
+                        "corruption at index $i survived verification: $corrupted"
+                    }
+                }
+            }
+        }
+
+        /** Changes a character to a different legal one, so the block stays lexically well formed. */
+        private fun flip(ch: Char): Char = when {
+            ch in '0'..'8' -> ch + 1
+            ch == '9' -> '0'
+            ch == ' ' -> '\t'
+            ch in 'A'..'Y' -> ch + 1
+            ch == 'Z' -> 'A'
+            ch == '.' -> '5'
+            else -> 'Q'
+        }
+    }
+}

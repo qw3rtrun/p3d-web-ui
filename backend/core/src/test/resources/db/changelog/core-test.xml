@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every table this module owns, for its own tests.
+
+  It replaces a changelog per module - jobs-test.xml, identity-test.xml and two bare
+  `spring.liquibase.change-log` settings - which was the right shape when each of these was a
+  Gradle module with a classpath of its own. One module means one test classpath and therefore one
+  `application.properties`, so the tests share one schema.
+
+  That is a superset of what any single test needs, and deliberately so: it is the same set of
+  fragments :app assembles, so a test now runs against the schema the application actually has
+  rather than against its own module's slice of it. A foreign key between two of these would have
+  been invisible before.
+-->
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <include file="db/changelog/printers.xml"/>
+    <include file="db/changelog/gcode-files.xml"/>
+    <include file="db/changelog/jobs.xml"/>
+    <include file="db/changelog/identity.xml"/>
+    <include file="db/changelog/sessions.xml"/>
+
+    <!-- Infrastructure rather than a module's data - see the fragment for why. -->
+    <include file="db/changelog/modulith-events.xml"/>
+
+</databaseChangeLog>

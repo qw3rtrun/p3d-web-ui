@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+
+<head th:fragment="common_headers(links, scripts)">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Print3d</title>
+    <link rel="shortcut icon" href="/images/favicon.svg"/>
+
+    <link rel="stylesheet" href="/webjars/bootstrap-icons/1.13.1/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="/webjars/mdi/2.1.19/css/materialdesignicons.min.css">
+    <link rel="stylesheet" href="/webjars/simple-line-icons/2.4.1/css/simple-line-icons.css">
+
+    <!--
+      The theme's stylesheet and its icon font, built by Vite from src/frontend/src/theme. They
+      used to be two links into /static; bundling them is what lets that directory hold nothing
+      but images.
+    -->
+    <link rel="stylesheet" href="/assets/p3d-ui.css">
+
+    <!--
+      No import map any more. It resolved the POC - a Vue and a Bootstrap from webjars, and three
+      hand-written modules under /static/js - and the bundle below now carries Vue, Bootstrap and
+      the theme's own behaviour, so nothing in a page imports a bare specifier.
+    -->
+    <th:block th:replace="${links}"/>
+
+    <!--
+      The Vue islands - one bundle for every page, built by Vite from src/frontend.
+
+      It is `defer`red rather than placed at the end of the body because the mount points live in
+      the fragment this head is included from, and the bundle waits for DOMContentLoaded anyway.
+      A page with no `data-p3d` element simply gets nothing.
+
+      The filename is stable on purpose: a hashed one would need a manifest lookup here. See
+      vite.config.ts.
+    -->
+    <script type="module" src="/assets/p3d-ui.js"></script>
+
+    <th:block th:replace="${scripts}"/>
+</head>
+
+<body th:fragment="common_body(content, after_scripts)">
+<div class="container-scroller">
+    <nav th:replace="~{nav::common_nav(name='Petya')}"></nav>
+    <div class="container-fluid page-body-wrapper">
+        <nav th:replace="~{sidebar :: common_sidebar(active='fdms')}" id="sidebar"></nav>
+        <div class="main-panel">
+            <th:block th:replace="${content}"/>
+            <footer class="footer">
+                <div class="d-sm-flex justify-content-center justify-content-sm-between">
+                <span class="text-muted text-center text-sm-left d-block d-sm-inline-block">Premium <a
+                        href="https://www.bootstrapdash.com/" target="_blank">Bootstrap admin template</a> from BootstrapDash.</span>
+                    <span class="float-none float-sm-right d-block mt-1 mt-sm-0 text-center">Copyright © 2021. All rights reserved.</span>
+                </div>
+            </footer>
+            <!-- partial -->
+        </div>
+    </div>
+</div>
+
+<!--
+  The jQuery vendor bundle, a datepicker no page uses, and the theme's three scripts used to load
+  here. They are in the bundle now - see src/frontend/src/theme.ts, which keeps the two controls
+  nav.html actually hooks into and drops the rest, including a banner whose missing element made
+  template.js throw on every page load.
+-->
+
+<th:block th:replace="${after_scripts}"/>
+
+</body>
+
+</html>

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<!--
+  The login page - plan item D3.
+
+  Standalone, and deliberately not built on container.html: every other page assumes a signed-in
+  user to render its nav and sidebar, and this is the one page that by definition has none.
+-->
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Sign in - Print3d</title>
+    <link rel="shortcut icon" href="/images/favicon.svg"/>
+    <link rel="stylesheet" href="/webjars/bootstrap-icons/1.13.1/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="/assets/p3d-ui.css">
+</head>
+<body>
+<div class="container-scroller">
+    <div class="container-fluid page-body-wrapper full-page-wrapper">
+        <div class="content-wrapper d-flex align-items-center auth px-0">
+            <div class="row w-100 mx-0">
+                <div class="col-lg-4 mx-auto">
+                    <div class="card text-left py-5 px-4 px-sm-5">
+                        <h4>Print3d</h4>
+                        <h6 class="font-weight-light">Sign in to reach the farm.</h6>
+
+                        <div class="alert alert-danger mt-3" role="alert" th:if="${param.error}">
+                            That username and password did not match.
+                        </div>
+                        <div class="alert alert-success mt-3" role="alert" th:if="${param.logout}">
+                            You are signed out.
+                        </div>
+
+                        <form class="pt-3" method="post" th:action="@{/login}">
+                            <!--
+                              The CSRF field is written by hand because Thymeleaf's automatic
+                              insertion is a servlet-stack feature: on WebFlux the request data
+                              value processor that adds it is not in play, so a form without this
+                              is rejected with 403 and no hint as to why.
+                            -->
+                            <input type="hidden" th:name="${_csrf.parameterName}"
+                                   th:value="${_csrf.token}" th:if="${_csrf != null}"/>
+                            <div class="form-group">
+                                <label for="username">Username</label>
+                                <input type="text" class="form-control form-control-lg" id="username"
+                                       name="username" autocomplete="username" autofocus required/>
+                            </div>
+                            <div class="form-group">
+                                <label for="password">Password</label>
+                                <input type="password" class="form-control form-control-lg" id="password"
+                                       name="password" autocomplete="current-password" required/>
+                            </div>
+                            <div class="mt-3 d-grid gap-2">
+                                <button class="btn btn-block btn-primary btn-lg fw-medium auth-form-btn"
+                                        type="submit">SIGN IN
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

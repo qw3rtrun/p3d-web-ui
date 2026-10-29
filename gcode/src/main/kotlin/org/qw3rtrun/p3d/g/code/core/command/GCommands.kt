@@ -1,0 +1,223 @@
+package org.qw3rtrun.p3d.g.code.core.command
+
+import org.qw3rtrun.p3d.g.code.core.token.GComment
+import org.qw3rtrun.p3d.g.code.core.token.GIdentifier
+import org.qw3rtrun.p3d.g.code.core.token.GNumber
+import org.qw3rtrun.p3d.g.code.core.token.GString
+import org.qw3rtrun.p3d.g.code.core.token.GToken
+import org.qw3rtrun.p3d.g.code.core.token.GValue
+
+/**
+ * A field of a command (GCODE_spec.md section 3): usually an identifier and the value behind it,
+ * and in one case a value with no identifier at all.
+ *
+ * Words are **this** layer's vocabulary, not the block layer's. A block is classified from its tokens -
+ * where `N` is and where the last `*` is - and nothing above that needs a word until someone asks
+ * what the block *commands*. The **writing** direction is where they are produced now: the DSL and
+ * `GRq.encode()` build them, and `GEncoder` consumes them. Reading a block back into words - the
+ * command-agnostic decomposition the old `GCommandParser` did - is measurement apparatus and lives
+ * with the corpus tests; a host that wants to know what a block commands asks a decoder, which knows
+ * the command number and can therefore read what words cannot (spec 3.4a).
+ *
+ * **A word is named or it is not**, and the split is this interface's whole job. Almost every field
+ * has an identifier - [GNamedWord] - and spec 3.4a's bare rest-of-line string has none, so it is a
+ * [GUnnamedStr] and carries no `id` to read. The alternative, kept here for a while, was an empty
+ * identifier token that every unnamed word pointed at so the encoder could write a name
+ * unconditionally; that put a token no lexer ever produces into `core.token`, where it existed only
+ * to satisfy this layer's interface, and let `isChar` be asked of a word that has no character.
+ *
+ * ```
+ * GParameterWord(GLetter('X'), GInt(10)).isChar('x')   // true
+ * ```
+ *
+ * @property raw the tokens this word was read from, spelling included: `X  10` is one word holding
+ *   two spaces. Provenance, not identity, and not what round-trips a block - `GBlock.raw` is. A word
+ *   built by the DSL carries the canonical `[id, value]`; one read from `G 1` carries the space as
+ *   well.
+ */
+sealed interface GWord {
+
+    val raw: List<GToken>
+}
+
+/**
+ * A field that carries an identifier: every word but spec 3.4a's bare string.
+ *
+ * What a caller narrows to when it wants to ask *which* field this is - the letter, or the `*` of a
+ * checksum field. A [GUnnamedStr] cannot answer that question and is not this type, so the
+ * narrowing is the question rather than a null check after it.
+ *
+ * ```
+ * GFlagWord(GLetter('X')).isChar('x')   // true
+ * ```
+ *
+ * @property id the field's identifier
+ */
+sealed interface GNamedWord : GWord {
+
+    val id: GIdentifier
+
+    /**
+     * Whether this word's identifier is the single character [l], case-insensitively -
+     * `GIdentifier.isChar`.
+     *
+     * ```
+     * GParameterWord(GLetter('X'), GInt(10)).isChar('x')   // true
+     * ```
+     *
+     * @param l the character to compare against, in either case
+     * @return true when [id] is that character
+     */
+    fun isChar(l: Char): Boolean = id.isChar(l)
+}
+
+/**
+ * A field that carries a value: `X10`, `N1`, `*57`, and `X 10` - spec 2.1 lets a space separate.
+ *
+ * ```
+ * GParameterWord(GLetter('X'), GInt(10)).raw   // [GLetter('X'), GInt(10)]
+ * ```
+ *
+ * @property value the field's value
+ */
+data class GParameterWord<V : GValue>(
+    override val id: GIdentifier,
+    val value: V,
+    override val raw: List<GToken> = listOf(id, value),
+) : GNamedWord
+
+/**
+ * A field with no value after it: the `X` of `G28 X Y`, or a `*` with nothing usable behind it.
+ *
+ * ```
+ * GEncoder.encode(GCommand(GLetter('G'), GInt(28), listOf(GFlagWord(GLetter('X')))))   // "G28 X"
+ * ```
+ */
+data class GFlagWord(
+    override val id: GIdentifier,
+    override val raw: List<GToken> = listOf(id),
+) : GNamedWord
+
+/**
+ * A field with no identifier in front of it: spec 3.4a's bare rest-of-line string, as in
+ * `M117 Hello World`, where the text *is* the argument.
+ *
+ * Only a decoder builds one, because only a decoder knows the command number that says a block has
+ * such an argument at all (see `GRqDecoder`); the token layer lexes `Hello World` letter by letter
+ * and the command parser never assembles one.
+ *
+ * It carries **no identifier**, and that is the point: there is nothing to put there. It used to
+ * answer `GEmptyId`, a token the lexer never produces, so that `GWord` could promise an `id` and
+ * the encoder could write one unconditionally - which bought a single line in `appendWord` and cost
+ * a type in `core.token` whose only reason to exist was this interface, plus an `isChar` that could
+ * be asked of a word with no character and always answered false. The encoder already matches on
+ * the word kind, so it writes the identifier in the two branches that have one.
+ *
+ * This replaced a `GUnnamedWord<V : GValue>` interface whose type parameter appeared nowhere in
+ * its body and which had this as its only implementation.
+ *
+ * ```
+ * val message = GUnnamedStr(GUnquotedString("Hello World"))
+ * GEncoder.encode(GCommand(GLetter('M'), GInt(117), listOf(message)))   // "M117 Hello World"
+ * ```
+ *
+ * @property str the string itself
+ */
+data class GUnnamedStr(
+    val str: GString,
+    override val raw: List<GToken> = listOf(str),
+) : GWord
+
+/**
+ * Something that can stand in a [GBlockDraft]: a [GCommand] or a [GCommentPart]. Sealed, and both
+ * variants live in this package - a comment *token* is wrapped rather than implementing this, so
+ * the token layer does not depend on this one.
+ *
+ * This is the *build* direction, and the reason the two types are spelled apart: a `GBlock` - one
+ * layer down, in `core.block` - was read and carries the exact tokens it was read from, whitespace
+ * included; a [GBlockDraft] is being built and carries only what the author chose, leaving the
+ * bytes to the encoder. Keeping
+ * them apart is what lets `GEncoder` emit one canonical spelling instead of having to guess which
+ * of a parsed block's spaces were meaningful.
+ *
+ * ```
+ * GEncoder.encode(GBlockDraft(GCommand(GLetter('G'), GInt(28)), GCommentPart(GTailComment(" note"))))   // "G28 ; note"
+ * ```
+ */
+sealed interface GBlockPart
+
+/**
+ * A comment standing in a [GBlockDraft]: spec section 6's comment, as a part of a block being built.
+ *
+ * A wrapper rather than the token itself, so that the token layer does not have to know what a
+ * block is. `GComment` is a lexer token and stays one; being "something that can go in a block" is
+ * this layer's vocabulary, and a token implementing it would make `core.token` depend on
+ * `core.command`. The encoder renders it through the comment's own `rawText()`, so the author's
+ * marker and spacing are kept.
+ *
+ * ```
+ * val g28 = GCommand(GLetter('G'), GInt(28))
+ * GEncoder.encode(GBlockDraft(g28, GCommentPart(GTailComment(" note"))))    // "G28 ; note"
+ * GEncoder.frame(1, GBlockDraft(g28, GCommentPart(GTailComment(" home"))))  // "N1 G28*18 ; home"
+ * ```
+ *
+ * @property comment the comment token to emit
+ */
+data class GCommentPart(val comment: GComment) : GBlockPart
+
+/**
+ * A block being built: spec section 5's "line (block)", as a value the encoder can render.
+ *
+ * Ordered, and general enough for every shape section 5 allows - a command, a command with a
+ * trailing comment, a comment on its own, several commands, or a comment between two of them. What
+ * it does **not** carry is the `N` field or the `*` field: those are framing, they are added by
+ * `GEncoder.frame`, and a block that carried them could be framed twice.
+ *
+ * ```
+ * val block = GBlockDraft(GCommand(GLetter('G'), GInt(28)), GCommentPart(GTailComment(" note")))
+ * GEncoder.encode(block)       // "G28 ; note"
+ * GEncoder.frame(1, block)     // "N1 G28*18 ; note"
+ * ```
+ *
+ * @property parts the commands and comments, in wire order
+ */
+data class GBlockDraft(val parts: List<GBlockPart>) {
+    constructor(vararg parts: GBlockPart) : this(parts.toList())
+
+    /**
+     * The commands in wire order, comments dropped.
+     *
+     * ```
+     * val g28 = GCommand(GLetter('G'), GInt(28))
+     * val m105 = GCommand(GLetter('M'), GInt(105))
+     * GBlockDraft(g28, GCommentPart(GTailComment("x")), m105).commands()   // [g28, m105]
+     * ```
+     *
+     * @return every [GCommand] among [parts], in order
+     */
+    fun commands(): List<GCommand> = parts.filterIsInstance<GCommand>()
+}
+
+/**
+ * One command and its parameters, per spec section 4. [head] carries a `GNumber`, not a `GInt`,
+ * because spec 4.1 lets a command number carry a **subcode** - `G29.1` is one command word whose
+ * value is `GFloat("29.1")`, and keeping the lexeme is what re-emits `29.1` rather than `29` + `.1`.
+ *
+ * There is deliberately no `print()` here any more. It returned `head.raw + params.flatMap { raw }`
+ * - a token list with no separators in it - and left the caller to join them, which is how it could
+ * emit bytes that depended on the values happening to be self-delimiting (finding 1.10). Encoding is
+ * `GEncoder`, it produces a `String`, and it is a `String` because the checksum covers the bytes as
+ * transmitted (spec 8.3) and so whitespace is part of the output, not an afterthought.
+ *
+ * ```
+ * GEncoder.encode(GCommand(GLetter('G'), GFloat("29.1")))   // "G29.1"
+ * ```
+ *
+ * @property head the command word: its letter and its number
+ * @property params the parameter words, in wire order
+ */
+data class GCommand(val head: GParameterWord<GNumber>, val params: List<GWord> = emptyList()) : GBlockPart {
+    constructor(cmdId: GIdentifier, cmdNum: GNumber, params: List<GWord> = emptyList()) : this(
+        GParameterWord(cmdId, cmdNum), params
+    )
+}

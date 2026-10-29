@@ -70,6 +70,39 @@ internal fun String.blanksEnd(from: Int): Int {
 }
 
 /**
+ * Where the number at [from] ends, or -1 when there is not one there.
+ *
+ * spec 3.1's shape, as the patterns these decoders replaced all spelled it
+ * (`[-+]?(?>[0-9]*\.)?[0-9]+`): an optional sign, optional digits, an optional point, and **at
+ * least one digit somewhere**. So `5`, `-5`, `+1.5` and `.5` are numbers; `12.` is not, because a
+ * point with nothing behind it is a number the firmware did not finish writing.
+ *
+ * Returns an index rather than a value, like everything else here: the one `substring` happens
+ * where the field is actually taken, and a caller that only wants to know where the number ended
+ * pays nothing.
+ *
+ * ```
+ * "X:-1.5".numberEnd(2)   // 6
+ * "X:12.".numberEnd(2)    // -1
+ * ```
+ *
+ * @receiver the line being scanned
+ * @param from where the number should start
+ * @return the index past the number, or -1 when [from] does not start one
+ */
+internal fun String.numberEnd(from: Int): Int {
+    var i = from
+    if (i < length && (this[i] == '-' || this[i] == '+')) i++
+
+    val whole = digitsEnd(i)
+    if (whole < length && this[whole] == '.') {
+        val fraction = digitsEnd(whole + 1)
+        return if (fraction == whole + 1) -1 else fraction
+    }
+    return if (whole == i) -1 else whole
+}
+
+/**
  * Whether [this] and [other] are the same text, comparing ASCII letters case-insensitively.
  *
  * The two-sided form of [startsWithAscii], for comparing fields a scan has already cut out -

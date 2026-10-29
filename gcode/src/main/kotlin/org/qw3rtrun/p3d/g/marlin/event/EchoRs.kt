@@ -1,6 +1,5 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import java.util.regex.Pattern
 import org.qw3rtrun.p3d.g.protocol.BusyRs
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRs
@@ -92,15 +91,35 @@ data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
 
     companion object : GRsDecoder<UnknownCommand> {
 
-        private val PATTERN = Pattern.compile(
-            "^echo:[ \t]*Unknown command:[ \t]*\"(.*)\"[ \t]*$",
-            Pattern.CASE_INSENSITIVE
-        )
+        private const val BODY = "Unknown command:"
 
+        private const val QUOTE = '"'
+
+        /**
+         * `echo:Unknown command: "<command>"`, or null when the line is not one.
+         *
+         * **The command runs to the last quote, not the first.** `(.*)` was greedy, and that is the
+         * right reading rather than an accident of the pattern: a firmware quoting something that
+         * itself contains quotes keeps them, and what a host wants is the text that was rejected,
+         * as it was rejected.
+         *
+         * Expressed here as "the line ends at a quote", which is the same rule the anchored pattern
+         * stated with `"[ \t]*$` - the line is already trimmed, so the closing quote is the last
+         * character or there is no closing quote at all.
+         */
         override fun decode(line: String): UnknownCommand? {
-            val matcher = PATTERN.matcher(line.asciiTrim())
-            if (!matcher.matches()) return null
-            return UnknownCommand(matcher.group(1))
+            val text = line.asciiTrim()
+            if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
+
+            var i = text.blanksEnd(EchoMessage.PREFIX.length)
+            if (!text.startsWithAscii(BODY, i)) return null
+            i = text.blanksEnd(i + BODY.length)
+
+            if (i >= text.length || text[i] != QUOTE) return null
+            val end = text.length - 1
+            if (end <= i || text[end] != QUOTE) return null
+
+            return UnknownCommand(text.substring(i + 1, end))
         }
     }
 }

@@ -182,6 +182,65 @@ class MarlinRsTest {
         fun `a power too wide for an Int yields absence and never throws`() {
             assertNull(TemperatureRsDecoder.decode("T:210.00 /210.00 @:99999999999"))
         }
+
+        /**
+         * Characterisation of the field grammar, written while it was still a regex.
+         *
+         * Two alternatives - a power field and a sensor field - under `CASE_INSENSITIVE`, with
+         * power first because `B@` would otherwise start matching as sensor `B`. What none of it
+         * had a test for: where blanks are allowed, that a sensor value may be signed or lead with
+         * the point while a **power may not**, and what `ok` has to be followed by.
+         */
+        @Test
+        fun `blanks are allowed after every colon and around the slash`() {
+            val report = TemperatureRsDecoder.decode("T: 210.00 / 205.00 @: 127")!!
+            assertEquals(dec("210.00"), report.hotend?.current)
+            assertEquals(dec("205.00"), report.hotend?.target)
+            assertEquals(127, report.hotend?.power)
+        }
+
+        @Test
+        fun `a sensor value may be signed or lead with the point, and a power may not`() {
+            assertEquals(dec("-5.0"), TemperatureRsDecoder.decode("T:-5.0")?.hotend?.current)
+            assertEquals(dec("+5.0"), TemperatureRsDecoder.decode("T:+5.0")?.hotend?.current)
+            assertEquals(dec(".5"), TemperatureRsDecoder.decode("T:.5")?.hotend?.current)
+
+            // The power field is `[0-9]+` - unsigned, no point.
+            assertNull(TemperatureRsDecoder.decode("T:1.0 @:-5"))
+            assertNull(TemperatureRsDecoder.decode("T:1.0 @:1.5"))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = ["T:12.", "T:.", "T:+", "T:1.0 /", "T:1.0 /x"])
+        fun `an unfinished number is not a reading`(line: String) {
+            assertNull(TemperatureRsDecoder.decode(line), "should not decode: $line")
+        }
+
+        @Test
+        fun `the field letters fold and the bed power is told from the bed sensor`() {
+            // `B@` is a power field and `B:` is a sensor; the two share a letter and are told apart
+            // by what follows it.
+            val report = TemperatureRsDecoder.decode("t:210.00 b@:80 b:60.00 /55.00")!!
+            assertEquals(dec("210.00"), report.hotend?.current)
+            assertEquals(dec("60.00"), report.bed?.current)
+            assertEquals(dec("55.00"), report.bed?.target)
+            assertEquals(80, report.bed?.power)
+        }
+
+        @Test
+        fun `ok has to be the whole word`() {
+            // `ok` is a prefix only when what follows it is not alphanumeric - otherwise `okay` and
+            // `ok0` would be read as an acknowledged report of something.
+            assertNull(TemperatureRsDecoder.decode("okay T:1.0"))
+            assertNull(TemperatureRsDecoder.decode("ok0 T:1.0"))
+            assertEquals(true, TemperatureRsDecoder.decode("ok T:1.0")?.ok)
+            assertEquals(true, TemperatureRsDecoder.decode("ok\tT:1.0")?.ok)
+        }
+
+        @Test
+        fun `a repeated power field is malformed too`() {
+            assertNull(TemperatureRsDecoder.decode("T:1.0 @:1 @:2"))
+        }
     }
 
     @Nested
@@ -225,6 +284,44 @@ class MarlinRsTest {
         )
         fun `a line that is not a position report decodes to absence`(line: String) {
             assertNull(PositionRs.decode(line), "should not decode: $line")
+        }
+
+        /**
+         * Characterisation, written while the field was still a regex.
+         *
+         * `([XYZIJKUVWEABC]):[ \t]*([-+]?(?>[0-9]*\.)?[0-9]+)` is the one pattern in this module
+         * **without** `CASE_INSENSITIVE`, and `Count` was matched with a case-sensitive
+         * `startsWith`. Both matter: a position report is uppercase on every firmware that writes
+         * one, and folding here would start claiming lines that merely look like fields.
+         */
+        @Test
+        fun `axis letters and the Count marker are uppercase`() {
+            assertNull(PositionRs.decode("x:0.00 y:0.00"))
+            assertNull(PositionRs.decode("X:0.00 count X:0"))
+        }
+
+        @Test
+        fun `a value may be signed, and may lead with the decimal point`() {
+            // spec 3.1's number, as the pattern spelled it: an optional sign, optional digits
+            // before the point, and at least one digit somewhere.
+            assertEquals(dec("+1.5"), PositionRs.decode("X:+1.5")?.axes?.get('X'))
+            assertEquals(dec("-1.5"), PositionRs.decode("X:-1.5")?.axes?.get('X'))
+            assertEquals(dec(".5"), PositionRs.decode("X:.5")?.axes?.get('X'))
+            assertEquals(dec("5"), PositionRs.decode("X: 5")?.axes?.get('X'))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = ["X:12.", "X:.", "X:+", "X:", "X 1.0", "X:1.2.3"])
+        fun `a value that is not a number decodes to absence`(line: String) {
+            assertNull(PositionRs.decode(line), "should not decode: $line")
+        }
+
+        @Test
+        fun `a report must name X, and may not name an axis twice`() {
+            // X is what tells a position report from any other colon-separated line.
+            assertNull(PositionRs.decode("Y:1.0 Z:2.0"))
+            assertNull(PositionRs.decode("X:1.0 X:2.0"))
+            assertNull(PositionRs.decode("X:1.0 Count X:0 X:1"))
         }
     }
 
@@ -480,6 +577,44 @@ class MarlinRsTest {
             // The two partition the prefix, so nothing is claimed by both.
             assertNull(EchoMessage.decode("echo:Unknown command: \"M9999\""))
             assertNull(UnknownCommand.decode("echo:SD card ok"))
+        }
+
+        /**
+         * Characterisation of the unknown-command line, written while it was still a regex.
+         *
+         * `^echo:[ \t]*Unknown command:[ \t]*"(.*)"[ \t]*$` under `CASE_INSENSITIVE` decides three
+         * things nothing pinned: the whole line folds, blanks are allowed after each colon, and
+         * `(.*)` is **greedy**, so a command containing quotes keeps them rather than ending at the
+         * first one.
+         */
+        @Test
+        fun `the unknown-command line folds and tolerates blanks after each colon`() {
+            assertEquals(UnknownCommand("M1"), UnknownCommand.decode("ECHO:UNKNOWN COMMAND: \"M1\""))
+            assertEquals(UnknownCommand("M1"), UnknownCommand.decode("echo:  Unknown command:  \"M1\"  "))
+            assertEquals(UnknownCommand("M1"), UnknownCommand.decode("echo:Unknown command:\"M1\""))
+        }
+
+        @Test
+        fun `the quoted command runs to the last quote, not the first`() {
+            // `(.*)` is greedy. A firmware quoting something that itself contains quotes keeps
+            // them, which is the right reading: the host wants the text the firmware rejected.
+            assertEquals(
+                UnknownCommand("a\" \"b"),
+                UnknownCommand.decode("echo:Unknown command: \"a\" \"b\""),
+            )
+            assertEquals(UnknownCommand(""), UnknownCommand.decode("echo:Unknown command: \"\""))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = [
+            "echo:Unknown command: M1",
+            "echo:Unknown command: \"M1\" x",
+            "echo:Unknown command:",
+            "echo:\"M1\"",
+            "Unknown command: \"M1\"",
+        ])
+        fun `an unknown-command line that is malformed decodes to absence`(line: String) {
+            assertNull(UnknownCommand.decode(line), "should not decode: $line")
         }
 
         @Test

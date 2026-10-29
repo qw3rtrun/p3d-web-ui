@@ -1,11 +1,14 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
 import java.math.BigDecimal
-import java.util.regex.Pattern
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.OkRs
+import org.qw3rtrun.p3d.g.code.core.token.asciiFold
 import org.qw3rtrun.p3d.g.protocol.asciiTrim
+import org.qw3rtrun.p3d.g.protocol.blanksEnd
+import org.qw3rtrun.p3d.g.protocol.digitsEnd
+import org.qw3rtrun.p3d.g.protocol.numberEnd
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
@@ -196,13 +199,6 @@ object TemperatureRsDecoder : GRsDecoder<TemperatureRs<*>> {
  */
 internal object TemperatureFields {
 
-    private val FIELD = Pattern.compile(
-        "(?>([BC]?)@([0-9]?):[ \t]*([0-9]+))" +
-                "|(?>([TBCPLMR])([0-9]?):[ \t]*([-+]?(?>[0-9]*\\.)?[0-9]+)" +
-                "(?>[ \t]*/[ \t]*([-+]?(?>[0-9]*\\.)?[0-9]+))?)",
-        Pattern.CASE_INSENSITIVE
-    )
-
     /**
      * One scanned report, before it is known whether it becomes a [BareTemperatureRs] or an
      * [OkTemperatureRs]: the same payload, plus whether the line opened with `ok`.
@@ -317,28 +313,23 @@ internal object TemperatureFields {
     fun scan(line: String): Fields? {
         var rest = line.asciiTrim()
         val ok = rest.startsWithAscii("ok") &&
-                (rest.length == 2 || !rest[2].isLetterOrDigit())
+                (rest.length == 2 || !isAlphanumeric(rest[2]))
         if (ok) rest = rest.substring(2)
 
         val temps = HashMap<String, Pair<BigDecimal, BigDecimal?>>()
         val powers = HashMap<String, Int>()
         var at = 0
-        val matcher = FIELD.matcher(rest)
         while (at < rest.length) {
             if (rest[at] == ' ' || rest[at] == '\t') {
                 at++
                 continue
             }
-            if (!matcher.find(at) || matcher.start() != at) return null
-            if (matcher.group(4) != null) {
-                val key = matcher.group(4).uppercase() + matcher.group(5)
-                if (temps.put(key, readTemp(matcher) ?: return null) != null) return null
-            } else {
-                val key = matcher.group(1).uppercase() + "@" + matcher.group(2)
-                val power = matcher.group(3).toIntOrNull() ?: return null
-                if (powers.put(key, power) != null) return null
-            }
-            at = matcher.end()
+
+            // A power field first: `B@` would otherwise start reading as sensor `B`, which is the
+            // order the alternation this replaced had for the same reason.
+            val marker = powerMarker(rest, at)
+            at = if (marker < 0) readSensor(rest, at, temps) else readPower(rest, at, marker, powers)
+            if (at < 0) return null
         }
         if (temps.isEmpty()) return null
 
@@ -361,11 +352,107 @@ internal object TemperatureFields {
         )
     }
 
-    private fun readTemp(matcher: java.util.regex.Matcher): Pair<BigDecimal, BigDecimal?>? {
-        val current = matcher.group(6).toBigDecimalOrNull() ?: return null
-        val target = matcher.group(7)?.let { it.toBigDecimalOrNull() ?: return null }
-        return current to target
+    /**
+     * Where the `@` of a power field at [at] sits, or -1 when a power field does not start there.
+     *
+     * `@:127` is the active hotend's, `B@:80` and `C@:30` name a sensor, and `@1:0` names a hotend
+     * by index. The letter in front of the `@` is what tells `B@:80` from the sensor field `B:60`,
+     * so the decision has to be made before either is read.
+     */
+    private fun powerMarker(text: String, at: Int): Int {
+        if (text[at] == '@') return at
+        if (!isChar(text[at], 'B') && !isChar(text[at], 'C')) return -1
+        return if (at + 1 < text.length && text[at + 1] == '@') at + 1 else -1
     }
+
+    /**
+     * Reads `[B|C]@[index]:<digits>` into [powers], and answers the index past it - or -1 when the
+     * line does not hold one there.
+     *
+     * The value is **unsigned and whole**: `[0-9]+` is what the pattern said, and a PWM duty is
+     * what it describes. spec 9: a run too wide for an `Int` is malformed input off the wire, so
+     * the line does not scan rather than the decoder throwing.
+     */
+    private fun readPower(text: String, at: Int, marker: Int, powers: HashMap<String, Int>): Int {
+        val prefix = if (marker == at) "" else asciiFold(text[at]).toString()
+
+        var i = marker + 1
+        var index = ""
+        if (i < text.length && isDigit(text[i])) {
+            index = text[i].toString()
+            i++
+        }
+
+        if (i >= text.length || text[i] != ':') return -1
+        i = text.blanksEnd(i + 1)
+        val end = text.digitsEnd(i)
+        if (end == i) return -1
+
+        val power = text.substring(i, end).toIntOrNull() ?: return -1
+        if (powers.put(prefix + "@" + index, power) != null) return -1
+        return end
+    }
+
+    /**
+     * Reads `<letter>[index]:<current>[ / <target>]` into [temps], and answers the index past it -
+     * or -1 when the line does not hold one there.
+     *
+     * The target is optional because the RepRap spec's own example omits it (`T:93.2 B:22.9`), and
+     * absent stays absent rather than becoming zero - the distinction [HeaterReading] exists to
+     * keep.
+     */
+    private fun readSensor(
+        text: String,
+        at: Int,
+        temps: HashMap<String, Pair<BigDecimal, BigDecimal?>>,
+    ): Int {
+        if (!isSensor(text[at])) return -1
+        val letter = asciiFold(text[at])
+
+        var i = at + 1
+        var index = ""
+        if (i < text.length && isDigit(text[i])) {
+            index = text[i].toString()
+            i++
+        }
+
+        if (i >= text.length || text[i] != ':') return -1
+        i = text.blanksEnd(i + 1)
+        var end = text.numberEnd(i)
+        if (end < 0) return -1
+        val current = text.substring(i, end).toBigDecimalOrNull() ?: return -1
+
+        var target: BigDecimal? = null
+        val slash = text.blanksEnd(end)
+        if (slash < text.length && text[slash] == '/') {
+            val from = text.blanksEnd(slash + 1)
+            val targetEnd = text.numberEnd(from)
+            if (targetEnd < 0) return -1
+            target = text.substring(from, targetEnd).toBigDecimalOrNull() ?: return -1
+            end = targetEnd
+        }
+
+        if (temps.put(letter + index, current to target) != null) return -1
+        return end
+    }
+
+    /** `print_heater_states`' letters: hotend, bed, chamber, probe, cooLer, Motherboard, Redundant. */
+    private fun isSensor(c: Char): Boolean {
+        val f = asciiFold(c)
+        return f == 'T' || f == 'B' || f == 'C' || f == 'P' || f == 'L' || f == 'M' || f == 'R'
+    }
+
+    private fun isChar(c: Char, upper: Char) = asciiFold(c) == upper
+
+    private fun isDigit(c: Char) = c >= '0' && c <= '9'
+
+    /**
+     * Explicit ASCII, because `Char.isLetterOrDigit()` - which this replaced - accepts the whole
+     * Unicode category, and the wire is 7-bit (spec 1.1). The outcome for a non-ASCII character
+     * after `ok` is unchanged either way: the scan then fails on a field it cannot read.
+     */
+    private fun isAlphanumeric(c: Char) =
+        isDigit(c) || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 
     private fun reading(value: Pair<BigDecimal, BigDecimal?>, power: Int?): HeaterReading =
         HeaterReading(value.first, value.second, power)

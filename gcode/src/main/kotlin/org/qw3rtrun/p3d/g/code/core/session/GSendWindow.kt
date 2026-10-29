@@ -25,8 +25,22 @@ import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
  *
  * It holds the **exact bytes** it emitted rather than the commands behind them: section 8.3 makes a
  * checksum a property of the bytes, so a replay that re-encoded could differ from what was
- * checksummed the first time. The outstanding blocks are kept oldest first, as two parallel lists of
- * numbers and texts.
+ * checksummed the first time. The outstanding blocks are kept oldest first, as a list of [GSent].
+ *
+ * **Who may touch it: one owner, one serialisation point, and this is a contract rather than a
+ * note.** There is not an atomic in this class and there is not going to be - it is portable Kotlin
+ * and a port gets whatever its own host offers - so a window is **not thread-safe**, and every
+ * mutation ([send], [acknowledge], [resendFrom], [reset]) must happen on whatever the owner has
+ * chosen as its one point of serialisation. One window per session; never share one between two.
+ *
+ * That is not hypothetical. In this repo the three things that reach a window arrive on different
+ * threads - a command is pulled on whichever thread produced it, an `ok` and a `Resend:` arrive on
+ * the inbound loop - and `:backend:terminal`'s `CommandProcessor` resolves it by letting none of
+ * them touch the window: each parks its work and then enters a drain loop whose guard admits one
+ * thread at a time, and that thread is the only caller. The guard is an atomic, so the hand-off also
+ * carries the happens-before these plain fields need. **That contract was written down on the
+ * consumer and not here**, which is the wrong half - the consumer does not travel to a port and this
+ * file does.
  *
  * **Bytes are also how a block gets in.** [send] takes either a `GCommand` or the text of one, and
  * the typed form is the text form applied to `GEncoder.encode(command)`: a sender that rendered its
@@ -56,11 +70,10 @@ class GSendWindow(
     var next: Int = first
         private set
 
-    private val outstandingNumber = ArrayList<Int>()
-    private val outstandingText = ArrayList<String>()
+    private val outstanding = ArrayList<GSent>()
 
     val inFlight: Int
-        get() = outstandingNumber.size
+        get() = outstanding.size
 
     /**
      * Frames [command] as the next numbered block and records it, or returns **null** when the window
@@ -112,8 +125,7 @@ class GSendWindow(
         if (inFlight >= capacity) return null
 
         val text = GEncoder.frame(next, payload, calculator())
-        outstandingNumber.add(next)
-        outstandingText.add(text)
+        outstanding.add(GSent(next, text))
         next++
         return text
     }
@@ -163,9 +175,10 @@ class GSendWindow(
      * overstates and then has to walk backwards - and the second is knowable only here, because
      * this is what holds the correspondence between an `ok` and the block it answers.
      *
-     * An `ok` is matched to the **oldest** outstanding block and not to a number on the line
-     * itself. Spec 8.5 has the firmware acknowledge in order, and the bare `ok` that most builds
-     * send carries no number at all, so order is the only correspondence there is.
+     * **This is the form for a bare `ok`**, which is what most builds send and which carries nothing
+     * to match on. When the acknowledgement names a line - Marlin's advanced `ok N5 P15 B3`, whose
+     * number `AdvancedOkRs.lineNumber` already decodes - use [acknowledge] with it instead, and read
+     * there why the difference matters.
      *
      * ```
      * val window = GSendWindow()
@@ -177,9 +190,46 @@ class GSendWindow(
      * @return the line number of the block released, or null for a stray `ok`
      */
     fun acknowledge(): Int? {
-        if (outstandingNumber.isEmpty()) return null
-        val number = outstandingNumber.removeAt(0)
-        outstandingText.removeAt(0)
+        if (outstanding.isEmpty()) return null
+        return outstanding.removeAt(0).number
+    }
+
+    /**
+     * The same, for an `ok` that **named the line it acknowledges**: release block [number] and
+     * everything still held in front of it, or release nothing when this window is not holding it.
+     *
+     * Acknowledging block *n* accepts everything up to it and not only it. Spec 8.5 has the firmware
+     * acknowledge in order, so an `ok N5` arriving while 3, 4 and 5 are outstanding says all three
+     * were taken and the two earlier `ok`s were lost - not that 3 and 4 are somehow still pending.
+     *
+     * **Prefer this whenever the number is on the wire, because the counted form cannot
+     * self-correct.** One `ok` lost in transit, or one arriving for a block this window never sent,
+     * shifts [acknowledge]'s correspondence by one *permanently*; from then on every [resendFrom]
+     * replays the wrong bytes, and does it silently, because an unknown number is answered with an
+     * empty list rather than a complaint. Named, a stray `ok` releases nothing and the window does
+     * not move - which is the whole reason this overload exists.
+     *
+     * **Two functions rather than one with a default**, which is what this was first written as: a
+     * Kotlin default argument is not visible to a Java caller, so `acknowledge()` stopped compiling
+     * in `:backend:terminal` - and a default argument is a portability wrinkle besides, since
+     * neither C nor Rust has one. Two plain overloads transliterate as two functions.
+     *
+     * ```
+     * val window = GSendWindow()
+     * window.send("G28")       // "N1 G28*18"
+     * window.send("G90")       // "N2 G90*18"
+     * window.acknowledge(99)   // null - not a block this window holds, and nothing moves
+     * window.acknowledge(2)    // 2 - and block 1 goes with it
+     * ```
+     *
+     * @param number the line number the `ok` named
+     * @return [number] when it was held - several blocks may have been released with it - or null
+     *   when this window is not holding it, in which case nothing was released
+     */
+    fun acknowledge(number: Int): Int? {
+        val at = indexOf(number)
+        if (at < 0) return null
+        for (i in 0..at) outstanding.removeAt(0)
         return number
     }
 
@@ -228,12 +278,11 @@ class GSendWindow(
         val from = indexOf(number)
         if (from < 0) return emptyList()
 
-        val replay = ArrayList<String>(outstandingText.size - from)
-        for (i in from until outstandingText.size) replay.add(outstandingText[i])
+        val replay = ArrayList<String>(outstanding.size - from)
+        for (i in from until outstanding.size) replay.add(outstanding[i].text)
 
-        while (outstandingNumber.size > 0 && outstandingNumber[0] < number) {
-            outstandingNumber.removeAt(0)
-            outstandingText.removeAt(0)
+        while (outstanding.size > 0 && outstanding[0].number < number) {
+            outstanding.removeAt(0)
         }
         return replay
     }
@@ -254,26 +303,41 @@ class GSendWindow(
      * window.reset(0)   // "N1 M110 N0*124", and next is 1 again
      * ```
      *
+     * The return type used to be nullable and nothing ever returned null, so it asked every caller
+     * to handle a case that could not arise. A resynchronisation always has a block to send.
+     *
      * @param to the value the counter is set to; the next block sent carries `to + 1`
      * @return the framed `M110` block to transmit
      */
-    fun reset(to: Int): String? {
+    fun reset(to: Int): String {
         val m110 = GCommand(
             GLetter('M'), GInt(110),
             listOf(GParameterWord(GLetter('N'), GInt(to)))
         )
         val text = GEncoder.frame(next, m110, calculator())
 
-        outstandingNumber.clear()
-        outstandingText.clear()
+        outstanding.clear()
         next = to + 1
         return text
     }
 
     private fun indexOf(number: Int): Int {
-        for (i in outstandingNumber.indices) {
-            if (outstandingNumber[i] == number) return i
+        for (i in outstanding.indices) {
+            if (outstanding[i].number == number) return i
         }
         return -1
     }
 }
+
+/**
+ * One block this window sent and is still holding: the line number it carries and the exact bytes.
+ *
+ * A pair rather than two parallel lists, which is what this replaced. Parallel arrays are a
+ * portability hazard - a port has to re-establish by hand that they stay the same length - and a
+ * correctness one here in particular, because every operation on this window removes from the front
+ * of both and nothing but discipline kept them in step.
+ *
+ * @property number the line number in the block's `N` field
+ * @property text the framed block, byte for byte as it was transmitted
+ */
+internal data class GSent(val number: Int, val text: String)

@@ -1,0 +1,137 @@
+AdvancedOkRs	ok P15 B3
+UnknownCommand	echo:Unknown command: "M154 S0"
+AdvancedOkRs	ok P15 B3
+FirmwareInfoRs	FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin PROTOCOL_VERSION:1.0 MACHINE_TYPE:MarlinSim KINEMATICS:Cartesian EXTRUDER_COUNT:1 UUID:00000000-0000-0000-0000-000000000000
+CapabilityRs	Cap:QUOTED_STRINGS:1
+CapabilityRs	Cap:SERIAL_XON_XOFF:0
+CapabilityRs	Cap:BINARY_FILE_TRANSFER:1
+CapabilityRs	Cap:EEPROM:1
+CapabilityRs	Cap:VOLUMETRIC:1
+CapabilityRs	Cap:AUTOREPORT_POS:0
+CapabilityRs	Cap:AUTOREPORT_TEMP:1
+CapabilityRs	Cap:PROGRESS:0
+CapabilityRs	Cap:PRINT_JOB:1
+CapabilityRs	Cap:AUTOLEVEL:0
+CapabilityRs	Cap:RUNOUT:0
+CapabilityRs	Cap:Z_PROBE:0
+CapabilityRs	Cap:LEVELING_DATA:0
+CapabilityRs	Cap:BUILD_PERCENT:0
+CapabilityRs	Cap:SOFTWARE_POWER:0
+CapabilityRs	Cap:TOGGLE_LIGHTS:0
+CapabilityRs	Cap:CASE_LIGHT_BRIGHTNESS:0
+CapabilityRs	Cap:EMERGENCY_PARSER:1
+CapabilityRs	Cap:HOST_ACTION_COMMANDS:1
+CapabilityRs	Cap:PROMPT_SUPPORT:1
+CapabilityRs	Cap:SDCARD:1
+CapabilityRs	Cap:MULTI_VOLUME:0
+CapabilityRs	Cap:REPEAT:0
+CapabilityRs	Cap:SD_WRITE:1
+CapabilityRs	Cap:AUTOREPORT_SD_STATUS:0
+CapabilityRs	Cap:LONG_FILENAME:0
+CapabilityRs	Cap:LFN_WRITE:0
+CapabilityRs	Cap:CUSTOM_FIRMWARE_UPLOAD:0
+CapabilityRs	Cap:EXTENDED_M20:0
+CapabilityRs	Cap:THERMAL_PROTECTION:1
+CapabilityRs	Cap:MOTION_MODES:0
+CapabilityRs	Cap:ARCS:1
+CapabilityRs	Cap:BABYSTEPPING:0
+CapabilityRs	Cap:EP_BABYSTEP:0
+CapabilityRs	Cap:CHAMBER_TEMPERATURE:0
+CapabilityRs	Cap:COOLER_TEMPERATURE:0
+CapabilityRs	Cap:MEATPACK:0
+CapabilityRs	Cap:CONFIG_EXPORT:0
+AdvancedOkRs	ok P15 B3
+OkTemperatureRs	ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+PositionRs	X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+AdvancedOkRs	ok P15 B3
+PositionRs	X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+(none)	
+(none)	Logical: X: 10.000 Y: 10.000 Z: 5.000
+(none)	Raw:     X: 10.000 Y: 10.000 Z: 5.000
+(none)	Stepper: X:800 Y:800 Z:2000 E:5000
+(none)	FromStp: X: 10.000 Y: 10.000 Z: 5.000 E: 10.000
+(none)	Diff:    X: 0.000 Y: 0.000 Z: 0.000 E: 0.000
+AdvancedOkRs	ok P15 B3
+EndstopReportHeader	Reporting endstop status
+EndstopStateRs	x_min: open
+EndstopStateRs	y_min: open
+EndstopStateRs	z_min: open
+AdvancedOkRs	ok P15 B3
+SdNotPrinting	Not SD printing
+AdvancedOkRs	ok P15 B3
+EchoMessage	echo:SD card ok
+AdvancedOkRs	ok P15 B3
+(none)	Begin file list
+(none)	End file list
+AdvancedOkRs	ok P15 B3
+SdCurrentFile	Current file: (no file)
+AdvancedOkRs	ok P15 B3
+ActionRs	//action:notification 0s
+EchoMessage	echo:Print time: 0s
+AdvancedOkRs	ok P15 B3
+EchoMessage	echo:; Linear Units:
+EchoMessage	echo:  G21 ; (mm)
+EchoMessage	echo:; Auto Temp Control:
+EchoMessage	echo:  M104 S210 B250 F0.00
+EchoMessage	echo:; Temperature Units:
+EchoMessage	echo:  M149 C ; Units in Celsius
+EchoMessage	echo:; Filament settings (Disabled):
+EchoMessage	echo:  M200 S0 D1.75
+EchoMessage	echo:; Steps per unit:
+EchoMessage	echo:  M92 X80.00 Y80.00 Z400.00 E500.00
+EchoMessage	echo:; Max feedrates (units/s):
+EchoMessage	echo:  M203 X300.00 Y300.00 Z5.00 E25.00
+EchoMessage	echo:; Max Acceleration (units/s2):
+EchoMessage	echo:  M201 X3000.00 Y3000.00 Z100.00 E10000.00
+EchoMessage	echo:; Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>):
+EchoMessage	echo:  M204 P3000.00 R3000.00 T3000.00
+EchoMessage	echo:; Advanced (B<min_segment_time_us> S<min_feedrate> T<min_travel_feedrate> J<junc_dev>):
+EchoMessage	echo:  M205 B20000.00 S0.00 T0.00 J0.01
+EchoMessage	echo:; Home offset:
+EchoMessage	echo:  M206 X0.00 Y0.00 Z0.00
+EchoMessage	echo:; Material heatup parameters:
+EchoMessage	echo:  M145 S0 H180.00 B70.00 F0
+EchoMessage	echo:  M145 S1 H240.00 B110.00 F0
+EchoMessage	echo:; Hotend PID:
+EchoMessage	echo:  M301 P22.20 I1.08 D114.00
+AdvancedOkRs	ok P15 B3
+ActionRs	//action:notification corpus capture
+AdvancedOkRs	ok P15 B3
+AdvancedOkRs	ok P15 B3
+BareTemperatureRs	 T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+BareTemperatureRs	 T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+BareTemperatureRs	 T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+BareTemperatureRs	 T:209.88 /210.00 B:25.00 /0.00 @:15 B@:0
+AdvancedOkRs	ok P15 B3
+UnknownCommand	echo:Unknown command: "M154 S1"
+AdvancedOkRs	ok P15 B3
+UnknownCommand	echo:Unknown command: "M154 S0"
+AdvancedOkRs	ok P15 B3
+BusyNotice	echo:busy: processing
+BusyNotice	echo:busy: processing
+BusyNotice	echo:busy: processing
+PositionRs	X:0.00 Y:0.00 Z:5.00 E:10.00 Count X:0 Y:0 Z:2000
+AdvancedOkRs	ok P15 B3
+AdvancedOkRs	ok P14 B3
+AdvancedOkRs	ok P15 B3
+PositionRs	X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+AdvancedOkRs	ok P15 B3
+AdvancedOkRs	ok P15 B3
+OkTemperatureRs	ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+PositionRs	X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+AdvancedOkRs	ok N2 P15 B3
+ErrorRs	Error:checksum mismatch, Last Line: 2
+ResendRs	Resend: 3
+SimpleOkRs	ok
+PositionRs	X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+AdvancedOkRs	ok N3 P15 B3
+ErrorRs	Error:Line Number is not Last Line Number+1, Last Line: 3
+ResendRs	Resend: 4
+SimpleOkRs	ok
+UnknownCommand	echo:Unknown command: "M998"
+AdvancedOkRs	ok P15 B3
+UnknownCommand	echo:Unknown command: "G998.5"
+AdvancedOkRs	ok P15 B3
+InvalidExtruder	echo:M104 Invalid extruder 5
+AdvancedOkRs	ok P15 B3
+AdvancedOkRs	ok P14 B3

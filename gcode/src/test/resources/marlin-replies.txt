@@ -1,0 +1,176 @@
+; Marlin reply corpus - every line below is a received line, exactly as it arrived.
+; Captured by backend/terminal/src/test/java/.../ReplyCorpusProbe.java
+; 2026-10-29T15:21:24.239390700Z  against localhost:8099
+;
+; Sent, in order:
+;   M155 S0   (stop any temperature auto-report still running)
+;   M154 S0   (stop any position auto-report still running)
+;   M115   (firmware info and capability report)
+;   M105   (temperature)
+;   M114   (position)
+;   M114 D   (detailed position)
+;   M119   (endstop states)
+;   M27   (SD print status)
+;   M21   (initialise the card)
+;   M20   (list the card)
+;   M27 C   (the file the card is positioned on)
+;   M31   (print time)
+;   M503   (settings report)
+;   M117 corpus capture   (LCD message)
+;   M155 S1   (temperature auto-report on)
+;   M155 S0   (temperature auto-report off)
+;   M154 S1   (position auto-report on)
+;   M154 S0   (position auto-report off)
+;   G28   (auto home)
+;   G1 X10 Y10 F3000   (linear move)
+;   M400   (finish moves)
+;   M114   (position after the move)
+;   M110 N0   (reset the line counter)
+;   N1 M105*38   (framed temperature)
+;   N2 M114*37   (framed position)
+;   N3 M105*1   (a bad checksum, on purpose)
+;   N3 M114*36   (the resend the error asked for)
+;   N99 M105*23   (a line number out of sequence)
+;   M998   (unknown command)
+;   G998.5   (unknown command with a subcode)
+;   M104 T5 S100   (a tool this machine does not have)
+;   G1 E10 F100   (a cold extrude, refused)
+;
+; 137 received lines.
+ok P15 B3
+echo:Unknown command: "M154 S0"
+ok P15 B3
+FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin PROTOCOL_VERSION:1.0 MACHINE_TYPE:MarlinSim KINEMATICS:Cartesian EXTRUDER_COUNT:1 UUID:00000000-0000-0000-0000-000000000000
+Cap:QUOTED_STRINGS:1
+Cap:SERIAL_XON_XOFF:0
+Cap:BINARY_FILE_TRANSFER:1
+Cap:EEPROM:1
+Cap:VOLUMETRIC:1
+Cap:AUTOREPORT_POS:0
+Cap:AUTOREPORT_TEMP:1
+Cap:PROGRESS:0
+Cap:PRINT_JOB:1
+Cap:AUTOLEVEL:0
+Cap:RUNOUT:0
+Cap:Z_PROBE:0
+Cap:LEVELING_DATA:0
+Cap:BUILD_PERCENT:0
+Cap:SOFTWARE_POWER:0
+Cap:TOGGLE_LIGHTS:0
+Cap:CASE_LIGHT_BRIGHTNESS:0
+Cap:EMERGENCY_PARSER:1
+Cap:HOST_ACTION_COMMANDS:1
+Cap:PROMPT_SUPPORT:1
+Cap:SDCARD:1
+Cap:MULTI_VOLUME:0
+Cap:REPEAT:0
+Cap:SD_WRITE:1
+Cap:AUTOREPORT_SD_STATUS:0
+Cap:LONG_FILENAME:0
+Cap:LFN_WRITE:0
+Cap:CUSTOM_FIRMWARE_UPLOAD:0
+Cap:EXTENDED_M20:0
+Cap:THERMAL_PROTECTION:1
+Cap:MOTION_MODES:0
+Cap:ARCS:1
+Cap:BABYSTEPPING:0
+Cap:EP_BABYSTEP:0
+Cap:CHAMBER_TEMPERATURE:0
+Cap:COOLER_TEMPERATURE:0
+Cap:MEATPACK:0
+Cap:CONFIG_EXPORT:0
+ok P15 B3
+ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+ok P15 B3
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+
+Logical: X: 10.000 Y: 10.000 Z: 5.000
+Raw:     X: 10.000 Y: 10.000 Z: 5.000
+Stepper: X:800 Y:800 Z:2000 E:5000
+FromStp: X: 10.000 Y: 10.000 Z: 5.000 E: 10.000
+Diff:    X: 0.000 Y: 0.000 Z: 0.000 E: 0.000
+ok P15 B3
+Reporting endstop status
+x_min: open
+y_min: open
+z_min: open
+ok P15 B3
+Not SD printing
+ok P15 B3
+echo:SD card ok
+ok P15 B3
+Begin file list
+End file list
+ok P15 B3
+Current file: (no file)
+ok P15 B3
+//action:notification 0s
+echo:Print time: 0s
+ok P15 B3
+echo:; Linear Units:
+echo:  G21 ; (mm)
+echo:; Auto Temp Control:
+echo:  M104 S210 B250 F0.00
+echo:; Temperature Units:
+echo:  M149 C ; Units in Celsius
+echo:; Filament settings (Disabled):
+echo:  M200 S0 D1.75
+echo:; Steps per unit:
+echo:  M92 X80.00 Y80.00 Z400.00 E500.00
+echo:; Max feedrates (units/s):
+echo:  M203 X300.00 Y300.00 Z5.00 E25.00
+echo:; Max Acceleration (units/s2):
+echo:  M201 X3000.00 Y3000.00 Z100.00 E10000.00
+echo:; Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>):
+echo:  M204 P3000.00 R3000.00 T3000.00
+echo:; Advanced (B<min_segment_time_us> S<min_feedrate> T<min_travel_feedrate> J<junc_dev>):
+echo:  M205 B20000.00 S0.00 T0.00 J0.01
+echo:; Home offset:
+echo:  M206 X0.00 Y0.00 Z0.00
+echo:; Material heatup parameters:
+echo:  M145 S0 H180.00 B70.00 F0
+echo:  M145 S1 H240.00 B110.00 F0
+echo:; Hotend PID:
+echo:  M301 P22.20 I1.08 D114.00
+ok P15 B3
+//action:notification corpus capture
+ok P15 B3
+ok P15 B3
+ T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+ T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+ T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+ T:209.88 /210.00 B:25.00 /0.00 @:15 B@:0
+ok P15 B3
+echo:Unknown command: "M154 S1"
+ok P15 B3
+echo:Unknown command: "M154 S0"
+ok P15 B3
+echo:busy: processing
+echo:busy: processing
+echo:busy: processing
+X:0.00 Y:0.00 Z:5.00 E:10.00 Count X:0 Y:0 Z:2000
+ok P15 B3
+ok P14 B3
+ok P15 B3
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+ok P15 B3
+ok P15 B3
+ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+ok N2 P15 B3
+Error:checksum mismatch, Last Line: 2
+Resend: 3
+ok
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
+ok N3 P15 B3
+Error:Line Number is not Last Line Number+1, Last Line: 3
+Resend: 4
+ok
+echo:Unknown command: "M998"
+ok P15 B3
+echo:Unknown command: "G998.5"
+ok P15 B3
+echo:M104 Invalid extruder 5
+ok P15 B3
+ok P14 B3

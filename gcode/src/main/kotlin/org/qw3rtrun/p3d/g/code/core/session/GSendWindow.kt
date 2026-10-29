@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.g.code.core.session
 
 import org.qw3rtrun.p3d.g.code.core.block.CheckSumCalculator
 import org.qw3rtrun.p3d.g.code.core.GEncoder
+import org.qw3rtrun.p3d.g.code.core.block.GLineLimit
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum
 import org.qw3rtrun.p3d.g.code.core.command.GCommand
 import org.qw3rtrun.p3d.g.code.core.token.GInt
@@ -41,6 +42,7 @@ import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
  * ```
  *
  * @property capacity how many blocks may be outstanding at once; Marlin's `BUFSIZE` is 4
+ * @property limit the firmware's receive buffer in bytes, spec 1.3; see [fits]
  * @property next the number the next block will carry
  * @property inFlight how many blocks are sent and not yet acknowledged
  */
@@ -48,6 +50,7 @@ class GSendWindow(
     val capacity: Int = 4,
     first: Int = 1,
     private val calculator: () -> CheckSumCalculator = ::XorCheckSum,
+    val limit: Int = GLineLimit.MARLIN,
 ) {
 
     var next: Int = first
@@ -66,6 +69,9 @@ class GSendWindow(
      * A refused send consumes no line number. It has to be that way round: a gap in the sequence is
      * exactly what the firmware rejects, so letting a full window burn a number would turn back
      * pressure into a protocol fault.
+     *
+     * **Null means full, and only that.** Length is not checked here - see [fits] for what that
+     * leaves the caller to decide, and why an over-long block cannot share this channel.
      *
      * ```
      * val window = GSendWindow(capacity = 1)
@@ -111,6 +117,39 @@ class GSendWindow(
         next++
         return text
     }
+
+    /**
+     * Whether [payload] would still fit the firmware's buffer **once this window has framed it** -
+     * spec 1.3, and the check [send] deliberately does not make.
+     *
+     * **Only this object can answer it.** The framing is `N<number> ` in front and `*<checksum>`
+     * behind, so how much room a payload has depends on the number it is about to be given, and the
+     * number is assigned here, at the moment of writing, precisely because anything that reorders
+     * blocks after numbering them produces a gap. A caller holding the text does not know it yet.
+     * The answer is for the block that would go out **next**: send another first and it changes.
+     *
+     * Exact rather than conservative - it frames the payload and measures the bytes, this
+     * algorithm's own checksum included. `GLineLimit.payloadBudget` is the conservative form, for a
+     * generator deciding how much to put in a block before any number exists.
+     *
+     * **[send] does not consult this, and that is not an oversight.** A refused [send] returns null,
+     * which the caller is told to read as "wait for an `ok`" - and the transport does exactly that,
+     * parking the payload and retrying. An over-long block must never go down that path: waiting
+     * will not shorten it. Nor can it simply be sent, because spec 8.5's recovery replays the exact
+     * bytes, so a block the firmware truncates once is truncated identically on every resend and the
+     * session stops making progress. It is the one error a resend cannot repair, which is why the
+     * decision belongs to a caller that can fail the command instead of queueing it.
+     *
+     * ```
+     * val window = GSendWindow()
+     * window.fits("G28")                      // true
+     * window.fits("M117 " + "x".repeat(90))   // false - 95 bytes bare, 99 or more framed
+     * ```
+     *
+     * @param payload the block's bytes, without an `N` or a `*`
+     * @return true when the framed block reaches the firmware whole
+     */
+    fun fits(payload: String): Boolean = GLineLimit.fits(GEncoder.frame(next, payload, calculator()), limit)
 
     /**
      * Records one `ok`: the oldest outstanding block is done and its slot is free. Returns **the

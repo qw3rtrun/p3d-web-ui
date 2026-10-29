@@ -71,6 +71,36 @@ class OkDecoderTest {
         Assertions.assertFalse(decoder.decode(line) != null, "should not decode: $line")
     }
 
+    /**
+     * Characterisation, written while this was still a regex.
+     *
+     * `^[oO][kK](?> +([Nn])([0-9]+))? +([PpBb])([0-9]+) +([PpBb])([0-9]+)` read with `matches()`,
+     * plus a cross-check in code that the two field letters differ. Three of its rules were not
+     * covered by anything: the separator is a **space** and not a tab, several spaces are allowed,
+     * and the `N` field has to come first.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = ["ok  P15  B3", "ok   N100   P15   B3"])
+    fun `several spaces between the fields are allowed`(line: String) {
+        Assertions.assertTrue(decoder.decode(line) is AdvancedOkRs, "should decode: $line")
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "ok\tP15 B3",
+            "ok P15\tB3",
+            "ok P15 P3",
+            "ok B3 B15",
+            "ok B3 N100 P15",
+            "ok P15 B3 X1",
+            "okP15 B3",
+        ]
+    )
+    fun `a shape the firmware does not write yields absence`(line: String) {
+        Assertions.assertNull(decoder.decode(line), "should not decode: $line")
+    }
+
     @Test
     fun `what it encodes, it decodes`() {
         // Regression: an absent `N` decoded to -1 while encode() writes out any non-null line

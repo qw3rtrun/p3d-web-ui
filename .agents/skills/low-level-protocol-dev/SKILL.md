@@ -242,16 +242,21 @@ Then check by hand:
 
 Live examples of what this skill rules out, so nobody copies them as precedent:
 
-- **`java.util.regex` in seven reply decoders** — `marlin/event/`: `EchoRs.kt`, `EndstopRs.kt`,
-  `FirmwareInfoRs.kt`, `PositionRs.kt`, `TemperatureRs.kt`; `protocol/`: `CommentRs.kt`,
-  `OkRs.kt`. These are the *edge*, but the pattern **is** the specification of what the decoder
-  accepts, and a condensed one is not reviewable against
-  [spec §9](../../../doc/specs/GCODE_spec.md#9-error-handling). Five of them use `(?>...)` atomic
-  groups, which exist in Java and PCRE and in neither Rust's `regex` crate nor C — a port cannot
-  translate those, only re-derive them. Four others (`SdStatusRs`, `ResendRs`, `BusyRs`,
-  `ErrorRs`) have been converted to explicit scans over `protocol/GRsScan.kt`'s primitives; that
-  file is the worked example, and `TemperatureRs`'s multi-branch field scan is the one left that
-  is real work rather than transcription.
+- ~~**`java.util.regex` in seven reply decoders.**~~ **Done** — there is none left anywhere in
+  `gcode/src/main`, and the only mention of it is the prose in `GRsScan.kt` saying why. Every
+  decoder walks the line with that file's primitives: `startsWithAscii`, `sameAscii`,
+  `equalsAscii`, `blanksEnd`, `digitsEnd`, `numberEnd`, `asciiTrim`. Five of the seven carried
+  `(?>...)` atomic groups, which exist in Java and PCRE and in neither Rust's `regex` crate nor C,
+  so a port could only have re-derived them.
+
+  **Read this before writing a new decoder.** The conversion turned up rules that were encoded in
+  patterns and tested by nothing: an axis endstop name carries one optional character and it may be
+  a letter; `FIRMWARE_NAME:`'s anchor is case-sensitive while the rest of the module folds; the
+  fields of an advanced `ok` are separated by a **space** and not a blank; a sensor temperature may
+  be signed while a `@` power may not; and `OkRsDecoder`'s own KDoc example had been wrong since it
+  was written. Each is a test now rather than a `?` in a pattern — and each was found by
+  **characterising first**: the cases go in green against the code as it stands, and only then does
+  the code change.
 - ~~**`ignoreCase = true` at 11 sites in 8 files**, and `.trim()` at 32 sites in 13.~~ **Done** —
   both are zero in this module's code now; what is left of them is the prose in `GTokens.kt`,
   `GHead.kt` and `GRsScan.kt` saying why they are not used. `GRsScan.kt` is the one copy of the

@@ -233,6 +233,39 @@ class BaseRsTest {
             assertEquals(ActionRs("something_new"), ActionRs.decode("//action:something_new"))
         }
 
+        /**
+         * Characterisation, written while this was still a regex.
+         *
+         * `^//[ \t]*action[ \t]*:[ \t]*(\S+)(?>[ \t]+(.*))?$` decides three things nothing pinned:
+         * the action word ends at a **blank** and may hold any other character, the argument needs
+         * at least one blank in front of it and then runs to the end of the line, and the keyword
+         * folds while the action word keeps the case the firmware wrote.
+         */
+        @Test
+        fun `the action word ends at a blank and holds anything else`() {
+            assertEquals(ActionRs("prompt_end!"), ActionRs.decode("//action:prompt_end!"))
+            assertEquals(ActionRs("a:b"), ActionRs.decode("//action:a:b"))
+            assertEquals(ActionRs("PAUSE"), ActionRs.decode("//ACTION:PAUSE"))
+        }
+
+        @Test
+        fun `the argument starts after the blanks and keeps the ones inside it`() {
+            assertEquals(ActionRs("pause", "now"), ActionRs.decode("//action:pause   now"))
+            assertEquals(ActionRs("pause", "now"), ActionRs.decode("//action:pause\tnow"))
+            assertEquals(
+                ActionRs("prompt_begin", "two  spaces  inside"),
+                ActionRs.decode("//action:prompt_begin two  spaces  inside"),
+            )
+            // A trailing blank is not an empty argument.
+            assertEquals(ActionRs("pause"), ActionRs.decode("//action:pause  "))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = ["//action:", "//action", "// action", "//actions:pause", "/action:pause"])
+        fun `an action line without an action word decodes to absence`(line: String) {
+            assertNull(ActionRs.decode(line), "should not decode: $line")
+        }
+
         @Test
         fun `every documented action round-trips`() {
             val actions = listOf(

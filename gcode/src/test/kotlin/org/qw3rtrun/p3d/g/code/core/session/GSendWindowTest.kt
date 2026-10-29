@@ -373,6 +373,100 @@ class GSendWindowTest {
     }
 
     /**
+     * Acknowledging by line number, which Marlin's advanced `ok` carries.
+     *
+     * The counted form is correct while nothing goes wrong, and cannot recover when something does.
+     * These are the cases where the two readings diverge - which is to say, the only cases where
+     * passing the number buys anything.
+     */
+    @Nested
+    inner class AcknowledgingByNumber {
+
+        @Test
+        fun `a named acknowledgement releases that block`() {
+            val window = GSendWindow()
+            window.send(g28)
+
+            assertEquals(1, window.acknowledge(1))
+            assertEquals(0, window.inFlight)
+        }
+
+        @Test
+        fun `it releases everything up to the named block, not only it`() {
+            // spec 8.5 has the firmware acknowledge in order, so an `ok N3` while 1, 2 and 3 are
+            // outstanding says all three were taken and two `ok`s were lost - not that 1 and 2 are
+            // somehow still pending.
+            val window = GSendWindow(capacity = 4)
+            window.send(g28)
+            window.send(g28)
+            window.send(t0)
+
+            assertEquals(3, window.acknowledge(3))
+            assertEquals(0, window.inFlight)
+        }
+
+        @Test
+        fun `a stray acknowledgement releases nothing and moves nothing`() {
+            // The failure the parameter exists to prevent. Counted, this `ok` would release block 1
+            // and the window would be wrong about every block from then on.
+            val window = GSendWindow()
+            window.send(g28)
+            window.send(g28)
+
+            assertNull(window.acknowledge(99))
+
+            assertEquals(2, window.inFlight)
+            assertTrue(window.canResendFrom(1))
+            assertTrue(window.canResendFrom(2))
+        }
+
+        @Test
+        fun `a stray acknowledgement leaves the resend replaying the right lines`() {
+            // The consequence, stated end to end: this is what silently goes wrong today, because
+            // a shifted window answers `resendFrom` with the wrong bytes or with nothing at all.
+            val window = GSendWindow(capacity = 4)
+            val first = requireNotNull(window.send(g28))
+            val second = requireNotNull(window.send(t0))
+
+            window.acknowledge(99)
+
+            assertEquals(listOf(first, second), window.resendFrom(1))
+        }
+
+        @Test
+        fun `an acknowledgement for a block already released is not a second release`() {
+            // A duplicate `ok` - which the resend protocol itself can produce, since a host may
+            // retransmit a line the firmware had in fact accepted.
+            val window = GSendWindow()
+            window.send(g28)
+            window.send(t0)
+
+            assertEquals(1, window.acknowledge(1))
+            assertNull(window.acknowledge(1))
+            assertEquals(1, window.inFlight)
+        }
+
+        @Test
+        fun `the no-argument form is unchanged, which is what a bare ok means`() {
+            // Two overloads rather than one default argument: a Kotlin default is invisible to a
+            // Java caller, and `:backend:terminal` is one.
+            val window = GSendWindow()
+            window.send(g28)
+            window.send(t0)
+
+            assertEquals(1, window.acknowledge())
+            assertEquals(2, window.acknowledge())
+            assertNull(window.acknowledge())
+        }
+
+        @Test
+        fun `an empty window answers null whether or not a number is named`() {
+            assertNull(GSendWindow().acknowledge())
+            assertNull(GSendWindow().acknowledge(1))
+        }
+    }
+
+    /**
      * Spec 1.3: whether a payload still fits the firmware's buffer once this window has framed it.
      *
      * The question only this object can answer, because the answer depends on the line number and

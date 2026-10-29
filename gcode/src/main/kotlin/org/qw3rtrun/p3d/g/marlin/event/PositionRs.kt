@@ -1,11 +1,12 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
 import java.math.BigDecimal
-import java.util.regex.Pattern
 import org.qw3rtrun.p3d.g.protocol.GEventRs
 import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.asciiTrim
+import org.qw3rtrun.p3d.g.protocol.blanksEnd
+import org.qw3rtrun.p3d.g.protocol.numberEnd
 
 /**
  * The position report - `M114`'s answer and `M154`'s auto-report.
@@ -69,8 +70,15 @@ data class PositionRs(
 
         private val AXIS_ORDER = "XYZIJKUVWEABC".toCharArray()
 
-        private val FIELD = Pattern.compile("([XYZIJKUVWEABC]):[ \t]*([-+]?(?>[0-9]*\\.)?[0-9]+)")
-
+        /**
+         * The walk was already here - the pattern only ever read **one field at a time**, anchored
+         * at the cursor with `find(at)` and `matcher.start() != at`. So what comes out is the field
+         * reader, not the loop.
+         *
+         * Note there is no case folding anywhere in this decoder, and there was none in the
+         * pattern either: axis letters and `Count` are uppercase on every firmware that writes a
+         * position report, and folding would start claiming lines that merely look like fields.
+         */
         override fun decode(line: String): PositionRs? {
             val rest = line.asciiTrim()
             if (rest.isEmpty()) return null
@@ -78,7 +86,6 @@ data class PositionRs(
             val counts = LinkedHashMap<Char, Int>()
             var inCounts = false
             var at = 0
-            val matcher = FIELD.matcher(rest)
             while (at < rest.length) {
                 if (rest[at] == ' ' || rest[at] == '\t') {
                     at++
@@ -90,21 +97,38 @@ data class PositionRs(
                     at += COUNT.length
                     continue
                 }
-                if (!matcher.find(at) || matcher.start() != at) return null
-                val axis = matcher.group(1)[0]
+
+                val axis = rest[at]
+                if (!isAxis(axis)) return null
+                var i = at + 1
+                if (i >= rest.length || rest[i] != ':') return null
+                i = rest.blanksEnd(i + 1)
+
+                val end = rest.numberEnd(i)
+                if (end < 0) return null
+                val value = rest.substring(i, end)
+
                 if (inCounts) {
-                    val steps = matcher.group(2).toIntOrNull() ?: return null
+                    val steps = value.toIntOrNull() ?: return null
                     if (counts.put(axis, steps) != null) return null
                 } else {
-                    val value = matcher.group(2).toBigDecimalOrNull() ?: return null
-                    if (axes.put(axis, value) != null) return null
+                    val parsed = value.toBigDecimalOrNull() ?: return null
+                    if (axes.put(axis, parsed) != null) return null
                 }
-                at = matcher.end()
+                at = end
             }
             if (axes.isEmpty()) return null
             if (!axes.containsKey('X')) return null
             if (inCounts && counts.isEmpty()) return null
             return PositionRs(axes, counts)
+        }
+
+        /** The letters Marlin reports a position in, in the order it writes them. */
+        private fun isAxis(c: Char): Boolean {
+            for (axis in AXIS_ORDER) {
+                if (axis == c) return true
+            }
+            return false
         }
 
         private const val COUNT = "Count"

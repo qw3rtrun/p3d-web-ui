@@ -187,8 +187,16 @@ class MarlinDocExamplesTest {
      * Three of the sixteen have a different cause. `M552`/`M553`/`M554` take a dotted quad -
      * `P192.168.1.55` - which is not a number by [spec 3.1](../../../../../../../doc/specs/GCODE_spec.md#31-numeric-values)
      * because it has more than one `.`, and is not a quoted string either. Upstream types `P` as
-     * `string`, so this layer emits `P"192.168.1.55"`, which is not the form Marlin reads. There
-     * is no value the model can hold for these until todo 09 lands bare strings.
+     * `string`, so this layer emits `P"192.168.1.55"`, which is not the form Marlin reads.
+     *
+     * **These three were recorded here as waiting on todo 09's bare rest-of-line strings, and that
+     * was the wrong diagnosis.** 09 has landed - `M117`, `M23` and the other 20 carry their
+     * arguments - and these still do not, because a dotted quad is not a rest-of-line string: it is
+     * a **lettered** parameter whose value is neither a number nor a quoted string. The blocker is a
+     * layer lower, in the value model: the tokenizer makes the quad one `GUnknown`, and `GUnknown`
+     * is not a `GValue`, so no `GParameterWord` can carry it and `valueOf` cannot see it.
+     * `MarlinGapsTest.DottedQuad` pins that, and closing it is a decision about the value model or
+     * about giving the generator an unquoted-string kind - not a transcription.
      */
     @Test
     fun `a valued parameter sent bare is not read back`() {

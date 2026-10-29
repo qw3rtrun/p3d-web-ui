@@ -252,6 +252,43 @@ class MarlinRsTest {
             }
         }
 
+        /**
+         * Characterisation, written while the name was still an alternation in a regex.
+         *
+         * `([a-z][a-z0-9]?_(?>min|max)|z_probe|probe_en|filament)` under `CASE_INSENSITIVE` decides
+         * four things nothing pinned: the axis may carry **one** extra character, that character may
+         * be a letter as well as a digit, the whole line folds, and the blanks are allowed after the
+         * colon and nowhere else.
+         */
+        @Test
+        fun `an axis name carries at most one character before the suffix`() {
+            assertEquals(EndstopStateRs("x2_min", false), EndstopStateRs.decode("x2_min: open"))
+            // A letter in that position is accepted too - the rule is "one character", not "a digit".
+            assertEquals(EndstopStateRs("xy_min", false), EndstopStateRs.decode("xy_min: open"))
+            // Two is not.
+            assertNull(EndstopStateRs.decode("x22_min: open"))
+        }
+
+        @Test
+        fun `the line folds, and the name keeps the case Marlin wrote`() {
+            assertEquals(EndstopStateRs("X_MIN", true), EndstopStateRs.decode("X_MIN: TRIGGERED"))
+            assertEquals(EndstopStateRs("x_min", true), EndstopStateRs.decode("x_min: triggered"))
+            assertEquals(EndstopStateRs("x_min", false), EndstopStateRs.decode("x_min: OPEN"))
+        }
+
+        @Test
+        fun `a blank is allowed after the colon and nowhere else`() {
+            assertEquals(EndstopStateRs("x_min", false), EndstopStateRs.decode("x_min:open"))
+            assertEquals(EndstopStateRs("x_min", false), EndstopStateRs.decode("x_min:\t open"))
+            assertNull(EndstopStateRs.decode("x_min : open"))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = ["filamentX: open", "z_probe: open extra", "_min: open", "x_mid: open"])
+        fun `a name Marlin does not write decodes to absence`(line: String) {
+            assertNull(EndstopStateRs.decode(line), "should not decode: $line")
+        }
+
         // `<word>: <word>` is far too common a shape on this wire to claim loosely.
         @ParameterizedTest
         @ValueSource(strings = ["busy: processing", "Cap:EEPROM:1", "x_min: maybe", "nonsense: open"])
@@ -348,11 +385,82 @@ class MarlinRsTest {
             assertEquals(CapabilityRs("SOMETHING_NEW", true), CapabilityRs.decode("Cap:SOMETHING_NEW:1"))
         }
 
+        /**
+         * Characterisation of the key scan, written while it was still a regex.
+         *
+         * `([A-Z][A-Z_0-9]*):` is **uppercase only**, and the `FIRMWARE_NAME:` anchor was matched
+         * case-sensitively while the rest of this module folds. Both are load-bearing: it is what
+         * keeps a lowercase word inside a value - `MACHINE_TYPE:3D Printer rev:2` - from being read
+         * as the start of the next field.
+         */
+        @Test
+        fun `keys are uppercase, so a lowercase word is part of a value`() {
+            assertNull(FirmwareInfoRs.decode("firmware_name:Marlin"))
+
+            val info = FirmwareInfoRs.decode("FIRMWARE_NAME:Marlin machine_type:X")!!
+            assertEquals("Marlin machine_type:X", info.firmwareName())
+            assertNull(info.machineType())
+        }
+
+        @Test
+        fun `a key carries digits and underscores after its first letter`() {
+            val info = FirmwareInfoRs.decode("FIRMWARE_NAME:M EXTRUDER_COUNT:2 CAP_2:ok")!!
+            assertEquals(2, info.extruderCount())
+            assertEquals("ok", info.keyValues["CAP_2"])
+        }
+
+        @Test
+        fun `a colon inside a value does not end it`() {
+            val info = FirmwareInfoRs.decode(
+                "FIRMWARE_NAME:M SOURCE_CODE_URL:github.com/x:y PROTOCOL_VERSION:1.0"
+            )!!
+            assertEquals("github.com/x:y", info.srcCodeUrl())
+            assertEquals("1.0", info.protocolVersion())
+        }
+
         @ParameterizedTest
         @ValueSource(strings = ["Cap:EEPROM", "Cap::1", "PROTOCOL_VERSION:1.0", "echo:Cap:EEPROM:1"])
         fun `a line that is not one of these decodes to absence`(line: String) {
             assertNull(CapabilityRs.decode(line), "should not decode as cap: $line")
             assertNull(FirmwareInfoRs.decode(line), "should not decode as firmware info: $line")
+        }
+
+        /**
+         * Characterisation, written while the pattern was still a regex.
+         *
+         * `Pattern.CASE_INSENSITIVE` folded the `Cap:` prefix and the `true`/`false` words as well
+         * as the name, and the blanks were allowed in exactly two places. None of that was pinned,
+         * so a hand-written scan could have tightened or loosened any of it without a failure.
+         */
+        @Test
+        fun `the prefix and the boolean words fold, and the name keeps its case`() {
+            assertEquals(CapabilityRs("eeprom", true), CapabilityRs.decode("cap:eeprom:1"))
+            assertEquals(CapabilityRs("EEPROM", true), CapabilityRs.decode("CAP:EEPROM:TRUE"))
+            assertEquals(CapabilityRs("EEPROM", false), CapabilityRs.decode("Cap:EEPROM:False"))
+        }
+
+        @Test
+        fun `blanks are allowed after each colon and nowhere else`() {
+            assertEquals(CapabilityRs("SDCARD", true), CapabilityRs.decode("Cap: SDCARD:1"))
+            assertEquals(CapabilityRs("SDCARD", true), CapabilityRs.decode("Cap:SDCARD:\t1"))
+            assertEquals(CapabilityRs("SDCARD", true), CapabilityRs.decode("  Cap: SDCARD: 1  "))
+
+            // Not before a colon: the name runs up to it.
+            assertNull(CapabilityRs.decode("Cap:SDCARD :1"))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = ["Cap:1X:1", "Cap:X:1.5", "Cap:X:1 extra", "Cap:X:yes", "Cap:X:"])
+        fun `a capability line the firmware would not write decodes to absence`(line: String) {
+            assertNull(CapabilityRs.decode(line), "should not decode as cap: $line")
+        }
+
+        @Test
+        fun `a flag too wide for an Int reads as disabled rather than throwing`() {
+            // spec 9: malformed input off the wire is a value, not a crash. `toIntOrNull` answers
+            // null and the flag falls to 0 - which is "not enabled", the safe reading of a number
+            // nobody can interpret.
+            assertEquals(CapabilityRs("X", false), CapabilityRs.decode("Cap:X:99999999999"))
         }
     }
 

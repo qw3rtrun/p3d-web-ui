@@ -830,7 +830,7 @@ words**: fields are assembled only when a caller asks what the block commands.
 | Unnumbered block | `GPlainBlock` |
 | `N…*…` framed block ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GFramedBlock(number, checksum, body, raw)` — also `GOrdered`, `GCheckSumControlled` |
 | Line number ([§7.1](#71-syntax)), checksum field ([§8.1](#81-syntax)) | `GInt` — the integer behind the `N`, and behind the last `*` |
-| Structural error ([§9](#9-error-handling)) | `GError`: `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum`, `GCheckSumFailedBlock` |
+| Structural error ([§9](#9-error-handling)) | `GError`: `GMissingChecksum`, `GMissingLineNumber`, `GMalformedLineNumber`, `GMalformedChecksum`, `GCheckSumFailedBlock`. The three that name a line — `GMissingChecksum`, `GMalformedChecksum`, `GCheckSumFailedBlock` — are **also `GOrdered`**, which is how a host asks which faults [§8.5](#85-failure-handling-and-the-resend-protocol) lets it answer with `Resend: n`; the other two carry no number and leave `M110` ([§7.2](#72-m110-set-line-number)) as the way back into sequence |
 
 `raw` is every token of the block in wire order, terminator included, and it is the stored value
 of every block type — so "a block reproduces its input" holds by construction rather than by an

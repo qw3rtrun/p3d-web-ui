@@ -120,7 +120,6 @@ class GBlocksTest {
             // GCODE_spec.md section 7.3 and section 9 - structural errors. Each one keeps the whole
             // block so a caller can log it, resend it, or decide the severity for itself.
             assertEquals("line number 42 has no checksum", GMissingChecksum(GInt(42), raw).msg)
-            assertEquals("line number ? has no checksum", GMissingChecksum(null, raw).msg)
             assertEquals("checksum without a line number", GMissingLineNumber(raw).msg)
             assertEquals("'N' is not followed by a line number", GMalformedLineNumber(raw).msg)
             assertEquals(
@@ -144,13 +143,40 @@ class GBlocksTest {
             val asLines: List<GBlock> = errors
 
             assertTrue(asLines.all { it.raw == raw })
-            assertTrue(errors.none { it is GOrdered || it is GCheckSumControlled })
+
+            // None of them is trustworthy - that is what GCheckSumControlled means, and an error is
+            // precisely a block whose checksum did not establish anything.
+            assertTrue(errors.none { it is GCheckSumControlled })
+        }
+
+        /**
+         * The resend partition, as a property of the types rather than of a reader - see `GError`.
+         *
+         * This asserted `none { it is GOrdered }` while only the mismatch implemented it, which
+         * froze the model the other way round: it read as "no structural error can be resent",
+         * which is true of two of the four and false of the other two.
+         */
+        @Test
+        fun `a structural error is addressable exactly when it names its line`() {
+            val addressable: List<GOrdered> = listOf(
+                GMissingChecksum(GInt(1), raw),
+                GMalformedChecksum(GInt(1), raw),
+            )
+            assertTrue(addressable.all { it.number == GInt(1) })
+
+            // The other half is a compile-time claim and cannot be written as an assertion:
+            // `GOrdered` is sealed, so `GMissingLineNumber(raw) is GOrdered` is refused outright -
+            // "Check for instance is always 'false'". That refusal is the proof. What a *reader*
+            // produces for those two lines is asserted in GBlockReaderTest, where the static type
+            // is GBlock and the question is real.
         }
 
         @Test
         fun `a missing checksum keeps the line number it did find`() {
+            // Non-null by construction: the reader only builds one after it has read the number
+            // (GBlockReader returns GMissingLineNumber when there is none), so the type says so
+            // rather than every reader of it checking.
             assertEquals(GInt(42), GMissingChecksum(GInt(42), raw).number)
-            assertEquals(null, GMissingChecksum(null, raw).number)
         }
     }
 

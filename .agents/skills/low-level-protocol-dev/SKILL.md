@@ -260,10 +260,18 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   which is the module's one copy of that rule.
 - `code/core/token/GTokens.kt`, `GTokenizer.kt` — `java.math.BigDecimal` is the core's only external
   type, and it is in the hot path.
-- `:gcode` depends on `:backend:core` for event types, so the module as a whole is not extractable
-  yet; only `code/core/**` is close.
+
+**This module depends on nothing, and that is now load-bearing in the other direction.** It used to
+be listed here as debt — `:gcode` borrowed `:backend:core`'s event types, so the module was not
+extractable — and the dependency has since been removed *and reversed*: `:backend:api` declares
+`api project(':gcode')`, so the application reads a reply as the `GRs` this module decoded.
+`doc/sub_boundaries.txt` rules 6-8 state it. What that buys is a rename here being visible all the
+way to a TypeScript client, and what it costs is that a rename here is visible all the way to a
+TypeScript client — `EventStreamContractTest` in `:frontend:web-ui` pins the class names that reach
+the browser. Check it before renaming anything under `marlin/event/` or `protocol/`.
 
 These are tracked in [the issue queue](https://github.com/qw3rtrun/p3d-web-ui/issues/18) — mainly
-[01](https://github.com/qw3rtrun/p3d-web-ui/issues/3),
 [02](https://github.com/qw3rtrun/p3d-web-ui/issues/4) and
-[06](https://github.com/qw3rtrun/p3d-web-ui/issues/8). Do not add to the list.
+[14](https://github.com/qw3rtrun/p3d-web-ui/issues/16), which inherited the portability pass when
+[06](https://github.com/qw3rtrun/p3d-web-ui/issues/8) was closed as superseded. Do not add to the
+list.

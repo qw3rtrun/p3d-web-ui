@@ -5,7 +5,7 @@ GFramedBlock	1	18	g28
 GFramedBlock	1	123	M110 N7
 GFramedBlock	2	115	G1 X10
 GCheckSumFailedBlock	1	-	G28
-GMissingChecksum	-	-	G28
+GMissingChecksum	1	-	G28
 GMissingLineNumber	-	-	G28
 GMissingLineNumber	-	-	
 GMissingLineNumber	-	-	
@@ -13,11 +13,11 @@ GMissingLineNumber	-	-
 GMissingLineNumber	-	-	
 GMalformedLineNumber	-	-	
 GMalformedLineNumber	-	-	
-GMalformedChecksum	-	-	G28
-GMalformedChecksum	-	-	
-GMalformedChecksum	-	-	G28 X
-GMalformedChecksum	-	-	G28
-GMalformedChecksum	-	-	G28
+GMalformedChecksum	1	-	G28
+GMalformedChecksum	1	-	
+GMalformedChecksum	1	-	G28 X
+GMalformedChecksum	1	-	G28
+GMalformedChecksum	1	-	G28
 GFramedBlock	1	59	G28
 GFramedBlock	1	18	G28
 GPlainBlock	-	-	G28

@@ -44,7 +44,12 @@ sealed interface GBlock {
 }
 
 /**
- * A block that carries a line number (spec 7): one whose checksum verified, or one whose failed.
+ * A block that carries a line number (spec 7) - the question "can this block be asked for again?".
+ *
+ * Four types answer to it: a block whose checksum verified, and the three faults that still name
+ * their line. Spec 8.5 gives all three of those the same answer, a `Resend:` for that number, which
+ * is why the interface is the partition rather than a property of the successful case. See
+ * [GError] for the other half of it.
  *
  * ```
  * (GBlockReader.blocks("N1 G28*18\n").first() as GOrdered).number   // GInt(1)
@@ -135,6 +140,21 @@ data class GFramedBlock(
  * A block the reader could classify but not accept: a structural fault of framing (spec 7.1, 7.3) or of
  * the checksum (spec 8). Errors are values - the block still carries every token it was read from.
  *
+ * **The faults partition by what a host can do about them**, and the line between them is
+ * [GOrdered], not the fault's name:
+ *
+ * - **addressable** - the block names its line, so spec 8.5's answer is `Resend: n`:
+ *   [GCheckSumFailedBlock] (the value disagrees), [GMalformedChecksum] (the field is garbled) and
+ *   [GMissingChecksum] (spec 7.3, no field at all).
+ * - **not addressable** - nothing on the block names a line, so there is no number to ask for and
+ *   the way back into sequence is `M110` (spec 7.2): [GMissingLineNumber] and
+ *   [GMalformedLineNumber].
+ *
+ * The three addressable ones were not one set for a while: only the mismatch implemented
+ * [GOrdered], so a consumer that switched on it to answer "resend line n" saw one case of three and
+ * silently dropped the other two, though every one of them carries the number it would have asked
+ * for.
+ *
  * ```
  * (GBlockReader.blocks("N1 G28\n").first() as GError).msg   // "line number 1 has no checksum"
  * ```
@@ -153,13 +173,16 @@ sealed interface GError : GBlock {
  * the reader reports the structure and leaves the severity to the caller rather than refusing to
  * parse. The corpus fixture contains two such blocks.
  *
+ * [GOrdered], because the block names its line: a host that wants the block again has a number to
+ * ask for, whether or not the sender attached a checksum to it.
+ *
  * ```
  * GBlockReader.blocks("N1 G28\n").first()   // GMissingChecksum, number 1
  * ```
  */
-data class GMissingChecksum(val number: GInt?, override val raw: List<GToken>) : GError {
+data class GMissingChecksum(override val number: GInt, override val raw: List<GToken>) : GError, GOrdered {
     override val msg: String
-        get() = "line number ${number?.rawText() ?: "?"} has no checksum"
+        get() = "line number ${number.rawText()} has no checksum"
 }
 
 /**
@@ -197,10 +220,14 @@ data class GMalformedLineNumber(override val raw: List<GToken>) : GError {
  *
  * ```
  * GBlockReader.blocks("N1 G28*ABC\n").first()    // GMalformedChecksum
+ * [GOrdered]: the marker is on the wire and the line is named, so spec 8.5's answer is a resend of
+ * this block rather than a framing complaint - the same answer a mismatch gets.
+ *
+ * ```
  * GBlockReader.blocks("N1 G28*1234\n").first()   // GMalformedChecksum
  * ```
  */
-data class GMalformedChecksum(val number: GInt, override val raw: List<GToken>) : GError {
+data class GMalformedChecksum(override val number: GInt, override val raw: List<GToken>) : GError, GOrdered {
     override val msg: String
         get() = "'*' is not followed by a checksum value on line ${number.rawText()}"
 }

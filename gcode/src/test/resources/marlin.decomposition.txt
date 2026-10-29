@@ -170,9 +170,9 @@ GPlainBlock	-	-	M109 T1 R205
 GPlainBlock	-	-	M109 F S180 B190
 GPlainBlock	-	-	M109
 GMeaninglessBlock	-	-	
-GMissingChecksum	-	-	M110
+GMissingChecksum	100	-	M110
 GPlainBlock	-	-	M110 N100
-GMissingChecksum	-	-	M110 N100
+GMissingChecksum	101	-	M110 N100
 GMeaninglessBlock	-	-	
 GPlainBlock	-	-	M111 S38
 GPlainBlock	-	-	M111 S8

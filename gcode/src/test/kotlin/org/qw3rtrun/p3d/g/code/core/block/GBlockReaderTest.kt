@@ -212,6 +212,45 @@ class GBlockReaderTest {
         assertInstanceOf(GMalformedLineNumber::class.java, block)
     }
 
+    /**
+     * Spec 8.5: every fault that names a line can be answered with `Resend: n`, and `GOrdered` is
+     * how a consumer asks which those are.
+     *
+     * The three differ in *what* is wrong with the checksum field - the value disagrees, the field
+     * is garbled, the field is absent - and spec 8.5 gives all three the same answer, because the
+     * host's move is to send that line again. A consumer that matched only the mismatch would
+     * answer the other two with silence, which is the failure this partition exists to prevent.
+     */
+    @Test
+    fun `every fault that names a line is addressable by resend`() {
+        val addressable = listOf(
+            "N1 G28*19\n" to GCheckSumFailedBlock::class.java,   // spec 8.5: the value disagrees
+            "N1 G28*ABC\n" to GMalformedChecksum::class.java,    // spec 8.1: the field is garbled
+            "N1 G28\n" to GMissingChecksum::class.java,          // spec 7.3: no field at all
+        )
+        for ((line, type) in addressable) {
+            val block = GBlockReader(GTokenizer.parse(line).iterator()).next()
+
+            assertInstanceOf(type, block, line)
+            assertInstanceOf(GOrdered::class.java, block, line)
+            assertEquals(GInt(1), (block as GOrdered).number, line)
+        }
+    }
+
+    /**
+     * And a fault that does not name one is not addressable: there is nothing to put in a
+     * `Resend:`, so the way back into sequence is `M110` (spec 7.2) rather than a retransmission.
+     */
+    @Test
+    fun `a fault with no usable line number is not addressable`() {
+        for (line in listOf("G28*18\n", "N G28*18\n")) {
+            val block = GBlockReader(GTokenizer.parse(line).iterator()).next()
+
+            assertInstanceOf(GError::class.java, block, line)
+            assertFalse(block is GOrdered, line)
+        }
+    }
+
     @Test
     fun `framed block with tail comment`() {
         val input = "N1 G28 *50 ;homing\n"

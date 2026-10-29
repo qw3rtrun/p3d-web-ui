@@ -80,6 +80,11 @@ sealed interface GIdentifier : GToken {
      * why the name is not `isLetter`: it was called that while only `GLetter` mattered to its
      * callers, and it read as a promise that the identifier was a letter (todo 07).
      *
+     * **The default reads [name], and [GLetter] does not use it.** This is the general form - one
+     * character, whatever the identifier's text happens to be - and it costs a `String` read per
+     * call. A letter knows its character without going through its text and overrides accordingly;
+     * see [GLetter.isChar]. The two must agree, which they do by both folding through [asciiFold].
+     *
      * ```
      * GLetter('x').isChar('X')   // true
      * GChecksum.isChar('*')      // true
@@ -138,8 +143,25 @@ data class GUnknown(val str: String) : GToken {
  * @property letter the letter as written
  */
 data class GLetter(val letter: Char) : GIdentifier {
-    override val name: String
-        get() = letter.toString()
+
+    /**
+     * Stored, not computed.
+     *
+     * It was `get() = letter.toString()`, so every read allocated - and [GIdentifier.isChar]'s
+     * default reads it twice, on a path that runs for every field of every line: `MarlinWords`
+     * scans its letters linearly per field, so decoding `G1 X10 Y20 E5 F1800` was on the order of
+     * 48 calls and ~96 short-lived `String`s for one line.
+     */
+    override val name: String = letter.toString()
+
+    /**
+     * The same question as [GIdentifier.isChar], asked of the character directly.
+     *
+     * A letter is one character by construction, so the length test the default makes is already
+     * answered and the text it makes it through is not needed. Both fold through [asciiFold], so
+     * this cannot disagree with the general form.
+     */
+    override fun isChar(l: Char): Boolean = asciiFold(letter) == asciiFold(l)
 }
 
 /**

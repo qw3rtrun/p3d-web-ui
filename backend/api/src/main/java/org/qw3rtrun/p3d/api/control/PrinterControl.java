@@ -54,6 +54,46 @@ public interface PrinterControl {
      */
     Publisher<Void> send(UUID id, List<GRq<?>> commands);
 
+    /**
+     * Writes a stored G-code file onto the machine's SD card, and completes when it is <em>queued</em>.
+     *
+     * <p><strong>It does not complete when the transfer does</strong>, and it must not: every line
+     * of an upload is a round trip inside the send window, so a real file takes minutes. A request
+     * held open for that is a request that times out. What this answers is "the transfer started";
+     * what answers "it finished" is {@code SdUploadProgressed} on {@link #updates(UUID)}, which is
+     * where the progress goes too.
+     *
+     * <p><strong>The file is one already on the server</strong>, named by {@code fileId} - this
+     * takes no bytes. The browser uploads to {@code /api-files} first, which streams to a
+     * content-addressed store and records the size an upload needs for its denominator; sending it
+     * to a card is a second, separate act, and the same file can go to several machines without
+     * being uploaded again.
+     *
+     * <p><strong>The machine takes nothing else until it is over.</strong> {@code M28} turns the
+     * wire into a file sink - every line that follows is written into the file rather than executed
+     * - so the transfer holds the connection exclusively, and an emergency stop is the only thing
+     * that can take it away.
+     *
+     * @param id       the machine
+     * @param fileId   a file in the server's store
+     * @param cardName what to call it on the card, which is what will be listed, printed and
+     *                 deleted afterwards
+     */
+    Publisher<Void> uploadToCard(UUID id, UUID fileId, String cardName);
+
+    /**
+     * Stops a transfer that is running, leaving a short but closed file on the card.
+     *
+     * <p><strong>It is a stop and not a cancel</strong>, and the difference is the one thing that
+     * matters here: the source is asked to stop producing content, and {@code M29} still goes out
+     * behind it. Tearing the transfer out instead would leave the file <em>open</em>, and every
+     * command the machine was given next would be written into it.
+     *
+     * <p>Completes whether or not a transfer was running. Nothing to stop is not an error - the
+     * page's button and the machine's state are different clocks.
+     */
+    Publisher<Void> cancelCardUpload(UUID id);
+
     /** Connects to the machine, or disconnects from it. */
     Publisher<Void> connect(UUID id, ConnectCmd command);
 

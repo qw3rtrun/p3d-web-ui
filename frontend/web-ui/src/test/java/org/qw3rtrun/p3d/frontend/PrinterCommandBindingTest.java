@@ -15,9 +15,12 @@ import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The JSON the browser posts, and the G-code it becomes.
@@ -44,6 +47,11 @@ class PrinterCommandBindingTest {
     private final UUID id = UUID.randomUUID();
     private final AtomicReference<List<String>> received = new AtomicReference<>(List.of());
     private final AtomicReference<ConnectCmd> connected = new AtomicReference<>();
+
+    /** What the upload endpoint asked for, as {@code fileId -> name on the card}. */
+    private final AtomicReference<String> uploaded = new AtomicReference<>();
+
+    private final AtomicBoolean cancelled = new AtomicBoolean();
 
     private WebTestClient client() {
         PrinterControl control = new PrinterControl() {
@@ -73,6 +81,18 @@ class PrinterCommandBindingTest {
 
             @Override
             public Publisher<ConnectionStatus> connection(UUID id) {
+                return Mono.empty();
+            }
+
+            @Override
+            public Publisher<Void> uploadToCard(UUID id, UUID fileId, String cardName) {
+                uploaded.set(fileId + " -> " + cardName);
+                return Mono.empty();
+            }
+
+            @Override
+            public Publisher<Void> cancelCardUpload(UUID id) {
+                cancelled.set(true);
                 return Mono.empty();
             }
         };
@@ -260,6 +280,70 @@ class PrinterCommandBindingTest {
                 .expectStatus().isBadRequest();
 
         assertEquals(List.of(), received.get(), "nothing may reach the printer");
+    }
+
+    /**
+     * The upload endpoint names a stored file; it carries no bytes.
+     *
+     * <p>The browser posts those to {@code /api-files} first. Two requests rather than one, which
+     * is what lets the same file go to a second machine without being sent again.
+     */
+    @Test
+    void theUploadPayloadNamesAStoredFileAndItsNameOnTheCard() {
+        var fileId = UUID.randomUUID();
+
+        post("/sd/upload", "{\"fileId\":\"" + fileId + "\",\"name\":\"BENCHY.GCO\"}");
+
+        assertEquals(fileId + " -> BENCHY.GCO", uploaded.get());
+        assertEquals(List.of(), received.get(), "an upload is not a command on the send path");
+    }
+
+    /**
+     * An extension is not required of the browser - the server adds one.
+     *
+     * <p>{@code M20} lists only printable extensions, so a name without one makes a file that is on
+     * the card and invisible. The request is accepted as typed and the defaulting happens where the
+     * extension list lives; the name that was actually used comes back on the event stream.
+     */
+    @Test
+    void anUploadNameNeedsNoExtensionHere() {
+        var fileId = UUID.randomUUID();
+
+        post("/sd/upload", "{\"fileId\":\"" + fileId + "\",\"name\":\"benchy\"}");
+
+        assertEquals(fileId + " -> benchy", uploaded.get());
+    }
+
+    /** Cancelling needs no body, and is fine when nothing is running. */
+    @Test
+    void cancellingAnUploadNeedsNoBody() {
+        client().post().uri("/api-printer/" + id + "/sd/upload/cancel").exchange().expectStatus().isOk();
+
+        assertTrue(cancelled.get());
+    }
+
+    /** The same filename check as delete and print, on the request that actually writes the file. */
+    @Test
+    void anUploadNameCarryingANewlineIsRejectedAsABadRequest() {
+        client().post().uri("/api-printer/" + id + "/sd/upload")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"fileId\":\"" + UUID.randomUUID() + "\",\"name\":\"a.gco\\nM112\"}")
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        assertNull(uploaded.get(), "nothing may reach the printer");
+    }
+
+    /** A request naming no file is a bad request, not a transfer of nothing. */
+    @Test
+    void anUploadWithNoFileIsRejectedAsABadRequest() {
+        client().post().uri("/api-printer/" + id + "/sd/upload")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"name\":\"benchy.gco\"}")
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        assertNull(uploaded.get());
     }
 
     @Test

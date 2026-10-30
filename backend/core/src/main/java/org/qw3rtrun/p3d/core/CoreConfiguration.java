@@ -48,8 +48,21 @@ public class CoreConfiguration {
 
     /** The only way into this module from the web - see {@link PrinterControlService}. */
     @Bean
-    public PrinterControlService printerControl(PrinterReactorManager manager) {
-        return new PrinterControlService(manager);
+    public PrinterControlService printerControl(PrinterReactorManager manager, SdUploader uploads) {
+        return new PrinterControlService(manager, uploads);
+    }
+
+    /**
+     * Writes a stored file onto a machine's SD card - the other half of {@code JobFeeder}'s job.
+     *
+     * <p>Same two collaborators for the same reason: it reads the file through {@code api::files}
+     * and hands the blocks to the machine's runtime. What is different is that the transfer holds
+     * the connection exclusively, because between {@code M28} and {@code M29} every line goes into
+     * the file rather than being executed.
+     */
+    @Bean
+    public SdUploader sdUploader(PrinterReactorManager reactors, GcodeFileService files) {
+        return new SdUploader(reactors, files);
     }
 
     /**

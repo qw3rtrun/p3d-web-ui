@@ -10,6 +10,7 @@ import org.reactivestreams.Subscription;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 
 import java.nio.charset.StandardCharsets;
@@ -105,11 +106,15 @@ public final class SdUploadProbe {
 
         Result exclusive = run(host, port, "excl.gco", true);
         Result shared = run(host, port, "shared.gco", false);
+        boolean closedOnStop = stopRun(host, port, "stopped.gco");
 
         System.out.println();
         System.out.println("=== what to read out of it ===");
         System.out.printf("  exclusive : %s%n", exclusive);
         System.out.printf("  shared    : %s%n", shared);
+        System.out.printf("  stopped   : %s%n", closedOnStop
+                ? "M29 closed the file - the next command was not written into it"
+                : "NOT CLOSED, or not measured");
         System.out.println();
         if (shared.intact()) {
             System.out.println("  !! the control came back clean, so the competing source never");
@@ -121,7 +126,101 @@ public final class SdUploadProbe {
             System.out.println("  run a measurement of the mechanism rather than of a quiet moment.");
         }
 
-        System.exit(exclusive.intact() && !shared.intact() ? 0 : 1);
+        System.exit(exclusive.intact() && !shared.intact() && closedOnStop ? 0 : 1);
+    }
+
+    /**
+     * Stops a transfer part-way and proves the firmware really closed the file.
+     *
+     * <p><strong>The claim no unit test can make.</strong> A stop must not cancel the transfer - it
+     * ends the <em>content</em> and lets {@code M29} follow, which is what
+     * {@code SdUploader.transferOf} builds and {@code SdUploaderTest} pins. What that test cannot
+     * show is the half that lives in the firmware: that the {@code M29} actually closed the file,
+     * so the next command is executed rather than appended to it.
+     *
+     * <p>So this measures the file twice. Once right after the stop, and once after sending an
+     * ordinary command. <strong>If the size does not move, the file was closed.</strong> If it grew
+     * by the length of that command, it was not, and every command the machine is given from now on
+     * is being written into a G-code file nobody is reading.
+     *
+     * <p>The shape is built here rather than imported because {@code :backend:terminal} cannot see
+     * {@code :backend:core}. That split is deliberate: this probe owns the firmware half of the
+     * claim and {@code SdUploaderTest} owns the "production builds this shape" half.
+     */
+    private static boolean stopRun(String host, int port, String file) throws Exception {
+        System.out.println();
+        System.out.printf("=== uploading %s and stopping half way ===%n", file);
+
+        var manager = new TerminalManager(new ConnectionDetails(host, port));
+        var terminal = manager.connect().block(Duration.ofSeconds(10));
+        Objects.requireNonNull(terminal, "no connection to " + host + ":" + port);
+
+        var queue = new PublisherQueue<String, Priority>();
+        var sizes = new java.util.concurrent.ConcurrentLinkedQueue<Long>();
+        var measured = new java.util.concurrent.atomic.AtomicInteger();
+
+        Disposable replies = terminal.messageFlux().subscribe(message -> {
+            if (message instanceof SdFileOpened reply && reply.getFile().equalsIgnoreCase(file)) {
+                sizes.add(reply.getSize());
+                measured.incrementAndGet();
+            }
+        });
+        Disposable sending = terminal.start(Flux.from(queue)).subscribe();
+
+        queue.addPublisher(Priority.REGULAR, Flux.just("M21", "M30 " + file)).block(Duration.ofSeconds(20));
+
+        var lines = content();
+        int stopAfter = 10;
+        var stop = Sinks.<Void>empty();
+        var sent = new java.util.concurrent.atomic.AtomicInteger();
+
+        // The same arrangement SdUploader builds: the content is ended by takeUntilOther and the
+        // close is concatenated behind it, so M29 goes out either way.
+        Flux<String> content = Flux.fromIterable(lines)
+                .doOnNext(block -> {
+                    if (sent.incrementAndGet() == stopAfter) {
+                        stop.tryEmitEmpty();
+                    }
+                })
+                .takeUntilOther(stop.asMono());
+
+        Flux<String> transfer = Flux.concat(
+                Mono.just("M28 " + file),
+                content,
+                Mono.just("M29"));
+
+        queue.addExclusivePublisher(Priority.REALTIME, transfer).block(TIMEOUT);
+        System.out.printf("  stopped after %d of %d block(s)%n", sent.get(), lines.size());
+
+        queue.addPublisher(Priority.REGULAR, Mono.just("M23 " + file)).block(Duration.ofSeconds(20));
+        Thread.sleep(500);
+
+        // An ordinary command. If the file is still open this is written into it and the size grows.
+        var marker = "M118 P0 WOULD-BE-WRITTEN-IN";
+        queue.addPublisher(Priority.REGULAR, Mono.just(marker)).block(Duration.ofSeconds(20));
+        queue.addPublisher(Priority.REGULAR, Mono.just("M23 " + file)).block(Duration.ofSeconds(20));
+        Thread.sleep(500);
+
+        sending.dispose();
+        replies.dispose();
+        terminal.stop();
+
+        var reported = new java.util.ArrayList<>(sizes);
+        if (reported.size() < 2) {
+            System.out.printf("  !! only %d size(s) came back, so nothing was measured%n", reported.size());
+            return false;
+        }
+        long before = reported.get(reported.size() - 2);
+        long after = reported.get(reported.size() - 1);
+        System.out.printf("  the card reports %d bytes, then %d after an unrelated command%n", before, after);
+
+        if (before == after) {
+            System.out.println("  -> unchanged: M29 closed the file, so the command was executed");
+            return true;
+        }
+        System.out.printf("  -> grew by %d bytes: the file was left OPEN and '%s' went into it%n",
+                after - before, marker);
+        return false;
     }
 
     /** What one run found: the size the card reported against the size that was sent. */

@@ -1,4 +1,4 @@
-import type {Account, ConnectionStatus, Descriptor, EventMessage} from './types'
+import type {Account, ConnectionStatus, Descriptor, EventMessage, GcodeFile} from './types'
 
 /**
  * The one place the browser talks to the server.
@@ -252,7 +252,65 @@ export function printer(uuid: string) {
          * screen; this only starts it.
          */
         printFile: (name: string) => send(at('/sd/print'), {name}),
+
+        /**
+         * Write a file the server already holds onto the card (M28, the file, M29).
+         *
+         * **It resolves when the transfer has started, not when it has finished.** Every line is a
+         * round trip, so a real file takes minutes. Watch the event stream for `SdUploadProgressed`
+         * and treat a `state` other than `UPLOADING` as the end.
+         *
+         * `fileId` names something uploaded to `/api-files` first - see {@link files.upload}. An
+         * extension is not required: the server adds one if it is missing, because `M20` lists only
+         * printable extensions, and the first progress event reports the name it actually used.
+         *
+         * **The machine takes nothing else until it ends.** Disable the other controls while it
+         * runs; the server enforces it anyway, but a control that appears to work and does nothing
+         * is worse than one that is visibly unavailable.
+         */
+        uploadToCard: (fileId: string, name: string) =>
+            send(at('/sd/upload'), {fileId, name}),
+
+        /**
+         * Stop a transfer that is running.
+         *
+         * **A stop, not a cancel.** The content ends and `M29` still goes out, so the card keeps a
+         * short but closed file - which the next listing will show, and which is safe to delete and
+         * not safe to print. Expect `state: 'CANCELLED'`.
+         */
+        cancelCardUpload: () => send(at('/sd/upload/cancel'), {}),
     }
+}
+
+// ---------------------------------------------------------------- stored files
+
+/**
+ * The server's own G-code store, which is where a file goes before it can go to a card.
+ *
+ * Deliberately **not multipart**: the body is the bytes and the name travels in a header, so
+ * nothing has to decide where to put a part - see `GcodeFileController`. The same stored file can
+ * be sent to several machines without being uploaded again.
+ */
+export const files = {
+    all: () => getJson<GcodeFile[]>('/api-files'),
+
+    one: (id: string) => getJson<GcodeFile>(`/api-files/${id}`),
+
+    /**
+     * Stream a file to the server and get back what it recorded - including `sizeBytes`, which is
+     * the denominator an SD transfer's progress bar divides by.
+     */
+    upload: async (file: File): Promise<GcodeFile> => {
+        const response = await request('/api-files', {
+            method: 'POST',
+            headers: {'X-File-Name': file.name, 'Content-Type': 'application/octet-stream'},
+            body: file,
+        })
+        return await response.json() as GcodeFile
+    },
+
+    remove: (id: string) =>
+        request(`/api-files/${id}`, {method: 'DELETE'}).then(() => undefined),
 }
 
 // ---------------------------------------------------------------- people

@@ -52,9 +52,10 @@ class PrinterControlServiceTest {
         directory.onRegistered(new MRegisteredEvent(id, "a printer", "localhost", 8099,
                 MachineProfile.unknown(), MachineSpec.undeclared(),
                 MachineConnectionState.OFFLINE, LocalDateTime.now()));
-        var control = new PrinterControlService(
-                new PrinterReactorManager(directory, PrinterState::new, event -> {
-                }));
+        var manager = new PrinterReactorManager(directory, PrinterState::new, event -> {
+        });
+        // The uploader is reached only by the two card methods, and this test calls neither.
+        var control = new PrinterControlService(manager, new SdUploader(manager, null));
 
         control.state(id).block();
 

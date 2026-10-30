@@ -34,6 +34,15 @@ public class PrinterControlService implements PrinterControl {
     private final PrinterReactorManager manager;
 
     /**
+     * The one operation that is not a command on a machine but a piece of work against it.
+     *
+     * <p>It is held here rather than reached through {@link PrinterReactor} because a transfer
+     * outlives the request that started it and has to be findable again to be stopped - which is
+     * state about work in progress, not about a printer.
+     */
+    private final SdUploader uploads;
+
+    /**
      * The machine's runtime, opened off the caller's thread.
      *
      * <p>{@code openReactor} is {@code synchronized} and builds a resource on a miss. It no longer
@@ -59,6 +68,20 @@ public class PrinterControlService implements PrinterControl {
     @Override
     public Mono<Void> send(UUID id, List<GRq<?>> commands) {
         return reactor(id).flatMap(r -> r.handle(commands));
+    }
+
+    /**
+     * The reactor is opened first, so that a transfer to a machine nobody has dialled fails for
+     * that reason rather than for "there is no runtime".
+     */
+    @Override
+    public Mono<Void> uploadToCard(UUID id, UUID fileId, String cardName) {
+        return reactor(id).then(uploads.start(id, fileId, cardName));
+    }
+
+    @Override
+    public Mono<Void> cancelCardUpload(UUID id) {
+        return uploads.cancel(id);
     }
 
     @Override

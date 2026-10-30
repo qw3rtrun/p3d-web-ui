@@ -235,6 +235,18 @@ class FarmSchedulerTest {
                 return state == null ? Mono.empty()
                         : Mono.just(new ConnectionStatus(state, LocalDateTime.now(), 0, null));
             }
+
+            // Writing to a card is nothing to do with scheduling a job onto a machine, so these
+            // two are here to satisfy the interface and for no other reason.
+            @Override
+            public Publisher<Void> uploadToCard(UUID id, UUID fileId, String cardName) {
+                return Mono.empty();
+            }
+
+            @Override
+            public Publisher<Void> cancelCardUpload(UUID id) {
+                return Mono.empty();
+            }
         };
     }
 

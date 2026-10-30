@@ -89,6 +89,16 @@ class BootVuejsApplicationTests {
                 public Publisher<ConnectionStatus> connection(UUID id) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
+
+                @Override
+                public Publisher<Void> uploadToCard(UUID id, UUID fileId, String cardName) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public Publisher<Void> cancelCardUpload(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
             };
         }
 

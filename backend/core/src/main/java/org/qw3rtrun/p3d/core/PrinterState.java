@@ -23,11 +23,17 @@ import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
 import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
 import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
+import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
 import org.qw3rtrun.p3d.g.marlin.command.FanOff;
 import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition;
+import org.qw3rtrun.p3d.g.marlin.command.InitSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
+import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.RelativePositioning;
+import org.qw3rtrun.p3d.g.marlin.command.ReleaseSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
+import org.qw3rtrun.p3d.g.marlin.command.SelectSDFile;
+import org.qw3rtrun.p3d.g.marlin.command.StartOrResumeSDPrint;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
@@ -289,6 +295,21 @@ public class PrinterState implements PrinterAggregate {
             case FanOff c -> passThrough(c);
             case SaveSettings c -> passThrough(c);
             case GetCurrentPosition c -> passThrough(c);
+
+            // The card, which carries no decision here either. Writing to one does not appear in
+            // this list and must not: an upload is a stream between M28 and M29 that has to hold
+            // the connection for its whole length, so it goes to PublisherQueue as an exclusive
+            // source rather than arriving here one command at a time.
+            //
+            // M22 is the one with an argument against passing it straight through - releasing a
+            // card mid-print stops the print - but this aggregate holds no SD print state to
+            // decide that on, and inventing some while fixing a drop would bury the fix.
+            case InitSDCard c -> passThrough(c);
+            case ReleaseSDCard c -> passThrough(c);
+            case ListSDCard c -> passThrough(c);
+            case DeleteSDFile c -> passThrough(c);
+            case SelectSDFile c -> passThrough(c);
+            case StartOrResumeSDPrint c -> passThrough(c);
 
             default -> log.warn("no handler for {}, so nothing was sent", command);
         }

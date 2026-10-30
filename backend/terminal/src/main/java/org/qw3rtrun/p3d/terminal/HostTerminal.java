@@ -4,6 +4,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.g.code.core.session.GSendWindow;
 import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
+import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
+import org.qw3rtrun.p3d.g.marlin.event.SdFileListBegin;
+import org.qw3rtrun.p3d.g.marlin.event.SdFileListEnd;
+import org.qw3rtrun.p3d.g.marlin.event.SdFileListReader;
 import org.qw3rtrun.p3d.g.protocol.AdvancedOkRs;
 import org.qw3rtrun.p3d.g.protocol.BusyRs;
 import org.qw3rtrun.p3d.g.protocol.GRs;
@@ -138,6 +142,11 @@ public class HostTerminal {
      * dropped with a {@code #traffic} debug line, because {@code GRs} has no value for "unread"
      * and the raw text has no consumer.
      *
+     * <p><strong>One reply on this flux was never a single line.</strong> {@code M20}'s answer is
+     * three lines or more, and it arrives as one {@link SdFileList} assembled by
+     * {@link ReplyFlux#listing} - the markers and the entries are consumed there. A listing nothing
+     * interrupted is the only thing that produces one; see that field for why.
+     *
      * <p><strong>One thing on this flux is not a reply at all.</strong> An {@code ok} that releases
      * a block is republished as a {@link BlockAcknowledged} carrying the line number the window
      * held against it. The justification for swallowing an {@code ok} was that it said nothing a
@@ -254,6 +263,23 @@ public class HostTerminal {
 
         private final Flux<GRs<?>> flux;
 
+        /**
+         * The one stateful thing on the inbound side: {@code M20}'s listing, being assembled.
+         *
+         * <p><strong>It has to live here, because this is the last place the raw line exists.</strong>
+         * A listing is {@code Begin file list}, some entries, {@code End file list}, and the entries
+         * are deliberately <em>not</em> claimable replies - {@code TEST.GCO 47} is
+         * {@code <word> <number>}, far too common a shape for a decoder to claim. So every entry
+         * reaches {@link #decode} as a line no decoder wants, and before this they were dropped with
+         * a debug line and nothing downstream could ever see a file list at all.
+         *
+         * <p>One per {@code ReplyFlux}, and a {@code ReplyFlux} is built per session in
+         * {@link #start}, which is exactly the ownership {@code SdFileListReader} asks for: one per
+         * connection, every call on the owner's thread. That thread is the netty inbound loop, and
+         * it is the only one that touches this.
+         */
+        private final SdFileListReader listing = new SdFileListReader();
+
         public ReplyFlux(Flux<String> source) {
             super(source);
             this.flux = source
@@ -261,7 +287,7 @@ public class HostTerminal {
                     .bufferUntil("\n"::equals)
                     .map(l -> String.join("", l).trim())
                     .doOnNext((in) -> TRAFFIC_LOGGER.debug("<- {}", in))
-                    .handle(ReplyFlux::decode);
+                    .handle(this::decode);
         }
 
         /**
@@ -272,11 +298,34 @@ public class HostTerminal {
          * calibration report - and a {@code Flux} may not carry a null. Null is the normal case and
          * not an error: the line goes to the traffic logger and is dropped, which is what the layer
          * above did with it before.
+         *
+         * <p><strong>A file listing is the exception, and it is assembled rather than forwarded.</strong>
+         * Its three line kinds are consumed here and one {@code SdFileList} comes out in their place,
+         * on the terminator:
+         *
+         * <ul>
+         *   <li>the two markers are swallowed - they are scaffolding, like a {@code Resend:}, and a
+         *       subscriber told "a list is starting" can do nothing with that;
+         *   <li>an entry is swallowed because it was never a reply in the first place;
+         *   <li>a listing something interrupted produces <strong>nothing</strong>, because the
+         *       reader cannot vouch for it - see {@code SdFileListRs}. A short list reported as the
+         *       card's contents is the failure that matters, and silence is the honest alternative.
+         * </ul>
          */
-        private static void decode(String line, SynchronousSink<GRs<?>> sink) {
+        private void decode(String line, SynchronousSink<GRs<?>> sink) {
+            SdFileList files = listing.read(line);
+            if (files != null) {
+                sink.next(files);
+                return;
+            }
             GRs<?> reply = MarlinRsDecoder.INSTANCE.decode(line);
             if (reply == null) {
-                TRAFFIC_LOGGER.debug("<- (unread) {}", line);
+                // Not "unread" while a list is open: an entry is a line this host understands
+                // perfectly well and has just put into the listing being assembled.
+                TRAFFIC_LOGGER.debug(listing.isReading() ? "<- (in a listing) {}" : "<- (unread) {}", line);
+                return;
+            }
+            if (reply instanceof SdFileListBegin || reply instanceof SdFileListEnd) {
                 return;
             }
             sink.next(reply);

@@ -234,6 +234,53 @@ export interface SdFileOpened {
  */
 export type SdCardOk = Record<string, never>
 
+/** One file the server holds - `api.files.GcodeFile`. `sizeBytes` is an upload's denominator. */
+export interface GcodeFile {
+    id: string
+    name: string
+    contentHash: string
+    sizeBytes: number
+    lineCount: number
+    uploadedAt: string
+}
+
+/**
+ * How a transfer to the card ended, which decides **what is on the card** - `SdUploadState`.
+ *
+ * - `CANCELLED` sent its `M29`, so the file is short but **closed**: safe to delete, not to print.
+ * - `FAILED` may not have. An emergency stop preempts a transfer with no close behind it, so the
+ *   file can be left **open** until the next reset.
+ *
+ * Showing both as "did not finish" hides the difference that matters.
+ */
+export type SdUploadState = 'UPLOADING' | 'DONE' | 'CANCELLED' | 'FAILED'
+
+/**
+ * `type: "SdUploadProgressed"` - how far a transfer to the card has got.
+ *
+ * **Two counts, and they are not interchangeable.**
+ *
+ * - `bytesSent / bytesTotal` is the progress bar. Exact, because the stored file's size is known
+ *   before a single line goes out.
+ * - `blocksSent` has **no total** on purpose. A tenth of a sliced file is comments and blank lines
+ *   that are dropped rather than sent, so the file's `lineCount` is an upper bound - a bar driven
+ *   by it would stop short of the end every time. Show the number; never divide by `lineCount`.
+ *
+ * `file` is the name on the **card**, which may not be the name that was asked for: the server
+ * adds a printable extension to one that lacks it, because `M20` lists nothing else. This is how
+ * the page learns what it became.
+ *
+ * Arrives about once a second while running, and once more - exact - when it ends.
+ */
+export interface SdUploadProgressed {
+    file: string
+    state: SdUploadState
+    bytesSent: number
+    bytesTotal: number
+    blocksSent: number
+    reason: string | null
+}
+
 /** `type: "MachineJoinedFarm"` - a printer registered while the page was open. */
 export interface MachineJoinedFarm {
     name: string

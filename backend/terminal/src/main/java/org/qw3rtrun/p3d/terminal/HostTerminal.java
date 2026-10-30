@@ -321,8 +321,30 @@ public class HostTerminal {
      */
     public class CommandProcessor implements Processor<String, String>, Subscription {
 
-        /** A parked {@code ok}: the oldest outstanding block is done. Line numbers are never negative. */
-        private static final int ACK = -1;
+        /**
+         * One thing the printer said about the send window, parked for the drain loop.
+         *
+         * <p>A record rather than the sentinel integer this replaced - {@code ACK = -1} in a
+         * {@code Queue<Integer>}, every other value being a resend request. That encoding had
+         * nowhere to put the line number an advanced {@code ok} carries: a positive value already
+         * meant "replay from here", so parking an acknowledged number would have been read as a
+         * request to retransmit from it.
+         *
+         * @param kind   what the printer said
+         * @param number the line it named, or null for a bare {@code ok}, which names none
+         */
+        private record WindowEvent(Kind kind, Integer number) {
+
+            enum Kind {ACKNOWLEDGED, RESEND}
+
+            static WindowEvent acknowledged(Integer number) {
+                return new WindowEvent(Kind.ACKNOWLEDGED, number);
+            }
+
+            static WindowEvent resend(int number) {
+                return new WindowEvent(Kind.RESEND, number);
+            }
+        }
 
         Publisher<String> gcode;
         Subscription subscription;
@@ -389,10 +411,11 @@ public class HostTerminal {
         private final Requested awaitingFrame = new Requested();
 
         /**
-         * Window events parked in the order the printer stated them: {@link #ACK}, or the line
-         * number of a {@code Resend:}. One queue and not two, because the order is the protocol.
+         * Window events parked in the order the printer stated them: an acknowledgement, or the
+         * line number of a {@code Resend:}. One queue and not two, because the order is the
+         * protocol.
          */
-        private final Queue<Integer> windowEvents = new ConcurrentLinkedQueue<>();
+        private final Queue<WindowEvent> windowEvents = new ConcurrentLinkedQueue<>();
 
         /**
          * Blocks a {@code Resend:} asked for, framed already, waiting for downstream demand.
@@ -480,17 +503,27 @@ public class HostTerminal {
          * block onwards without acknowledging it, and {@link #rewind} has already said so. Taking
          * it as an acknowledgement would release a block the printer never accepted, and that block
          * is the one it just asked for.
+         *
+         * <p><strong>The line number is carried through when the reply states one.</strong>
+         * Marlin's advanced form is {@code ok N5 P15 B3} and {@code AdvancedOkRs} already decodes
+         * the 5; it used to reach here and go no further than the buffer counts. Counting instead
+         * cannot self-correct: one {@code ok} lost in transit, or one for a block this host never
+         * sent, shifts the window's correspondence by one *permanently*, and every later replay is
+         * then the wrong bytes - silently, because an unknown number is answered with an empty
+         * list rather than a complaint.
          */
         public void handleBackpressure(OkRs<?> ok) {
+            Integer acknowledged = null;
             if (ok instanceof AdvancedOkRs advanced) {
                 backpressure = advanced;
+                acknowledged = advanced.getLineNumber();
             }
             if (rewinding.compareAndSet(true, false)) {
                 log.info("OUT: ok closing a resend - credit only, it acknowledges no block: {} {}",
                         ok.encode(), report.get());
             } else {
                 sentWithoutAck.dec();
-                windowEvents.add(ACK);
+                windowEvents.add(WindowEvent.acknowledged(acknowledged));
                 log.info("OUT: backpressure applied: {} {}", ok.encode(), report.get());
             }
             outSide.processRequest();
@@ -592,17 +625,33 @@ public class HostTerminal {
          * {@link HostTerminal#replays} could no longer be an unsafe sink.
          */
         private void applyWindowEvents() {
-            for (Integer event; (event = windowEvents.poll()) != null; ) {
-                if (event == ACK) {
-                    Integer released = window.acknowledge();
-                    if (released == null) {
-                        log.debug("OUT: ok with nothing outstanding in the send window {}", report.get());
-                    } else {
-                        emit(new BlockAcknowledged(released, window.getInFlight()));
-                    }
-                } else {
-                    rewind0(event);
+            for (WindowEvent event; (event = windowEvents.poll()) != null; ) {
+                if (event.kind() == WindowEvent.Kind.RESEND) {
+                    rewind0(event.number());
+                    continue;
                 }
+
+                // A named `ok` releases that block and everything still held in front of it, which
+                // is what spec 8.5's in-order acknowledgement means: an `ok N5` while 3, 4 and 5
+                // are outstanding says all three were taken and two acknowledgements were lost. A
+                // bare one has only the window's FIFO order to go on, which is the older reading
+                // and still the common one.
+                int before = window.getInFlight();
+                Integer released = event.number() == null
+                        ? window.acknowledge()
+                        : window.acknowledge(event.number());
+
+                if (released == null) {
+                    log.debug("OUT: ok acknowledging no block this window holds {} {}",
+                            event.number() == null ? "(unnumbered)" : "N" + event.number(), report.get());
+                    continue;
+                }
+                int releasedCount = before - window.getInFlight();
+                if (releasedCount > 1) {
+                    log.info("OUT: ok N{} released {} blocks - {} acknowledgement(s) were lost {}",
+                            released, releasedCount, releasedCount - 1, report.get());
+                }
+                emit(new BlockAcknowledged(released, window.getInFlight()));
             }
         }
 
@@ -729,7 +778,7 @@ public class HostTerminal {
          */
         void rewind(int lineNumber) {
             rewinding.set(true);
-            windowEvents.add(lineNumber);
+            windowEvents.add(WindowEvent.resend(lineNumber));
             processRequest();
         }
 

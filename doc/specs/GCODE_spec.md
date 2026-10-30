@@ -964,7 +964,8 @@ valueless letter is the default (`value_float()` returns 0), so this is recorded
 `MarlinDocExamplesTest` pins the affected doc examples line by line, and `stringArgStart()` depends
 on this: a bare own-letter has to *end* the lettered run precisely because it cannot be represented.
 
-Not yet covered by either of these layers: line-length limits, and [§3.4](#34-string-values)'s bare
+Not covered by either of these layers in the reading direction: [§1.3](#13-line-length)'s length
+limit — see B.5, which measures it on the way out — and [§3.4](#34-string-values)'s bare
 rest-of-line strings. The latter is a layering fact rather than a gap: which commands take one
 depends on the command number, and nothing below a decoder knows it, so the reading is done one
 layer up - `GRqDecoder` is handed the tokens as lexed, and `MarlinWords.stringArg()` reassembles
@@ -994,6 +995,7 @@ a block around them cannot be separated without one of them guessing at the othe
 | A block as bytes ([§5](#5-line-block-structure)) | `GEncoder.encode(draft: GBlockDraft): String` |
 | Framing ([§7](#7-line-numbering), [§8](#8-checksum-and-crc)) | `GEncoder.frame(number: Int, payload: String, checksum: CheckSumCalculator)` — **the primitive**; the `GCommand` and `GBlockDraft` overloads render their bytes and delegate to it |
 | The host's window ([§8.5](#85-failure-handling-and-the-resend-protocol)) | `GSendWindow.send(payload: String)` / `send(command: GCommand)`, `acknowledge()`, `canResendFrom()`, `resendFrom()`, `reset()` |
+| Line length ([§1.3](#13-line-length)) | `GLineLimit.wireLength()`, `fits()`, `overrun()`, `payloadBudget()`; `GSendWindow.fits(payload)` for the framed form |
 
 **Framing is defined over bytes, so the entry point takes bytes.** A sender that assigns the line
 number at the moment of writing — which [§7.2](#72-semantics) forces on anything that reorders blocks
@@ -1031,6 +1033,35 @@ Consequences, all verified by running:
 The last two are the price of not parsing, and are stated here rather than fixed: the caller holding
 rendered text knows what it rendered.
 
+**[§1.3](#13-line-length)'s limit is measured here, by `block/GLineLimit.kt`.** The dialect figures
+are constants (`MARLIN` 96, `REPRAP_FIRMWARE` and `RS274` 256, and the §1.3 guidance figure
+`INTEROPERABLE_PAYLOAD` 76), and three functions answer the three questions that get asked:
+`wireLength(line)`, `fits(line, limit)` / `overrun(line, limit)`, and
+`payloadBudget(number, limit, checksumDigits)` — how much payload a block numbered *n* may carry once
+framed. `GSendWindow.fits(payload)` is the exact form of that last question and the only place it can
+be answered, because the number is assigned in the window, at the moment of writing.
+
+Three facts the arithmetic depends on, all verified by running:
+
+* **the budget shrinks as the session runs.** `N1 ` costs three bytes and `N100000 ` costs eight, so
+  `payloadBudget(1)` is 89 and `payloadBudget(100000)` is 84 under Marlin. An 88-byte payload fits at
+  the start of a print and not later in it;
+* **the `*` field's width is the algorithm's worst case, not this value's.** [§8.2](#82-xor-checksum-the-common-algorithm)
+  masks to a byte, so three digits; [§8.4](#84-crc16-reprapfirmware) is always five. A budget
+  computed from `*7` would be wrong for the next block whose checksum is `*213`;
+* **bytes, not characters.** The wire is 7-bit ([§1.1](#11-character-set-and-encoding)) so the two
+  agree for a conforming line, but a [§3.4](#34-string-values)a rest-of-line string carries text a
+  user typed: `M117 Café` is 9 characters and 10 bytes of `MAX_CMD_SIZE`. `wireLength` counts UTF-8,
+  because counting characters there passes a line the firmware truncates.
+
+**Nothing enforces it, and that is deliberate.** `GSendWindow.send` returns null only when the window
+is full, which the caller is told to read as "wait for an `ok`" — and an over-long block must not take
+that path, because waiting will not shorten it. It also cannot simply be sent:
+[§8.5](#85-failure-handling-and-the-resend-protocol)'s recovery replays the *exact bytes*, so a block
+truncated once is truncated identically on every resend and the session stops making progress. **It
+is the one error class a resend cannot repair.** So the check is offered and the decision belongs to a
+caller that can fail a command rather than queue it — which, in this repo, is the transport.
+
 ---
 
 ## References
@@ -1049,4 +1080,3 @@ rendered text knows what it rendered.
    <https://docs.duet3d.com/User_manual/Reference/Gcode_meta_commands>
 7. Kramer, T. R., Proctor, F. M., Messina, E. — *The NIST RS274/NGC Interpreter — Version 3*,
    NISTIR 6556, 2000.
-</content>

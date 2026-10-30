@@ -9,7 +9,6 @@ import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
-import org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
@@ -21,13 +20,10 @@ import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
-import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
-import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
-import org.qw3rtrun.p3d.g.marlin.command.FanOff;
-import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition;
-import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
-import org.qw3rtrun.p3d.g.marlin.command.RelativePositioning;
-import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
+import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
+import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber;
+import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
+import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
@@ -260,10 +256,31 @@ public class PrinterState implements PrinterAggregate {
      * pointed at the aggregate rather than at the machine being unreachable, which is the least
      * useful place it could have pointed.
      *
-     * <p>Unhandled is a <em>warning</em> here, unlike {@link #onEvent}: a command is something a
-     * user asked for, and silently doing nothing about it is the failure. {@code PrinterControl}
-     * takes any {@link GRq}, and this is the short list the aggregate actually sends - the rest are
-     * a gap in this layer rather than noise from the machine.
+     * <p><strong>Sending is the default, and the list is what is special.</strong> This used to be
+     * the other way round - an allow-list of the commands the aggregate would send, and a
+     * {@code default} that logged a warning and dropped - on the argument that forgetting to add an
+     * arm would then be visible. It was visible only to whoever was reading the log of a running
+     * farm, and twice it was not read: motion once, and every command on the Storage tab after
+     * that, each shipped with its translation tested, its route returning 200 and no byte leaving
+     * the host. A list that has to be extended in lockstep with another module's is a list that
+     * will be forgotten, and the test that guards it is written by the same act of remembering, so
+     * it fails in exactly the cases the code does.
+     *
+     * <p>So the arms below are the two kinds of command that are <em>not</em> ordinary, and
+     * everything else is written as it was given:
+     *
+     * <ul>
+     *   <li><strong>Decided</strong> - the temperature commands, which this layer refuses when
+     *       incomplete, checks against the machine's extruder count, and fixes the scale of.</li>
+     *   <li><strong>Refused</strong> - commands that change what the connection <em>is</em> rather
+     *       than telling the machine to do something, and so cannot be correct as one block among
+     *       others. There are four, and each has been measured rather than guessed at.</li>
+     * </ul>
+     *
+     * <p>What this trades away is real and worth stating: a command that needed a decision and did
+     * not get an arm is now sent raw instead of dropped. That has never happened; the other failure
+     * has happened twice. The refusals below are where the cost is paid back, because the commands
+     * that are genuinely unsafe to pass through are few, known, and now named.
      */
     public void onCommand(GRq<?> command) {
         if (!connection.linked()) {
@@ -271,27 +288,40 @@ public class PrinterState implements PrinterAggregate {
             return;
         }
         switch (command) {
+            // Decided. A missing target is refused, a hotend index is checked against the machine's
+            // extruder count, and a scale is imposed on the wire - see the handlers below.
             case SetHotendTemperature c -> handle(c);
             case SetBedTemperature c -> handle(c);
             case ReportHotendTemperature c -> handle(c);
             case TemperatureAutoReport c -> handle(c);
 
-            // Motion, fans and settings carry no decision this layer gets to make: the application
-            // command was already translated into exactly the Marlin command the machine should
-            // receive, so these go through as they are. They are still listed one by one rather
-            // than caught by a wildcard, because the point of this switch is that adding a command
-            // and forgetting to send it is visible here.
-            case AutoHome c -> passThrough(c);
-            case LinearMoveG1 c -> passThrough(c);
-            case RelativePositioning c -> passThrough(c);
-            case AbsolutePositioning c -> passThrough(c);
-            case SetFanSpeed c -> passThrough(c);
-            case FanOff c -> passThrough(c);
-            case SaveSettings c -> passThrough(c);
-            case GetCurrentPosition c -> passThrough(c);
+            // Refused. Not because they are dangerous commands - they are all legitimate - but
+            // because this route cannot carry them correctly, and sending them anyway would be
+            // worse than saying so.
+            case StartSDWrite c -> refuse(c, "M28 turns the wire into a file sink until M29, so "
+                    + "every command queued behind it would be written into the file instead of "
+                    + "run - use PrinterControl.uploadToCard, which holds the connection");
+            case StopSDWrite c -> refuse(c, "M29 ends a transfer this route never began");
+            case SetGetLineNumber c -> refuse(c, "the line counter belongs to the send window; an "
+                    + "M110 sent as a command moves the firmware's and not the host's, and every "
+                    + "block after it is rejected for the rest of the session");
+            case FullShutdown c -> refuse(c, "an emergency stop queued behind a print is not one; "
+                    + "M112 needs Priority.EMERGENCY, and this route is not that");
 
-            default -> log.warn("no handler for {}, so nothing was sent", command);
+            default -> passThrough(command);
         }
+    }
+
+    /**
+     * Declines a command this route cannot carry, loudly and with the reason.
+     *
+     * <p>Distinct from the old {@code default} arm, which looked identical in the log and meant
+     * something else entirely - "nobody has got round to this yet" rather than "this is the wrong
+     * way to ask". The first was a bug every time it fired; this is a decision, and it names the
+     * right route where there is one.
+     */
+    private void refuse(GRq<?> command, String why) {
+        log.warn("{} was not sent to {}: {}", command, id, why);
     }
 
     public HeaterReading getTemperature() {
@@ -354,12 +384,12 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * Sends a command the aggregate has nothing to add to.
+     * Sends a command the aggregate has nothing to add to, which is most of them.
      *
-     * <p>The temperature handlers above exist because they <em>decide</em> something - a missing
-     * target is refused, a hotend index is checked against the machine's extruder count, a scale is
-     * imposed on the wire. Homing, moving, the fan and {@code M500} have no such decision at this
-     * layer, so a handler each would be eight copies of one line.
+     * <p>Homing, moving, the fan, {@code M500}, everything on the card: the request was already
+     * translated into exactly the Marlin command the machine should receive, so this layer has
+     * nothing left to decide and writes it as it was given. The temperature handlers above exist
+     * because they <em>do</em> decide something, which is what makes them worth naming.
      *
      * <p><strong>What is deliberately not checked here is the one thing worth checking.</strong> A
      * move is not validated against the bed volume, because a relative move cannot be without

@@ -54,6 +54,25 @@ public record MachineProfile(Map<String, String> firmware,
         }
     }
 
+    /**
+     * Whether the firmware said it has an SD card reader - Marlin's {@code Cap:SDCARD}.
+     *
+     * <p><strong>This is a question about the <em>firmware</em>, not about the slot.</strong> A
+     * build compiled without SD support reports {@code Cap:SDCARD:0} and will not answer
+     * {@code M20} or {@code M21} however many cards are pushed into it; a build that reports
+     * {@code 1} may still have an empty slot. So this decides whether the Storage tab is offered at
+     * all, and whether a card is actually present is a separate question nothing but {@code M21}
+     * can answer.
+     *
+     * <p>Absent is false, which covers both a machine that has never reported and one whose
+     * firmware does not know the capability. Mainline Marlin always writes the line, so in practice
+     * absent means nothing has asked yet - and {@link #isKnown()} is what tells those two apart for
+     * a page that wants to explain itself.
+     */
+    public boolean hasSdCard() {
+        return Boolean.TRUE.equals(capabilities.get("SDCARD"));
+    }
+
     public String firmwareName() {
         return firmware.get("FIRMWARE_NAME");
     }

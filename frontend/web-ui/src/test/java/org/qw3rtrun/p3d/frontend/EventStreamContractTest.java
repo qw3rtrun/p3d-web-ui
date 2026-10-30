@@ -10,6 +10,10 @@ import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.OkTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
+import org.qw3rtrun.p3d.g.marlin.event.SdCardOk;
+import org.qw3rtrun.p3d.g.marlin.event.SdFile;
+import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
+import org.qw3rtrun.p3d.g.marlin.event.SdFileOpened;
 import org.qw3rtrun.p3d.g.protocol.ErrorPrefix;
 import org.qw3rtrun.p3d.g.protocol.ErrorRs;
 import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs;
@@ -18,6 +22,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -209,6 +214,64 @@ class EventStreamContractTest {
         var busy = mapper.readTree(streamed(new SimpleBusyRs("processing")));
         assertEquals("SimpleBusyRs", busy.get("type").asString());
         assertEquals("processing", busy.get("event").get("reason").asString());
+    }
+
+    /**
+     * The card's listing, which is the one reply on this stream that was never a single line.
+     *
+     * <p>The firmware writes {@code Begin file list}, an entry each, {@code End file list}; the
+     * transport assembles them and publishes one of these. So the browser sees one event with a
+     * list in it, and the type string it switches on is {@code SdFileList}.
+     *
+     * <p><strong>{@code size} is a number and {@code name} is the card's spelling.</strong> A build
+     * without long-filename support reports DOS 8.3 in upper case, and that same text is what
+     * {@code M23} and {@code M30} take - so the page sends back what the listing gave it rather
+     * than what the user typed.
+     */
+    @Test
+    void aCardListingCarriesItsFilesAndTheirSizes() {
+        var payload = mapper.readTree(streamed(new SdFileList(List.of(
+                new SdFile("BENCHY.GCO", 2847561),
+                new SdFile("TEST.GCO", 47)))));
+
+        assertEquals("SdFileList", payload.get("type").asString());
+        assertEquals("BENCHY.GCO", payload.get("event").get("files").get(0).get("name").asString());
+        assertEquals(2847561, payload.get("event").get("files").get(0).get("size").asLong());
+        assertEquals(47, payload.get("event").get("files").get(1).get("size").asLong());
+    }
+
+    /**
+     * A card with nothing printable on it sends an empty list, and that is an answer.
+     *
+     * <p>Different from no event at all, which is what an interrupted listing produces - so the
+     * page can tell an empty card from a machine that never replied, and must not render the two
+     * the same way.
+     */
+    @Test
+    void anEmptyCardListingIsAnEmptyArrayAndNotAbsence() {
+        var payload = mapper.readTree(streamed(new SdFileList(List.of())));
+
+        assertEquals("SdFileList", payload.get("type").asString());
+        assertTrue(payload.get("event").get("files").isArray());
+        assertEquals(0, payload.get("event").get("files").size());
+    }
+
+    /**
+     * The two other SD replies the Storage tab reads, by the names it switches on.
+     *
+     * <p>{@code SdCardOk} carries nothing and is the whole of "there is a card": no command asks
+     * that question, so mounting and watching for this is how the tab finds out.
+     * {@code SdFileOpened} carries the size a progress bar divides by.
+     */
+    @Test
+    void theOtherTwoCardRepliesCarryTheirNamesAndFields() {
+        var ok = mapper.readTree(streamed(SdCardOk.INSTANCE));
+        assertEquals("SdCardOk", ok.get("type").asString());
+
+        var opened = mapper.readTree(streamed(new SdFileOpened("BENCHY.GCO", 2847561)));
+        assertEquals("SdFileOpened", opened.get("type").asString());
+        assertEquals("BENCHY.GCO", opened.get("event").get("file").asString());
+        assertEquals(2847561, opened.get("event").get("size").asLong());
     }
 
     /**

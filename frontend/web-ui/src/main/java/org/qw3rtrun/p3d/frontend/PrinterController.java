@@ -6,9 +6,14 @@ import org.qw3rtrun.p3d.api.control.PrinterControl;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
+import org.qw3rtrun.p3d.frontend.command.DeleteFile;
 import org.qw3rtrun.p3d.frontend.command.HomeAxes;
+import org.qw3rtrun.p3d.frontend.command.ListFiles;
+import org.qw3rtrun.p3d.frontend.command.MountCard;
 import org.qw3rtrun.p3d.frontend.command.MoveAxes;
+import org.qw3rtrun.p3d.frontend.command.PrintFile;
 import org.qw3rtrun.p3d.frontend.command.PrinterCommand;
+import org.qw3rtrun.p3d.frontend.command.ReleaseCard;
 import org.qw3rtrun.p3d.frontend.command.RequestPosition;
 import org.qw3rtrun.p3d.frontend.command.RequestTemperatureReport;
 import org.qw3rtrun.p3d.frontend.command.SetBedTarget;
@@ -150,6 +155,69 @@ public class PrinterController {
     @PostMapping("/position")
     public Mono<Void> position(@PathVariable UUID id) {
         return send(id, new RequestPosition());
+    }
+
+    /**
+     * Mount the card - {@code M21}, and the only way to ask whether there is one.
+     *
+     * <p>No command asks "is a card present", so the Storage tab infers it: the machine answers
+     * {@code echo:SD card ok} when there is one, which reaches the browser as {@code SdCardOk} on
+     * the event stream. Anything else is read as no card. See {@link MountCard}.
+     */
+    @PostMapping("/sd/mount")
+    public Mono<Void> mountCard(@PathVariable UUID id) {
+        return send(id, new MountCard());
+    }
+
+    /**
+     * Release the card - {@code M22}.
+     *
+     * <p>Ends a print that is running from it, because the reader is the job's source. The page
+     * disables the button while the machine is printing from the card; this endpoint does not
+     * second-guess that, for the reason {@link ReleaseCard} gives.
+     */
+    @PostMapping("/sd/release")
+    public Mono<Void> releaseCard(@PathVariable UUID id) {
+        return send(id, new ReleaseCard());
+    }
+
+    /**
+     * Ask for the card's contents - {@code M20}.
+     *
+     * <p>The listing does not come back here. It arrives on the event stream as one
+     * {@code SdFileList}, which the transport assembles from the three or more lines the firmware
+     * writes - a reply is an event in this application, and this one is several lines besides.
+     *
+     * <p>Only printable extensions are listed, which is Marlin's filter and not this one's: a file
+     * uploaded under another name is on the card and invisible here. See {@link ListFiles}.
+     */
+    @PostMapping("/sd/list")
+    public Mono<Void> listFiles(@PathVariable UUID id) {
+        return send(id, new ListFiles());
+    }
+
+    /**
+     * Delete a file from the card - {@code M30}.
+     *
+     * <p>Irreversible and unconfirmed by the machine, so the confirmation is the page's. The name
+     * must be the card's own spelling - what the listing reported - because that is what the
+     * firmware matches on.
+     */
+    @PostMapping("/sd/delete")
+    public Mono<Void> deleteFile(@PathVariable UUID id, @RequestBody Mono<DeleteFile> command) {
+        return send(id, command);
+    }
+
+    /**
+     * Start printing a file already on the card - {@code M23} then {@code M24}.
+     *
+     * <p>Two commands sent as one unit, because {@code :gcode}'s {@code M32} cannot carry a
+     * filename - see {@link PrintFile}, which records why. Watching the print is a different screen
+     * and a different issue; this only starts it.
+     */
+    @PostMapping("/sd/print")
+    public Mono<Void> printFile(@PathVariable UUID id, @RequestBody Mono<PrintFile> command) {
+        return send(id, command);
     }
 
     @PostMapping("/connect")

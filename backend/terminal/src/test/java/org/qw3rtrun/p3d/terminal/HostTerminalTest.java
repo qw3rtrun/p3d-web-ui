@@ -3,6 +3,8 @@ package org.qw3rtrun.p3d.terminal;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.marlin.event.SdFile;
+import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
 import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
 import org.qw3rtrun.p3d.g.protocol.BusyRs;
 import org.qw3rtrun.p3d.g.protocol.ErrorRs;
@@ -217,6 +219,116 @@ class HostTerminalTest {
         receive("Marlin bugfix-2.1.x");
 
         assertEquals(List.of(), published);
+    }
+
+    /**
+     * {@code M20}'s answer reaches the bus as one assembled listing, not as four lines.
+     *
+     * <p><strong>Nothing downstream could see a file list at all before this.</strong> The entries
+     * are deliberately not claimable replies - {@code TEST.GCO 47} is {@code <word> <number>}, far
+     * too common a shape to claim - so every one of them arrived as a line no decoder wanted and was
+     * dropped. The markers decoded and said nothing useful on their own. A Storage tab asking for a
+     * listing would have waited forever.
+     */
+    @Test
+    void anSdListingArrivesAsOneAssembledReply() {
+        listen();
+
+        receive("Begin file list");
+        receive("TEST.GCO 47");
+        receive("BENCHY.GCO 2847561");
+        receive("End file list");
+
+        assertEquals(1, published.size(), "four lines, one reply: " + published);
+        var listing = assertInstanceOf(SdFileList.class, published.getFirst());
+        assertEquals(List.of(new SdFile("TEST.GCO", 47), new SdFile("BENCHY.GCO", 2847561)),
+                listing.getFiles());
+    }
+
+    /**
+     * A card with nothing printable on it answers, and the answer is an empty list.
+     *
+     * <p>Which is a different fact from "no listing arrived", and the only reason a page can tell an
+     * empty card from a machine that never replied. This is the form the captured corpus holds.
+     */
+    @Test
+    void anEmptySdListingIsStillAnAnswer() {
+        listen();
+
+        receive("Begin file list");
+        receive("End file list");
+
+        assertEquals(1, published.size());
+        assertEquals(List.of(), assertInstanceOf(SdFileList.class, published.getFirst()).getFiles());
+    }
+
+    /**
+     * A listing something interrupted produces no listing at all - and the interruption still does.
+     *
+     * <p>The strict reading, and the right one: a host cannot tell a card holding one file from a
+     * card whose listing was cut off after one, so reporting the entries that did arrive would be
+     * reporting a short list as the card's contents. Silence is what a caller can act on.
+     *
+     * <p>The temperature report that interrupted it is published as itself, because it is a
+     * perfectly good reply that happened to land in the middle of something else.
+     */
+    @Test
+    void aListingSomethingInterruptedProducesNothing() {
+        listen();
+
+        receive("Begin file list");
+        receive("TEST.GCO 47");
+        receive("T:24.31 /0.00 @:0");
+        receive("BENCHY.GCO 2847561");
+        receive("End file list");
+
+        assertEquals(1, published.size(), "only the interrupting reply: " + published);
+        assertInstanceOf(TemperatureRs.class, published.getFirst());
+    }
+
+    /**
+     * The markers are scaffolding and are consumed, like a {@code Resend:}.
+     *
+     * <p>A subscriber told "a list is starting" can do nothing with that, and one told "a list has
+     * ended" has already been handed the list. Publishing them would put two events on the bus that
+     * only make sense beside a third.
+     */
+    @Test
+    void theListingMarkersThemselvesDoNotReachTheBus() {
+        listen();
+
+        receive("Begin file list");
+        assertEquals(List.of(), published);
+
+        receive("End file list");
+        assertEquals(1, published.size());
+        assertInstanceOf(SdFileList.class, published.getFirst());
+    }
+
+    /**
+     * A second listing on the same connection works, which is what Refresh does.
+     *
+     * <p>The reader is per-session rather than per-request, so this is the claim that it resets
+     * itself: a tab that lists, uploads and lists again must get two complete answers and not one
+     * followed by the first one repeated.
+     */
+    @Test
+    void asecondListingOnTheSameConnectionIsItsOwnAnswer() {
+        listen();
+
+        receive("Begin file list");
+        receive("A.GCO 1");
+        receive("End file list");
+
+        receive("Begin file list");
+        receive("B.GCO 2");
+        receive("End file list");
+
+        assertEquals(2, published.size());
+        assertEquals(List.of(new SdFile("A.GCO", 1)),
+                assertInstanceOf(SdFileList.class, published.get(0)).getFiles());
+        assertEquals(List.of(new SdFile("B.GCO", 2)),
+                assertInstanceOf(SdFileList.class, published.get(1)).getFiles());
     }
 
     /**

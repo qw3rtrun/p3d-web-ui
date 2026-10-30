@@ -207,4 +207,69 @@ class PrinterCommandBindingTest {
 
         assertEquals("M105", sent());
     }
+
+    // ------------------------------------------------- the Storage tab
+
+    /** The three that ask for nothing and so carry no body. */
+    @Test
+    void mountReleaseAndListNeedNoBody() {
+        client().post().uri("/api-printer/" + id + "/sd/mount").exchange().expectStatus().isOk();
+        assertEquals("M21", sent());
+
+        client().post().uri("/api-printer/" + id + "/sd/release").exchange().expectStatus().isOk();
+        assertEquals("M22", sent());
+
+        client().post().uri("/api-printer/" + id + "/sd/list").exchange().expectStatus().isOk();
+        assertEquals("M20", sent());
+    }
+
+    @Test
+    void theDeletePayloadBindsItsName() {
+        post("/sd/delete", "{\"name\":\"BENCHY.GCO\"}");
+
+        assertEquals("M30 BENCHY.GCO", sent());
+    }
+
+    /** Printing is two commands, so this is the one SD request that is not a single line. */
+    @Test
+    void thePrintPayloadBecomesSelectThenStart() {
+        post("/sd/print", "{\"name\":\"BENCHY.GCO\"}");
+
+        assertEquals(List.of("M23 BENCHY.GCO", "M24"), received.get());
+    }
+
+    /**
+     * A filename that would change what the G-code block means is a bad request, not a 500.
+     *
+     * <p><strong>The status is the point of this test, and it was not obvious.</strong> The check
+     * lives in a record's compact constructor and throws {@code IllegalArgumentException}, so what
+     * the browser sees depends on where WebFlux catches it - a body that fails to construct is a
+     * decoding failure and comes back 400, where the same exception thrown later in a handler would
+     * be a 500 and would read to a user as "the server is broken" rather than "that name is not
+     * allowed".
+     *
+     * <p>The payload itself is the injection: a filename is a bare rest-of-line string, so
+     * {@code "a.gco\nM112"} is a delete and an emergency stop.
+     */
+    @Test
+    void aFilenameCarryingANewlineIsRejectedAsABadRequest() {
+        client().post().uri("/api-printer/" + id + "/sd/delete")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"name\":\"a.gco\\nM112\"}")
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        assertEquals(List.of(), received.get(), "nothing may reach the printer");
+    }
+
+    @Test
+    void anEmptyFilenameIsRejectedAsABadRequest() {
+        client().post().uri("/api-printer/" + id + "/sd/print")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"name\":\"\"}")
+                .exchange()
+                .expectStatus().isBadRequest();
+
+        assertEquals(List.of(), received.get(), "nothing may reach the printer");
+    }
 }

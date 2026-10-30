@@ -23,9 +23,34 @@
                             <a class="nav-link active ps-0" id="home-tab" data-bs-toggle="tab" href="#overview"
                                role="tab" aria-controls="overview" aria-selected="true">Monitor</a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link" id="profile-tab" data-bs-toggle="tab" href="#audiences" role="tab"
+                        <!--
+                          Storage, in one of three states - and which one is decided here rather
+                          than in the island.
+
+                          A capability is true at request time and does not keep changing, which is
+                          the same test the Firmware panel below is on the server side for. So a
+                          machine with no card reader gets a dead tab with a tooltip, and the island
+                          is never mounted at all: no fetch, no flash of an enabled control, and
+                          nothing for an operator to click that could not work.
+
+                          A tab that opens onto an explanation of why it is useless is worse than
+                          one that says so before it is clicked. The tooltip hangs on a wrapper
+                          because a `.disabled` element fires no events of its own.
+
+                          The third state inherits the Firmware panel's own limitation and its
+                          wording: the profile is learned when a machine first connects, so
+                          connecting while this page is open leaves it stale until a reload.
+                        -->
+                        <li class="nav-item" th:with="sd=${printer.profile.hasSdCard()}">
+                            <a th:if="${sd}" class="nav-link" id="storage-tab" data-bs-toggle="tab"
+                               href="#storage" role="tab" aria-controls="storage"
                                aria-selected="false">Storage</a>
+                            <span th:unless="${sd}" data-bs-toggle="tooltip" data-bs-placement="bottom"
+                                  th:title="${printer.profile.isKnown()}
+                                            ? 'This firmware reports no SD card support.'
+                                            : 'This machine has not reported yet. Connect it and reload.'">
+                                <a class="nav-link disabled" aria-disabled="true" tabindex="-1">Storage</a>
+                            </span>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" id="contact-tab" data-bs-toggle="tab" href="#demographics" role="tab"
@@ -39,6 +64,21 @@
                     <!-- The connection badge and buttons are part of PrinterMonitor now. -->
                 </div>
                 <div class="tab-content tab-content-basic">
+                    <!--
+                      The card - a Vue island, because everything in it changes while you watch it.
+
+                      Rendered only when the firmware reports a reader, which is the other half of
+                      the disabled tab above: an island that mounted behind a dead tab would be
+                      invisible until it misbehaved, and it would open a stream to a machine the
+                      operator cannot use from here.
+                    -->
+                    <div class="tab-pane fade" id="storage" role="tabpanel" aria-labelledby="storage-tab"
+                         th:if="${printer.profile.hasSdCard()}">
+                        <div data-p3d="storage-tab"
+                             th:attr="data-uuid=${printer.uuid},
+                                      data-role=${currentRole}"></div>
+                    </div>
+
                     <!--
                       What the machine is - rendered by Thymeleaf and not by a Vue island.
 

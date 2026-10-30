@@ -75,6 +75,19 @@ function oneSubmenuAtATime(bootstrap: typeof import('bootstrap')) {
     })
 }
 
+/**
+ * Bootstrap tooltips are opt-in, and the theme ships only their CSS.
+ *
+ * Markup alone does nothing: `data-bs-toggle="tooltip"` is inert until something constructs a
+ * `Tooltip` for the element. The monitor page needs one to explain a **disabled** tab - a
+ * `.disabled` control fires no events of its own, so the tooltip hangs on a wrapper around it -
+ * and "the tab is dead and the page cannot say why" is the worst of the available outcomes.
+ */
+function enableTooltips(bootstrap: typeof import('bootstrap')) {
+    document.querySelectorAll('[data-bs-toggle="tooltip"]')
+        .forEach(element => new bootstrap.Tooltip(element))
+}
+
 export function startTheme(bootstrap: typeof import('bootstrap')) {
     document.querySelectorAll('[data-bs-toggle="minimize"]')
         .forEach(control => control.addEventListener('click', minimiseSidebar))
@@ -84,4 +97,5 @@ export function startTheme(bootstrap: typeof import('bootstrap')) {
 
     hoverToOpenWhenCollapsed()
     oneSubmenuAtATime(bootstrap)
+    enableTooltips(bootstrap)
 }

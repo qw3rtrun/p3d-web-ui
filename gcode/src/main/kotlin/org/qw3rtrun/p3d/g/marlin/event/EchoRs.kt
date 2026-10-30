@@ -15,7 +15,9 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  *
  * `serial_echo_start()` writes the prefix, and everything from a settings dump to a busy notice to
  * a rejected command comes out under it. [UnknownCommand] and [BusyNotice] are split out because a
- * host has to act on them; everything else is [EchoMessage].
+ * host has to act on them; [SdCardOk] and [SdFreshFile] because what they report is the card
+ * rather than the echo channel, and they are [SdCardRs] as well for that reason; everything else is
+ * [EchoMessage].
  *
  * ```
  * EchoRsDecoder.decode("echo:Unknown command: \"M9999\"")   // UnknownCommand("M9999")
@@ -31,9 +33,9 @@ interface EchoRs<D : EchoRs<D>> : GEventRs<D>
  * `echo:<text>` - a line of prose from the firmware.
  *
  * Deliberately matches none of the specialisations - [UnknownCommand], [InvalidExtruder],
- * [BusyNotice], [DebugLevelRs], [ColdExtrusionRs], [ColdExtrusionPrevented] - so they partition
- * the prefix between them and no line is claimed by two, the way `DebugRs` and `ActionRs`
- * partition `//`.
+ * [BusyNotice], [DebugLevelRs], [ColdExtrusionRs], [ColdExtrusionPrevented], [SdCardOk],
+ * [SdFreshFile] - so they partition the prefix between them and no line is claimed by two, the way
+ * `DebugRs` and `ActionRs` partition `//`.
  *
  * ```
  * EchoMessage.decode("echo:busy")   // EchoMessage("busy")
@@ -49,10 +51,10 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
     companion object : GRsDecoder<EchoMessage> {
 
         /**
-         * The general `echo:` line - everything on that channel that is not one of the six kinds
+         * The general `echo:` line - everything on that channel that is not one of the eight kinds
          * with a class of its own.
          *
-         * The `echo:` test comes first and is cheap, so the six reads below happen only for a line
+         * The `echo:` test comes first and is cheap, so the eight reads below happen only for a line
          * that really is an echo. They are kept for a **direct** call, which has no other way to
          * know; [EchoRsDecoder] answers the same question by trying the specific decoders first and
          * never reaching this one for a line they claim.
@@ -66,6 +68,8 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
             if (ColdExtrusionRs.match(line)) return null
             if (ColdExtrusionPrevented.match(line)) return null
             if (InvalidExtruder.match(line)) return null
+            if (SdCardOk.match(line)) return null
+            if (SdFreshFile.match(line)) return null
             return EchoMessage(text.substring(PREFIX.length).asciiTrim())
         }
 
@@ -241,7 +245,7 @@ data class BusyNotice(override val reason: String) : BusyRs<BusyNotice>, EchoRs<
 /**
  * Any `echo:` line, tried most specific first.
  *
- * The order is the partition: [EchoMessage] excludes what the other two claim, so the three never
+ * The order is the partition: [EchoMessage] excludes what the specialisations claim, so no two ever
  * answer to the same line and the registry above does not depend on which is asked first.
  *
  * ```
@@ -266,6 +270,8 @@ object EchoRsDecoder : GRsDecoder<EchoRs<*>> {
         DebugLevelRs,
         ColdExtrusionRs,
         ColdExtrusionPrevented,
+        SdCardOk,
+        SdFreshFile,
         EchoMessage,
     )
 

@@ -1,7 +1,5 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
-import org.qw3rtrun.p3d.g.protocol.GEventRs
-import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
@@ -13,7 +11,8 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * `M27`'s answer: either the machine is printing from its card, or it is not.
  *
  * Two shapes for one question, so they share an interface the way the `ok` replies do. Decode with
- * [SdStatusRsDecoder] when you only want to know which.
+ * [SdStatusRsDecoder] when you only want to know which, and with [SdCardRsDecoder] when you want
+ * anything the card has to say.
  *
  * ```
  * SdStatusRsDecoder.decode("Not SD printing")   // SdNotPrinting
@@ -21,7 +20,7 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-interface SdStatusRs<D : SdStatusRs<D>> : GEventRs<D>
+interface SdStatusRs<D : SdStatusRs<D>> : SdCardRs<D>
 
 /**
  * `SD printing byte <position>/<size>` - how far into the file on the card the machine has read.

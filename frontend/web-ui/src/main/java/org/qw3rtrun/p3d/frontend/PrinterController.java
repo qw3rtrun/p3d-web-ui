@@ -21,6 +21,7 @@ import org.qw3rtrun.p3d.frontend.command.SetFanSpeed;
 import org.qw3rtrun.p3d.frontend.command.SetHotendTarget;
 import org.qw3rtrun.p3d.frontend.command.SetTemperatureAutoReport;
 import org.qw3rtrun.p3d.frontend.command.StoreSettings;
+import org.qw3rtrun.p3d.frontend.command.UploadToCard;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -218,6 +219,42 @@ public class PrinterController {
     @PostMapping("/sd/print")
     public Mono<Void> printFile(@PathVariable UUID id, @RequestBody Mono<PrintFile> command) {
         return send(id, command);
+    }
+
+    /**
+     * Write a file the server holds onto the card - {@code M28}, the file, {@code M29}.
+     *
+     * <p><strong>It answers when the transfer has started, not when it has finished.</strong> Every
+     * line is a round trip inside the send window, so a real file takes minutes; a request held
+     * open for that is a request that times out. Progress and the end both arrive on the event
+     * stream as {@code SdUploadProgressed}.
+     *
+     * <p>The bytes are not in this request. The browser posts them to {@code /api-files} first and
+     * names the result here - see {@link UploadToCard}.
+     *
+     * <p><strong>The machine takes nothing else until it is over.</strong> That is not a policy of
+     * this endpoint, it is what {@code M28} does to the wire, and the transport enforces it by
+     * holding the connection exclusively for the transfer.
+     */
+    @PostMapping("/sd/upload")
+    public Mono<Void> uploadToCard(@PathVariable UUID id, @RequestBody Mono<UploadToCard> command) {
+        return command.flatMap(c -> Mono.from(printers.uploadToCard(id, c.fileId(), c.name())));
+    }
+
+    /**
+     * Stop a transfer that is running - and close the file behind it.
+     *
+     * <p>Not a cancel in the Reactive Streams sense, deliberately: the content stops and
+     * {@code M29} still goes out, so the card is left with a short but <em>closed</em> file.
+     * Tearing it out instead would leave the file open, and the next command the machine was given
+     * would be written into it.
+     *
+     * <p>Answers OK whether or not anything was running. The page's button and the machine's state
+     * are different clocks.
+     */
+    @PostMapping("/sd/upload/cancel")
+    public Mono<Void> cancelCardUpload(@PathVariable UUID id) {
+        return Mono.from(printers.cancelCardUpload(id));
     }
 
     @PostMapping("/connect")

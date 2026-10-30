@@ -281,8 +281,14 @@ class HostTerminalTest {
      * <p>Ten asked for downstream, one pulled from the source: until a printer says otherwise it
      * gets one command and nothing more until it acknowledges. An advanced {@code ok} reporting
      * {@code B3} then widens it to three, and the next pull is for three - which only happens if
-     * {@code ok N2 P15 B3} decodes, so this is also where the {@code N}-first field order is pinned
+     * {@code ok N1 P15 B3} decodes, so this is also where the {@code N}-first field order is pinned
      * on the flow-control side.
+     *
+     * <p>The acknowledgement used to read {@code ok N2} while the block in flight was {@code N1} -
+     * a printer naming a block this host had never sent. It passed either way, because the two
+     * readings of it happen to leave {@code canProcess()} at three: released, the window frees a
+     * slot it was not using; unreleased, the block-queue term binds instead. Now that the number is
+     * acted on it says something, so it says the true thing.
      */
     @Test
     void theWindowIsTheBlockQueueAndNotTheSubscribersDemand() {
@@ -295,9 +301,110 @@ class HostTerminalTest {
                 .thenRequest(10)
                 .expectNext("N1 G1 X1*96\n")
                 .then(() -> assertEquals(List.of(1L), pulled))
-                .then(() -> receive("ok N2 P15 B3"))
+                .then(() -> receive("ok N1 P15 B3"))
                 .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
                 .then(() -> assertEquals(List.of(1L, 3L), pulled))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * A numbered {@code ok} for a block this host never sent releases nothing.
+     *
+     * <p>The failure it prevents is not the lost block, it is everything after it. Counted, this
+     * acknowledgement releases the oldest block in the window and the correspondence between an
+     * {@code ok} and the block it answers is one out for the rest of the session - so a later
+     * {@code Resend:} replays the wrong bytes, and does it in silence, because a number the window
+     * does not hold is answered with an empty list rather than a complaint.
+     *
+     * <p>The credit is still applied: a reply arrived, so the printer has a slot free whatever it
+     * named. That half was never in doubt, and separating the two is the point.
+     */
+    @Test
+    void anOkNamingABlockTheWindowNeverSentReleasesNothing() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N99 P15 B3"))
+                // Credit applied, so the printer's three slots are offered and filled...
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                // ...and nothing was announced, because nothing was released.
+                .then(() -> assertEquals(List.of(), acknowledged(),
+                        "an ok for a block never sent must not release one"))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * The block a numbered {@code ok} names is the one announced, and the replay stays correct.
+     *
+     * <p>End to end, which is the only way this is worth asserting: the window is still holding the
+     * right bytes under the right numbers after a stray acknowledgement has been through it, so the
+     * {@code Resend:} that follows replays exactly what the firmware asked for.
+     */
+    @Test
+    void aStrayAcknowledgementLeavesTheResendReplayingTheRightBlocks() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .then(() -> assertEquals(List.of(new BlockAcknowledged(1, 0)), acknowledged()))
+                // A stray one lands in the middle, naming a block long since released. It is still
+                // a reply, so the credit frees a slot and a fifth block goes out - that half is not
+                // in dispute and is asserted so the test is not surprised by it.
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N5 G1 X5*96\n")
+                .then(() -> assertEquals(List.of(new BlockAcknowledged(1, 0)), acknowledged(),
+                        "the stray ok released no second block"))
+                // And the window is undisturbed: everything from 2 onwards replays, in order,
+                // byte for byte, under the numbers it was first sent with.
+                .then(() -> receive("Resend: 2"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n", "N5 G1 X5*96\n")
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * An {@code ok} that names a later block releases the ones in front of it too.
+     *
+     * <p>Spec 8.5 has the firmware acknowledge in order, so an {@code ok N3} while 2 and 3 are
+     * outstanding says both were taken and the acknowledgement for 2 was lost on the way back -
+     * not that 2 is somehow still pending. Counted, the window would be left believing 3 is
+     * outstanding when the printer has already executed it.
+     *
+     * <p>One {@code BlockAcknowledged} is published, under the number the wire named. A consumer
+     * reading these as a high-water mark is right; one counting them as a tally would be short, and
+     * the log says so at INFO when it happens, because it only happens when a reply was lost.
+     */
+    @Test
+    void anOkNamingALaterBlockReleasesTheOnesInFrontOfIt() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                // The ok for 2 never arrives; the one for 3 does.
+                .then(() -> receive("ok N3 P15 B3"))
+                .then(() -> assertEquals(
+                        List.of(new BlockAcknowledged(1, 0), new BlockAcknowledged(3, 1)),
+                        acknowledged(),
+                        "N2 and N3 are both released, and N4 is what is left in flight"))
                 .thenCancel()
                 .verify(TIMEOUT);
     }

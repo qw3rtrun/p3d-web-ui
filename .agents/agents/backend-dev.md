@@ -1,8 +1,8 @@
 ---
 name: backend-dev
 description: >-
-  Spring application work in this repo: the `api`, `core`, `printer-management`, `frontend` and
-  `app` submodels - the Java/Kotlin layers that expose printers over REST and SSE, persist them with JPA and
+  Spring application work in this repo: the `api`, `core`, `management` and `frontend` submodels -
+  the Java/Kotlin layers that expose printers over REST and SSE, persist them with JPA and
   Liquibase, and hold the printer aggregate. Use for WebFlux controllers, SSE and WebSocket
   endpoints, Spring configuration and bean wiring, JPA entities, repositories and changelogs, Spring
   Modulith boundaries and their verification, the command/query and event buses, the printer
@@ -11,7 +11,8 @@ description: >-
   print-job entity and its state machine", "stop leaking reactors on delete", "expose a farm-wide
   SSE stream", "convert this module to Kotlin". Do NOT use for the G-code tokenizer, checksums or
   reply decoders under `:gcode` - that is protocol-dev - nor for the Reactor pipelines, send window
-  or socket handling in `:backend:terminal`, which is terminal-dev.
+  or socket handling in `:backend:terminal`, which is terminal-dev, nor for `:app` and its
+  integration tests, which belong to lead-dev alone.
 tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell, Skill, WebSearch, WebFetch
 model: opus
 ---
@@ -139,6 +140,10 @@ development, Lombok throughout.
   aggregate wrote; a new reply needs one saying it reached a subscriber. A translation test in
   `:frontend:web-ui` proves neither, and **no test can span the two modules** - `:frontend:web-ui`
   does not depend on `:backend:core` by design, so the join exists only in somebody's head.
+- **`:app` is not yours.** The assembly and every integration test in it belong to `lead-dev`, so
+  that the module which proves the others fit together cannot be edited by the agent whose work it
+  is proving. You may *read* it, and `./gradlew :app:test` is how you check a module boundary. If a
+  change needs an integration test, say so in your report and let the lead write it.
 - **Everything created is released.** A reactor, a socket, a sink, a subscription — name the owner.
 
 ## Working in this repo

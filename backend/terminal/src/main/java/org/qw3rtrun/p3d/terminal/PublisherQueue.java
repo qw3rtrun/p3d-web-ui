@@ -8,6 +8,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
 import java.util.Queue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -34,6 +35,11 @@ import java.util.function.Consumer;
  * {@code requested.reset()} then {@code request(n)} is three steps, and two threads that each
  * peeked the same head would each have claimed the demand - one of them handing the publisher a
  * zero, which Reactive Streams rule 3.9 makes an error rather than a no-op.
+ *
+ * <p><strong>One source may ask not to be interleaved at all</strong> - see
+ * {@link #addExclusivePublisher}. Preemption is this class's whole purpose and an SD upload is the
+ * one thing it must not do, because between {@code M28} and {@code M29} the wire is a file sink
+ * rather than a command channel.
  */
 @Slf4j
 public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>, Subscription {
@@ -66,6 +72,15 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
     /** Set once, by whatever ends the stream. Every signalling path checks it first. */
     private final AtomicBoolean terminated = new AtomicBoolean();
 
+    /**
+     * The exclusive source that currently has the connection to itself, or null.
+     *
+     * <p>Written only from inside {@link #drain()}, which is single-threaded by its {@code wip}
+     * guard; {@code volatile} because {@link #onNext} reads it on whichever thread a source
+     * produces on.
+     */
+    private volatile PublisherDescr exclusiveHolder;
+
     /** The drain guard - zero when nobody is inside {@link #drain()}. */
     private final AtomicInteger wip = new AtomicInteger();
 
@@ -86,7 +101,67 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
      * <p>A caller that does not care ignores it; an unsubscribed {@code Mono} costs one sink.
      */
     public Mono<Void> addPublisher(P priority, Publisher<? extends T> publisher) {
-        var descr = new PublisherDescr(publisher, priority, sequence.getAndIncrement());
+        return add(priority, publisher, false);
+    }
+
+    /**
+     * Adds a source that must not be interleaved with anything else.
+     *
+     * <p><strong>This exists for {@code M28}.</strong> An SD upload opens a file on the card and
+     * every line sent after it is <em>written into that file</em> rather than executed, until
+     * {@code M29} closes it. So a command from any other source that reaches the wire in between
+     * does not run - it is stored, and the fault surfaces much later as a line of nonsense in the
+     * middle of a print. Nothing catches it and nothing reports it.
+     *
+     * <p><strong>Priority alone does not prevent that</strong>, which is why this is a mechanism
+     * rather than a convention. Queueing an upload above everything else does keep it at the head
+     * of the heap, but a source that was handed demand <em>before</em> the upload was queued still
+     * holds that demand and may emit on it at any moment - a print already streaming at
+     * {@code BACKGROUND}, or an interactive command given a unit a moment earlier.
+     *
+     * <h2>What the caller gets</h2>
+     *
+     * <ul>
+     *   <li><strong>It waits to start.</strong> It takes the connection when it is the head
+     *       <em>and</em> no other source is holding demand, and not before. The demand it would
+     *       have been given is withheld meanwhile rather than handed elsewhere, so the wait is
+     *       short: every other source either spends what it holds or completes.
+     *   <li><strong>Then it keeps the connection</strong> until it completes. Everything queued
+     *       behind it waits, however much demand arrives.
+     *   <li><strong>A source of strictly higher priority preempts it, and that aborts it.</strong>
+     *       The returned {@link Mono} errors with {@link Preempted}; see below.
+     * </ul>
+     *
+     * <h2>Why a preemption aborts rather than pauses</h2>
+     *
+     * An emergency stop cannot wait. A real sliced file is tens of thousands of lines at one round
+     * trip each, so an {@code M112} held until the transfer finished would arrive minutes late,
+     * which is not a stop. It therefore goes through - and Marlin's emergency parser reads it out
+     * of the serial bytes as they arrive, ahead of the command queue and ahead of the SD redirect,
+     * so it does fire. The same bytes are also written into the open file.
+     *
+     * <p>So the file is corrupt the moment anything else reaches the wire, and a half-written
+     * transfer cannot be resumed from where it stopped. Carrying on would produce a file that
+     * looks complete and is not. The caller is told instead.
+     *
+     * <p><strong>Queue an upload at {@link org.qw3rtrun.p3d.terminal.msg.Priority#REALTIME}</strong>,
+     * which is the slot with only {@code EMERGENCY} above it - so an emergency stop is the one
+     * thing that can take the wire away, and that is the one thing that should be able to.
+     *
+     * <h2>The one way it can be delayed indefinitely</h2>
+     *
+     * A source that is holding demand and neither emits nor completes keeps an exclusive source
+     * waiting. Every source this queue has today is request-driven and spends what it is given
+     * promptly, and the amount outstanding is bounded by the send window, so in practice the wait
+     * is a few blocks. It is still a wait with no timeout here: a deadline belongs to the layer
+     * that knows what the transfer is for, not to the queue.
+     */
+    public Mono<Void> addExclusivePublisher(P priority, Publisher<? extends T> publisher) {
+        return add(priority, publisher, true);
+    }
+
+    private Mono<Void> add(P priority, Publisher<? extends T> publisher, boolean exclusive) {
+        var descr = new PublisherDescr(publisher, priority, sequence.getAndIncrement(), exclusive);
         if (terminated.get()) {
             log.debug("the queue is over, so {} was not added", publisher);
             return Mono.empty();
@@ -137,9 +212,13 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
      * {@link PublisherDescr#onComplete} calls this from inside the drain that caused the
      * completion, and the nested call defers to the loop already on the stack.
      *
-     * <p><strong>All of it goes to the head and none is held back.</strong> That is what makes a
-     * preemption work: the demand follows whatever is now highest priority, and what the previous
-     * head did not spend comes back to the pool when it completes.
+     * <p><strong>All of it goes to the head and none is held back</strong>, with one exception -
+     * an exclusive source that is not ready to start is given nothing and the demand stays in the
+     * pool. That is the whole of {@link #addExclusivePublisher}: handing it elsewhere is what the
+     * upload must not have happen.
+     *
+     * <p>Otherwise the demand follows whatever is now highest priority, and what the previous head
+     * did not spend comes back to the pool when it completes.
      */
     private void drain() {
         if (wip.getAndIncrement() != 0) {
@@ -147,15 +226,15 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
         }
         int missed = 1;
         for (; ; ) {
-            if (!terminated.get() && requested.get() > 0) {
-                var head = publishers.peek();
-                if (head != null) {
+            if (!terminated.get()) {
+                var head = headThatMayRun();
+                if (head != null && requested.get() > 0) {
                     long give = requested.reset();
                     if (give > 0) {
                         log.debug("requesting {} from {}", give, head.publisher);
                         head.request(give);
                     }
-                } else {
+                } else if (head == null && requested.get() > 0) {
                     log.debug("unsatisfied {}", requested);
                 }
             }
@@ -166,11 +245,121 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
         }
     }
 
+    /**
+     * The source that may be given demand right now, or null when none may be.
+     *
+     * <p>Drain loop only, which is what makes {@link #exclusiveHolder} safe to read and write here
+     * without atomics: the {@code wip} guard admits one thread, and the hand-off through it carries
+     * the happens-before.
+     *
+     * <p>Three decisions, in the order they have to be made:
+     *
+     * <ol>
+     *   <li><strong>A holder that is no longer the head has been outranked</strong>, because the
+     *       heap puts the most urgent source first and nothing else moves it. That is a preemption,
+     *       and a preempted transfer is aborted rather than resumed - see
+     *       {@link #abortExclusive}.
+     *   <li><strong>An exclusive head waits while anyone else holds demand.</strong> Demand already
+     *       handed out is demand that can still be spent, and a line spent on it during a transfer
+     *       is written into the file. The pool keeps what it would have been given, so the wait
+     *       ends by itself the moment the last outstanding unit is spent or its source completes.
+     *   <li><strong>Otherwise the head runs</strong>, exclusive or not, and an exclusive one
+     *       becomes the holder as it starts.
+     * </ol>
+     */
+    private PublisherDescr headThatMayRun() {
+        var head = publishers.peek();
+        var holder = exclusiveHolder;
+        if (holder != null) {
+            if (head == holder) {
+                return holder;
+            }
+            abortExclusive(holder, head);
+            head = publishers.peek();
+        }
+        if (head == null || !head.exclusive) {
+            return head;
+        }
+        var blocker = sourceStillHoldingDemand(head);
+        if (blocker != null) {
+            log.debug("OUT: {} is waiting for the connection - {} still holds {} unit(s) of demand",
+                    head.publisher, blocker.publisher, blocker.requested);
+            return null;
+        }
+        exclusiveHolder = head;
+        log.info("OUT: {} has the connection to itself until it finishes", head.publisher);
+        return head;
+    }
+
+    /**
+     * Any source other than {@code except} that could still emit, or null when none can.
+     *
+     * <p>A weakly consistent iteration over the heap is enough: a source added during it is one
+     * that has been given no demand yet, and this is re-asked on every emission and every
+     * completion anyway.
+     */
+    private PublisherDescr sourceStillHoldingDemand(PublisherDescr except) {
+        for (var d : publishers) {
+            if (d != except && d.requested.get() > 0) {
+                return d;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Something more urgent arrived, so the transfer is over and the caller is told.
+     *
+     * <p>It does <strong>not</strong> end the queue, unlike {@link #onError} - the session is fine
+     * and the preempting source is about to use it. Only this one source dies.
+     *
+     * <p>The unspent demand goes back to the pool, the way a completion returns it, so the
+     * preempting source is not left waiting for a request that was already made.
+     */
+    private void abortExclusive(PublisherDescr holder, PublisherDescr preemptedBy) {
+        exclusiveHolder = null;
+        publishers.remove(holder);
+        long unspent = holder.requested.get();
+        holder.cancel();
+        requested.inc(unspent);
+        log.warn("OUT: {} had the connection to itself and was preempted by {} - aborting it,"
+                        + " because a transfer that is already half-written cannot be resumed",
+                holder.publisher, preemptedBy == null ? "a cancellation" : preemptedBy.publisher);
+        holder.finished.tryEmitError(new Preempted(holder.publisher, preemptedBy));
+    }
+
+    /**
+     * What a source queued with {@link #addExclusivePublisher} fails with when it is preempted.
+     *
+     * <p>A type rather than a plain {@code IllegalStateException}, because the caller has to tell
+     * this apart from a source that failed on its own: an upload aborted this way has left a file
+     * open on the card that the next {@code M29} or reset will close as a truncated one, and
+     * whatever is driving it needs to say so rather than retry blindly.
+     */
+    public static final class Preempted extends RuntimeException {
+
+        Preempted(Object source, Object preemptedBy) {
+            super(source + " had exclusive use of the connection and was preempted by "
+                    + (preemptedBy == null ? "a cancellation" : preemptedBy));
+        }
+    }
+
     void onNext(PublisherDescr p, T t) {
         if (terminated.get()) {
             return;
         }
         subscriber.onNext(t);
+
+        // A source that has just spent its last unit may be the only thing an exclusive source is
+        // waiting for, and nothing else would notice: a completion drains, an emission on its own
+        // does not. Asked narrowly rather than draining after every value, because this is the
+        // per-value path.
+        if (exclusiveHolder == null && p.requested.get() == 0) {
+            var head = publishers.peek();
+            if (head != null && head.exclusive) {
+                drain();
+            }
+        }
     }
 
     /**
@@ -186,6 +375,9 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
      */
     void onError(PublisherDescr p, Throwable t) {
         publishers.remove(p);
+        if (exclusiveHolder == p) {
+            exclusiveHolder = null;
+        }
         p.finished.tryEmitError(t);
         terminate(s -> s.onError(t));
     }
@@ -198,6 +390,10 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
      */
     void onComplete(PublisherDescr p) {
         publishers.remove(p);
+        if (exclusiveHolder == p) {
+            exclusiveHolder = null;
+            log.info("OUT: {} is finished and the connection is shared again", p.publisher);
+        }
         requested.inc(p.requested.reset());
         p.finished.tryEmitEmpty();
         drain();
@@ -215,13 +411,25 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
      * <p>One place, so that "has this stream ended" has one answer. A null signal is a cancel -
      * the subscriber asked to stop and Reactive Streams rule 2.4 says it is not to be signalled
      * afterwards.
+     *
+     * <p><strong>Every source still in the queue is failed, not just cancelled.</strong> It used to
+     * be cancelled and told nothing, so the {@link Mono} {@link #addPublisher} answers with simply
+     * never signalled - a caller waiting on it waited for the life of the process. That was
+     * invisible while nothing subscribed to those {@code Mono}s; an upload is the first thing whose
+     * whole report to the user is that signal, and "the connection went away mid-transfer" is
+     * precisely the case it must not lose. A job in the same position has the same claim on it.
      */
     private void terminate(Consumer<Subscriber<? super T>> signal) {
         if (!terminated.compareAndSet(false, true)) {
             return;
         }
         requested.reset();
-        publishers.forEach(PublisherDescr::cancel);
+        exclusiveHolder = null;
+        publishers.forEach(p -> {
+            p.cancel();
+            p.finished.tryEmitError(new CancellationException(
+                    p.publisher + " was still running when the queue ended"));
+        });
         publishers.clear();
         var s = subscriber;
         if (signal != null && s != null) {
@@ -248,6 +456,9 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
         private final P priority;
         private final long seq;
 
+        /** Whether this source may be interleaved with any other - see {@link #addExclusivePublisher}. */
+        private final boolean exclusive;
+
         /** Completes when this source does - see {@link #addPublisher}. */
         private final Sinks.One<Void> finished = Sinks.one();
 
@@ -271,10 +482,11 @@ public class PublisherQueue<T, P extends Comparable<P>> implements Publisher<T>,
          */
         private final Requested pending = new Requested();
 
-        PublisherDescr(Publisher<? extends T> publisher, P priority, long seq) {
+        PublisherDescr(Publisher<? extends T> publisher, P priority, long seq, boolean exclusive) {
             this.publisher = publisher;
             this.priority = priority;
             this.seq = seq;
+            this.exclusive = exclusive;
         }
 
         @Override

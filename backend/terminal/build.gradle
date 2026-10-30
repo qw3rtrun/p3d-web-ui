@@ -47,3 +47,21 @@ tasks.register('probeTemperature', JavaExec) {
             (findProperty('probeTimeout') ?: '10').toString(),
     ]
 }
+
+/**
+ * Upload a file to the card twice - once exclusively, once shared - while something competes for
+ * the wire, and report whether anything leaked into it.
+ *
+ * Hand-run only, like the probe above: it writes to the card on the far end, so it is deliberately
+ * not wired into `check`. The shared run is the control and is meant to fail.
+ */
+tasks.register('probeSdUpload', JavaExec) {
+    group = 'verification'
+    description = 'Upload to the SD card through the real transport with a competing source, and measure what got in.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.SdUploadProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

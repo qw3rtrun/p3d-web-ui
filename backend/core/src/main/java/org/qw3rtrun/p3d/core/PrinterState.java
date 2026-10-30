@@ -20,10 +20,25 @@ import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
+import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
+import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
+import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
+import org.qw3rtrun.p3d.g.marlin.command.FanOff;
 import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
+import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition;
+import org.qw3rtrun.p3d.g.marlin.command.InitSDCard;
+import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
+import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
+import org.qw3rtrun.p3d.g.marlin.command.RelativePositioning;
+import org.qw3rtrun.p3d.g.marlin.command.ReleaseSDCard;
+import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
+import org.qw3rtrun.p3d.g.marlin.command.SelectSDFile;
+import org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed;
 import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber;
+import org.qw3rtrun.p3d.g.marlin.command.StartOrResumeSDPrint;
 import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
+import org.qw3rtrun.p3d.g.marlin.event.SdCardRs;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
@@ -203,15 +218,21 @@ public class PrinterState implements PrinterAggregate {
      * and the farm's own events are not {@code GRs} at all. What the switch does buy is that every
      * arm is type-checked and a handler that is renamed or removed breaks the build instead of
      * going quiet.
+     *
+     * <p><strong>Republishing is the default, and every known reply has a named {@code on}
+     * handler.</strong> This arm used to drop what it did not recognise, and that dropped three
+     * finished features before anybody noticed: a position report decoded all the way through the
+     * transport and never reached a browser, and then both halves of the Storage tab, whose
+     * {@code SdCardOk} and {@code SdFileList} arrived here correctly parsed and stopped. The rule
+     * that replaces it is in {@link #onCommand}'s javadoc and holds in both directions - the
+     * aggregate is the seam every operating message crosses, so a message it has nothing to say
+     * about is passed on rather than discarded.
      */
     public void onEvent(Object event) {
         switch (event) {
-            case BlockAcknowledged ack -> {
-                blocksInFlight = ack.inFlight();
-                transition(connection.blockAcknowledged());
-            }
-            case BusyRs<?> e -> transition(connection.busyReported(e.getReason()));
-            case ErrorRs e -> transition(connection.faulted(e.getMessage()));
+            case BlockAcknowledged e -> on(e);
+            case BusyRs<?> e -> on(e);
+            case ErrorRs e -> on(e);
             case TemperatureRs<?> e -> {
                 heard();
                 on(e);
@@ -224,27 +245,36 @@ public class PrinterState implements PrinterAggregate {
                 heard();
                 on(e);
             }
-            /*
-             * Republished, not kept.
-             *
-             * The aggregate has nothing to decide about a position: there is no rule it enforces
-             * and no other handler that reads one. Storing it anyway would be the write-only field
-             * this module already removed once - `PrinterEntity.connected`, written by nothing and
-             * read by nothing - so it goes to whoever is watching and no further.
-             *
-             * It still needs an arm. An event with no arm reaches `default` and is *dropped*, so a
-             * reply that is mapped all the way through the transport can still never appear in a
-             * browser - which is exactly how this one behaved until this case existed.
-             */
             case PositionRs e -> {
                 heard();
-                emitter.accept(e);
+                on(e);
+            }
+            case SdCardRs<?> e -> {
+                heard();
+                on(e);
             }
             default -> {
                 heard();
-                log.debug("nothing for the aggregate to do about {}", event);
+                republish(event);
             }
         }
+    }
+
+    /**
+     * Passes on a reply the aggregate has no named handler for.
+     *
+     * <p>The counterpart of {@link #passThrough} on the command side, and it exists for the same
+     * reason: a list that has to be extended by hand every time {@code :gcode} learns a new reply
+     * is a list that will be forgotten, and what it used to cost when it was forgotten was the
+     * whole feature. Now it costs whatever the aggregate would have decided about the reply, which
+     * for most of them is nothing at all.
+     *
+     * <p>Logged at debug rather than warn, unlike a refused command: most replies genuinely are not
+     * this aggregate's business, and a machine saying something nobody modelled is not a defect.
+     */
+    private void republish(Object event) {
+        log.debug("nothing for the aggregate to decide about {}, passing it on", event);
+        emitter.accept(event);
     }
 
     /**
@@ -256,6 +286,14 @@ public class PrinterState implements PrinterAggregate {
      * pointed at the aggregate rather than at the machine being unreachable, which is the least
      * useful place it could have pointed.
      *
+     * <p><strong>Every operating command and event passes through this aggregate, in both
+     * directions, and every known one has a named handler: {@code handle(<Command>)} going out and
+     * {@code on(<Event>)} coming back.</strong> That is the CQRS seam of this application - the
+     * write side leaves through {@code handle}, the read side arrives through {@link #onEvent}'s
+     * {@code on}, and nothing crosses between the farm and a machine unaccounted for. A handler may
+     * be one line today; it is where the domain rule lands when there is one, and it is what makes
+     * the set of things this farm can do readable in one place.
+     *
      * <p><strong>Sending is the default, and the list is what is special.</strong> This used to be
      * the other way round - an allow-list of the commands the aggregate would send, and a
      * {@code default} that logged a warning and dropped - on the argument that forgetting to add an
@@ -265,6 +303,9 @@ public class PrinterState implements PrinterAggregate {
      * the host. A list that has to be extended in lockstep with another module's is a list that
      * will be forgotten, and the test that guards it is written by the same act of remembering, so
      * it fails in exactly the cases the code does.
+     *
+     * <p>So the default is the safety net rather than the gate: forgetting a handler now costs
+     * whatever the aggregate would have decided, not the whole feature.
      *
      * <p>So the arms below are the two kinds of command that are <em>not</em> ordinary, and
      * everything else is written as it was given:
@@ -294,6 +335,30 @@ public class PrinterState implements PrinterAggregate {
             case SetBedTemperature c -> handle(c);
             case ReportHotendTemperature c -> handle(c);
             case TemperatureAutoReport c -> handle(c);
+
+            // Motion, the fan and settings, which this layer adds nothing to - named because the
+            // set of things the farm can tell a machine to do should be readable here, and because
+            // a handler is where a rule lands when one arrives. The bed-volume check a move wants
+            // is the obvious candidate; see handle(LinearMoveG1).
+            case AutoHome c -> handle(c);
+            case LinearMoveG1 c -> handle(c);
+            case RelativePositioning c -> handle(c);
+            case AbsolutePositioning c -> handle(c);
+            case SetFanSpeed c -> handle(c);
+            case FanOff c -> handle(c);
+            case SaveSettings c -> handle(c);
+            case GetCurrentPosition c -> handle(c);
+
+            // The card. Writing to one is absent and must stay absent: an upload is a stream
+            // between M28 and M29 that holds the connection for its whole length, so it goes to
+            // PublisherQueue as an exclusive source rather than arriving here one command at a
+            // time - see the refusal below.
+            case InitSDCard c -> handle(c);
+            case ReleaseSDCard c -> handle(c);
+            case ListSDCard c -> handle(c);
+            case DeleteSDFile c -> handle(c);
+            case SelectSDFile c -> handle(c);
+            case StartOrResumeSDPrint c -> handle(c);
 
             // Refused. Not because they are dangerous commands - they are all legitimate - but
             // because this route cannot carry them correctly, and sending them anyway would be
@@ -383,6 +448,119 @@ public class PrinterState implements PrinterAggregate {
         g.m155(report.getSeconds());
     }
 
+    // ------------------------------------------------------------------ motion, fans, settings
+
+    /** {@code G28} - home the axes the command names, or all of them. */
+    public void handle(AutoHome home) {
+        passThrough(home);
+    }
+
+    /**
+     * {@code G1} - a linear move.
+     *
+     * <p><strong>Not validated against the bed, and that is the known gap this handler exists to
+     * hold.</strong> An absolute move could be checked against {@code MachineSpec.bedVolume}; a
+     * relative one could not without tracking position, and the declared volume is often absent.
+     * Left undone rather than half-done - but when it is done, it is done here.
+     */
+    public void handle(LinearMoveG1 move) {
+        passThrough(move);
+    }
+
+    /**
+     * {@code G91} - relative mode, which is <strong>modal</strong>.
+     *
+     * <p>The machine stays relative until something says otherwise, which is why
+     * {@code MoveAxes.toMarlin()} returns the mode switch, the move and the switch back as one
+     * list: a lost {@code G90} leaves every later absolute move - including a print's - landing
+     * somewhere else entirely.
+     */
+    public void handle(RelativePositioning relative) {
+        passThrough(relative);
+    }
+
+    /** {@code G90} - absolute mode. The other half of the modal pair above. */
+    public void handle(AbsolutePositioning absolute) {
+        passThrough(absolute);
+    }
+
+    /** {@code M106} - fan speed, on Marlin's 0..255 PWM scale with the fan index in {@code P}. */
+    public void handle(SetFanSpeed fan) {
+        passThrough(fan);
+    }
+
+    /** {@code M107} - fan off. */
+    public void handle(FanOff fan) {
+        passThrough(fan);
+    }
+
+    /** {@code M500} - write the settings to EEPROM. */
+    public void handle(SaveSettings save) {
+        passThrough(save);
+    }
+
+    /** {@code M114} - where is the toolhead. Answered by a {@code PositionRs} into {@link #on}. */
+    public void handle(GetCurrentPosition position) {
+        passThrough(position);
+    }
+
+    // ------------------------------------------------------------------------------- the card
+
+    /**
+     * {@code M21} - mount the card.
+     *
+     * <p>Answered by {@code echo:SD card ok}, and by nothing at all when there is no card in the
+     * slot: the protocol has no "is a card present" question, so the browser infers absence from
+     * silence. That is why the reply has to reach it - see {@link #on(SdCardRs)}.
+     */
+    public void handle(InitSDCard mount) {
+        passThrough(mount);
+    }
+
+    /**
+     * {@code M22} - release the card.
+     *
+     * <p><strong>Should be refused while a print is running from that card, and is not.</strong>
+     * Releasing mid-print stops the print. The aggregate holds no SD print state to decide it on;
+     * {@code SdPrinting}/{@code SdNotPrinting} now reach {@link #on(SdCardRs)}, so the state this
+     * needs is one field away. Recorded rather than half-done.
+     */
+    public void handle(ReleaseSDCard release) {
+        passThrough(release);
+    }
+
+    /**
+     * {@code M20} - list the card.
+     *
+     * <p>Sent bare. The long form ({@code F}, {@code L}, {@code T}) changes what the firmware
+     * writes back, and {@code SdFileListReader} in the transport is built for the plain form.
+     */
+    public void handle(ListSDCard list) {
+        passThrough(list);
+    }
+
+    /** {@code M30 <name>} - delete a file from the card. */
+    public void handle(DeleteSDFile delete) {
+        passThrough(delete);
+    }
+
+    /**
+     * {@code M23 <name>} - select a file to print.
+     *
+     * <p>Half of a pair: {@code PrintFile.toMarlin()} returns this and {@code M24} together,
+     * because {@code :gcode}'s generated {@code SelectAndStart} carries no filename (#37). A pair
+     * is exactly the shape that half-works if one arm goes missing, which is what the dispatch
+     * test asserts about.
+     */
+    public void handle(SelectSDFile select) {
+        passThrough(select);
+    }
+
+    /** {@code M24} - start or resume printing the selected file. */
+    public void handle(StartOrResumeSDPrint start) {
+        passThrough(start);
+    }
+
     /**
      * Sends a command the aggregate has nothing to add to, which is most of them.
      *
@@ -461,10 +639,66 @@ public class PrinterState implements PrinterAggregate {
         transition(connection.gaveUp(why));
     }
 
+    /**
+     * A block this session put on the wire came back, which is the one thing that proves the
+     * outbound half is alive - see {@link ConnectionLifecycle#blockAcknowledged()}.
+     */
+    public void on(BlockAcknowledged ack) {
+        blocksInFlight = ack.inFlight();
+        transition(connection.blockAcknowledged());
+    }
+
+    /** {@code busy:} - the machine is working and will not answer for a while. */
+    public void on(BusyRs<?> busy) {
+        transition(connection.busyReported(busy.getReason()));
+    }
+
+    /**
+     * {@code Error:} - routine traffic on a Marlin, so a state rather than a lost connection.
+     *
+     * <p>Not republished. The lifecycle transition it causes <em>is</em> the announcement, and
+     * emitting the reply as well would put the same fault on the stream twice in two shapes.
+     */
+    public void on(ErrorRs error) {
+        transition(connection.faulted(error.getMessage()));
+    }
+
     public void on(TemperatureRs<?> tempEvent) {
         if (temperatureControl.on(tempEvent)) {
             emitter.accept(tempEvent);
         }
+    }
+
+    /**
+     * Where the toolhead is - republished, not kept.
+     *
+     * <p>The aggregate has nothing to decide about a position: no rule it enforces and no other
+     * handler that reads one. Storing it anyway would be the write-only field this module already
+     * removed once - {@code PrinterEntity.connected}, written by nothing and read by nothing - so
+     * it goes to whoever is watching and no further.
+     */
+    public void on(PositionRs position) {
+        emitter.accept(position);
+    }
+
+    /**
+     * Anything the card said: mounted, listed, opened, selected, written, deleted, finished.
+     *
+     * <p><strong>One arm for the whole family, which is what the family interface is for.</strong>
+     * {@code SdCardOk}, {@code SdFileList}, {@code SdFileOpened}, {@code SdFileSelected},
+     * {@code SdWritingToFile}, {@code SdDoneSaving}, {@code SdDonePrinting}, {@code SdFreshFile}
+     * and the three {@code SdStatusRs} all implement {@link SdCardRs}, so a reply added to that
+     * family in {@code :gcode} arrives here already routed rather than needing an arm of its own.
+     * Routing on the family rather than on concrete classes is the same rule the transport follows
+     * for {@code OkRs} and {@code BusyRs}.
+     *
+     * <p>Republished and not kept, for now. The card's state - mounted, what is on it, what is
+     * printing - is a thing this aggregate could usefully hold, and the first rule that needs it
+     * is refusing {@code M22} while a print is running from the card. Until something reads it,
+     * storing it would be a write-only field.
+     */
+    public void on(SdCardRs<?> card) {
+        emitter.accept(card);
     }
 
     public void on(FirmwareInfoRs report) {

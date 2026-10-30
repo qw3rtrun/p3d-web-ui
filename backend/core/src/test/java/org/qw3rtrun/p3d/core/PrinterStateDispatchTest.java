@@ -126,26 +126,52 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * A reply nothing claims is survived, sends nothing, and moves the connection nowhere.
+     * A reply nothing claims is <strong>passed on</strong>, sends nothing, and proves nothing.
      *
-     * <p>A reply with no arm at all - an echo, a debug line, half of an {@code M503} dump - falls to
-     * the default arm and sends nothing, as it always has. What it no longer does is advance the
-     * connection: B3 put <em>any</em> reply on the {@code ONLINE} to {@code IDLE} arrow on the
+     * <p>Three claims, and the first is the inversion. This used to assert that a reply with no arm
+     * reached nobody, and that assertion is how three finished features came to ship dead: a
+     * position report decoded all the way through the transport and never appeared in a browser,
+     * and then both halves of the Storage tab. A suite that pins dropping as correct cannot also
+     * say that a particular reply must not be dropped. The default republishes now, so the cost of
+     * a missing arm is the aggregate's opinion rather than the whole feature.
+     *
+     * <p>The second is unchanged and is the point of the aggregate: it answers nothing on the wire.
+     * Passing a reply to a subscriber is not the same as acting on it.
+     *
+     * <p>The third is unchanged and was expensive to learn: a reply does <em>not</em> advance the
+     * connection. B3 put <em>any</em> reply on the {@code ONLINE} to {@code IDLE} arrow on the
      * grounds that it proved a firmware was there, and a live run proved that it does not.
      * Auto-report traffic an earlier session left running arrives at a host whose outbound half is
      * dead, and reads exactly like this.
-     *
-     * <p>Nothing may throw here either way: the event stream has to survive a message nobody wanted.
      */
     @Test
-    void aReplyWithNoArmSendsNothingAndProvesNothingEither() {
+    void aReplyWithNoArmIsPassedOnAndStillProvesNothing() {
+        var printer = online();
+        var echo = new DebugRs("busy heating");
+
+        printer.onEvent(echo);
+
+        assertEquals(List.of(echo), emitted, "a reply with no arm must still reach a subscriber");
+        assertEquals(List.of(), sent, "but the aggregate answers nothing on the wire");
+        assertEquals(MachineConnectionState.ONLINE, printer.getConnection().state());
+    }
+
+    /**
+     * An error is announced as a state change and not also as itself.
+     *
+     * <p>The one deliberate exception to republishing. {@code ErrorRs} moves the connection to
+     * {@code ERROR} carrying the firmware's own words, and emitting the reply beside the transition
+     * would put one fault on the stream twice in two shapes for a browser to reconcile.
+     */
+    @Test
+    void anErrorIsAnnouncedOnceAsAStateChange() {
         var printer = online();
 
-        printer.onEvent(new DebugRs("busy heating"));
+        printer.onEvent(new ErrorRs(ErrorPrefix.ERROR, "checksum mismatch, Last Line: 2"));
 
-        assertEquals(List.of(), sent);
-        assertEquals(MachineConnectionState.ONLINE, printer.getConnection().state());
-        assertEquals(List.of(), emitted);
+        assertEquals(List.of(ConnectionStateChanged.class),
+                emitted.stream().map(Object::getClass).toList());
+        assertEquals("checksum mismatch, Last Line: 2", printer.getConnection().reason());
     }
 
     /**

@@ -293,6 +293,50 @@ public class PrinterReactor {
     }
 
     /**
+     * Sends a transfer that may not be interleaved with anything - an SD upload.
+     *
+     * <p><strong>{@code M28} turns the wire into a file sink</strong>: every line after it is
+     * written into the file on the card rather than executed, until {@code M29}. So a command from
+     * any other source that reaches the wire in between is <em>stored in the G-code</em>, and
+     * nothing on either end reports it - the printer takes it happily and the fault surfaces much
+     * later as a line of nonsense mid-print.
+     *
+     * <p>{@code REALTIME} and <strong>exclusive</strong>, which are two different guarantees and
+     * both are needed. The priority keeps it at the head of the queue; exclusivity is what covers
+     * the case priority cannot, a source that was handed demand <em>before</em> the transfer was
+     * queued and still holds it. {@code REALTIME} is also the slot with only {@code EMERGENCY}
+     * above it, so an emergency stop is the one thing that can take the wire away - and taking it
+     * away aborts the transfer, because a half-written file cannot be resumed.
+     *
+     * <p>The returned {@code Mono} completes when the transfer is exhausted, errors when it fails,
+     * and errors with {@code PublisherQueue.Preempted} when an emergency stop took the connection.
+     */
+    public Mono<Void> uploadToCard(Publisher<String> transfer) {
+        var queue = commandQueue;
+        if (queue == null || terminal == null) {
+            return Mono.error(new IllegalStateException(
+                    "printer " + printer.getId() + " is not connected, so nothing can be written to its card"));
+        }
+        return queue.addExclusivePublisher(Priority.REALTIME, transfer);
+    }
+
+    /**
+     * Puts one of the host's own facts about this machine on its event stream.
+     *
+     * <p><strong>Not an aggregate event</strong>, which is what {@link #onEvent} otherwise carries,
+     * and the distinction is deliberate: {@code SdUploadProgressed} is a report about work
+     * <em>this host is doing to</em> a machine, not a change in what the machine is. The aggregate
+     * has no opinion on how far a file transfer has got and should not be made to hold one.
+     *
+     * <p>It goes on this stream rather than the application bus - which is where a job's progress
+     * goes - because an upload is about one machine's card, and the page watching for it is already
+     * subscribed here.
+     */
+    public void announce(Object event) {
+        onEvent(event);
+    }
+
+    /**
      * Puts a fixed sequence of blocks in front of whatever is printing.
      *
      * <p>{@code REGULAR}, so it preempts a job feeding at {@code BACKGROUND} - which is the whole

@@ -59,10 +59,10 @@ EndstopStateRs	z_min: open
 AdvancedOkRs	ok P15 B3
 SdNotPrinting	Not SD printing
 AdvancedOkRs	ok P15 B3
-EchoMessage	echo:SD card ok
+SdCardOk	echo:SD card ok
 AdvancedOkRs	ok P15 B3
-(none)	Begin file list
-(none)	End file list
+SdFileListBegin	Begin file list
+SdFileListEnd	End file list
 AdvancedOkRs	ok P15 B3
 SdCurrentFile	Current file: (no file)
 AdvancedOkRs	ok P15 B3

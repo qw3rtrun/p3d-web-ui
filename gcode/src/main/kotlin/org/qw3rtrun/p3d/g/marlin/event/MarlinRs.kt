@@ -24,7 +24,19 @@ import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
  * echo:Cold extrudes are enabled ...    ColdExtrusionRs - M302
  * echo: cold extrusion prevented        ColdExtrusionPrevented
  * Current file: (no file)               SdCurrentFile   - M27 C
+ * Begin file list / End file list       SdFileListBegin / SdFileListEnd - M20
+ * Writing to file: test.gco             SdWritingToFile - M28
+ * Done saving file.                     SdDoneSaving    - M29
+ * File opened: test.gco Size: 47        SdFileOpened    - M23, M32
+ * File selected                         SdFileSelected  - M23, M32
+ * Done printing file                    SdDonePrinting  - unbidden, at the end of a job
+ * echo:SD card ok                       SdCardOk        - M21
+ * echo:Now fresh file: test.gco         SdFreshFile     - M28, M32
  * ```
+ *
+ * **The `M20` entries between those two markers are deliberately absent**, and that is the one
+ * place the registry does not cover a reply: `TEST.GCO 47` is `<word> <number>`, a shape far too
+ * common to claim. `SdFileListReader` reads them, because it knows a listing is open.
  *
  * The decoders partition the reply space - a test pins that no line is claimed by two - so [decode]
  * does not depend on the order of [decoders]. The Marlin ones come first anyway, because
@@ -46,7 +58,7 @@ object MarlinRsDecoder : GRsDecoder<GRs<*>> {
     val decoders: List<GRsDecoder<GRs<*>>> = listOf(
         TemperatureRsDecoder,
         PositionRs,
-        SdStatusRsDecoder,
+        SdCardRsDecoder,
         FirmwareInfoRs,
         CapabilityRs,
         EchoRsDecoder,

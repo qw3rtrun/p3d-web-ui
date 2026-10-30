@@ -6,6 +6,8 @@ import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.MachineJoinedFarm;
 import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
+import org.qw3rtrun.p3d.api.msg.SdUploadProgressed;
+import org.qw3rtrun.p3d.api.msg.SdUploadState;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.OkTemperatureRs;
@@ -272,6 +274,54 @@ class EventStreamContractTest {
         assertEquals("SdFileOpened", opened.get("type").asString());
         assertEquals("BENCHY.GCO", opened.get("event").get("file").asString());
         assertEquals(2847561, opened.get("event").get("size").asLong());
+    }
+
+    /**
+     * An upload's progress, as the Storage tab reads it.
+     *
+     * <p><strong>Two counts, and the UI must not confuse them.</strong> {@code bytesSent} over
+     * {@code bytesTotal} is the progress bar - exact, because the stored file's size is known
+     * before a line goes out. {@code blocksSent} has <em>no</em> total on purpose: a tenth of a
+     * sliced file is comments and blank lines that are dropped rather than sent, so the file's line
+     * count is an upper bound and a bar driven by it would stop short every time.
+     *
+     * <p>{@code file} is the name on the <em>card</em>, which may not be the name that was
+     * requested - the server adds a printable extension to one that lacks it, and this is how the
+     * page learns what it became.
+     */
+    @Test
+    void anUploadProgressReportCarriesBothCountsAndTheNameOnTheCard() {
+        var payload = mapper.readTree(streamed(new SdUploadProgressed(
+                "BENCHY.GCO", SdUploadState.UPLOADING, 1_200_000, 2_847_561, 31_006, null)));
+
+        assertEquals("SdUploadProgressed", payload.get("type").asString());
+        assertEquals("BENCHY.GCO", payload.get("event").get("file").asString());
+        assertEquals("UPLOADING", payload.get("event").get("state").asString());
+        assertEquals(1_200_000, payload.get("event").get("bytesSent").asLong());
+        assertEquals(2_847_561, payload.get("event").get("bytesTotal").asLong());
+        assertEquals(31_006, payload.get("event").get("blocksSent").asLong());
+        assertTrue(payload.get("event").get("reason").isNull());
+    }
+
+    /**
+     * The four end states, because <strong>how a transfer ended decides what is on the card</strong>.
+     *
+     * <p>A cancel sent {@code M29}, so the file is short but closed - safe to delete, not safe to
+     * print. A failure may not have: an emergency stop preempts a transfer and there is no close
+     * behind it, so the file is left open until the next reset. A page that showed both as "did not
+     * finish" would be hiding the difference that matters.
+     */
+    @Test
+    void theUploadStatesReachTheBrowserByName() {
+        for (var state : SdUploadState.values()) {
+            var payload = mapper.readTree(streamed(
+                    new SdUploadProgressed("B.GCO", state, 1, 2, 3, null)));
+            assertEquals(state.name(), payload.get("event").get("state").asString());
+        }
+
+        var failed = mapper.readTree(streamed(new SdUploadProgressed(
+                "B.GCO", SdUploadState.FAILED, 1, 2, 3, "the connection went away")));
+        assertEquals("the connection went away", failed.get("event").get("reason").asString());
     }
 
     /**

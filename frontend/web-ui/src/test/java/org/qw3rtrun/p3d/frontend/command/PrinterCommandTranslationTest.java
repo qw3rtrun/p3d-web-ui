@@ -1,6 +1,8 @@
 package org.qw3rtrun.p3d.frontend.command;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.qw3rtrun.p3d.g.code.core.GEncoder;
 
 import java.math.BigDecimal;
@@ -8,6 +10,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * What a request body becomes on the wire.
@@ -179,5 +182,99 @@ class PrinterCommandTranslationTest {
     @Test
     void askingWhereTheToolheadIsIsM114() {
         assertEquals("M114", one(new RequestPosition()));
+    }
+
+    // ------------------------------------------------- the card
+
+    @Test
+    void mountingAndReleasingTheCardAreM21AndM22() {
+        assertEquals("M21", one(new MountCard()));
+        assertEquals("M22", one(new ReleaseCard()));
+    }
+
+    /**
+     * The bare {@code M20}, without the flags for long names or timestamps.
+     *
+     * <p>{@code Cap:LONG_FILENAME:0} on this firmware, so {@code L} asks for something it cannot
+     * give - and a flag one machine ignores and another honours is two different answers to one
+     * request.
+     */
+    @Test
+    void listingTheCardIsABareM20() {
+        assertEquals("M20", one(new ListFiles()));
+    }
+
+    @Test
+    void deletingAFileIsM30WithItsName() {
+        assertEquals("M30 BENCHY.GCO", one(new DeleteFile("BENCHY.GCO")));
+    }
+
+    /**
+     * Printing is two commands, and that is a gap rather than a preference.
+     *
+     * <p>{@code M32} would do it in one, but {@code :gcode}'s {@code SelectAndStart} is generated
+     * from a documented signature that omits the filename, so it has nowhere to put one. The pair
+     * is sent as a unit by {@code PrinterControl.send}, so nothing lands between them.
+     */
+    @Test
+    void printingAFileIsSelectThenStart() {
+        assertEquals(List.of("M23 BENCHY.GCO", "M24"), wire(new PrintFile("BENCHY.GCO")));
+    }
+
+    /**
+     * A name is trimmed, because a trailing blank would reach the card as part of the name.
+     *
+     * <p>The firmware takes everything to the end of the line, so {@code "M30 a.gco "} and
+     * {@code "M30 a.gco"} are not the same request - and a browser form hands over whatever was
+     * typed.
+     */
+    @Test
+    void aNameIsTrimmedBeforeItTravels() {
+        assertEquals("M30 A.GCO", one(new DeleteFile("  A.GCO  ")));
+    }
+
+    /**
+     * A filename that would change what the block means is refused.
+     *
+     * <p><strong>The newline is the one that matters.</strong> A filename is a bare rest-of-line
+     * string, the transport frames what it is handed without parsing it, so {@code "a.gco\nM112"}
+     * is not a file to delete - it is a delete <em>and</em> an emergency stop, with the checksum on
+     * the wrong side of the break. The others are quieter: {@code ;} opens a comment that swallows
+     * the checksum, and {@code *} is the checksum delimiter itself.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "a.gco\nM112",
+            "a.gco\r\nM112",
+            "a.gco;M112",
+            "a.gco*42",
+            "café.gco",
+            "",
+            "   ",
+    })
+    void aFilenameThatWouldChangeTheBlockIsRefused(String name) {
+        assertThrows(IllegalArgumentException.class, () -> new DeleteFile(name));
+        assertThrows(IllegalArgumentException.class, () -> new PrintFile(name));
+    }
+
+    @Test
+    void aMissingFilenameIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> new DeleteFile(null));
+    }
+
+    /**
+     * A name too long for a G-code block is refused rather than silently truncated.
+     *
+     * <p>Spec 1.3: Marlin's line buffer is 96 bytes including the {@code N} word and the checksum,
+     * and a line past it is <em>truncated</em> and executed - so an over-long name would delete or
+     * print a different file than the one asked for. The budget is taken at a six-digit line
+     * number, which an upload reaches on its own, so a name is not accepted early in a session and
+     * refused later in it.
+     */
+    @Test
+    void aNameTooLongForABlockIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> new DeleteFile("x".repeat(200)));
+        // and one that fits is not
+        assertEquals("M30 " + "x".repeat(60), one(new DeleteFile("x".repeat(60))));
     }
 }

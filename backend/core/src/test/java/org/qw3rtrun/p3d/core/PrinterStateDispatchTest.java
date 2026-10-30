@@ -309,15 +309,16 @@ class PrinterStateDispatchTest {
     /**
      * A position report reaches whoever is watching.
      *
-     * <p><strong>This is a regression test for a silent drop.</strong> The transport decoded
-     * {@code M114}'s answer correctly and it still never appeared in a browser: the aggregate
-     * republishes only what it has an arm for, and everything else reaches {@code default}, which
-     * logs at debug and stops. Every layer in between looked right, which is why it took a live run
-     * to find.
+     * <p><strong>This is a regression test for a silent drop, and it was the first of three.</strong>
+     * The transport decoded {@code M114}'s answer correctly and it still never appeared in a
+     * browser, because back then the aggregate republished only what it had an arm for and
+     * everything else reached a {@code default} that logged at debug and stopped. Every layer in
+     * between looked right, which is why it took a live run to find - and the same drop then took
+     * the Storage tab's commands and its replies in turn.
      *
-     * <p>Adding a reply is one change fewer than it was - the transport propagates whatever
-     * {@code :gcode} decoded, so there is nothing to map - but it is still a change here: a reply
-     * the aggregate has no case for reaches nobody.
+     * <p>The default republishes now, so this arm is no longer what stands between a position and
+     * oblivion. It is still the named handler the aggregate rule asks for, and what it asserts -
+     * that the axes arrive intact and under their own letters - is worth pinning either way.
      */
     @Test
     void aPositionReportIsRepublishedToSubscribers() {

@@ -240,12 +240,93 @@ on(TemperatureRs)`), where the reflective version compiled happily and went quie
 `Object`, because what travels is either a `:gcode` reply or one of the farm's own events and no
 type spans both - inventing one would mean `:gcode` implementing an application interface, which is
 the dependency that is never for sale. `GRq` cannot be sealed either: it has 295 implementations in
-`:gcode`. So each switch carries a `default`, and the two defaults differ on purpose: an unhandled
-**event** is a debug line, because most replies genuinely are not the aggregate's business; an
-unhandled **command** is a warning, because a user asked for it and nothing happened.
+`:gcode`. So each switch carries a `default` - and **both defaults now pass the message along**;
+see the next section for why they used to drop it and what that cost.
 
 **New work does not add a second mechanism back.** When a change touches the dispatch, reducing it
 is in scope and growing it is not.
+
+## IMPORTANT - every operating message crosses the aggregate, in both directions
+
+**This is the rule this layer has broken most often, three times, each time shipping a finished
+feature that did nothing.** Read it before touching `PrinterState`.
+
+Every operating command and event passes through `PrinterAggregate`, and **every known one has a
+named handler on it**:
+
+| Direction | Entry point | Handler |
+|---|---|---|
+| command, going out | `PrinterState.onCommand(GRq<?>)` | `handle(<Command>)` |
+| event, coming back | `PrinterState.onEvent(Object)` | `on(<Event>)` |
+
+That is the CQRS seam of this application. The write side leaves through `handle`, the read side
+arrives through `on`, and nothing crosses between the farm and a machine unaccounted for. **A
+handler may be one line** - most of the motion and card handlers delegate straight to
+`passThrough` - and it still earns its place: it is where the domain rule lands when there is one
+(`handle(ReleaseSDCard)` names the `M22`-during-a-print refusal it does not yet make), and it makes
+the set of things this farm can do readable in one screen.
+
+### The defaults are the safety net, not the gate
+
+Both `default` arms **pass the message on**: `passThrough(command)` outbound, `republish(event)`
+inbound. Forgetting a handler now costs whatever the aggregate would have decided, which for most
+messages is nothing. It used to cost the whole feature, and here is the bill:
+
+| What shipped dead | Direction | How it was found |
+|---|---|---|
+| the motion commands | outbound | a live run; endpoints answered 200 and nothing reached the printer |
+| the Storage tab's five buttons | outbound | a live run; `no handler for InitSDCard(M21), so nothing was sent` |
+| the Storage tab's two replies | inbound | a live run, *after* fixing the outbound half |
+
+Each time the translation was tested and passing, the route returned 200, and the page rendered.
+
+**The reason it kept happening is structural, not careless, and it is why an allow-list cannot work
+here.** The arms live in `:backend:core` and the request records live in `:frontend:web-ui`, which
+**does not depend on `:backend:core` by design** - `frontend/web-ui/build.gradle` says so in a
+comment, and rule 1 of `doc/sub_boundaries.txt` is why. So no test can name both sides of that
+seam. The arm and the test that guards it are written by the same act of remembering, and they fail
+in exactly the same cases.
+
+The trade is stated rather than buried: **a command that needed a decision and did not get a handler
+is now sent raw instead of dropped.** That has never happened; the other failure has happened three
+times.
+
+### Refusal is a decision and looks different in the log
+
+Four commands are declined rather than sent, each because this route cannot carry them correctly:
+
+- **`M28`/`M29`** (`StartSDWrite`, `StopSDWrite`) - `M28` makes the wire a file sink until `M29`, so
+  anything queued behind it is written into the file instead of run. An upload goes through
+  `PrinterControl.uploadToCard`, which takes the connection exclusively.
+- **`M110`** (`SetGetLineNumber`) - the line counter belongs to the send window. One sent as a
+  command moves the firmware's and not the host's, and every block after it is rejected for the
+  rest of the session.
+- **`M112`** (`FullShutdown`) - an emergency stop queued behind a print is not one. It needs
+  `Priority.EMERGENCY`.
+
+`refuse(command, why)` is a separate method from the old warn-and-drop on purpose. The two read
+identically in a log and mean opposite things: *"nobody has got round to this yet"*, which was a bug
+every time it fired, against *"this is the wrong way to ask"*, which names the right route.
+
+`ErrorRs` is the one inbound exception: it is announced as a `ConnectionStateChanged` and **not**
+also republished as itself, because one fault on the stream twice in two shapes is for a browser to
+reconcile and it should not have to.
+
+### Route on the family interface
+
+`case SdCardRs<?> e -> on(e)` covers `SdCardOk`, `SdFileList`, `SdFileOpened`, `SdFileSelected`,
+`SdWritingToFile`, `SdDoneSaving`, `SdDonePrinting`, `SdFreshFile` and the three `SdStatusRs` - a
+reply added to that family in `:gcode` arrives here already routed. That is the same rule
+`reactive-transport-dev` states for `OkRs` and `BusyRs`, and it is the difference between one arm
+and eleven that each have to be remembered.
+
+### Republishing is not keeping
+
+The position arm and the card arm emit and store nothing. There is no rule the aggregate enforces
+with either and no handler that reads them, and a stored field with no reader is the write-only
+`PrinterEntity.connected` defect in a new place. **Add the handler; add the field when something
+reads it.** The card is the live candidate: `SdPrinting`/`SdNotPrinting` reach `on(SdCardRs)` now,
+so the state `handle(ReleaseSDCard)` needs to refuse an `M22` mid-print is one field away.
 
 ## What CQRS means here
 
@@ -652,21 +733,22 @@ one of them fails silently**. In order:
 |---|---|---|
 | 1 | `frontend/command` | a record in the browser's shape, with a `toMarlin()` of its own |
 | 2 | `frontend` | a `@PostMapping` under `/api-printer/{id}` binding that record |
-| 3 | `core` | an arm in `PrinterState.onCommand` that actually sends the `GRq` |
+| 3 | `core` | `PrinterState.handle(<Command>)`, reached from an arm in `onCommand` |
 
 It was four places, with an `api::msg` command model and a `toMarlin` switch in `core` between
 them. That step is gone: `PrinterControl.send` takes `List<GRq<?>>`, so a command crosses the
 boundary as itself.
 
-**Step 3 has no compiler protection.** `PrinterState.onCommand` switches on `:gcode`'s `GRq`, which
-cannot be sealed (295 implementations) and therefore carries a `default` that logs a warning. A
-command that is built correctly but has no handler reaches the aggregate and is dropped, and the
-only trace is one WARN line.
+**Step 3 has no compiler protection**, because `GRq` cannot be sealed (295 implementations). It no
+longer *drops* what it does not recognise - see *every operating message crosses the aggregate* -
+but a command without a named `handle` still skips whatever decision that handler would have made,
+so write the handler.
 
-That is not hypothetical: it is the red the motion commands were written against. The endpoints
-answered 200, the translation was correct, and nothing reached the printer. The two halves are
-tested either side of the boundary - `PrinterCommandTranslationTest` in `:frontend:web-ui` for what
-a payload becomes, `PrinterStateMotionTest` in `:backend:core` for what the aggregate does with it.
+The two halves are tested either side of the boundary, and **neither module can test the join**:
+`PrinterCommandTranslationTest` in `:frontend:web-ui` for what a payload becomes,
+`PrinterStateMotionTest` and `PrinterStateStorageTest` in `:backend:core` for the bytes the
+aggregate writes. Writing only the first is how the motion commands and then the whole Storage tab
+shipped dead.
 
 ### One intent is sometimes several commands
 
@@ -681,31 +763,34 @@ relative move is `G91`, the move, then `G90`. Two consequences:
   scheduled between them and be interpreted in relative mode. One `doOnNext` over the list is what
   makes the batch atomic with respect to everything else that printer is asked to do.
 
-### A reply needs two arms, not one
+### A reply reaching a browser
 
-**The inbound path has the same shape and the same trap, one layer deeper.** To make a firmware
-reply reach a browser:
+**The inbound path has the same shape as the outbound one.** To make a firmware reply reach a
+browser:
 
 1. `:gcode` decodes it - already true for everything in `marlin/event/`;
-2. **`PrinterState.onEvent` needs a case for it.**
+2. `:backend:terminal` propagates the decoded `GRs` as it is - no mapping step any more;
+3. `PrinterState.on(<Event>)` - add the named handler, per the rule above.
 
-It was three steps; the mapping in the middle is gone, because `:backend:terminal` propagates the
-decoded `GRs` as it is. Step 2 is the one that gets missed. The aggregate republishes only what it
-has an arm for; everything else reaches `default`, which logs at debug and stops. A position report
-was decoded correctly all the way through the transport - the log showed
-`IN: onNext(PositionRs(axes={X=15.00, ...}))` - and never appeared in a browser, because the
-aggregate had nothing to say about it and therefore said nothing. Every layer looked right, which
-is why it took a live run to find.
+**Step 3 no longer eats a reply that has no handler**, and that is a recent change paid for twice
+over. A position report was decoded correctly all the way through the transport - the log showed
+`IN: onNext(PositionRs(axes={X=15.00, ...}))` - and never appeared in a browser. The same thing
+then happened to `SdCardOk` and `SdFileList` while the Storage tab was being built, *after* the
+command half of the same bug had been fixed. Every layer looked right each time, which is why each
+took a live run to find.
 
-**A new reply type also reaches the browser under its own class name.** `EventMessage.type` is the
-event's simple class name, so adding an arm is visible to the UI as a new string - and a reply with
+**The noise objection to republishing by default was measured, not assumed.** Over a live session
+the only replies that reached the inbound `default` at all were `SdCardOk` and `SdFileList`:
+`AdvancedOkRs` never gets there (the send window consumes it and republishes `BlockAcknowledged`),
+and busy, temperature, firmware and capability all have handlers. Echo and comment lines are what
+newly reach the stream, both low-volume, and the client ignores a type it does not know.
+
+**A new reply type reaches the browser under its own class name.** `EventMessage.type` is the
+event's simple class name, so a new reply is visible to the UI as a new string - and a reply with
 two concrete classes (`BareTemperatureRs` and `OkTemperatureRs` are one reading) is two strings the
-TypeScript side has to match as a family. `EventStreamContractTest` pins them.
-
-**Republishing is not the same as keeping.** The position arm emits and stores nothing: there is no
-rule the aggregate enforces with it and no handler that reads it, and a stored field with no reader
-is the write-only `PrinterEntity.connected` defect in a new place. Add the arm; add the field only
-when something reads it.
+TypeScript side has to match as a family. `EventStreamContractTest` pins them. **A family interface
+like `SdCardRs` is one handler and many strings**, so the TypeScript side is where that family is
+re-stated.
 
 ### What the farm can tell a machine to do
 
@@ -820,6 +905,13 @@ have been invisible before.
 - [ ] no `block()`, `Thread.sleep`, or synchronous I/O in a controller or a pipeline
 - [ ] module boundaries declared with `@ApplicationModule` and verified by a test, for any module
       the change touches
+- [ ] **every command the change adds has a `PrinterState.handle(<Command>)`, and every event a
+      `PrinterState.on(<Event>)`** - both directions cross the aggregate, and a handler is where
+      the domain rule lands
+- [ ] **the bytes are asserted, not the routing.** A new command needs a test in `:backend:core`
+      saying what the aggregate wrote; a new reply needs one saying it reached a subscriber.
+      Translation passing in `:frontend:web-ui` proves nothing about either, and no test can span
+      the two modules
 - [ ] no new dispatch mechanism; an existing one reduced if the change touched it
 - [ ] no entity outside its own module; controllers return records
 - [ ] schema changes are Liquibase changesets, never `ddl-auto`

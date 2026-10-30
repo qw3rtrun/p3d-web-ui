@@ -128,6 +128,17 @@ development, Lombok throughout.
   `ApplicationModules.verify()` buys nothing.
 - **One dispatch mechanism: Spring events.** The other two are deleted. Routing a message is the
   business of whatever acts on it - a pattern switch in that class, never reflection.
+- **Every operating command and event crosses `PrinterAggregate`, in both directions, and every
+  known one has a named handler: `PrinterState.handle(<Command>)` going out,
+  `PrinterState.on(<Event>)` coming back.** This is the rule this layer has broken most often -
+  three features have shipped complete, tested at both ends and doing nothing, because a message
+  reached the aggregate and was dropped. The defaults pass a message along now, so a missing
+  handler costs the aggregate's decision rather than the feature; write the handler anyway. The
+  skill's *every operating message crosses the aggregate* section is the authority.
+- **Assert the bytes, not the routing.** A new command needs a `:backend:core` test saying what the
+  aggregate wrote; a new reply needs one saying it reached a subscriber. A translation test in
+  `:frontend:web-ui` proves neither, and **no test can span the two modules** - `:frontend:web-ui`
+  does not depend on `:backend:core` by design, so the join exists only in somebody's head.
 - **Everything created is released.** A reactor, a socket, a sink, a subscription — name the owner.
 
 ## Working in this repo
@@ -182,7 +193,10 @@ Liquibase cannot apply forward will fail the boot against an existing file, whic
 
 - what you changed, file by file, and the one-line reason for each;
 - test totals per module touched, counted out of the XML;
-- whether the application was actually started, and against what printer or simulator;
+- whether the application was actually started, and against what printer or simulator. **For a
+  change to the command or event path, "tests pass" is not the claim** - say what you saw on the
+  wire and what reached the SSE stream, or say that you did not look. All three of this layer's
+  silent drops passed every test that existed;
 - any contract you established that callers will depend on, and where you wrote it down;
 - any rule above you had to weigh against another, and which way you decided;
 - anything you left undone, named, so it can be picked up.

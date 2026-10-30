@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.terminal;
 
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
+import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileOpened;
 import org.qw3rtrun.p3d.terminal.msg.Priority;
 import org.reactivestreams.Publisher;
@@ -43,11 +44,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * file something got into.
  *
  * <p>The size is read with {@code M23}, whose {@code File opened: <name> Size: <n>} is a decoded
- * reply. <strong>{@code M20} would not work here</strong>, and that is worth knowing before the
- * Storage tab is built: a listing's entry lines are deliberately not claimable replies - see
- * {@code SdFileListRs} - so {@code ReplyFlux} drops them as unread and nothing downstream sees
- * them. Assembling a listing needs the raw received lines, which {@code messageFlux()} does not
- * carry.
+ * reply. {@code M20}'s listing is reported alongside it, which is the only live exercise of the
+ * transport's assembly of that reply - the entry lines are deliberately not claimable replies, so
+ * before {@code ReplyFlux} learned to assemble them nothing downstream could see a listing at all.
  *
  * <h2>Why the competitor is a slow source and not a stream of one-shot commands</h2>
  *
@@ -156,11 +155,20 @@ public final class SdUploadProbe {
         var queue = new PublisherQueue<String, Priority>();
         var opened = new AtomicReference<SdFileOpened>();
         var sawSize = new CountDownLatch(1);
+        var listing = new AtomicReference<SdFileList>();
+        var sawListing = new CountDownLatch(1);
 
         Disposable replies = terminal.messageFlux().subscribe(message -> {
             if (message instanceof SdFileOpened reply && reply.getFile().equalsIgnoreCase(file)) {
                 opened.set(reply);
                 sawSize.countDown();
+            }
+            // The listing is the transport's own assembly of several lines - see HostTerminal's
+            // ReplyFlux. Nothing downstream could see one at all before that was built, so this is
+            // the live check on it.
+            if (message instanceof SdFileList files) {
+                listing.set(files);
+                sawListing.countDown();
             }
         });
         Disposable sending = terminal.start(Flux.from(queue)).subscribe();
@@ -201,6 +209,17 @@ public final class SdUploadProbe {
         // M23 selects the file without printing it, and answers with its size.
         queue.addPublisher(Priority.EMERGENCY, Mono.just("M23 " + file));
         boolean answered = sawSize.await(30, TimeUnit.SECONDS);
+
+        // And M20, whose answer is several lines the transport assembles into one reply. Reported
+        // rather than asserted: what this run is measuring is the upload, and the listing is here
+        // because it is the only live exercise of that assembly.
+        queue.addPublisher(Priority.EMERGENCY, Mono.just("M20"));
+        if (sawListing.await(30, TimeUnit.SECONDS)) {
+            System.out.printf("  M20 assembled into one reply: %d file(s) %s%n",
+                    listing.get().getFiles().size(), listing.get().getFiles());
+        } else {
+            System.out.println("  !! M20 produced no listing event");
+        }
 
         pest.stop();
         sending.dispose();

@@ -25,15 +25,24 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * <p>These assert the <strong>wire format</strong> and not the object graph, because the object
  * graph is not what a printer reads.
  *
- * <p><strong>What this half guards is {@code onCommand}'s default arm.</strong> The aggregate lists
- * the commands it passes through one by one rather than catching them with a wildcard, so a command
- * that reaches it and is not listed is logged and dropped - which is the state this suite once
- * found the code in, with the translation working perfectly and nothing arriving at the machine.
+ * <p><strong>What this half used to guard was {@code onCommand}'s default arm</strong>, back when
+ * that arm dropped anything the aggregate had not been taught to send. It guarded it badly: the
+ * list of arms and the list of tests were both written by hand and both by the same act of
+ * remembering, so they failed together. Motion shipped dead once and every command on the Storage
+ * tab shipped dead after it, each with its translation passing. The default now passes a command
+ * through, and what the switch names is the two kinds that are not ordinary - decided, and refused.
+ *
+ * <p>These tests are kept, and are worth more than they were. They no longer stand between a
+ * command and oblivion, so what they assert is the thing that was always the point: the exact bytes
+ * a Marlin screen's buttons put on the wire, which is the half of the contract no type checker sees.
  *
  * <p>The other half - that a request body becomes these commands - is
  * {@code PrinterCommandTranslationTest} in {@code :frontend:web-ui}, which is where the request
  * bodies live now. The two were one test while {@code api} carried a command model of its own and
- * {@code core} translated it; they are split where the models were merged.
+ * {@code core} translated it; they are split where the models were merged, and <strong>no test can
+ * join them</strong>: {@code :frontend:web-ui} does not depend on {@code :backend:core} by design,
+ * so neither module can name both sides of that seam. Which is the other half of why the allow-list
+ * could not hold.
  */
 class PrinterStateMotionTest {
 

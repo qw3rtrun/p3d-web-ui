@@ -5,6 +5,10 @@ import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
+import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
+import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber;
+import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
+import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
@@ -223,19 +227,57 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * A command with no arm is a warning and not a crash.
+     * A command with no arm is <strong>sent</strong>, which is the inversion of what this test
+     * used to assert.
      *
-     * <p>{@code PrinterControl} accepts any {@code GRq} and this aggregate acts on a dozen, so an
-     * unhandled command is a gap in this layer. It must still not take the caller's request down
-     * with it - and nothing is sent, which is the honest outcome rather than a half-executed one.
+     * <p>It read {@code aCommandWithNoArmSendsNothingAndDoesNotThrow} and pinned the old default:
+     * an unlisted command was dropped with a warning, on the argument that nothing is honester
+     * than a command that does not half-happen. The trouble is that it made the suite agree with
+     * the bug - it asserted that silently dropping a command the user asked for was correct
+     * behaviour, so no test could also say that a <em>particular</em> command must not be dropped.
+     * Motion shipped dead once and the whole Storage tab shipped dead after it.
+     *
+     * <p>{@code M115} is the case in point: nothing about asking a machine what firmware it runs
+     * needs this layer's permission, and there was never a reason beyond an unwritten arm for it to
+     * be thrown away.
      */
     @Test
-    void aCommandWithNoArmSendsNothingAndDoesNotThrow() {
+    void aCommandWithNoArmIsSentAsItWasGiven() {
         var printer = online();
 
         printer.onCommand(MarlinG.INSTANCE.firmwareInfo());
 
-        assertEquals(List.of(), sent);
+        assertEquals(List.of("M115"), sent);
+    }
+
+    /**
+     * The commands that are refused, which is the half of the bargain that makes the inversion
+     * safe.
+     *
+     * <p>Each of these would be accepted by the firmware and each would break something this host
+     * guarantees, so they are declined rather than written - and declined by name, with the reason
+     * in the log, which is a different thing from the old default's "nobody got round to it".
+     *
+     * <ul>
+     *   <li>{@code M28} makes the wire a file sink until {@code M29}, so everything behind it is
+     *       written into the file rather than run. #31 measured that. An upload goes through
+     *       {@code PrinterControl.uploadToCard}, which holds the connection.</li>
+     *   <li>{@code M29} ends a transfer this route never began.</li>
+     *   <li>{@code M110} moves the firmware's line counter and not the send window's, and every
+     *       block after it is rejected for the rest of the session.</li>
+     *   <li>{@code M112} is an emergency stop, and one queued behind a print is not one.</li>
+     * </ul>
+     */
+    @Test
+    void theCommandsThisRouteCannotCarryAreRefusedRatherThanWritten() {
+        var printer = online();
+
+        printer.onCommand(new StartSDWrite("JOB.GCO"));
+        printer.onCommand(new StopSDWrite());
+        printer.onCommand(new SetGetLineNumber());
+        printer.onCommand(new FullShutdown());
+
+        assertEquals(List.of(), sent, "none of these may reach the wire through onCommand");
     }
 
     /**

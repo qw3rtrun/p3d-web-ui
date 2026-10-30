@@ -19,18 +19,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * What the Storage tab's buttons actually put on the wire.
  *
- * <p><strong>This is the half of a pair that was missing, and the gap shipped a dead feature.</strong>
- * {@code PrinterCommandTranslationTest} asserts that a request body becomes the right {@link GRq}
- * list and it passed throughout; nothing asserted that the aggregate then <em>sends</em> it. Every
- * one of these commands reached {@code onCommand}'s default arm and was logged and dropped, so the
- * tab rendered, the requests bound, the routes returned 200, and no byte left the host.
+ * <p><strong>These were the regression tests for a feature that shipped dead.</strong> Every one of
+ * these commands reached {@code onCommand}'s old allow-list, matched no arm, and was logged and
+ * dropped - so the tab rendered, the requests bound, the routes returned 200, and no byte left the
+ * host. {@code PrinterCommandTranslationTest} asserted the request body became the right
+ * {@link GRq} list and passed throughout; nothing asserted the aggregate then <em>sent</em> it.
  *
- * <p>{@code PrinterStateMotionTest} says the same thing about the same switch one feature earlier -
- * <em>"the state this suite once found the code in, with the translation working perfectly and
- * nothing arriving at the machine"</em>. This is that, a second time, which is why these assert the
- * bytes rather than that a handler was reached: the object graph is not what a printer reads, and a
- * command that is routed but not written is indistinguishable from one that works until someone
- * watches a machine do nothing.
+ * <p>The allow-list is gone - the default passes a command through now, so none of these could
+ * regress the same way twice. They are kept because what they actually assert is the wire bytes,
+ * and those are still worth pinning: {@code M20} must stay bare because the listing reader is built
+ * for the plain form, and printing must stay a pair in the right order. A command that is routed
+ * but not written is indistinguishable from one that works until someone watches a machine do
+ * nothing, and that is what these catch.
  *
  * <p><strong>Writing to a card is deliberately not here.</strong> An upload is a stream that has to
  * hold the connection from {@code M28} to {@code M29}, so it goes to {@code PublisherQueue} as an

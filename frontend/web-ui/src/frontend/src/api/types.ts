@@ -179,6 +179,61 @@ export interface ErrorRs {
     lastLine: number | null
 }
 
+/**
+ * One entry in a card listing - `:gcode`'s `SdFile`.
+ *
+ * `name` is **the card's spelling, not the user's**: a build without long-filename support reports
+ * DOS 8.3 in upper case, so a file uploaded as `benchy.gco` is listed as `BENCHY.GCO`. That is also
+ * the name `M23` and `M30` take, which is why delete and print send back whatever the listing gave
+ * rather than what was typed.
+ */
+export interface SdFile {
+    name: string
+    size: number
+}
+
+/**
+ * `type: "SdFileList"` - the whole of `M20`'s answer, in one event.
+ *
+ * **Assembled by the server, and it has to be.** The firmware writes a listing as three lines or
+ * more - `Begin file list`, an entry each, `End file list` - and an entry on its own is
+ * `<word> <number>`, far too common a shape for the reply decoder to claim. So the transport keeps
+ * the open listing and publishes one of these on the terminator.
+ *
+ * **An interrupted listing produces nothing at all**, rather than a short list. A host cannot tell a
+ * card holding two files from a card holding two hundred whose listing was cut off, so a page that
+ * asked for a listing and received no event should say it did not get an answer - never show an
+ * empty table.
+ *
+ * `files` is empty for a card with nothing printable on it, and that *is* an answer: `M20` lists
+ * only `.gcode`, `.gco` and `.g`, so a file uploaded under another name is on the card and will
+ * never appear here.
+ */
+export interface SdFileList {
+    files: SdFile[]
+}
+
+/**
+ * `type: "SdFileOpened"` - `M23`'s answer, naming the file and its size in bytes.
+ *
+ * The size is the firmware's own measure of what is on the card, which is where a progress bar gets
+ * its denominator: `SdPrinting` reports a position against it.
+ */
+export interface SdFileOpened {
+    file: string
+    size: number
+}
+
+/**
+ * `type: "SdCardOk"` - `M21` mounted the card and it answered. Carries nothing.
+ *
+ * **This is the only way to learn that a card is present.** No command asks, so the Storage tab
+ * mounts and reads the answer: this event means a card, and anything else means none. The failure
+ * text is deliberately not matched on - the simulator always has a card, so it has never been
+ * captured, and guessing a reply format from the wiki is how this module got them wrong before.
+ */
+export type SdCardOk = Record<string, never>
+
 /** `type: "MachineJoinedFarm"` - a printer registered while the page was open. */
 export interface MachineJoinedFarm {
     name: string

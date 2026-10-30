@@ -566,7 +566,7 @@ class MarlinRsTest {
 
         @Test
         fun `an echo line decodes to its text`() {
-            assertEquals(EchoMessage("SD card ok"), EchoRsDecoder.decode("echo:SD card ok"))
+            assertEquals(EchoMessage("Print time: 0s"), EchoRsDecoder.decode("echo:Print time: 0s"))
             assertEquals(EchoMessage("Settings Stored (632 bytes; crc 8907)"),
                 EchoRsDecoder.decode("echo:Settings Stored (632 bytes; crc 8907)"))
         }
@@ -576,7 +576,7 @@ class MarlinRsTest {
             assertEquals(UnknownCommand("M9999"), EchoRsDecoder.decode("echo:Unknown command: \"M9999\""))
             // The two partition the prefix, so nothing is claimed by both.
             assertNull(EchoMessage.decode("echo:Unknown command: \"M9999\""))
-            assertNull(UnknownCommand.decode("echo:SD card ok"))
+            assertNull(UnknownCommand.decode("echo:Print time: 0s"))
         }
 
         /**
@@ -628,7 +628,7 @@ class MarlinRsTest {
             // Three-way partition: nothing is claimed by two.
             assertNull(EchoMessage.decode("echo:busy: processing"))
             assertNull(UnknownCommand.decode("echo:busy: processing"))
-            assertNull(BusyNotice.decode("echo:SD card ok"))
+            assertNull(BusyNotice.decode("echo:Print time: 0s"))
         }
 
         @Test
@@ -768,7 +768,7 @@ class MarlinRsTest {
 
         @Test
         fun `all of them round-trip`() {
-            for (echo in listOf(EchoMessage("SD card ok"), UnknownCommand("M9999"),
+            for (echo in listOf(EchoMessage("Print time: 0s"), UnknownCommand("M9999"),
                                 BusyNotice("processing"), DebugLevelRs(emptySet()),
                                 DebugLevelRs(setOf("INFO", "ERRORS")), ColdExtrusionRs(true, 170),
                                 ColdExtrusionRs(false, 0), ColdExtrusionPrevented,
@@ -804,8 +804,12 @@ class MarlinRsTest {
             "x_min: open" to EndstopStateRs("x_min", false),
             "SD printing byte 1234/56789" to SdPrinting(1234, 56789),
             "Not SD printing" to SdNotPrinting,
+            "Begin file list" to SdFileListBegin,
+            "End file list" to SdFileListEnd,
             "Cap:EEPROM:1" to CapabilityRs("EEPROM", true),
-            "echo:SD card ok" to EchoMessage("SD card ok"),
+            "echo:Print time: 0s" to EchoMessage("Print time: 0s"),
+            "echo:SD card ok" to SdCardOk,
+            "Done saving file." to SdDoneSaving,
             "echo:Unknown command: \"M9999\"" to UnknownCommand("M9999"),
             "ok" to SimpleOkRs,
         )
@@ -838,7 +842,7 @@ class MarlinRsTest {
         @ParameterizedTest
         @ValueSource(
             strings = [
-                "PID Autotune start", "Bilinear Leveling Grid:", "Begin file list",
+                "PID Autotune start", "Bilinear Leveling Grid:",
                 "Marlin 2.1.2", "  Free Memory: 2048  PlannerBufferBytes: 1232", "", "   ",
             ]
         )

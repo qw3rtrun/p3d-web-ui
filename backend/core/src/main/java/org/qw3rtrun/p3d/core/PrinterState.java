@@ -307,21 +307,24 @@ public class PrinterState implements PrinterAggregate {
      * <p>So the default is the safety net rather than the gate: forgetting a handler now costs
      * whatever the aggregate would have decided, not the whole feature.
      *
-     * <p>So the arms below are the two kinds of command that are <em>not</em> ordinary, and
-     * everything else is written as it was given:
+     * <p>The arms below are therefore three kinds, and anything not among them is written as it was
+     * given:
      *
      * <ul>
      *   <li><strong>Decided</strong> - the temperature commands, which this layer refuses when
      *       incomplete, checks against the machine's extruder count, and fixes the scale of.</li>
+     *   <li><strong>Named</strong> - motion, the fan, settings and the card, which this layer adds
+     *       nothing to today. They are listed because the rule above says a known command has a
+     *       handler, and because a handler is where a rule lands when one arrives.</li>
      *   <li><strong>Refused</strong> - commands that change what the connection <em>is</em> rather
      *       than telling the machine to do something, and so cannot be correct as one block among
      *       others. There are four, and each has been measured rather than guessed at.</li>
      * </ul>
      *
      * <p>What this trades away is real and worth stating: a command that needed a decision and did
-     * not get an arm is now sent raw instead of dropped. That has never happened; the other failure
-     * has happened twice. The refusals below are where the cost is paid back, because the commands
-     * that are genuinely unsafe to pass through are few, known, and now named.
+     * not get a handler is now sent raw instead of dropped. That has never happened; the other
+     * failure has happened three times. The refusals below are where the cost is paid back, because
+     * the commands that are genuinely unsafe to pass through are few, known, and now named.
      */
     public void onCommand(GRq<?> command) {
         if (!connection.linked()) {
@@ -562,17 +565,16 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * Sends a command the aggregate has nothing to add to, which is most of them.
+     * Writes a command as it was given, which is what most handlers above do.
      *
-     * <p>Homing, moving, the fan, {@code M500}, everything on the card: the request was already
-     * translated into exactly the Marlin command the machine should receive, so this layer has
-     * nothing left to decide and writes it as it was given. The temperature handlers above exist
-     * because they <em>do</em> decide something, which is what makes them worth naming.
+     * <p>The request was already translated into exactly the Marlin command the machine should
+     * receive, so this layer has nothing left to decide. The temperature handlers are the ones that
+     * <em>do</em> decide something and so have bodies of their own; the rest delegate here, which
+     * keeps one implementation of "put this on the wire" while still giving every known command a
+     * name - see {@link #onCommand}'s javadoc for why the name matters even when the body does not.
      *
-     * <p><strong>What is deliberately not checked here is the one thing worth checking.</strong> A
-     * move is not validated against the bed volume, because a relative move cannot be without
-     * knowing the position and the declared volume is often absent. That is recorded as debt
-     * rather than half-done.
+     * <p>It is also the {@code default} arm, which is the half that stops a command nobody has
+     * named yet from vanishing. {@link #republish} is its counterpart inbound.
      */
     private void passThrough(GRq<?> command) {
         log.info("{}", command);

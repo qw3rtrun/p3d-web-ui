@@ -203,6 +203,55 @@ export function printer(uuid: string) {
          * questions.
          */
         requestPosition: () => send(at('/position'), {}),
+
+        /**
+         * Mount the SD card (M21) - and the only way to find out whether there is one.
+         *
+         * No command asks "is a card present", so this is the question: a machine with a card
+         * answers `SdCardOk` on the event stream, and anything else means there is none. The
+         * failure text is deliberately not matched - it has never been captured, because the
+         * simulator always has a card.
+         */
+        mountCard: () => send(at('/sd/mount'), {}),
+
+        /**
+         * Release the card (M22) so it can be pulled out.
+         *
+         * **Ends a print running from the card**, because the reader is the job's source. Disable
+         * the control while the last `SdPrinting` seen says the machine is printing - the server
+         * does not second-guess it, and Marlin will not refuse.
+         */
+        releaseCard: () => send(at('/sd/release'), {}),
+
+        /**
+         * Ask for the card's contents (M20).
+         *
+         * The listing arrives on the event stream as one `SdFileList`, assembled server-side from
+         * the several lines the firmware writes. **No event means no answer** - an interrupted
+         * listing produces nothing rather than a short list, so a view that asked and heard nothing
+         * should say so and never render an empty table, which means a card with no files.
+         *
+         * Only `.gcode`, `.gco` and `.g` are listed. A file uploaded under another name is on the
+         * card, is printable by exact name, and will never appear here.
+         */
+        listFiles: () => send(at('/sd/list'), {}),
+
+        /**
+         * Delete a file from the card (M30). Irreversible, and the machine does not confirm.
+         *
+         * `name` must be **the card's spelling** - what the listing reported, which on a build
+         * without long filenames is DOS 8.3 in upper case - because that is what the firmware
+         * matches on.
+         */
+        deleteFile: (name: string) => send(at('/sd/delete'), {name}),
+
+        /**
+         * Start printing a file already on the card (M23 then M24, sent as one unit).
+         *
+         * `name` is the card's spelling, as for `deleteFile`. Watching the print is a different
+         * screen; this only starts it.
+         */
+        printFile: (name: string) => send(at('/sd/print'), {name}),
     }
 }
 

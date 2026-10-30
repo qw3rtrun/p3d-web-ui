@@ -20,26 +20,31 @@ Then restart Claude Code so it re-reads the configuration.
 | [`protocol-dev`](./agents/protocol-dev.md) | yes | Implementing and fixing low-level protocol code — tokenizer, framer, checksums, encoders, decoders. Picking up an item from the :gcode issue queue. |
 | [`protocol-reviewer`](./agents/protocol-reviewer.md) | **no** | Auditing protocol code against `doc/specs/GCODE_spec.md` and the style rules. Pre-commit passes, "does this match the spec", test-quality review. |
 | [`terminal-dev`](./agents/terminal-dev.md) | yes | The reactive transport — `:backend:terminal`. Flux pipelines, the send window and backpressure, hand-written Publishers, line framing, StepVerifier. |
-| [`backend-dev`](./agents/backend-dev.md) | yes | The Spring application — the `api`, `core`, `printer-management`, `frontend` and `app` submodels. WebFlux and SSE, JPA and Liquibase, Modulith boundaries, the printer aggregate, print jobs and scheduling. |
-| [`lead-dev`](./agents/lead-dev.md) | **no** (notes only) | Design, architecture, module boundaries, refactoring strategy, concurrency and reactive-pipeline design. Turning a vague ask into task notes someone can execute. |
+| [`backend-dev`](./agents/backend-dev.md) | yes | The Spring application — the `api`, `core`, `management` and `frontend` submodels. WebFlux and SSE, JPA and Liquibase, Modulith boundaries, the printer aggregate, print jobs and scheduling. **Not `:app`.** |
+| [`ui-developer`](./agents/ui-developer.md) | yes | The browser: Thymeleaf pages, the Vue islands, the SSE-driven dashboard and monitor, the Vite build. |
+| [`lead-dev`](./agents/lead-dev.md) | **`:app` only** | Taking a feature from an issue to a mergeable branch: probe the simulator, write the spec and the cross-layer interfaces, own the integration tests, delegate each layer, review, prove it end to end, push. Also pure design questions. |
 
-The four writing agents are split by **layer, not by task**, because the layers have genuinely
-opposite rules: in `:gcode` nothing throws and nothing depends on anything; in `:backend:terminal`
-there is no Spring and the Reactive Streams contract is hand-rolled; in the application modules
-Spring and blocking persistence are the whole point, and the rule that matters is keeping the second
-off the event loop. Each agent is told to stop and hand over if the task turns out to belong to
-another layer.
+The writing agents are split by **layer, not by task**, because the layers have genuinely opposite
+rules: in `:gcode` nothing throws and nothing depends on anything; in `:backend:terminal` there is no
+Spring and the Reactive Streams contract is hand-rolled; in the application modules Spring and
+blocking persistence are the whole point, and the rule that matters is keeping the second off the
+event loop. Each agent is told to stop and hand over if the task turns out to belong to another
+layer.
 
-The first two are a pair on purpose. The reviewer has no `Edit` or `Write` tool, so it structurally
-cannot "helpfully" fix what it finds — which keeps its findings honest and keeps the fix in a diff
-someone chose to make. Hand a reviewer report to `protocol-dev` to act on it.
+`protocol-dev` and `protocol-reviewer` are a pair on purpose. The reviewer has no `Edit` or `Write`
+tool, so it structurally cannot "helpfully" fix what it finds — which keeps its findings honest and
+keeps the fix in a diff someone chose to make. Hand a reviewer report to `protocol-dev` to act on it.
 
-`lead-dev` sits above all four. It has `Write` for notes and designs but **no `Edit`**, so it cannot
-drift into implementing what it just designed; it has the `Agent` tool instead and is told to hand
-execution to a layer agent, `Explore` or `general-purpose`. Its output is a decision plus a task
-note — `:gcode` work goes into the GitHub issue queue and its index issue, backend work into
-[`doc/backend-plan.md`](../doc/backend-plan.md), everything else somewhere adjacent and linked. It
-runs on the expensive model on the explicit condition that it only does work that needs one.
+`lead-dev` sits above the rest and orchestrates them ([#46](https://github.com/qw3rtrun/p3d-web-ui/issues/46)).
+It runs the nine-step procedure in its own file: probe a live simulator for evidence, write the spec
+and the interfaces between layers, write the integration tests, split the work, delegate, review the
+diffs, prove the feature end to end, push the branch.
+
+**It owns `:app` and may edit nothing else.** That is the point of the split — the module that proves
+the others fit together cannot be edited by the agent whose work it is proving — and it is why
+`backend-dev`'s description now stops short of `:app`. For every other tree the lead prescribes and
+delegates. It has the `Agent` tool so it can fan out, and it runs on the expensive model on the
+explicit condition that it only does work that needs one.
 
 ## The plans of record
 
@@ -48,13 +53,14 @@ runs on the expensive model on the explicit condition that it only does work tha
 | `:gcode` | [GitHub issue #18](https://github.com/qw3rtrun/p3d-web-ui/issues/18) and the issues it indexes; `doc/gcode-completed.md` is what is already done |
 | `:backend:terminal` | the *Known debt* section of `reactive-transport-dev` |
 | The application | [`doc/backend-plan.md`](../doc/backend-plan.md) — four phases, eighteen items, in execution order. Its boundaries are [`doc/sub_boundaries.txt`](../doc/sub_boundaries.txt) |
+| Integration tests | [GitHub issue #43](https://github.com/qw3rtrun/p3d-web-ui/issues/43) — one per feature, endpoint-level, mocked printers. `lead-dev` writes them |
 
 ## Skills
 
-`skills/` holds five, two of them vendored (see `skills-lock.json` at the repo root). Written here:
+`skills/` holds seven, two of them vendored (see `skills-lock.json` at the repo root). Written here:
 `low-level-protocol-dev` (`:gcode`'s core), `gcode-dsl-dev` (`code/dsl`, the inverse rules),
-`reactive-transport-dev` (`:backend:terminal`) and `spring-backend-dev` (the application modules).
-Vendored: `tdd` and `kotlin-tooling-java-to-kotlin`.
+`reactive-transport-dev` (`:backend:terminal`), `spring-backend-dev` (the application modules) and
+`vue-ui-dev` (the browser). Vendored: `tdd` and `kotlin-tooling-java-to-kotlin`.
 
 Each layer skill is the **only written authority** for its layer — only `:gcode` has a spec document
 — so a behaviour that callers come to depend on is recorded in the skill, in the change that
@@ -64,9 +70,10 @@ establishes it. Each also carries a *known debt* list, which doubles as that lay
 
 Each loads its layer's skill (`.agents/skills/`) as its first action rather than restating it, so
 the rules have one home: `low-level-protocol-dev` for the two protocol agents,
-`reactive-transport-dev` for `terminal-dev`, `spring-backend-dev` for `backend-dev`. `protocol-dev`
-and `backend-dev` additionally load `tdd` for the red-green loop and
-`kotlin-tooling-java-to-kotlin` for migration work.
+`reactive-transport-dev` for `terminal-dev`, `spring-backend-dev` for `backend-dev`, `vue-ui-dev`
+for `ui-developer`. `protocol-dev` and `backend-dev` additionally load `tdd` for the red-green loop
+and `kotlin-tooling-java-to-kotlin` for migration work. `lead-dev` loads whichever layer skill it is
+designing into — that is why it carries no copy of the rules itself.
 
 Beyond the skill, each definition carries what the skill does not: the repo map, the three
 authorities (spec / work queue / style), the Gradle invocations that actually work here, and a
@@ -84,6 +91,13 @@ pull in opposite directions. If they ever do, the house style wins.
 
 `model: opus` suits exacting protocol work; drop `protocol-dev` or `protocol-reviewer` to `sonnet`
 for routine items — `lead-dev` is opus by definition, since being the thinking agent is its whole
-premise. Neither protocol agent has the `Agent` tool, so they cannot fan out further; `lead-dev`
-does, deliberately, so it can delegate execution. None has `AskUserQuestion`, since a subagent cannot
-interact with the user — all three are told to state assumptions plainly and report back instead.
+premise. Only `lead-dev` has the `Agent` tool, so only it can fan out; the layer agents cannot
+delegate further, deliberately. None has `AskUserQuestion`, since a subagent cannot interact with the
+user — each is told to state its assumptions plainly and report back instead.
+
+**Two things a subagent cannot do here, and the definitions say so rather than failing quietly.**
+It cannot start the Marlin simulator, so `lead-dev` is told to stop and ask the operator when
+`localhost:8099` is not listening rather than designing around the gap. And it has no GitHub tools
+unless they are in its own `tools:` list, so it pushes the branch — `GITHUB_MCP_PAT` from the
+environment, since no credential helper is configured — and hands the PR body back to whoever
+invoked it.

@@ -345,10 +345,15 @@ abstract class FarmIntegrationTest {
     protected Events connectAndLearn(UUID id) {
         var events = watch(id);
         connect(id);
-        await("machine " + id + " to reach IDLE", () -> "IDLE".equals(connectionState(id)));
+        await(() -> "machine " + id + " to reach IDLE. It is " + connectionState(id)
+                        + ", the machine received " + received(id)
+                        + " and the stream carried " + events.types(),
+                () -> "IDLE".equals(connectionState(id)));
         await(() -> "the aggregate to take the firmware report."
                         + " The machine received " + received(id)
-                        + " and the stream carried " + events.types(),
+                        + " and the stream carried " + events.types()
+                        + ". If M115 is in the first list and FirmwareInfoRs is not in the second,"
+                        + " the reply was lost between the socket and the aggregate",
                 () -> events.saw("FirmwareInfoRs"));
         return events;
     }

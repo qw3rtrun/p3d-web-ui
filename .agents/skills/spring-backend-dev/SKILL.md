@@ -458,6 +458,58 @@ own backoff and its own bugs. Three things about it that are easy to get wrong:
   network blip do not all redial on the same tick - which means a test asserts the *sequence* and
   not the instants.
 
+### A safe sink refuses a concurrent emission; it does not serialise one
+
+**`PrinterReactor.onEvent` is reached from several threads and every event it is given reaches a
+subscriber of `updates()`.** That is a contract callers depend on - the SSE stream, `FarmEvents`,
+and `printer-management`'s persisted connection state all hang off it - and it is held by an
+**outbox plus a drain loop**, the same shape `HostTerminal`, `GSendWindow`'s send window and
+`PublisherQueue` use. A thread that finds another one already emitting parks its message on a
+`ConcurrentLinkedQueue` and leaves; the thread inside goes round again and picks it up. Nothing
+blocks, nothing spins, and `FAIL_NON_SERIALIZED` becomes unreachable.
+
+The rules that follow, each paid for:
+
+- **`Sinks.many()` is *safe*, which means it refuses rather than serialises.** Two threads emitting
+  at once get `FAIL_NON_SERIALIZED` on one of them. The emitters here are real and named: the
+  aggregate's executor, the backoff scheduler on a failed attempt, and netty's on a dropped link.
+  The transport measured **26,640 of 40,000 emissions refused** with two threads on one safe sink -
+  the collision is a question of load, not of correctness, so it reproduces on a loaded CI runner
+  and never on a developer's machine.
+- **`EmitFailureHandler.busyLooping(...)` is the wrong remedy twice over, and a `static final` one
+  is the wrong remedy three times.** It spins on *whichever thread emitted* - as readily a netty
+  event loop - which is this layer's cardinal rule broken outright; and when the spin runs out it
+  **throws `Sinks.EmissionException`**, which skips every statement after it. Worse, Reactor's own
+  javadoc says *"don't cache the returning handler for later usage"*: the deadline is computed **at
+  construction**, so a handler in a static field is expired one second after the class loads and
+  every collision from then on throws immediately without retrying at all.
+- **Put the durable work before the volatile work.** `onEvent` tells the roster, then reports the
+  firmware/capability/connection fact, and only then puts the message on the sink. A failure to
+  reach a browser must never cost the farm the record of what the machine said - and under the old
+  order it did: a collision threw before `roster.publishEvent`, so the firmware never reached the
+  database. The loss is **permanent, not late**, because `PrinterState.on(FirmwareInfoRs)` sets its
+  profile *before* emitting, so the identical `M115` of any later redial is suppressed.
+- **Ordering is the second reason, and it is easy to miss.** The drain loop can hand a *later* event
+  to a subscriber before the thread carrying the earlier one has got as far as the roster. With the
+  roster first, the roster is told in the order the aggregate decided - which matters because
+  `printer_entity.connection_state` is persisted from exactly those messages.
+- **A terminal signal goes through the outbox too.** `stop()` parks a `StreamEnd` rather than
+  calling `tryEmitComplete` from the caller's thread, so it cannot terminate the sink underneath an
+  event another thread is still publishing.
+- **The replay seed stays one element deep.** `updates` is `replay().latestOrDefault(current state)`
+  and must not become a backlog. The seed answers *"where is this machine"* so a late SSE subscriber
+  learns the connection state without waiting; a backlog would answer *"what has this machine said"*,
+  which on a farm running for days with nobody watching is every temperature reading since boot
+  handed to the first page that opens. `HostTerminal` needed the opposite (256) for the opposite
+  reason: its caller cannot subscribe until `start()` has already begun reading the socket, so a
+  one-element history lost the opening exchange. Nothing races a subscriber here - a reactor is
+  built, then subscribed - and what a late subscriber misses, the roster has persisted.
+- **Prove it by forcing the collision, not by hoping for one.** Reactor's serialisation guard is
+  re-entrant for the thread that holds it, so a refusal needs a *different* thread inside the sink
+  at that moment. `PrinterReactorEmissionTest` parks the first emitter inside `tryEmitNext` with a
+  latch in the subscriber and emits from a second thread while it is held. That makes the race a
+  certainty rather than a 2-core-CI-runner coincidence.
+
 ### The persisted connection state is derived, and it has a reader
 
 `printer_entity.connection_state` is written from `MConnectionChangedEvent` and from nowhere else -
@@ -1063,5 +1115,34 @@ the source, not suspected.
 - **A package boundary is no longer a compile error.** Six Modulith modules share one Gradle
   module, so only `ApplicationModulesTest` stands between `files` and `jobs`. It is fast and it is
   proven to bite, but it runs in `:app` - a change compiled in isolation will look fine.
+- **`FarmEvents` has the same unserialised-sink bug `PrinterReactor` was just fixed for, and it
+  fires on a laptop.** `FarmEvents.emit` calls `tryEmitNext` on a safe
+  `multicast().directBestEffort()` sink from whatever thread published the Spring event - the
+  reactor's `single`, a netty loop, or `boundedElastic` - so two machines (or one machine and a
+  registration) emitting at once get one of them refused. Observed live in a two-minute session
+  against the simulator: `FarmEvents : the farm stream dropped ConnectionStateChanged
+  (FAIL_NON_SERIALIZED)`. The log line reads like the deliberate lossiness that sink was chosen
+  for, and it is not - `directBestEffort` drops for *backpressure*, which is a slow browser, while
+  this is a concurrency defect that costs every dashboard the same event. The fix is the outbox and
+  drain loop of *A safe sink refuses a concurrent emission*; it wants its own failing test first.
+- **A listener that throws still skips the roster report behind it.** `PrinterReactor.onEvent` runs
+  `roster.publishEvent(message)` then `report(event)`, and Spring's multicaster propagates a
+  listener's exception - so a synchronous `@EventListener` on `EventMessage` that throws costs the
+  `MFirmwareReportedEvent` after it. The sink is now immune (see *A safe sink refuses a concurrent
+  emission*) and these two are not. Fixing it means deciding what a thrown listener should mean,
+  which is a change to the dispatch rather than to this method.
+- **`PrinterReactor.onConnected` holds a terminal it has not started yet, and a concurrent
+  disconnect would trip over it.** `this.terminal = terminal` is assigned, the handshake is sent,
+  and `terminal.start(...)` only runs when the zip is subscribed; `HostTerminal.stop()` dereferences
+  an `outSide` that `start` creates, so a `disconnect()` landing in that window is a
+  `NullPointerException` out of a REST call. The window is microseconds and has always existed;
+  deferring the start widened it slightly. The honest fix is in `:backend:terminal` - `stop()` on a
+  terminal that never started should be a no-op - which is `reactive-transport-dev`'s to make.
+- **One `Schedulers.single()` serialises every aggregate in the farm.** `Schedulers.single()`
+  returns the JVM-wide shared scheduler, not a new one, so forty printers' replies, commands and
+  state changes all queue behind one thread. It is correct - each aggregate is touched by one
+  thread - and it does not scale: one slow handler stalls every machine. A scheduler per reactor,
+  or `Schedulers.newSingle` partitioned by machine, is the shape; neither is worth doing before
+  something measures the queue.
 - **There is no written spec for this layer.** This skill is the only authority, so a behaviour that
   callers come to depend on gets written down here, in the change that establishes it.

@@ -250,6 +250,39 @@ afterwards, while the printer carried on answering normally.
 Which errors are fatal is **not** decided here. `:gcode` keeps the machine's own words as text on
 purpose, and the host is the layer that judges them.
 
+### A reply reaches the subscriber whenever it subscribed, and whatever thread published it
+
+Two things a caller may rely on, and neither used to hold:
+
+- **The bus holds a backlog of `HostTerminal.BACKLOG` (256) replies for a subscriber that is not
+  there yet.** `start()` begins reading the socket as a side effect of being called, and a caller
+  cannot subscribe `messageFlux()` any earlier than that - `start()` is the call that builds the
+  two halves. So the gap is the caller's by construction and the transport covers it. The sink was
+  `replay().latest()`, a history of **one**: measured, six replies emitted with nothing attached
+  arrive as one. `M115` answers with `FIRMWARE_NAME:`, five `Cap:` lines and an `ok`, so the whole
+  opening exchange of a session fitted in that hole.
+- **Two threads publishing at once lose nothing.** Every emission goes through one drain loop -
+  `HostTerminal.drainBus()`, the same atomics-plus-drain-loop as everything else here - and the
+  sink is only ever touched by the thread inside it.
+
+The second one is the trap, because the code that had it looked careful. A **safe** `Sinks`
+answers a concurrent emitter with `FAIL_NON_SERIALIZED`, and checking the result is not handling
+it: `emit` logged the failure and dropped the reply. Measured, two threads into a safe sink:
+**26,640 of 40,000 emissions refused**. It needs two threads genuinely running at once, so it
+reproduces on a loaded CI runner and never in a single-threaded unit test - and the two threads
+are real and named in this file already: a decoded reply off the netty inbound loop, and a
+`BlockAcknowledged` released inside the send window's drain loop, which runs on whoever got there
+first.
+
+A terminal signal goes through the same queue, so it is the **last** thing on the bus rather than
+something that can overtake a reply still waiting to go out, or be refused by a collision and leave
+a bus that never ends.
+
+**Do not replace this with a contract on the caller.** "Subscribe to `messageFlux()` before calling
+`start()`" is an invariant nothing can enforce and the compiler cannot see, and the test suite
+agreed with the bug for exactly that reason: every test in `HostTerminalTest` but the three named
+below subscribes the bus before `start()`, which no caller can do.
+
 ## The layering rule
 
 | Layer | Where | May depend on |
@@ -376,13 +409,26 @@ That is not hypothetical: a disconnect reported `OFFLINE`, sent its `M155 S0`, a
 from it: when a wrong mechanism is also load-bearing, find out what it was holding up before
 taking it away.
 
-### Check what `tryEmit*` returns
+### Checking what `tryEmit*` returns is not the same as handling it
 
-`Sinks.tryEmitNext` returns an `EmitResult` and **fails silently when it is not `OK`**.
-`HostTerminal` makes five such calls - two `tryEmitNext`, two `tryEmitError`, one
-`tryEmitComplete` - and discards every result. Either use
-`emitNext(..., Sinks.EmitFailureHandler)` or branch on the result; a dropped reply here is a
-temperature reading that never reaches the UI.
+`Sinks.tryEmitNext` returns an `EmitResult` and **fails silently when it is not `OK`**, so every
+call here branches on the result. That is the easy half, and `HostTerminal` passed it while losing
+replies: a `FAIL_NON_SERIALIZED` answered with `log.warn` is a *checked* drop, and the message on
+the wire is just as gone as it would have been with the result discarded. Ask what the failure
+means before deciding what to do with it:
+
+| result | what it means | what to do |
+|---|---|---|
+| `FAIL_NON_SERIALIZED` | another thread is emitting right now | **retry, do not drop.** Nothing is wrong except the timing |
+| `FAIL_OVERFLOW` | the subscriber is too slow for the backlog | drop and say so - something real is wrong |
+| `FAIL_TERMINATED` | the bus has already ended | drop quietly; this is the normal end of a session |
+| `FAIL_ZERO_SUBSCRIBER` | only a `directBestEffort`/`directAllOrNothing` sink says this | choose a buffering sink instead |
+
+The retry must not be `emitNext(..., EmitFailureHandler.busyLooping(...))`: that busy-waits on the
+netty inbound loop and throws when the wait runs out, which is the wrong answer twice over.
+`HostTerminal.drainBus()` is the shape to copy - park the value and let whichever thread holds the
+loop publish it - and because it is the only path to the sink, `FAIL_NON_SERIALIZED` is now
+unreachable there.
 
 ### `Sinks.unsafe()` means you promise external serialisation
 
@@ -392,9 +438,12 @@ while emissions came from `ReplaySubscriber.onNext` and the `onOk` it calls - bo
 loop. `BlockAcknowledged` broke it, because a block is released inside the drain loop and the drain
 loop runs on whichever thread got there first.
 
-**It is the safe sink now**, which is the move this entry used to recommend. The lesson stands for
-the next one: an unsafe sink is a promise about threads, so adding an emitter means re-checking the
-promise rather than the sink.
+**It is the safe sink now**, and what that bought was a *report* of the collision rather than a
+silent one - it never stopped the reply being lost, because the safe sink's answer to a collision is
+to refuse the emission. The serialisation the unsafe sink asked for is real work and it had to be
+written: `drainBus()`. Two lessons, and the second is the one that was missed for a whole release:
+an unsafe sink is a promise about threads, so adding an emitter means re-checking the promise; and
+a safe sink does not keep that promise for you, it only tells you when you broke it.
 
 ## Patterns that work here
 
@@ -407,6 +456,16 @@ transport that is the hot path. The shape that belongs here is a stateful buffer
 chunks that cuts at `\n` and keeps the remainder, or reactor-netty's own line decoder. Whatever
 replaces it must keep the two properties the current one has: a reply split across TCP reads is
 rejoined, and a chunk holding several replies yields several.
+
+**`flatMap` is also the wrong operator, and it is safe here by two accidents.** It does not preserve
+order across inner publishers, so two chunks in flight can interleave their characters and frame
+nonsense lines. It cannot happen today because (1) the source is one netty channel-read thread, so a
+chunk's `onNext` has returned before the next one starts, and (2) `ReplaySubscriber` requests
+`Long.MAX_VALUE` and nothing between here and it bounds the demand, so each synchronous inner is
+drained to exhaustion inside its own `onNext`. Bound the demand anywhere in that chain - a
+`limitRate`, a `publishOn`, an operator with a prefetch - and the second accident goes, with a
+half-drained inner left open when the next chunk arrives. `concatMap` states the intent and costs
+nothing here; change it in its own commit, because it is not the cause of anything known.
 
 ### Keep blocking out of the pipeline
 
@@ -451,6 +510,17 @@ the default for anything with demand in it.
   block's checksum, and checks that the firmware rejects it, that the host sends the same bytes
   again, and that the session carries on. No unit test can do that, because it needs a peer that
   rejects something.
+- **Subscribe the bus where the caller can subscribe it.** Most of `HostTerminalTest` subscribes
+  `messageFlux()` *before* `start()`, which no caller can do, and that is how a one-element history
+  survived: the tests agreed with the bug.
+  `everyReplyOfABurstReachesASubscriberThatAttachedAfterTheSocketWasRead` is the one that subscribes
+  afterwards, and it is the only shape that can catch a loss in that window.
+- **Make a race happen rather than hoping for one.** A concurrency defect that reproduces three runs
+  in five on CI reproduces never in a test that just starts two threads.
+  `aReplyIsNotLostBecauseAnotherThreadWasPublishingAtTheSameMoment` holds one thread *inside* the
+  sink with a subscriber that blocks on a latch, and delivers the burst while it is in there - so
+  the collision is scheduled, and the test fails deterministically without the fix. Blocking in
+  `onNext` is exactly what pipeline code may never do and exactly what the test needs.
 
 Run the module's tests with `:backend:terminal:test`. The Gradle summary line only prints on
 failure, so count them out of the XML the way `protocol-dev` does.
@@ -460,7 +530,8 @@ failure, so count them out of the XML the way `protocol-dev` does.
 - [ ] no transport-local reply type - decoding goes through `:gcode`'s `MarlinRsDecoder`, and
       routing matches the family interfaces rather than concrete classes
 - [ ] `:gcode` still does not depend on `:backend:terminal`
-- [ ] every `tryEmit*` result is handled
+- [ ] every `tryEmit*` result is handled - and a `FAIL_NON_SERIALIZED` is retried, not logged away
+- [ ] a reply cannot be lost by *when* a caller subscribed or by *which thread* published it
 - [ ] no signal after `onComplete` / `onError`; terminal state is checked on every path
 - [ ] no `onNext` without demand
 - [ ] demand accounting is one mechanism, not half-synchronised
@@ -544,6 +615,15 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   stress-tests the counters, and `HostTerminalTest` pins the window arithmetic deterministically,
   including an acknowledgement that lands mid-emission. Removing the guard breaks no test, which is
   the thing to know before someone simplifies it away.
+- **The reply bus's backlog is 256 and not unbounded.** A subscriber that attaches after more than
+  that many replies have been published sees the most recent 256, and the oldest are gone. It is a
+  number, not a proof, and it is twenty-five times the opening exchange it exists for - the real
+  guarantee would be "buffer until the first subscriber, then stream", which is
+  `multicast().onBackpressureBuffer()`. That was measured and rejected for now because it drops a
+  value outright once a subscriber has attached and left (`tryEmitNext` answers `OK` and nobody
+  receives it) and because it would take the replay out from under
+  `aSubscriberArrivingAfterAnErrorStillGetsReplies`. Revisit it if anything ever subscribes
+  `messageFlux()` long after a session opens.
 - **`TerminalManager` prints to `System.out`** from three of its four lifecycle hooks, calls
   `printStackTrace` from the fourth, and has no error handling on `connect()`.
 - **`GFlux` captures its `FluxSink` from `Flux.create` into a field**, so `onG` NullPointers if

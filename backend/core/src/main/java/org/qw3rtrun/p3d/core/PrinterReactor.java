@@ -28,23 +28,14 @@ import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 import reactor.util.retry.Retry;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 public class PrinterReactor {
-
-    /**
-     * How long a thread will spin waiting for the update sink to be free.
-     *
-     * <p>{@code FAIL_FAST} was correct while every emission came from the one {@code executor}
-     * thread. B3 added two more sources - a failed attempt is announced from whichever scheduler
-     * the backoff ran on, and a dropped link from Netty's - so two emissions can genuinely race,
-     * and failing fast there would silently drop a state change rather than report one late.
-     */
-    private static final Sinks.EmitFailureHandler SERIALISE =
-            Sinks.EmitFailureHandler.busyLooping(Duration.ofSeconds(1));
 
     private final TerminalManager manager;
     private final PrinterState printer;
@@ -58,7 +49,64 @@ public class PrinterReactor {
     /** Where the backoff between connection attempts is timed. A virtual one in tests. */
     private final Scheduler retries;
 
+    /**
+     * This machine's live stream, touched by exactly one thread at a time - see {@link #drainUpdates()}.
+     *
+     * <p>A <em>safe</em> {@code Sinks.Many} does not serialise for its caller; it <strong>refuses</strong>
+     * a concurrent emission with {@code FAIL_NON_SERIALIZED}. The emitters here are genuinely several
+     * threads - the aggregate's {@link #executor}, the backoff scheduler on a failed attempt, and
+     * netty's on a dropped link - so a collision is a question of load and not of correctness.
+     *
+     * <p>It is kept safe and fed through an outbox, rather than being made {@code unsafe()}: the
+     * {@code replay} sink's subscriber list is what an unsafe sink would leave unguarded, and the
+     * drain loop costs one atomic per event.
+     */
     private final Sinks.Many<EventMessage> updates;
+
+    /**
+     * Messages decided on but not yet put on {@link #updates}, oldest first.
+     *
+     * <p>What makes {@link #drainUpdates()} possible: a thread that finds another one already
+     * emitting parks its message here and leaves, instead of being refused by the sink.
+     */
+    private final Queue<Parked> outbox = new ConcurrentLinkedQueue<>();
+
+    /**
+     * The emission guard: zero when no thread is in {@link #drainUpdates()}, otherwise the number
+     * of calls still to be accounted for.
+     */
+    private final AtomicInteger emitting = new AtomicInteger();
+
+    /**
+     * Set once the stream has terminated, and read only inside {@link #drainUpdates()}.
+     *
+     * <p>A plain field and not a volatile one: {@link #emitting} is an {@link AtomicInteger}, so the
+     * hand-off from one draining thread to the next carries the happens-before this needs.
+     */
+    private boolean streamEnded;
+
+    /**
+     * One thing waiting for the update sink: a message, or the end of the stream.
+     *
+     * <p>A sealed interface so {@link #publish} is an exhaustive switch with no {@code default} -
+     * a third kind of parked item would fail the build rather than fall through a hole.
+     */
+    private sealed interface Parked {
+
+        record Update(EventMessage message) implements Parked {
+        }
+
+        /**
+         * The end of the stream, parked so that it cannot overtake a message in front of it.
+         *
+         * <p>{@link #stop()} used to call {@code tryEmitComplete} straight from the caller's thread
+         * while a drain might still have had an event to publish - which terminates the sink under
+         * it, and that event is then refused with {@code FAIL_TERMINATED}. A terminal signal is the
+         * last thing on this stream, so it queues like everything else.
+         */
+        record StreamEnd() implements Parked {
+        }
+    }
 
     /**
      * The running attempt chain, or null when nothing is dialling.
@@ -99,6 +147,15 @@ public class PrinterReactor {
         this.policy = policy;
         this.executor = executor;
         this.retries = retries;
+        // One element of history, deliberately, and not the 256-deep backlog HostTerminal needed.
+        // The seed here answers "where is this machine", so that a browser attaching to the SSE
+        // stream learns the connection state without waiting for something to happen; a backlog
+        // would answer "what has this machine said", which on a farm running for days with nobody
+        // watching is every temperature reading since boot, handed to the first page that opens.
+        // The transport's case is the opposite one: its caller cannot subscribe until start() has
+        // already begun reading the socket, so a one-element history lost the opening exchange.
+        // Nothing here races a subscriber in that way - a reactor is built, then subscribed - and
+        // what a late subscriber would miss (firmware, capabilities) the roster has persisted.
         this.updates = Sinks.many().replay()
                 .latestOrDefault(new EventMessage(printer.getId(), printer.connectionAsEvent()));
         this.printer.setEmitter(this::onEvent);
@@ -205,14 +262,14 @@ public class PrinterReactor {
      * typically a browser holding an SSE connection; leaving the sink hanging leaves the browser
      * waiting for a machine that no longer exists, and {@code Sinks.Many} keeps every one of them
      * referenced until it terminates.
+     *
+     * <p>The completion goes through the outbox like any other emission, so it cannot terminate the
+     * sink underneath an event another thread is still publishing - see {@link Parked.StreamEnd}.
      */
     public void stop() {
         log.info("stop()");
         disconnect();
-        Sinks.EmitResult result = updates.tryEmitComplete();
-        if (result.isFailure()) {
-            log.warn("the update stream did not complete ({})", result);
-        }
+        emit(new Parked.StreamEnd());
     }
 
     private Mono<Void> onConnected(HostTerminal terminal) {
@@ -223,9 +280,13 @@ public class PrinterReactor {
         commandQueue = new PublisherQueue<>();
         this.terminal = terminal;
         Mono<Void> events = gEvent();
-        Mono<Void> gcodes = gCode();
         printer.onOnline(new GSender(this::enqueue));
-        return Mono.zip(events, gcodes)
+        // Mono.defer, so that reading the socket begins at subscription like every other step.
+        // gCode() calls terminal.start(...) eagerly, and start() begins reading as a side effect of
+        // being called - so assembling the chain used to read the socket before anything had
+        // subscribed to it. That is correct today only because Mono.zip happens to subscribe index
+        // 0 first; defence in depth rather than the fix for anything observed.
+        return Mono.zip(events, Mono.defer(this::gCode))
                 .then();
     }
 
@@ -417,7 +478,12 @@ public class PrinterReactor {
     }
 
     /**
-     * One event from the aggregate: to this machine's own subscribers, to the farm, to the roster.
+     * One event from the aggregate: to the farm, to the roster, and then to this machine's own
+     * subscribers.
+     *
+     * <p><strong>In that order, because the last of the three is the only volatile one.</strong>
+     * A browser missing an event is a refresh; the roster missing one is a fact about the machine
+     * that is gone for good. See {@link #emit} for what that order is paid for.
      *
      * <p>The farm hop is the application event bus rather than a second sink handed in here, which
      * keeps plan item D2's farm view from having to be wired into every reactor as it is built -
@@ -427,9 +493,100 @@ public class PrinterReactor {
      */
     private void onEvent(Object report) {
         var message = new EventMessage(printer.getId(), report);
-        updates.emitNext(message, SERIALISE);
         roster.publishEvent(message);
         report(report);
+        emit(new Parked.Update(message));
+    }
+
+    /**
+     * Parks one thing for the update sink, and publishes what is parked if nobody else is.
+     *
+     * <p><strong>Deliberately the last statement of {@link #onEvent}, because it is the volatile
+     * one.</strong> It used to be the first, as {@code updates.emitNext(message, SERIALISE)} with a
+     * {@code static final busyLooping} handler, and that was two bugs in one line. The spinning
+     * happened on whichever thread emitted - as readily the netty inbound loop as the aggregate's
+     * executor - which is this layer's cardinal rule broken outright. And when the spin ran out it
+     * <em>threw</em>, so {@code roster.publishEvent} and {@link #report} never ran: a collision did
+     * not merely delay a UI update, it lost the machine's firmware from the database and the throw
+     * propagated out of {@link #gEvent}'s {@code doOnNext} and killed that session's reply stream.
+     * The loss was permanent, not late - {@code PrinterState.on(FirmwareInfoRs)} sets its profile
+     * before emitting, so the identical {@code M115} of a later redial is suppressed.
+     *
+     * <p>Worse than Reactor intends, too: {@code EmitFailureHandler.busyLooping}'s deadline is
+     * computed <em>at construction</em> and its javadoc says "don't cache the returning handler for
+     * later usage". Held in a static field it is expired one second after the class loads, so every
+     * collision from then on threw immediately rather than retrying at all.
+     *
+     * <p>Adding to a {@link ConcurrentLinkedQueue} throws nothing, blocks nothing and spins nothing,
+     * and whichever thread is draining will publish what was parked. So the volatile half of
+     * {@code onEvent} cannot skip the durable halves twice over: by construction, because this
+     * cannot fail, and by order, because the roster has already been told by the time it runs.
+     *
+     * <p>The order matters for a second reason, which a test found rather than a reader: the drain
+     * loop can hand a <em>later</em> event to a subscriber before the thread carrying the earlier
+     * one has got as far as the roster. With the roster first, what it is told arrives in the order
+     * the aggregate decided it - and {@code printer-management} persists a connection state from
+     * exactly those messages, so a reordering there is a stale state written over a current one.
+     */
+    private void emit(Parked parked) {
+        outbox.add(parked);
+        drainUpdates();
+    }
+
+    /**
+     * Publishes what is parked, one thread at a time.
+     *
+     * <p>The same shape {@code HostTerminal} uses one layer down, and the same one the send window
+     * and {@code PublisherQueue} use: the first caller in runs the loop, a caller that arrives while
+     * it is running leaves a mark and returns with its message safely in the outbox, and the thread
+     * inside goes round again to pick it up.
+     *
+     * <p>Because this is the only path to the sink, {@code FAIL_NON_SERIALIZED} is unreachable: a
+     * failure reaching the log in {@link #publish} means a cancelled or already-terminated stream,
+     * which says something real.
+     */
+    private void drainUpdates() {
+        if (emitting.getAndIncrement() != 0) {
+            return;
+        }
+        int missed = 1;
+        for (; ; ) {
+            for (Parked parked; (parked = outbox.poll()) != null; ) {
+                publish(parked);
+            }
+            missed = emitting.addAndGet(-missed);
+            if (missed == 0) {
+                return;
+            }
+        }
+    }
+
+    /** One parked item onto the sink. Drain loop only, so {@link #streamEnded} is plain. */
+    private void publish(Parked parked) {
+        switch (parked) {
+            case Parked.StreamEnd _ -> {
+                if (streamEnded) {
+                    return;
+                }
+                streamEnded = true;
+                Sinks.EmitResult result = updates.tryEmitComplete();
+                if (result.isFailure()) {
+                    log.warn("the update stream did not complete ({})", result);
+                }
+            }
+            case Parked.Update(EventMessage message) -> {
+                if (streamEnded) {
+                    // Nothing follows a terminal signal, ever. A reply still in flight when the
+                    // printer was released is the normal way to get here.
+                    log.debug("the update stream has ended, so {} goes nowhere", message);
+                    return;
+                }
+                Sinks.EmitResult result = updates.tryEmitNext(message);
+                if (result.isFailure()) {
+                    log.warn("event dropped ({}): {}", result, message);
+                }
+            }
+        }
     }
 
     /**

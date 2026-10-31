@@ -81,7 +81,25 @@ public class HostTerminal {
     }
 
     /**
-     * The reply bus, and a <em>safe</em> sink because it now has two emitting threads.
+     * How many replies the bus holds for a subscriber that has not attached yet.
+     *
+     * <p>It used to hold <strong>one</strong> - the sink was {@code replay().latest()} - and the
+     * opening exchange of a session is seven lines: {@code M115} answers with {@code FIRMWARE_NAME:},
+     * five {@code Cap:} lines and then its {@code ok}. A caller that subscribes
+     * {@link #messageFlux()} a moment after calling {@link #start} therefore saw the <em>last</em>
+     * of them and nothing else, because {@link #start} begins reading the socket as a side effect of
+     * being called. Measured, not reasoned about: six replies emitted with nothing attached arrive
+     * as one.
+     *
+     * <p>256 is {@code publishOn}'s own prefetch and twenty-five times the opening exchange, so the
+     * number is not load-bearing - what is load-bearing is that it is not one. A subscriber that
+     * attaches after more than this many replies does miss the oldest, which is why the figure is
+     * stated in the contract rather than hidden.
+     */
+    static final int BACKLOG = 256;
+
+    /**
+     * The reply bus: a backlog deep enough to survive the moment a caller attaches to it.
      *
      * <p>It was {@code Sinks.unsafe()}, which opts out of the serialisation the safe variant does
      * and leaves the caller promising it. That promise held while every emission came from the
@@ -90,16 +108,66 @@ public class HostTerminal {
      * whichever thread got there first, and that is as readily the producer thread pushing a
      * command as the inbound thread delivering an {@code ok}.
      *
-     * <p>The honest fix is the safe sink rather than a lock of our own. What it costs is a
-     * compare-and-set on the emitting path; what it buys is that a concurrent emission is reported
-     * as {@code FAIL_NON_SERIALIZED} to {@link #emit}, which logs it, instead of quietly corrupting
-     * the subscriber list.
+     * <p><strong>The safe sink was half the answer and dropped the other half on the floor.</strong>
+     * It reports a concurrent emission as {@code FAIL_NON_SERIALIZED} rather than corrupting the
+     * subscriber list - and {@link #emit} logged that and lost the reply. Two threads hammering a
+     * safe sink measured <em>26,640 of 40,000 emissions refused</em>; one collision is one
+     * temperature reading, one {@code FIRMWARE_NAME:} or one acknowledgement that never reaches the
+     * layer above, and it can only happen when two threads genuinely run at once - which is a loaded
+     * CI runner and not a single-threaded unit test. So the serialisation is {@link #drainBus()}
+     * now, and the sink never sees two threads at all.
      */
-    private final Sinks.Many<Object> replays = Sinks.many().replay().latest();
+    private final Sinks.Many<Object> replays = Sinks.many().replay().limit(BACKLOG);
+
+    /**
+     * Replies decided on but not yet put on the bus, oldest first.
+     *
+     * <p>The outbox is what makes {@link #drainBus()} possible: a thread that finds another one
+     * already emitting parks its reply here and leaves, instead of being refused by the sink.
+     */
+    private final Queue<Object> outbox = new ConcurrentLinkedQueue<>();
+
+    /**
+     * The emission guard: zero when no thread is in {@link #drainBus()}, otherwise the number of
+     * calls still to be accounted for.
+     */
+    private final AtomicInteger emitting = new AtomicInteger();
+
+    /**
+     * Set once a terminal signal has gone out, and read only inside {@link #drainBus()}.
+     *
+     * <p>A plain field and not a volatile one, for the same reason {@code GSendWindow}'s plain
+     * fields are safe inside the send window's drain loop: {@link #emitting} is an
+     * {@link AtomicInteger}, so the hand-off from one draining thread to the next carries the
+     * happens-before this needs.
+     */
+    private boolean busEnded;
+
+    /**
+     * The end of the bus, parked in the outbox so that it cannot overtake a reply in front of it.
+     *
+     * <p>{@code onComplete} used to go straight to the sink from the inbound thread while the drain
+     * loop might still have had an acknowledgement to publish - which terminates the sink under it,
+     * and the acknowledgement is then refused with {@code FAIL_TERMINATED}. A terminal signal is the
+     * last thing on this bus, so it queues like everything else.
+     *
+     * @param error what killed the inbound side, or null when it merely ended
+     */
+    private record BusEnd(Throwable error) {
+    }
 
     private CommandProcessor outSide;
     private ReplaySubscriber inSide;
 
+    /**
+     * Opens the session: the socket is read from this call, the writing waits for a subscriber.
+     *
+     * <p>The asymmetry is deliberate and it is worth knowing about. Subscribing the inbound side
+     * here rather than inside the returned {@code Mono} means a reply can arrive before the caller
+     * has got as far as subscribing {@link #messageFlux()} - it cannot subscribe earlier, because
+     * this is the call that creates the two halves. Nothing is lost by that: see
+     * {@link #messageFlux()} for the backlog that covers it.
+     */
     public Mono<Void> start(Publisher<String> gcodes) {
         this.inSide = new ReplaySubscriber();
         this.outSide = new CommandProcessor(gcodes);
@@ -158,6 +226,21 @@ public class HostTerminal {
      * {@code onError} here means the inbound side died - the socket, or the decoder - and not that
      * the printer reported a fault. A printer fault is an {@code ErrorRs} value like any other
      * reply; see {@link ReplaySubscriber#onNext}.
+     *
+     * <p><strong>It does not matter when this is subscribed, and it does not matter which thread a
+     * reply was decided on.</strong> {@link #start} begins reading the socket as a side effect of
+     * being called, so a caller that subscribes afterwards - which is what every caller does, since
+     * it needs the terminal before it can ask for its flux - would otherwise race the opening
+     * exchange. So the bus holds a {@link #BACKLOG} of replies for a subscriber that is not there
+     * yet, and every emission goes through one drain loop rather than straight at the sink. Both
+     * halves were a real loss: with a one-element history the six lines of an {@code M115} answer
+     * arrived as one, and a safe sink refuses a concurrent emission outright.
+     *
+     * <p>What that buys a caller: <em>every</em> reply the transport decided to publish reaches the
+     * first subscriber, in order, whenever it attaches - up to {@link #BACKLOG} replies, which is
+     * twenty-five times the opening exchange. A second subscriber gets the same backlog and then the
+     * live stream. Nothing here asks a caller to subscribe before anything else, because a contract
+     * that is kept by the order calls happen to be made in is a contract that is not kept.
      */
     public Flux<Object> messageFlux() {
         return replays.asFlux();
@@ -231,31 +314,88 @@ public class HostTerminal {
     }
 
     /**
-     * Puts a reply on the bus, and says so when it did not go.
+     * Puts a reply on the bus - parked first, so that two threads never emit at once.
      *
-     * <p>{@code tryEmitNext} answers with an {@link Sinks.EmitResult} and fails silently when it is
-     * not {@code OK} - a dropped reply here is a temperature reading that never reaches the UI, so
-     * it is worth a line in the log rather than nothing at all.
+     * <p>Two threads reach here and they are not the same thread: a decoded reply comes off the
+     * netty inbound loop, and a {@link BlockAcknowledged} is released inside the send window's drain
+     * loop, which runs on whoever got there first. This used to call {@code tryEmitNext} from
+     * whichever one it was and log the {@code FAIL_NON_SERIALIZED} the safe sink answered a
+     * collision with - a reply refused by the sink is a reply nobody ever sees, and the log line
+     * said so after the fact rather than preventing it.
      */
     private void emit(Object reply) {
-        Sinks.EmitResult result = replays.tryEmitNext(reply);
-        if (result.isFailure()) {
-            log.warn("IN: reply dropped ({}): {}", result, reply);
-        }
+        outbox.add(reply);
+        drainBus();
     }
 
     /**
-     * Kills the bus, which is reserved for the transport dying.
+     * Ends the bus, which is reserved for the transport dying.
      *
-     * <p>One caller: {@link ReplaySubscriber#onError}. A fault the <em>printer</em> reported is a
-     * value and goes through {@link #emit} - putting it here terminated the sink and every
-     * subscriber of {@link #messageFlux()} with it, over a checksum the printer itself recovered
-     * from on the next line.
+     * <p>Two callers: {@link ReplaySubscriber#onError} and {@link ReplaySubscriber#onComplete}. A
+     * fault the <em>printer</em> reported is a value and goes through {@link #emit} - putting it
+     * here terminated the sink and every subscriber of {@link #messageFlux()} with it, over a
+     * checksum the printer itself recovered from on the next line.
      */
-    private void emitError(Throwable t) {
-        Sinks.EmitResult result = replays.tryEmitError(t);
+    private void endBus(Throwable error) {
+        outbox.add(new BusEnd(error));
+        drainBus();
+    }
+
+    /**
+     * Publishes what is parked, one thread at a time.
+     *
+     * <p>The module's one mechanism - atomics plus a drain loop, the same shape as
+     * {@link CommandProcessor#processRequest()} and {@link PublisherQueue}'s. The first caller in
+     * runs the loop, a caller that arrives while it is running leaves a mark and returns with its
+     * reply safely in the outbox, and the thread inside goes round again to pick it up. Nothing
+     * blocks and nothing spins: the alternative that was considered first,
+     * {@code emitNext(reply, EmitFailureHandler.busyLooping(...))}, busy-waits on the netty inbound
+     * loop and throws when the wait runs out, which is a worse answer on both counts.
+     *
+     * <p>Because this is the only path to the sink, {@code FAIL_NON_SERIALIZED} is now unreachable:
+     * a failure reaching the log below means a full backlog or a bus that has already ended, both of
+     * which say something real.
+     */
+    private void drainBus() {
+        if (emitting.getAndIncrement() != 0) {
+            return;
+        }
+        int missed = 1;
+        for (; ; ) {
+            for (Object parked; (parked = outbox.poll()) != null; ) {
+                publish(parked);
+            }
+            missed = emitting.addAndGet(-missed);
+            if (missed == 0) {
+                return;
+            }
+        }
+    }
+
+    /** One parked item onto the sink. Drain loop only, so {@link #busEnded} is plain. */
+    private void publish(Object parked) {
+        if (parked instanceof BusEnd end) {
+            if (busEnded) {
+                return;
+            }
+            busEnded = true;
+            Sinks.EmitResult result = end.error() == null
+                    ? replays.tryEmitComplete()
+                    : replays.tryEmitError(end.error());
+            if (result.isFailure()) {
+                log.warn("IN: the bus did not terminate ({}): {}", result, end.error());
+            }
+            return;
+        }
+        if (busEnded) {
+            // Nothing follows a terminal signal, ever. A late acknowledgement from the send window
+            // is the normal way to get here and is not worth a warning.
+            log.debug("IN: the bus has ended, so this reply goes nowhere: {}", parked);
+            return;
+        }
+        Sinks.EmitResult result = replays.tryEmitNext(parked);
         if (result.isFailure()) {
-            log.warn("IN: error dropped ({})", result, t);
+            log.warn("IN: reply dropped ({}): {}", result, parked);
         }
     }
 
@@ -1025,16 +1165,13 @@ public class HostTerminal {
         @Override
         public void onError(Throwable t) {
             log.error("IN: onError()", t);
-            emitError(t);
+            endBus(t);
         }
 
         @Override
         public void onComplete() {
             log.warn("IN: onComplete()");
-            Sinks.EmitResult result = replays.tryEmitComplete();
-            if (result.isFailure()) {
-                log.warn("IN: completion dropped ({})", result);
-            }
+            endBus(null);
         }
     }
 

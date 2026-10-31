@@ -111,7 +111,7 @@ public class IdentityModule {
             @Value(
                     "${p3d.security.initial-admin.username:admin}") String username,
             @Value(
-                    "${p3d.security.initial-admin.password:}") String password) {
+                    "${p3d.security.initial-admin.password:admin}") String password) {
         return new InitialAdmin(users, username, password);
     }
 }

@@ -3,7 +3,6 @@ package org.qw3rtrun.p3d.identity.service;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.identity.FarmRole;
 import org.qw3rtrun.p3d.api.identity.FarmUserDirectory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 
@@ -40,8 +39,8 @@ public class InitialAdmin implements ApplicationRunner {
     private final String configuredPassword;
 
     public InitialAdmin(FarmUserDirectory users,
-                        @Value("${p3d.security.initial-admin.username:admin}") String username,
-                        @Value("${p3d.security.initial-admin.password:}") String configuredPassword) {
+                        String username,
+                        String configuredPassword) {
         this.users = users;
         this.username = username;
         this.configuredPassword = configuredPassword;
@@ -74,7 +73,9 @@ public class InitialAdmin implements ApplicationRunner {
         }
     }
 
-    /** 192 bits, URL-safe and unpadded so that it survives being copied out of a log. */
+    /**
+     * 192 bits, URL-safe and unpadded so that it survives being copied out of a log.
+     */
     private static String generate() {
         var bytes = new byte[24];
         new SecureRandom().nextBytes(bytes);

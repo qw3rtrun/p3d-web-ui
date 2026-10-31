@@ -2,12 +2,15 @@ package org.qw3rtrun.p3d.terminal;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
+import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.SdFile;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
 import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
 import org.qw3rtrun.p3d.g.protocol.BusyRs;
 import org.qw3rtrun.p3d.g.protocol.ErrorRs;
+import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -18,13 +21,17 @@ import reactor.test.StepVerifier;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Protocol-level tests: a {@code Sinks} wire in place of a socket, no sleeps, no printer.
@@ -46,8 +53,22 @@ class HostTerminalTest {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
 
+    /**
+     * What MarlinSim answers {@code M115} with, verbatim from the captured census.
+     *
+     * <p>Kept whole rather than shortened: the point of the tests that use it is that six replies
+     * and an {@code ok} arrive as one burst, which is the shape the loss was found in.
+     */
+    private static final String M115_FIRMWARE =
+            "FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56) "
+                    + "SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin PROTOCOL_VERSION:1.0 "
+                    + "MACHINE_TYPE:MarlinSim KINEMATICS:Cartesian EXTRUDER_COUNT:1 "
+                    + "UUID:00000000-0000-0000-0000-000000000000";
+
     private final Sinks.Many<String> wire = Sinks.many().multicast().onBackpressureBuffer();
-    private final List<Object> published = new ArrayList<>();
+
+    /** Synchronised, because two of these tests publish from a thread of their own. */
+    private final List<Object> published = Collections.synchronizedList(new ArrayList<>());
 
     /** Every {@code request(n)} the send window made of the G-code source. */
     private final List<Long> pulled = new ArrayList<>();
@@ -673,6 +694,159 @@ class HostTerminalTest {
         wire.tryEmitComplete();
 
         assertEquals(Signal.complete(), busEnd.get());
+    }
+
+    // ------------------------------------------------------- a reply reaches the bus, or it is a bug
+
+    /**
+     * The opening exchange, with the bus subscribed where a real caller can first subscribe it.
+     *
+     * <p><strong>Every other test in this file subscribes the bus before {@code start()}, and no
+     * caller can.</strong> {@code start()} is the call that builds the two halves, so a caller holds
+     * nothing to subscribe until it has returned - and {@code start()} begins reading the socket as
+     * a side effect of being called. The window between those two moments is where
+     * {@code PrinterReactor} lives: it calls {@code terminal.start(...)} while assembling the chain
+     * and {@code Mono.zip} subscribes the reply flux afterwards.
+     *
+     * <p>The shape is {@code M115}'s real answer off MarlinSim - six replies and then the {@code ok}
+     * that releases the next block. The {@code ok} went down a different road entirely
+     * ({@code onOk} drives the send window on the inbound thread and never touches the sink), which
+     * is why a session could look perfectly healthy - the next block goes out, the connection
+     * reaches {@code IDLE} - while the firmware report that came with it was never seen by anybody.
+     *
+     * <p>With a one-element history, what a subscriber got here was the <em>last</em> capability and
+     * nothing before it.
+     */
+    @Test
+    void everyReplyOfABurstReachesASubscriberThatAttachedAfterTheSocketWasRead() {
+        terminal = new HostTerminal(wire::asFlux, out -> Flux.from(out).then());
+        terminal.start(Flux.never()).subscribe();
+
+        receive(M115_FIRMWARE);
+        receive("Cap:AUTOREPORT_TEMP:1");
+        receive("Cap:EEPROM:1");
+        receive("Cap:SDCARD:1");
+        receive("Cap:SD_WRITE:1");
+        receive("Cap:EMERGENCY_PARSER:0");
+        receive("ok P15 B3");
+
+        StepVerifier.create(terminal.messageFlux())
+                .expectNextMatches(FirmwareInfoRs.class::isInstance)
+                .expectNext(new CapabilityRs("AUTOREPORT_TEMP", true))
+                .expectNext(new CapabilityRs("EEPROM", true))
+                .expectNext(new CapabilityRs("SDCARD", true))
+                .expectNext(new CapabilityRs("SD_WRITE", true))
+                .expectNext(new CapabilityRs("EMERGENCY_PARSER", false))
+                .then(() -> receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0"))
+                .expectNextMatches(TemperatureRs.class::isInstance)
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * A reply published while another thread is publishing is not refused, it waits.
+     *
+     * <p>Two threads reach the bus and they are genuinely different threads: a decoded reply arrives
+     * on the netty inbound loop, and a {@link BlockAcknowledged} is released inside the send
+     * window's drain loop, which runs on whichever thread got there first - as readily a producer
+     * pushing a command as the inbound loop delivering an {@code ok}. A {@code Sinks} built the safe
+     * way answers the second of two concurrent emitters with {@code FAIL_NON_SERIALIZED}, and this
+     * module's response to that was a log line and a lost reply. Measured on this machine: two
+     * threads emitting into a safe sink had <strong>26,640 of 40,000</strong> emissions refused.
+     *
+     * <p>It can only happen when two threads really do run at once, which is why it reproduces on a
+     * loaded two-core CI runner and never in a single-threaded unit test - and why this test makes
+     * the collision happen rather than hoping for it: the other thread is held <em>inside</em> the
+     * sink by a subscriber that will not return, and the burst is delivered while it is in there.
+     *
+     * <p>{@code onBusy} stands in for the acknowledgement route. It is the one path into the bus a
+     * test can drive from a thread of its own; the real second emitter is the drain loop, and the
+     * module's debt list already says why a two-instruction window cannot be scheduled on demand.
+     */
+    @Test
+    void aReplyIsNotLostBecauseAnotherThreadWasPublishingAtTheSameMoment() throws InterruptedException {
+        var inTheSink = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        terminal = new HostTerminal(wire::asFlux, out -> Flux.from(out).then());
+        subscribeHolding(inTheSink, release);
+        terminal.start(Flux.never()).subscribe();
+
+        var other = Thread.ofPlatform().name("the-other-emitter")
+                .start(() -> terminal.onBusy(new SimpleBusyRs("processing")));
+        assertTrue(inTheSink.await(5, TimeUnit.SECONDS), "the other thread never reached the sink");
+
+        receive(M115_FIRMWARE);
+        receive("Cap:AUTOREPORT_TEMP:1");
+        receive("Cap:EEPROM:1");
+        receive("Cap:SDCARD:1");
+        receive("Cap:SD_WRITE:1");
+        receive("Cap:EMERGENCY_PARSER:0");
+        receive("ok P15 B3");
+
+        release.countDown();
+        other.join();
+
+        assertInstanceOf(BusyRs.class, published.getFirst());
+        assertInstanceOf(FirmwareInfoRs.class, published.get(1));
+        assertEquals(List.of(new CapabilityRs("AUTOREPORT_TEMP", true),
+                        new CapabilityRs("EEPROM", true),
+                        new CapabilityRs("SDCARD", true),
+                        new CapabilityRs("SD_WRITE", true),
+                        new CapabilityRs("EMERGENCY_PARSER", false)),
+                published.subList(2, published.size()));
+    }
+
+    /**
+     * The socket closing is the last thing on the bus, not the first thing to jump the queue.
+     *
+     * <p>Same arrangement, and the other half of the same rule. A terminal signal used to go
+     * straight at the sink from the inbound thread - so it could be refused by a collision like any
+     * other emission, leaving a bus that never ends, and when it was not refused it could terminate
+     * the sink in front of a reply that was still waiting to go out. Both are
+     * {@code FAIL_TERMINATED} in the log and silence on the wire.
+     */
+    @Test
+    void whatWasParkedIsPublishedBeforeTheBusEnds() throws InterruptedException {
+        var inTheSink = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        terminal = new HostTerminal(wire::asFlux, out -> Flux.from(out).then());
+        subscribeHolding(inTheSink, release);
+        terminal.start(Flux.never()).subscribe();
+
+        var other = Thread.ofPlatform().name("the-other-emitter")
+                .start(() -> terminal.onBusy(new SimpleBusyRs("processing")));
+        assertTrue(inTheSink.await(5, TimeUnit.SECONDS), "the other thread never reached the sink");
+
+        receive("Error:checksum mismatch, Last Line: 2");
+        wire.tryEmitComplete();
+
+        release.countDown();
+        other.join();
+
+        assertInstanceOf(BusyRs.class, published.getFirst());
+        assertInstanceOf(ErrorRs.class, published.get(1), "the parked error: " + published);
+        assertEquals(Signal.complete(), busEnd.get(), "the bus never ended");
+    }
+
+    /**
+     * Subscribes the bus with a collector that holds the first value - and so holds the sink.
+     *
+     * <p>Blocking inside {@code onNext} is exactly what a pipeline must never do and exactly what
+     * this test needs: it is how a second thread is made to find the sink occupied at a moment of
+     * the test's choosing, rather than at one the scheduler picks once in every few runs.
+     */
+    private void subscribeHolding(CountDownLatch inTheSink, CountDownLatch release) {
+        terminal.messageFlux().subscribe(value -> {
+            published.add(value);
+            if (inTheSink.getCount() > 0) {
+                inTheSink.countDown();
+                try {
+                    release.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }, t -> busEnd.set(Signal.error(t)), () -> busEnd.set(Signal.complete()));
     }
 
     /**

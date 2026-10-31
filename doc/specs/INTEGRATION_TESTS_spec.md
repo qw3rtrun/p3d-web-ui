@@ -113,6 +113,30 @@ response would have passed on all three.
 So the rule is: **a test of a command asserts the G-code that reached the machine; a test of a reply
 asserts the event that reached the stream.** A feature with both halves asserts both.
 
+**It caught a fourth one before it was merged.** The first CI runs of this suite failed
+intermittently, three runs in five, and never locally. The message was the whole diagnosis:
+
+```
+The machine received [M110 N0, M115, M155 S1]
+and the stream carried [ConnectionStateChanged, ConnectionStateChanged, ...]
+```
+
+`M115` went out and the printer answered — the `ok` must have been processed, because `M155 S1` is
+only pulled after it — and the `FirmwareInfoRs` with five `CapabilityRs` from that same answer
+reached nobody. The cause was a *safe* `Sinks.Many` being handed two threads: it refuses the second
+with `FAIL_NON_SERIALIZED`, and both `HostTerminal.emit` and `PrinterReactor.onEvent` treated that
+as something to log rather than something to retry. Two of the three instances were fixed with this
+work; the third is [#55](https://github.com/qw3rtrun/p3d-web-ui/issues/55).
+
+Three things about that are worth keeping, because they are what this document is arguing for:
+
+- **no unit test in either module could have caught it.** The loss is on the seam between
+  `:backend:terminal` and `:backend:core`, and it needs two threads genuinely running at once;
+- **the module's own suite agreed with the bug.** Every test in `HostTerminalTest` subscribed the
+  reply bus *before* `start()` — which no real caller can do, since `start()` is the call that
+  creates the thing you subscribe to;
+- **the failure was only diagnosable because the wait printed both observables.** See §3.2.
+
 ### 3.2 Waiting
 
 Everything is asynchronous — a dial, a handshake, a round trip, an event reaching a subscriber. Use
@@ -122,6 +146,24 @@ expires.
 A fixed pause is permitted **only where the claim is that something did not happen**, and must say
 so at the call site. Waiting a fixed time for a result is a test that is slow when it passes and
 flaky when it fails.
+
+Three rules that were each learned by a CI failure nobody could reproduce:
+
+- **Wait for something that actually guarantees what comes next.** `connectAndWait` returns at
+  `IDLE`, which is the firmware acknowledging the *first* block of the session — `M110 N0`.
+  `M115` and `M155 S1` are queued behind it and are usually still in flight, so a test that then
+  cleared the machine's command log found the handshake landing in the cleared log and read it as
+  its own traffic. Worse, "`M155 S1` reached the machine" does **not** mean the aggregate read the
+  firmware report: the `ok` closing `M115` is handled on the netty inbound thread, which writes the
+  next block itself, while the `FirmwareInfoRs` from the same reply is queued onto the aggregate's
+  scheduler. Two threads, no happens-before. Use `connectAndLearn` or `connectAndSettle`, which
+  wait on the aggregate's own emission.
+- **Build the evidence into the failure message, lazily.** A CI-only failure is diagnosed by what
+  its message carries and nothing else. Use the `Supplier<String>` overload of `await` so the
+  evidence is sampled *after* the wait rather than before it, and name both observables — what the
+  machine received and what the stream carried. The diagnosis above is one such message.
+- **`:app` sets `testLogging { exceptionFormat 'full' }`** for the same reason. Gradle's default
+  prints the exception class and a line number, which discards the message entirely.
 
 ---
 

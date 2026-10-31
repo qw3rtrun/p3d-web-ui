@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -80,8 +81,28 @@ import static org.junit.jupiter.api.Assertions.fail;
 @ActiveProfiles("test")
 abstract class FarmIntegrationTest {
 
-    /** Long enough for a dial, a handshake and a round trip on a loaded build agent. */
-    protected static final Duration PATIENCE = Duration.ofSeconds(15);
+    /**
+     * Long enough for a dial, a handshake and a round trip on a loaded build agent.
+     *
+     * <p><strong>Thirty seconds, and the reason is a real bottleneck rather than nerves.</strong>
+     * Every {@code PrinterReactor} in the process uses {@code Schedulers.single()} as its aggregate
+     * executor - that is Reactor's <em>JVM-wide cached single thread</em>, not one per printer - and
+     * the inbound path runs a blocking JPA write on it: a reply reaches
+     * {@code PrinterState.onEvent}, which publishes {@code MFirmwareReportedEvent}, which
+     * {@code MachineManagementImpl} handles with a synchronous {@code @Transactional} save on the
+     * calling thread. A connect does that seven times - one firmware report and five capabilities,
+     * each also re-publishing {@code MRegisteredEvent}.
+     *
+     * <p>So every reply, every command and every connection query for every machine in the suite is
+     * serialised behind one thread that is also talking to a database. On a two-core CI runner
+     * sharing those cores with Gradle, netty and H2, a backlog of seconds is entirely possible, and
+     * the window a test actually gets is much smaller than the number here suggests.
+     *
+     * <p>It costs nothing when a test passes and only lengthens a failure, which is the right trade.
+     * The bottleneck itself is {@code :backend:core}'s and is reported as a finding rather than
+     * worked around further here.
+     */
+    protected static final Duration PATIENCE = Duration.ofSeconds(30);
 
     private static final ObjectMapper JSON = JsonMapper.builder().build();
 
@@ -118,6 +139,9 @@ abstract class FarmIntegrationTest {
     private final List<UUID> registered = new ArrayList<>();
     private final List<MockPrinter> machines = new ArrayList<>();
     private final List<Events> streams = new ArrayList<>();
+
+    /** Which mock is behind which machine, so a failure can report what reached the far end. */
+    private final Map<UUID, MockPrinter> attached = new java.util.HashMap<>();
 
     @BeforeEach
     void signIn() {
@@ -187,6 +211,7 @@ abstract class FarmIntegrationTest {
             }
         }
         registered.clear();
+        attached.clear();
         machines.forEach(MockPrinter::close);
         machines.clear();
     }
@@ -202,12 +227,23 @@ abstract class FarmIntegrationTest {
 
     /** Registers a machine pointed at the mock, through the endpoint an administrator uses. */
     protected UUID register(String name, MockPrinter printer) {
-        return register(name, "localhost", printer.port(), null);
+        var id = register(name, "localhost", printer.port(), null);
+        attached.put(id, printer);
+        return id;
     }
 
     /** The same, declaring a spec - the half of a machine a person types rather than discovers. */
     protected UUID register(String name, MockPrinter printer, String specJson) {
-        return register(name, "localhost", printer.port(), specJson);
+        var id = register(name, "localhost", printer.port(), specJson);
+        attached.put(id, printer);
+        return id;
+    }
+
+    /** What reached the mock behind a machine, for a failure message. */
+    protected String received(UUID id) {
+        var printer = attached.get(id);
+        return printer == null ? "(no mock is attached to this machine)"
+                : printer.commands().toString();
     }
 
     /**
@@ -272,6 +308,81 @@ abstract class FarmIntegrationTest {
     protected void connectAndWait(UUID id) {
         connect(id);
         await("machine " + id + " to reach IDLE", () -> "IDLE".equals(connectionState(id)));
+    }
+
+    /**
+     * Dials the machine and waits until <strong>the aggregate has taken the firmware report</strong>,
+     * handing back the stream it watched.
+     *
+     * <p>Use this, and not {@link #connectAndWait(UUID)}, for anything that depends on what the
+     * machine said it is - an extruder count, a capability, the roster's copy of either.
+     *
+     * <p><strong>{@code IDLE} is not that precondition, and neither is a later command reaching the
+     * wire.</strong> Both were used here and both are wrong, in ways that only show up on a loaded
+     * machine:
+     *
+     * <ul>
+     *   <li>{@code IDLE} is reached when the firmware acknowledges a block this session sent, and the
+     *       first block of a session is {@code M110 N0}. {@code PrinterState.onOnline} queues
+     *       {@code M115} behind it, so when a machine reports {@code IDLE} the {@code M115} has
+     *       typically not been <em>written</em> yet, let alone answered;</li>
+     *   <li>{@code M155 S1} reaching the machine proves only that the {@code ok} closing {@code M115}
+     *       was processed - and that happens on the <em>netty inbound thread</em>, inside
+     *       {@code CommandProcessor.handleBackpressure}, which pulls and writes the next block
+     *       directly. The {@code FirmwareInfoRs} from the same reply went the other way, queued onto
+     *       {@code Schedulers.single()} by {@code PrinterReactor}'s {@code publishOn(executor)}.
+     *       Two threads, and no happens-before from the one to the other: the next command can be on
+     *       the wire before the aggregate has looked at the report.</li>
+     * </ul>
+     *
+     * <p>What <em>is</em> a guarantee is the report arriving on this machine's own event stream,
+     * because that emission is the last thing {@code PrinterState.on(FirmwareInfoRs)} does after
+     * updating itself. Seeing it means the aggregate has the firmware.
+     *
+     * <p>The stream is opened <em>before</em> the dial on purpose. The per-printer sink replays only
+     * the latest message, so a subscriber that attaches afterwards has already missed this.
+     */
+    protected Events connectAndLearn(UUID id) {
+        var events = watch(id);
+        connect(id);
+        await("machine " + id + " to reach IDLE", () -> "IDLE".equals(connectionState(id)));
+        await(() -> "the aggregate to take the firmware report."
+                        + " The machine received " + received(id)
+                        + " and the stream carried " + events.types(),
+                () -> events.saw("FirmwareInfoRs"));
+        return events;
+    }
+
+    /**
+     * Dials the machine, waits for the whole opening handshake to be <em>over</em>, and clears the
+     * machine's command log - so what follows is exactly what the test's own request caused.
+     *
+     * <p><strong>This is what {@code connectAndWait} followed by {@code forget()} was getting
+     * wrong, and it is the shape that broke on CI.</strong> A machine reports {@code IDLE} as soon
+     * as the firmware acknowledges the first block of the session, which is {@code M110 N0}.
+     * {@code M115} and {@code M155 S1} are queued behind it and are typically still in flight at
+     * that moment. Clearing the log there does not remove them - it removes {@code M110} and then
+     * lets the other two land in the cleared log, where the test reads them as its own:
+     *
+     * <ul>
+     *   <li>an exact-list assertion sees {@code [M115, M155 S1, M23 …, M24]} and fails;</li>
+     *   <li>{@code firstSent("M155")} returns the handshake's {@code M155 S1} rather than the
+     *       {@code M155 S3} the test asked for, and fails on the parameter.</li>
+     * </ul>
+     *
+     * <p>Locally the handshake finishes in microseconds and always wins the race. On a loaded
+     * two-core runner it does not, which is why this only ever failed in CI.
+     *
+     * <p>{@code M155 S1} is the last block of the handshake - see {@code PrinterState.onOnline} -
+     * so its arrival is the honest signal that the opening conversation is complete.
+     */
+    protected Events connectAndSettle(UUID id, MockPrinter printer) {
+        var events = connectAndLearn(id);
+        await(() -> "the opening handshake to finish."
+                        + " The machine received " + printer.commands(),
+                () -> printer.sent("M155 S1"));
+        printer.forget();
+        return events;
     }
 
     /** Posts a command with no body - the endpoints that build their own payload server-side. */
@@ -379,10 +490,22 @@ abstract class FarmIntegrationTest {
 
     /** Waits for something to become true, and says what it was waiting for when it does not. */
     protected static void await(String what, BooleanSupplier condition) {
+        await(() -> what, PATIENCE, condition);
+    }
+
+    /**
+     * The same, with the description built only if it is needed.
+     *
+     * <p>Worth the overload because the useful description is the <em>evidence</em> - which events
+     * arrived, what reached the machine - and computing that eagerly would snapshot it before the
+     * wait rather than after it, which is the opposite of what a failure needs. A CI failure that
+     * cannot be reproduced locally is diagnosed by what its message carries and nothing else.
+     */
+    protected static void await(Supplier<String> what, BooleanSupplier condition) {
         await(what, PATIENCE, condition);
     }
 
-    protected static void await(String what, Duration limit, BooleanSupplier condition) {
+    protected static void await(Supplier<String> what, Duration limit, BooleanSupplier condition) {
         var deadline = System.nanoTime() + limit.toNanos();
         do {
             if (condition.getAsBoolean()) {
@@ -395,7 +518,7 @@ abstract class FarmIntegrationTest {
                 break;
             }
         } while (System.nanoTime() < deadline);
-        fail("timed out after " + limit + " waiting for " + what);
+        fail("timed out after " + limit + " waiting for " + what.get());
     }
 
     /**

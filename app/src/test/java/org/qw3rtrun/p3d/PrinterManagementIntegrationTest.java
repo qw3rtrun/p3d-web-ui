@@ -79,18 +79,18 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
         var printer = machine(MockPrinter.marlin());
         var id = register("tells us what it is", printer);
 
-        connectAndWait(id);
+        var events = connectAndLearn(id);
 
-        await("the roster to learn the firmware",
-                () -> firmware(describe(id)).containsKey("FIRMWARE_NAME"));
+        awaitRoster(id, events, () -> firmware(describe(id)).containsKey("FIRMWARE_NAME"),
+                "the roster to learn the firmware");
         var firmware = firmware(describe(id));
         assertTrue(((String) firmware.get("FIRMWARE_NAME")).startsWith("Marlin bugfix-2.1.x"),
                 "the firmware name should be the machine's own words: " + firmware);
         assertEquals("1", firmware.get("EXTRUDER_COUNT"));
         assertEquals("MarlinSim", firmware.get("MACHINE_TYPE"));
 
-        await("the capabilities to arrive",
-                () -> capabilities(describe(id)).containsKey("AUTOREPORT_TEMP"));
+        awaitRoster(id, events, () -> capabilities(describe(id)).containsKey("AUTOREPORT_TEMP"),
+                "the capabilities to arrive");
         assertEquals(Boolean.TRUE, capabilities(describe(id)).get("AUTOREPORT_TEMP"));
         assertEquals(Boolean.TRUE, capabilities(describe(id)).get("SDCARD"));
     }
@@ -101,10 +101,10 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
         var printer = machine(MockPrinter.withoutCard());
         var id = register("no reader", printer);
 
-        connectAndWait(id);
+        var events = connectAndLearn(id);
 
-        await("the capabilities to arrive",
-                () -> capabilities(describe(id)).containsKey("SDCARD"));
+        awaitRoster(id, events, () -> capabilities(describe(id)).containsKey("SDCARD"),
+                "the capabilities to arrive");
         assertEquals(Boolean.FALSE, capabilities(describe(id)).get("SDCARD"),
                 "the page gates its Storage tab on this");
     }
@@ -114,8 +114,9 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     void theDeclaredHalfAndTheReportedHalfAreBothKept() {
         var printer = machine(MockPrinter.marlin());
         var id = register("described", printer);
-        connectAndWait(id);
-        await("the firmware report", () -> firmware(describe(id)).containsKey("EXTRUDER_COUNT"));
+        var events = connectAndLearn(id);
+        awaitRoster(id, events, () -> firmware(describe(id)).containsKey("EXTRUDER_COUNT"),
+                "the roster to learn the firmware");
 
         update(id, "described", printer.port(), DECLARED);
 
@@ -136,8 +137,9 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     void anEditCannotTouchWhatTheMachineReported() {
         var printer = machine(MockPrinter.marlin());
         var id = register("renamed", printer);
-        connectAndWait(id);
-        await("the firmware report", () -> firmware(describe(id)).containsKey("FIRMWARE_NAME"));
+        var events = connectAndLearn(id);
+        awaitRoster(id, events, () -> firmware(describe(id)).containsKey("FIRMWARE_NAME"),
+                "the roster to learn the firmware");
         var reported = firmware(describe(id));
 
         update(id, "a different name", printer.port(), DECLARED);
@@ -163,9 +165,9 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     void aDeclaredExtruderCountLetsACommandForTheSecondToolThrough() {
         var printer = machine(MockPrinter.marlin());
         var id = register("under-reports", printer);
-        connectAndWait(id);
-        await("the firmware report", () -> firmware(describe(id)).containsKey("EXTRUDER_COUNT"));
-        printer.forget();
+        // connectAndLearn, because what is under test is the aggregate's own extruder count - the
+        // roster's copy is not consulted by the refusal below.
+        connectAndSettle(id, printer);
 
         // Before: the firmware says one tool, so a target for the second goes nowhere.
         command(id, "/set-temp", "{\"index\":1,\"temp\":210}").expectStatus().isOk();
@@ -185,8 +187,7 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     void clearingTheDeclarationFallsBackToTheFirmware() {
         var printer = machine(MockPrinter.marlin());
         var id = register("cleared", printer);
-        connectAndWait(id);
-        await("the firmware report", () -> firmware(describe(id)).containsKey("EXTRUDER_COUNT"));
+        connectAndSettle(id, printer);
         update(id, "cleared", printer.port(), "{\"extruderCount\":2}");
         command(id, "/set-temp", "{\"index\":1,\"temp\":210}").expectStatus().isOk();
         await("the override to take effect", () -> printer.sent("M104"));
@@ -224,6 +225,29 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * Waits for the roster to catch up with something the aggregate has already taken.
+     *
+     * <p>Only ever called after {@link #connectAndLearn}, so the report has demonstrably reached
+     * {@code core}. That is what makes the failure message worth writing out: everything before the
+     * {@code core -> management} hop is excluded by construction, and a timeout here names the one
+     * hop left - {@code PrinterReactor.report} publishing {@code MFirmwareReportedEvent}, or
+     * {@code MachineManagementImpl} storing it.
+     *
+     * <p>That hop is <strong>at-most-once and unretried</strong>, and it is worth knowing why a loss
+     * there would be permanent rather than late: {@code PrinterState.on(FirmwareInfoRs)} sets its own
+     * {@code profile} <em>before</em> emitting, and guards on
+     * {@code updated.firmware().equals(profile.firmware())}. So a second identical {@code M115} -
+     * from a redial, say - is suppressed, and the roster never gets another chance.
+     */
+    private void awaitRoster(java.util.UUID id, Events events,
+                             java.util.function.BooleanSupplier condition, String what) {
+        await(() -> what + ". The aggregate emitted FirmwareInfoRs (the stream carried "
+                        + events.types() + ") and the machine received " + received(id)
+                        + ", so the report reached core: the loss is the core -> management hand-off",
+                condition);
+    }
 
     /** The edit endpoint. {@code PUT} and not {@code PATCH}: the body is the whole declaration. */
     private void update(java.util.UUID id, String name, int port, String specJson) {

@@ -34,9 +34,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     void mountingAnnouncesTheCardWhenThereIsOne() {
         var printer = machine(MockPrinter.marlin());
         var id = register("has a card", printer);
-        var events = watch(id);
-        connectAndWait(id);
-        printer.forget();
+        var events = connectAndSettle(id, printer);
 
         command(id, "/sd/mount").expectStatus().isOk();
 
@@ -55,9 +53,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     void mountingAnnouncesNoCardWhenThereIsNone() {
         var printer = machine(MockPrinter.withoutCard());
         var id = register("empty reader", printer);
-        var events = watch(id);
-        connectAndWait(id);
-        printer.forget();
+        var events = connectAndSettle(id, printer);
 
         command(id, "/sd/mount").expectStatus().isOk();
 
@@ -82,9 +78,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
                 .withFile("TEST.GCO", 47)
                 .withFile("BENCHY.GCO", 1245678);
         var id = register("listed", printer);
-        var events = watch(id);
-        connectAndWait(id);
-        printer.forget();
+        var events = connectAndSettle(id, printer);
 
         command(id, "/sd/list").expectStatus().isOk();
 
@@ -116,9 +110,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     void thereIsNoListingWithoutACard() {
         var printer = machine(MockPrinter.withoutCard());
         var id = register("no card to list", printer);
-        var events = watch(id);
-        connectAndWait(id);
-        printer.forget();
+        var events = connectAndSettle(id, printer);
 
         command(id, "/sd/list").expectStatus().isOk();
 
@@ -139,9 +131,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     void printingAFileSelectsItAndThenStartsIt() {
         var printer = machine(MockPrinter.marlin()).withFile("TEST.GCO", 47);
         var id = register("printing", printer);
-        var events = watch(id);
-        connectAndWait(id);
-        printer.forget();
+        var events = connectAndSettle(id, printer);
 
         command(id, "/sd/print", "{\"name\":\"TEST.GCO\"}").expectStatus().isOk();
 
@@ -168,9 +158,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
                 .withFile("KEEP.GCO", 100)
                 .withFile("DROP.GCO", 200);
         var id = register("deleting", printer);
-        var events = watch(id);
-        connectAndWait(id);
-        printer.forget();
+        var events = connectAndSettle(id, printer);
 
         command(id, "/sd/delete", "{\"name\":\"DROP.GCO\"}").expectStatus().isOk();
         await("M30 to reach the machine", () -> printer.sent("M30 DROP.GCO"));
@@ -192,8 +180,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     void aFilenameThatWouldCorruptTheBlockIsRefused() {
         var printer = machine(MockPrinter.marlin());
         var id = register("validating", printer);
-        connectAndWait(id);
-        printer.forget();
+        connectAndSettle(id, printer);
 
         command(id, "/sd/delete", "{\"name\":\"BAD;NAME.GCO\"}").expectStatus().isBadRequest();
 
@@ -206,8 +193,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     void releasingTheCardReachesTheMachine() {
         var printer = machine(MockPrinter.marlin());
         var id = register("releasing", printer);
-        connectAndWait(id);
-        printer.forget();
+        connectAndSettle(id, printer);
 
         command(id, "/sd/release").expectStatus().isOk();
 

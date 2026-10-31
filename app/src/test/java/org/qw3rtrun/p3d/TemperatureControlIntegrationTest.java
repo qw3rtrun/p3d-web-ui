@@ -30,8 +30,7 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     void settingTheHotendReachesTheMachine() {
         var printer = machine(MockPrinter.marlin());
         var id = register("hotend", printer);
-        connectAndWait(id);
-        printer.forget();
+        connectAndSettle(id, printer);
 
         command(id, "/set-temp", "{\"temp\":210}").expectStatus().isOk();
 
@@ -45,8 +44,7 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     void settingTheBedReachesTheMachine() {
         var printer = machine(MockPrinter.marlin());
         var id = register("bed", printer);
-        connectAndWait(id);
-        printer.forget();
+        connectAndSettle(id, printer);
 
         command(id, "/set-bed-temp", "{\"temp\":60}").expectStatus().isOk();
 
@@ -67,9 +65,7 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     void askingForAReadingPutsTheAnswerOnTheStream() {
         var printer = machine(MockPrinter.marlin());
         var id = register("asked", printer);
-        var events = watch(id);
-        connectAndWait(id);
-        printer.forget();
+        var events = connectAndSettle(id, printer);
 
         command(id, "/report-temp").expectStatus().isOk();
 
@@ -150,9 +146,11 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     void aTargetForASecondToolIsNotSentToASingleExtruderMachine() {
         var printer = machine(MockPrinter.marlin());
         var id = register("one tool", printer);
-        connectAndWait(id);
-        await("the firmware report to be taken", () -> printer.sent("M155 S1"));
-        printer.forget();
+        // connectAndLearn, not "wait until M155 S1 is on the wire". That only proves the ok closing
+        // M115 was handled on the netty inbound thread, which writes the next block itself; the
+        // FirmwareInfoRs from the same reply is queued onto the aggregate's scheduler and may not
+        // have run. The refusal below is the aggregate reading its own extruder count.
+        connectAndSettle(id, printer);
 
         command(id, "/set-temp", "{\"index\":1,\"temp\":210}").expectStatus().isOk();
 
@@ -167,9 +165,10 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     void theSameTargetIsSentToADualExtruderMachine() {
         var printer = machine(MockPrinter.dualExtruder());
         var id = register("two tools", printer);
-        connectAndWait(id);
-        await("the firmware report to be taken", () -> printer.sent("M155 S1"));
-        printer.forget();
+        // Same reason as the single-extruder case above, and this is the direction that would have
+        // failed rather than passed for the wrong reason: the default count is 1, so an aggregate
+        // that has not yet read EXTRUDER_COUNT:2 refuses the command and no M104 ever arrives.
+        connectAndSettle(id, printer);
 
         command(id, "/set-temp", "{\"index\":1,\"temp\":210}").expectStatus().isOk();
 
@@ -190,8 +189,7 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     void theAutoReportPeriodTravels() {
         var printer = machine(MockPrinter.marlin());
         var id = register("periodic", printer);
-        connectAndWait(id);
-        printer.forget();
+        connectAndSettle(id, printer);
 
         command(id, "/auto-report-temp", "{\"period\":3}").expectStatus().isOk();
 

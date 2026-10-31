@@ -141,8 +141,14 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         connectAndWait(id);
 
-        await("IDLE to be announced on the stream",
-                () -> "IDLE".equals(events.payloadOf("ConnectionStateChanged").get("to")));
+        // payloadOf is null until the first message of that type arrives, so the condition has to
+        // tolerate it rather than throw a NullPointerException out of the wait - which would report
+        // as an error instead of as the timeout it is, and hide what the stream actually carried.
+        await(() -> "IDLE to be announced on the stream (it carried " + events.types() + ")",
+                () -> {
+                    var latest = events.payloadOf("ConnectionStateChanged");
+                    return latest != null && "IDLE".equals(latest.get("to"));
+                });
         var announced = events.payloadOf("ConnectionStateChanged");
         assertEquals("IDLE", announced.get("to"));
         assertEquals("ONLINE", announced.get("from"),
@@ -211,10 +217,12 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         connectAndWait(id);
 
-        await("the roster to catch up", () -> {
-            var state = (String) describe(id).get("state");
-            return "IDLE".equals(state) || "ONLINE".equals(state);
-        });
+        await(() -> "the roster to catch up. The machine received " + received(id)
+                        + " and the roster says " + describe(id).get("state"),
+                () -> {
+                    var state = (String) describe(id).get("state");
+                    return "IDLE".equals(state) || "ONLINE".equals(state);
+                });
         assertFalse("OFFLINE".equals(describe(id).get("state")),
                 "the roster must not still think the machine is offline");
     }

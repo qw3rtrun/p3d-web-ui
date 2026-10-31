@@ -7,7 +7,6 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The card in the machine - issue #43's {@code SdCard} feature, and the one with the worst history.
@@ -153,7 +152,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         var opened = events.await("SdFileOpened");
         assertEquals("TEST.GCO", opened.get("file"));
         assertEquals(47, opened.get("size"));
-        assertTrue(events.saw("SdFileSelected"));
+        events.await("SdFileSelected");
     }
 
     /**

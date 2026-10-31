@@ -237,11 +237,11 @@ through its endpoints against a mocked printer.
 | 2 | Connectivity | `/api-printer/{id}/connect`, `/connection`, `/stream` | `ConnectivityIntegrationTest` | **covered** |
 | 3 | Temperature control | `/set-temp`, `/set-bed-temp`, `/report-temp`, `/auto-report-temp`, `GET /api-printer/{id}` | `TemperatureControlIntegrationTest` | **covered** |
 | 4 | SD-card storage | `/sd/mount`, `/release`, `/list`, `/delete`, `/print` | `SdCardIntegrationTest` | **covered** except upload — see below |
-| 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position`, `/store-settings` | — | **deferred** |
-| 6 | G-code file store | `/api-files` | — | **deferred** |
-| 7 | Print jobs and queue | `/api-jobs` | — | **deferred** |
-| 8 | Farm dashboard | `/api-farm/stream` | — | **deferred** |
-| 9 | SD-card *upload* | `/sd/upload`, `/sd/upload/cancel` | — | **deferred**, blocked on 6 |
+| 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position`, `/store-settings` | — | **deferred** — [#49](https://github.com/qw3rtrun/p3d-web-ui/issues/49) |
+| 6 | G-code file store | `/api-files` | — | **deferred** — [#50](https://github.com/qw3rtrun/p3d-web-ui/issues/50) |
+| 7 | Print jobs and queue | `/api-jobs` | — | **deferred** — [#51](https://github.com/qw3rtrun/p3d-web-ui/issues/51) |
+| 8 | Farm dashboard | `/api-farm/stream` | — | **deferred** — [#52](https://github.com/qw3rtrun/p3d-web-ui/issues/52) |
+| 9 | SD-card *upload* | `/sd/upload`, `/sd/upload/cancel` | — | **deferred** — [#53](https://github.com/qw3rtrun/p3d-web-ui/issues/53), blocked on 6 |
 | 10 | Identity and access | `/login`, `/logout`, `/profile`, `/api-users` | `FarmSecurityTest` (`:frontend:web-ui`) | covered **elsewhere**, deliberately |
 | 11 | Pages | `/dashboard.html`, `/printers/{id}` | `MonitorPageTest` (`:frontend:web-ui`) | **out of scope** — #43 item 2 |
 | 12 | Restart recovery | *none* | `StartupAnnouncementFlowTest` | covered, **and it is the exception** — §7 |
@@ -258,10 +258,15 @@ mean putting a file into the store by some other means, which §3 forbids. The t
 
 ### 6.2 What the deferred ones need
 
-5 needs nothing new — it is the same shape as temperature control and was left out only for size.
-6, 7 and 9 need the fixture to be able to upload bytes, which is a helper on `FarmIntegrationTest`
-and a decision about what a test-sized G-code file looks like. 8 needs two machines in one test,
-which the fixture already supports but nothing has needed yet.
+**#49** needs nothing new — it is the same shape as temperature control and was left out only for
+size. **#50**, **#51** and **#53** need the fixture to be able to upload bytes, which is a helper on
+`FarmIntegrationTest` and a decision about what a test-sized G-code file looks like; #50 lands first
+because the other two depend on it. **#52** needs two machines in one test, which the fixture
+already supports but nothing has needed yet.
+
+**#53 also needs `MockPrinter` to learn `M28`/`M29`** — `Writing to file: <name>` and
+`Done saving file.` are decoded types and neither is in the reply census, so they want a probe
+against the simulator before they are written down here.
 
 ---
 

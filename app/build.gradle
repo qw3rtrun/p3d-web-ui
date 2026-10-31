@@ -51,6 +51,25 @@ dependencies {
     runtimeOnly 'org.springframework.modulith:spring-modulith-observability'
 }
 
+/**
+ * Print the whole failure, because the ones that matter here only happen on CI.
+ *
+ * Gradle's default is the exception's class and the line it came from and nothing else, so an
+ * integration test that fails on a build agent and passes on every developer machine reports as
+ * `AssertionFailedError at SomeTest.java:140` - which says where the wait was, not what it saw.
+ * The waits in FarmIntegrationTest build their evidence into the message exactly so that a run
+ * nobody can reproduce is still diagnosable; without this they are writing it to nowhere.
+ */
+tasks.named('test') {
+    testLogging {
+        events 'failed'
+        exceptionFormat 'full'
+        showExceptions true
+        showCauses true
+        showStackTraces true
+    }
+}
+
 //sourceSets {
 //    main {
 //        resources {

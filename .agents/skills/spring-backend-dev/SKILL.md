@@ -639,6 +639,22 @@ show.
 
 - **REST** is `@RestController` returning `Mono`/`Flux`, under `/api-manager` for the farm and
   `/api-printer/{id}` for one machine.
+- **An empty `Mono` returned from a handler is 200 with a zero-length body, not 404.** A GET-by-id
+  answers for an id the farm does not hold by mapping the `Optional` its service returns onto a
+  `ResponseEntity`:
+  `offLoop(() -> svc.fetch(id)).map(found -> found.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build()))`.
+  The browser reaches these endpoints through `getJson`, which calls `response.json()` on whatever
+  arrives and throws a syntax error on nothing at all, so the 200-and-empty version surfaces in the
+  UI as a parse failure instead of as a status a caller can act on. The three GET-by-id handlers
+  that can answer *not here* agree on it: `JobController.fetch`, `GcodeFileController.download`
+  (`/api-files/{id}/content`, via `defaultIfEmpty`) and `GcodeFileController.fetch`.
+  **It is not signalled by an exception** - no `ResponseStatusException` and no `@ResponseStatus`;
+  nothing in the package throws for this, and a second mechanism for the same answer is what this
+  skill exists to prevent. **The blocking lookup still goes through `offLoop`** - the status
+  decision is a `map` downstream of the subscription, so choosing it moves no JPA call back onto an
+  event loop. `/api-manager/{uuid}` is the outlier and 500s on an unknown id, because
+  `MachineManagementService.fetch` returns a `Descriptor` and throws rather than returning an
+  `Optional`.
 - **SSE is what the UI actually uses**: `produces = TEXT_EVENT_STREAM_VALUE` on
   `/api-printer/{id}/stream`, consumed by `EventSource` in `static/js/lib/client.js`. It is the
   working live channel and the one to extend. **The replay sink is seeded with the current

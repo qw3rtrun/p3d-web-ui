@@ -139,6 +139,7 @@ abstract class FarmIntegrationTest {
     private final List<UUID> registered = new ArrayList<>();
     private final List<MockPrinter> machines = new ArrayList<>();
     private final List<Events> streams = new ArrayList<>();
+    private final List<UUID> uploaded = new ArrayList<>();
 
     /** Which mock is behind which machine, so a failure can report what reached the far end. */
     private final Map<UUID, MockPrinter> attached = new java.util.HashMap<>();
@@ -148,6 +149,13 @@ abstract class FarmIntegrationTest {
         var anonymous = WebTestClient.bindToServer()
                 .baseUrl("http://localhost:" + port)
                 .responseTimeout(Duration.ofSeconds(30))
+                // The test client buffers a response to assert on it; the server never does. A
+                // download is the one place the two differ - GcodeFileController streams the bytes
+                // straight out, and a test that wants to compare them has to hold them. The default
+                // ceiling is 256 KiB, which is below the size a file has to be for "larger than any
+                // single buffer" to mean anything, so it is raised here rather than silently
+                // bounding what a fixture may weigh.
+                .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(8 * 1024 * 1024))
                 .build();
 
         var session = cached;
@@ -198,11 +206,24 @@ abstract class FarmIntegrationTest {
      * {@code PrinterReactorManager.release}, which stops the reactor, disposes any retry still in
      * flight, closes the terminal and completes the update sink. Closing the mock without that would
      * leave a reactor redialling a dead port for the rest of the suite.
+     *
+     * <p>Uploaded files go the same way and for a related reason. The store is content-addressed
+     * and the whole module shares one database, so a file left behind is a row every later
+     * {@code GET /api-files} can see and a blob every later upload of the same bytes will be handed
+     * back instead of its own.
      */
     @AfterEach
     void tidyUp() {
         streams.forEach(Events::close);
         streams.clear();
+        for (var id : uploaded) {
+            try {
+                farm.delete().uri("/api-files/{id}", id).exchange();
+            } catch (RuntimeException e) {
+                // Same as below: a failed cleanup must not mask the failure that matters.
+            }
+        }
+        uploaded.clear();
         for (var id : registered) {
             try {
                 farm.delete().uri("/api-manager/{id}", id).exchange();
@@ -403,6 +424,49 @@ abstract class FarmIntegrationTest {
                 .exchange();
     }
 
+    // ------------------------------------------------------------------ the file store
+
+    /**
+     * Puts a file into the farm's store and hands back the record it became.
+     *
+     * <p>Shared rather than kept in {@code GcodeFileIntegrationTest} because two more features are
+     * waiting on it: a print job names a file the farm already holds (#51) and an SD upload writes
+     * one onto a card (#53). Neither can be driven through its endpoints without a file being in
+     * the store first, and putting one there by any other means is what §3 of the integration-test
+     * spec forbids.
+     *
+     * <p>The request is the one the browser makes - {@code client.ts}'s {@code files.upload}: the
+     * body is the raw bytes, the name travels in {@code X-File-Name}, and nothing is multipart. A
+     * test that posted a form here would be exercising a shape no caller uses.
+     */
+    protected Map<String, Object> upload(GcodeFixture file) {
+        return upload(file.name(), file.bytes());
+    }
+
+    /** The same, for a test that wants to decide the bytes itself. */
+    protected Map<String, Object> upload(String name, byte[] content) {
+        var stored = json(farm.post().uri("/api-files")
+                .header("X-File-Name", name)
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .bodyValue(content)
+                .exchange()
+                .expectStatus().isOk());
+        uploaded.add(idOf(stored));
+        return stored;
+    }
+
+    /** Every file the farm holds, as a browser's file picker reads it. */
+    protected List<Map<String, Object>> storedFiles() {
+        return jsonList(farm.get().uri("/api-files").exchange().expectStatus().isOk());
+    }
+
+    /** The {@code id} of a record the server returned, which is a string on the wire. */
+    protected static UUID idOf(Map<String, Object> record) {
+        var id = record.get("id");
+        assertNotNull(id, "the server returned a record with no id: " + record);
+        return UUID.fromString((String) id);
+    }
+
     // ------------------------------------------------------------------ the event stream
 
     /** Opens this machine's SSE channel and starts recording what a browser would receive. */
@@ -537,6 +601,14 @@ abstract class FarmIntegrationTest {
         var body = response.expectBody(new ParameterizedTypeReference<Map<String, Object>>() {
         }).returnResult().getResponseBody();
         assertNotNull(body, "expected a JSON object in the response body");
+        return body;
+    }
+
+    /** The same for the endpoints that answer with an array - a listing, a roster, a queue. */
+    protected static List<Map<String, Object>> jsonList(WebTestClient.ResponseSpec response) {
+        var body = response.expectBody(new ParameterizedTypeReference<List<Map<String, Object>>>() {
+        }).returnResult().getResponseBody();
+        assertNotNull(body, "expected a JSON array in the response body");
         return body;
     }
 }

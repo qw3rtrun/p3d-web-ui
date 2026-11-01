@@ -237,12 +237,4 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
         return (Map<String, Object>) reading.get("bed");
     }
 
-    /** A pause used only where the claim is that nothing was sent. See ConnectivityIntegrationTest. */
-    private static void quiet() {
-        try {
-            Thread.sleep(500);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
 }

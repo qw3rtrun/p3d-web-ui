@@ -290,6 +290,21 @@ abstract class FarmIntegrationTest {
         return id;
     }
 
+    /**
+     * Removes a machine from the farm mid-test, through the endpoint an administrator uses.
+     *
+     * <p>{@link #tidyUp()} deletes whatever is left at the end, which covers every test that only
+     * ever adds. A test whose <em>subject</em> is the removal needs to do it itself and needs the
+     * cleanup to then leave it alone: a second {@code DELETE} of the same id answers 404 harmlessly
+     * but publishes nothing, so the difference would not be visible here - it would be visible on
+     * the farm stream, as a second {@code MachineLeftFarm} for a machine that left once.
+     */
+    protected void deregister(UUID id) {
+        farm.delete().uri("/api-manager/{id}", id).exchange().expectStatus().isOk();
+        registered.remove(id);
+        attached.remove(id);
+    }
+
     /** What the roster says about a machine - {@code Descriptor}, as the browser receives it. */
     protected Map<String, Object> describe(UUID id) {
         return json(farm.get().uri("/api-manager/{id}", id).exchange().expectStatus().isOk());
@@ -476,7 +491,19 @@ abstract class FarmIntegrationTest {
         return events;
     }
 
-    /** Opens the farm-wide channel - the one a dashboard holds instead of one per machine. */
+    /**
+     * Opens the farm-wide channel - the one a dashboard holds instead of one per machine.
+     *
+     * <p><strong>Register the machines first.</strong> Unlike a per-printer stream, this one has no
+     * replay sink behind it: what a late subscriber receives is a snapshot built from the machines
+     * the farm knows about at that moment, and nothing at all when it knows about none. Opening it
+     * before registering therefore produces a stream that is correct and silent, and the first thing
+     * a test asserts on it would be waiting for an event the subscription was too early to hear.
+     *
+     * <p>It is also the one guarantee a test gets that the subscription is <em>live</em>: the live
+     * sink is subscribed only when the snapshot completes. Wait for each machine's snapshot entry
+     * before causing anything, and cause it with a request rather than with a direct push.
+     */
     protected Events watchTheFarm() {
         var events = new Events("/api-farm/stream");
         streams.add(events);
@@ -549,6 +576,76 @@ abstract class FarmIntegrationTest {
             return last;
         }
 
+        // -------------------------------------------------------------- one stream, many machines
+
+        /**
+         * The same, narrowed to one machine - which on {@code /api-farm/stream} is the whole point.
+         *
+         * <p>The accessors above ignore {@code id} because every stream they were written for
+         * carries one machine. The farm-wide stream carries all of them, and a dashboard routes on
+         * {@code EventMessage.id} before it switches on {@code type}; asserting that routing means
+         * asking the same questions per machine. A test that only asked "did the stream carry an
+         * {@code OkTemperatureRs}" would pass on a farm that put every machine's reading under one
+         * id, which is exactly the failure one stream can have and several cannot.
+         *
+         * <p>{@code id} is a string on the wire, as a browser receives it.
+         */
+        public List<Map<String, Object>> from(UUID machine) {
+            var wanted = machine.toString();
+            return seen.stream().filter(m -> wanted.equals(m.get("id"))).toList();
+        }
+
+        /** The types that arrived under one machine, oldest first. */
+        public List<String> typesFrom(UUID machine) {
+            return from(machine).stream().map(m -> (String) m.get("type")).toList();
+        }
+
+        /** The first message that arrived under one machine, or null - the snapshot entry. */
+        public Map<String, Object> firstFrom(UUID machine) {
+            var messages = from(machine);
+            return messages.isEmpty() ? null : messages.getFirst();
+        }
+
+        public boolean saw(UUID machine, String type) {
+            return typesFrom(machine).contains(type);
+        }
+
+        /** Waits for a message of this type under this machine, and hands back its payload. */
+        public Map<String, Object> await(UUID machine, String type) {
+            FarmIntegrationTest.await(() -> "an SSE message of type " + type + " for machine "
+                    + machine + ". The stream carried " + byMachine(), () -> saw(machine, type));
+            return payloadOf(machine, type);
+        }
+
+        /** The payload of the most recent message of this type under this machine, or null. */
+        @SuppressWarnings("unchecked")
+        public Map<String, Object> payloadOf(UUID machine, String type) {
+            Map<String, Object> last = null;
+            for (var message : from(machine)) {
+                if (type.equals(message.get("type"))) {
+                    last = (Map<String, Object>) message.get("event");
+                }
+            }
+            return last;
+        }
+
+        /**
+         * What arrived under each machine, in order - the evidence a demultiplexing failure needs.
+         *
+         * <p>{@link #types()} flattens the two machines together, which is the one thing a failure
+         * message here must not do: "the stream carried two {@code ConnectionStateChanged}" is true
+         * both when each machine announced itself once and when one announced itself twice while the
+         * other was never heard from. Grouped by id, those read differently at a glance.
+         */
+        public Map<String, List<String>> byMachine() {
+            var grouped = new java.util.LinkedHashMap<String, List<String>>();
+            for (var message : seen) {
+                grouped.computeIfAbsent((String) message.get("id"), any -> new ArrayList<String>())
+                        .add((String) message.get("type"));
+            }
+            return grouped;
+        }
+
         @Override
         public void close() {
             subscription.dispose();
@@ -572,6 +669,27 @@ abstract class FarmIntegrationTest {
      */
     protected static void await(Supplier<String> what, BooleanSupplier condition) {
         await(what, PATIENCE, condition);
+    }
+
+    /**
+     * A bounded pause, permitted <strong>only where the claim is that something did not happen</strong>.
+     *
+     * <p>§3.2 of the integration-test spec: waiting a fixed time for a <em>result</em> is a test that
+     * is slow when it passes and flaky when it fails, so everything else uses {@link #await}. A
+     * negative has no condition to poll - "no command reached the machine", "no socket was opened" -
+     * and the only honest way to state it is to give the thing long enough to have happened.
+     *
+     * <p>Long enough is measured against the positive case: a dial, a handshake and a round trip on
+     * loopback are a few milliseconds, so three quarters of a second is two orders of magnitude of
+     * room. It is one helper rather than one per test class so that the figure, and the rule about
+     * when it may be used at all, have a single place to be argued about.
+     */
+    protected static void quiet() {
+        try {
+            Thread.sleep(750);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     protected static void await(Supplier<String> what, Duration limit, BooleanSupplier condition) {

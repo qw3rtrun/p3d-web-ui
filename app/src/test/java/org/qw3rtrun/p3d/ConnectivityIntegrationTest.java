@@ -2,7 +2,6 @@ package org.qw3rtrun.p3d;
 
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -86,7 +85,7 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
         // Bounded, because the claim is that something does NOT happen. A machine that was going
         // to acknowledge would have done it in far less than this - the healthy case above takes
         // one round trip on loopback.
-        settle();
+        quiet();
 
         assertEquals("ONLINE", connectionState(id),
                 "a socket is not a firmware; nothing acknowledged a block, so this is not IDLE");
@@ -121,7 +120,7 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
         connect(id);
 
         await("the farm to start dialling", () -> "CONNECTING".equals(connectionState(id)));
-        settle();
+        quiet();
         assertEquals("CONNECTING", connectionState(id),
                 "a refused dial retries; it must not read as a connection");
     }
@@ -225,20 +224,5 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
                 });
         assertFalse("OFFLINE".equals(describe(id).get("state")),
                 "the roster must not still think the machine is offline");
-    }
-
-    /**
-     * A pause long enough to disprove "it just had not happened yet".
-     *
-     * <p>Used only where the claim is that something does <em>not</em> occur. Everything else waits
-     * for a condition instead, because a test that sleeps for a result is a test that is slow when
-     * it passes and flaky when it does not.
-     */
-    private static void settle() {
-        try {
-            Thread.sleep(Duration.ofMillis(750));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 }

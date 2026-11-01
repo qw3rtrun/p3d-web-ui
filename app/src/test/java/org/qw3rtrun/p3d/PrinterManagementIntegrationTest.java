@@ -276,13 +276,4 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
         var profile = (Map<String, Object>) described.get("profile");
         return (Map<String, Object>) profile.get("capabilities");
     }
-
-    /** A pause used only where the claim is that nothing was sent. */
-    private static void quiet() {
-        try {
-            Thread.sleep(500);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
 }

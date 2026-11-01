@@ -95,9 +95,22 @@ public class GcodeFileController {
         return Mono.fromSupplier(blocking).subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * One file's record, or a 404.
+     *
+     * <p><strong>An empty {@code Mono} returned from here is not "no such file" - it is 200 with a
+     * zero-length body</strong>, and the browser cannot tell the two apart: {@code files.one()}
+     * goes through {@code getJson}, which calls {@code response.json()} on whatever arrives and
+     * throws a syntax error on nothing at all. So a missing id surfaced in the UI as a parse
+     * failure instead of as a status, and the status is the only part of the answer a client can
+     * act on without guessing. {@code download} below and {@code JobController.fetch} beside it
+     * both already say it this way.
+     */
     @GetMapping(value = "/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<GcodeFile> fetch(@PathVariable UUID id) {
-        return offLoop(() -> files.fetch(id)).flatMap(Mono::justOrEmpty);
+    public Mono<ResponseEntity<GcodeFile>> fetch(@PathVariable UUID id) {
+        return offLoop(() -> files.fetch(id))
+                .map(found -> found.map(ResponseEntity::ok)
+                        .orElseGet(() -> ResponseEntity.notFound().build()));
     }
 
     /**

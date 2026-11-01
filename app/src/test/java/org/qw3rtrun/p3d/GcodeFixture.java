@@ -3,6 +3,8 @@ package org.qw3rtrun.p3d;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * A G-code file for a test to upload - generated, not checked in.
@@ -144,6 +146,34 @@ final class GcodeFixture {
     /** Lines as the store counts them: every file built here ends with a terminator. */
     long lineCount() {
         return text().chars().filter(c -> c == '\n').count();
+    }
+
+    /**
+     * The blocks a print job will put on the wire, in file order - #51's denominator.
+     *
+     * <p>Not the same as {@link #lineCount()}, and the difference is the point: a feed drops blank
+     * and comment-only lines rather than spending a line number and a slot in the printer's buffer
+     * to say nothing, so a sliced fixture sends fewer blocks than it has lines. A test that asserts
+     * what reached the machine needs the smaller number, and needs it independently of the server -
+     * taking the list from the response would be comparing the server to itself.
+     *
+     * <p><strong>This is not a G-code reader and must not become one.</strong> {@code GcodeLines} in
+     * {@code :backend:core} is, and it tokenizes every line through {@code :gcode} because
+     * {@code G1 X10 ; wipe} and {@code (a note ; not a comment)} are both real. What is relied on
+     * here is a property of these fixtures alone: every comment they contain is a whole line of its
+     * own, and no line carries a trailing one. Adding a fixture that breaks that would make this
+     * quietly wrong, so do not - put the trailing comment in the test that wants to prove it is
+     * stripped, and assert that against {@code GcodeLinesTest}'s subject instead.
+     */
+    List<String> blocks() {
+        var blocks = new ArrayList<String>();
+        for (var line : text().split("\n")) {
+            var trimmed = line.trim();
+            if (!trimmed.isEmpty() && trimmed.charAt(0) != ';') {
+                blocks.add(trimmed);
+            }
+        }
+        return List.copyOf(blocks);
     }
 
     /**

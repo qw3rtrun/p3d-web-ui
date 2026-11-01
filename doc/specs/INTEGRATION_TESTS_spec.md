@@ -112,6 +112,14 @@ of how much they cost to find out the hard way:
   that `cura("x").named("a.gcode")` and `cura("x").named("b.gcode")` are *the same bytes under two
   names*, which is what the de-duplication test needs to say and the only way to say it.
 
+`GcodeFixture.blocks()` is the second observable's half of this: **the blocks a feed will actually
+put on the wire**, which is not the line count, because blank and comment-only lines are dropped
+rather than sent. A test asserting what reached the machine needs that list and needs it
+independently of the server. It is not a G-code reader and must not become one — `GcodeLines` in
+`:backend:core` is, and it tokenizes every line through `:gcode` because `G1 X10 ; wipe` is a real
+line. What `blocks()` relies on is a property of these fixtures alone: every comment in one is a
+whole line of its own. A fixture that broke that would make it quietly wrong.
+
 ---
 
 ## 3. The two observables
@@ -281,11 +289,63 @@ Every reply string in `MockPrinter` is a line from
 Anything added here that is not in the census **must** be marked UNMEASURED at the call site and
 added to this list, or measured first with a probe.
 
+**Which commands are acknowledged is measured too, not only what the answers say.** `G21`, `M83` and
+`M84` were added to the plain-`ok` arm with #51 because a print job and the cool-down after a
+cancelled one send them, and they were falling to the `default` arm — so every print the suite drove
+would have put three `echo:Unknown command` lines on the event stream that a real machine does not
+send. Measured against a running MarlinSim rather than assumed:
+
+```
+>> N2 G21*24          << ok N2 P15 B3
+>> N9 M84*22          << echo:busy: processing (x2), ok N9 P15 B3
+>> N13 M83*42         << ok N13 P15 B3
+>> N14 G1 E-2 F2400*7 << echo: cold extrusion prevented, ok N14 P15 B3
+```
+
+**That capture also contradicts something this document and `MockPrinter.ok()` both say**, and it is
+recorded here rather than acted on, because fixing it changes the acknowledgement every test in the
+suite receives and is its own piece of work:
+
+> *"No `N` on the advanced form, because the census shows MarlinSim does not write one on an ordinary
+> `ok`"* — `MockPrinter.ok()`
+
+The census does mostly show `ok P15 B3`, and it also holds two `ok N2 P15 B3`. The capture above
+settles which is which: **a numbered block is answered with its number**, every time. The farm numbers
+every block it sends, so a real session is the second case throughout and `MockPrinter` reproduces the
+first. The consequence is narrow and worth naming — `CommandProcessor.applyWindowEvents` takes the
+`window.acknowledge(number)` path on a real printer and the FIFO `window.acknowledge()` path here, so
+**no test in this module exercises the numbered one**, and the comment in `GSendWindow` about a lost
+acknowledgement self-correcting is unexercised end to end. Reported with #51; not changed by it.
+
 ### 4.3 It is deterministic
 
 Nothing in `MockPrinter` runs on a timer. A real Marlin with `M155 S1` writes a temperature every
 second; a test that waited for one would be asserting on a clock. A test that wants a reading calls
 `reportTemperature(…)`, a busy notice `reportBusy()`, a fault `reportError(…)`.
+
+### 4.4 Stopping the conversation, for a feature that has one
+
+A print job is the first feature here that is not a round trip. It is tens of thousands of blocks
+pulled through the send window, and against a mock that answers instantly it is **over before the
+test's next line runs** — so the two facts #51 exists to prove, that an interactive command overtakes
+a running print and that the print then carries on where it was, have nothing left to observe.
+
+`holdRepliesFrom(block)` stops the machine answering from a named command onwards, and
+`answerOne()` / `answerFreely()` move it on again. **What makes that deterministic is the send
+window and not a clock**: the host may not have more outstanding than the printer's buffer count
+allows — three on `marlin()`, one on `legacyOk()` — so a machine that stops acknowledging stops the
+conversation within a few blocks and stops it for good. A test can then sample what is on the wire
+and know the number will not move under it, which `PrintJobIntegrationTest.feedStalled` asserts
+rather than assumes.
+
+It is the same rule as §4.3 rather than an exception to it: the test decides when the machine
+answers, and nothing is waited out.
+
+**The ordering of two sources is not a race either, and that is a property of the application rather
+than of the mock.** `PrinterReactor.handle` applies a command on the aggregate's own executor and
+completes its `Mono` afterwards, so a 200 from `/report-temp` means the `M105` is already in the
+priority queue — before any acknowledgement is released, and therefore before the job can be handed
+another unit of demand.
 
 ---
 
@@ -313,7 +373,12 @@ what the difference is. The three that have earned their place so far:
 * **how a machine acknowledges** decides how much the host may have outstanding. `mute()` proves
   `ONLINE` and `IDLE` are a real distinction — a socket, against a firmware that has taken something
   this session sent — and that exactly one block reaches a machine that never answers, because the
-  send window will not pull another until one comes back.
+  send window will not pull another until one comes back. The same axis is the one a **print job**
+  has: a job is tens of thousands of blocks through exactly that gate, so `marlin()`'s window of
+  three and `legacyOk()`'s window of one are two genuinely different ways of feeding one file, and
+  `PrintJobIntegrationTest` asserts the file that comes out is identical. Nothing else about a
+  printer changes what a job sends — a feed does not consult an extruder count and does not involve
+  a card — so no other profile is driven.
 
 Adding a profile is cheap and adding a *field* to `Profile` is the thing to be careful about: each
 one multiplies the matrix. Add one when a feature behaves differently, not when a machine could.
@@ -401,7 +466,7 @@ through its endpoints against a mocked printer.
 | 4 | SD-card storage | `/sd/mount`, `/release`, `/list`, `/delete`, `/print` | `SdCardIntegrationTest` | **covered** except upload — see below |
 | 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position`, `/store-settings` | `MotionControlIntegrationTest` | **covered** — and the one that asserts whole command lists, §3.3 |
 | 6 | G-code file store | `/api-files` | `GcodeFileIntegrationTest` | **covered** — and the one with no machine in it, §5.1 |
-| 7 | Print jobs and queue | `/api-jobs` | — | **deferred** — [#51](https://github.com/qw3rtrun/p3d-web-ui/issues/51) |
+| 7 | Print jobs and queue | `/api-jobs` | `PrintJobIntegrationTest` | **covered** |
 | 8 | Farm dashboard | `/api-farm/stream` | `FarmDashboardIntegrationTest` | **covered** — and the one with two machines in it, §5.2 |
 | 9 | SD-card *upload* | `/sd/upload`, `/sd/upload/cancel` | — | **deferred** — [#53](https://github.com/qw3rtrun/p3d-web-ui/issues/53); no longer blocked on 6, still wants `M28`/`M29` |
 | 10 | Identity and access | `/login`, `/logout`, `/profile`, `/api-users` | `FarmSecurityTest` (`:frontend:web-ui`) | covered **elsewhere**, deliberately |
@@ -422,11 +487,12 @@ mean putting a file into the store by some other means, which §3 forbids. **Tha
 ### 6.2 What the deferred ones need
 
 **#49 is done**, and it needed nothing new: no profile, no `MockPrinter` reply and no production
-change. What it added is §3.3. **#51** and **#53** needed the fixture to be able to upload bytes, and now it can; what is
-left for **#53** is `MockPrinter` learning `M28`/`M29`, below. **#52 is done** — it needed two
-machines in one test, and the fixture supported that except for the parts that are only a question
-when a stream carries more than one: `Events` was id-blind, and nothing could remove a machine
-mid-test without `tidyUp()` removing it a second time. `Events.from(id)` and its id-scoped
+change. What it added is §3.3. **#51 is done** — it needed the fixture to be able to upload bytes
+and to stop a machine answering, and both now exist, §2.4 and §4.4. **#53** needed the first of
+those too; what is left for it is `MockPrinter` learning `M28`/`M29`, below. **#52 is done** — it
+needed two machines in one test, and the fixture supported that except for the parts that are only
+a question when a stream carries more than one: `Events` was id-blind, and nothing could remove a
+machine mid-test without `tidyUp()` removing it a second time. `Events.from(id)` and its id-scoped
 companions, and `deregister(id)`, are what closed that; §5.2 and §5.3 are the rest.
 
 **#53 also needs `MockPrinter` to learn `M28`/`M29`** — `Writing to file: <name>` and

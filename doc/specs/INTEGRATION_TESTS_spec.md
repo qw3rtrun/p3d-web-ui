@@ -85,6 +85,33 @@ by another.
 separate test — `FarmSecurityTest` in `:frontend:web-ui` drives every role against every surface —
 and restating that matrix here would be a second copy to keep in step.
 
+### 2.4 The file a test uploads
+
+Three features need a G-code file in the store before they can be driven at all: the store itself,
+a print job that names a file the farm holds, and an SD upload that writes one onto a card. Putting
+one there by any means other than `POST /api-files` is what §3 forbids, so `FarmIntegrationTest`
+carries `upload(…)` — the browser's own request, raw body and the name in `X-File-Name` — and
+tidies away what it stored, for the same reason it deletes machines.
+
+**The bytes are generated, not checked in**, by `GcodeFixture`. Three reasons, in increasing order
+of how much they cost to find out the hard way:
+
+* **one file cannot be all of them.** #50 needs slicer comments at the top, a summary at the
+  *bottom*, none at all, and one file larger than a single socket read; #51 needs a known estimated
+  time and line count to divide a progress figure by; #53 needs one small enough that every line the
+  farm writes to a card can be read back out of `MockPrinter.commands()`. Six resources are six
+  things to keep in step;
+* **a checked-in `.gcode` has the line endings Git felt like giving it.** The store counts lines and
+  hashes bytes. On a Windows working copy with `core.autocrlf=true` every `\n` becomes `\r\n`, so
+  the size and the SHA-256 both change and a test that pinned either fails on one developer's
+  machine and nobody else's;
+* **a fixture carries a mark, and it is not optional.** The store is content-addressed and the whole
+  module shares one database, so two tests that happened to build the same file would be handed each
+  other's record — the store working exactly as designed and the tests lying. The mark goes in as a
+  coordinate rather than a comment, so an unsliced fixture stays genuinely comment-free. It follows
+  that `cura("x").named("a.gcode")` and `cura("x").named("b.gcode")` are *the same bytes under two
+  names*, which is what the de-duplication test needs to say and the only way to say it.
+
 ---
 
 ## 3. The two observables
@@ -266,6 +293,20 @@ what the difference is. The three that have earned their place so far:
 Adding a profile is cheap and adding a *field* to `Profile` is the thing to be careful about: each
 one multiplies the matrix. Add one when a feature behaves differently, not when a machine could.
 
+### 5.1 A feature with no machine in it
+
+`GcodeFileIntegrationTest` drives over **no** configuration, because it drives over no printer. A
+stored file is the farm's and not a machine's: it is uploaded once and can be sent to any number of
+them, or to none. The rule in this section is being applied rather than suspended — *every
+configuration where the answer should differ*, and here nothing about a printer changes any answer.
+
+Two consequences, and both are fine:
+
+* the second observable has nothing to observe. A feature with no machine asserts only the first;
+* **nothing in that class waits.** Every assertion is on the response to a request the test just
+  made, so there is no `await` in it at all. That is the exception rather than the rule — see §3.2 —
+  and it is worth noticing which features are asynchronous and which only look it.
+
 ---
 
 ## 6. Feature inventory and coverage
@@ -280,10 +321,10 @@ through its endpoints against a mocked printer.
 | 3 | Temperature control | `/set-temp`, `/set-bed-temp`, `/report-temp`, `/auto-report-temp`, `GET /api-printer/{id}` | `TemperatureControlIntegrationTest` | **covered** |
 | 4 | SD-card storage | `/sd/mount`, `/release`, `/list`, `/delete`, `/print` | `SdCardIntegrationTest` | **covered** except upload — see below |
 | 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position`, `/store-settings` | — | **deferred** — [#49](https://github.com/qw3rtrun/p3d-web-ui/issues/49) |
-| 6 | G-code file store | `/api-files` | — | **deferred** — [#50](https://github.com/qw3rtrun/p3d-web-ui/issues/50) |
+| 6 | G-code file store | `/api-files` | `GcodeFileIntegrationTest` | **covered** — and the one with no machine in it, §5.1 |
 | 7 | Print jobs and queue | `/api-jobs` | — | **deferred** — [#51](https://github.com/qw3rtrun/p3d-web-ui/issues/51) |
 | 8 | Farm dashboard | `/api-farm/stream` | — | **deferred** — [#52](https://github.com/qw3rtrun/p3d-web-ui/issues/52) |
-| 9 | SD-card *upload* | `/sd/upload`, `/sd/upload/cancel` | — | **deferred** — [#53](https://github.com/qw3rtrun/p3d-web-ui/issues/53), blocked on 6 |
+| 9 | SD-card *upload* | `/sd/upload`, `/sd/upload/cancel` | — | **deferred** — [#53](https://github.com/qw3rtrun/p3d-web-ui/issues/53); no longer blocked on 6, still wants `M28`/`M29` |
 | 10 | Identity and access | `/login`, `/logout`, `/profile`, `/api-users` | `FarmSecurityTest` (`:frontend:web-ui`) | covered **elsewhere**, deliberately |
 | 11 | Pages | `/dashboard.html`, `/printers/{id}` | `MonitorPageTest` (`:frontend:web-ui`) | **out of scope** — #43 item 2 |
 | 12 | Restart recovery | *none* | `StartupAnnouncementFlowTest` | covered, **and it is the exception** — §7 |
@@ -292,19 +333,19 @@ through its endpoints against a mocked printer.
 test. A control that needs something not listed above needs a backend change rather than a raw-send
 escape hatch.
 
-### 6.1 Why 9 is blocked on 6
+### 6.1 Why 9 was blocked on 6
 
 An upload writes a file *the server already holds* onto a card: the browser posts the bytes to
 `/api-files` first and names the result at `/sd/upload`. Testing the second without the first would
-mean putting a file into the store by some other means, which §3 forbids. The two land together.
+mean putting a file into the store by some other means, which §3 forbids. **That block is lifted**:
+`upload(…)` and `GcodeFixture` landed with #50 and are described in §2.4.
 
 ### 6.2 What the deferred ones need
 
 **#49** needs nothing new — it is the same shape as temperature control and was left out only for
-size. **#50**, **#51** and **#53** need the fixture to be able to upload bytes, which is a helper on
-`FarmIntegrationTest` and a decision about what a test-sized G-code file looks like; #50 lands first
-because the other two depend on it. **#52** needs two machines in one test, which the fixture
-already supports but nothing has needed yet.
+size. **#51** and **#53** needed the fixture to be able to upload bytes, and now it can; what is
+left for **#53** is `MockPrinter` learning `M28`/`M29`, below. **#52** needs two machines in one
+test, which the fixture already supports but nothing has needed yet.
 
 **#53 also needs `MockPrinter` to learn `M28`/`M29`** — `Writing to file: <name>` and
 `Done saving file.` are decoded types and neither is in the reply census, so they want a probe
@@ -360,7 +401,8 @@ Item 7 is absent from the issue's numbering, which runs 1–6 then 8. Nothing is
    the line is not in the census, measure it with a probe against the simulator first, or mark it
    UNMEASURED in §4.2 and assert around it.
 5. **Assert both halves** — the G-code that reached the machine, and the event that reached the
-   stream. §3.
+   stream. §3. A feature with no machine in it asserts the one half it has, and says so — §5.1.
+   If it needs a file in the store first, upload one; §2.4.
 6. **Move the row in §6 to covered.**
 
 ```

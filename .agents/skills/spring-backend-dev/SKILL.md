@@ -71,10 +71,28 @@ and a Marlin *is* G-code, so there is no second kind of printer to abstract over
 vocabulary to keep in step. A new reply that needs to reach the host is now one change (an arm in
 `PrinterState.onEvent`) rather than three.
 
-**What `api.msg` still holds is what no firmware has a word for**: `ConnectionStateChanged`,
-`BlockAcknowledged`, `MachineJoinedFarm`/`MachineLeftFarm`, `ConnectCmd` and the `M`-prefixed
-roster events. If a new message is a fact about the host rather than something a machine said, it
-belongs there; otherwise it is already a `GRs`.
+**What `api.msg` still holds is what no firmware has a word for**: a connection moving, a block
+acknowledged or abandoned, how far an upload to a card has got, a machine joining or leaving the
+farm, and the `M`-prefixed roster events - plus `ConnectCmd`, which is a command rather than a fact.
+If a new message is a fact about the host rather than something a machine said, it belongs there;
+otherwise it is already a `GRs`.
+
+**The enumeration of that package lives in a test, and the prose deliberately no longer tries.**
+`EventMessage`'s javadoc names the farm's own facts and `api.msg`'s `package-info` says the same set
+in words; both went stale on `SdUploadProgressed`, and the sentence you are reading was a fifth copy
+that had gone stale on two. That is issue #69, and the repository had found three other
+hand-maintained lists wrong in the two days before it. `EventMessageCatalogueTest` in
+`:backend:api` is the one that cannot: it reads the **compiled** package - not the source files,
+because `ManagementEvents.kt` is one file holding four types - and asserts that every type in it is
+classified as either travelling as an `EventMessage.event` or not, each of the latter with a reason.
+
+**The contract is that a type added to `api.msg` and classified as neither fails the build.** That
+is aimed at the failure the lists exist to prevent, which is not untidy javadoc: it is a new message
+reaching a browser that has no `case` for it. `EventStreamContractTest` pins those strings, and it
+lives in `:frontend:web-ui`, which this module cannot see - so the guard catches the *moment of
+addition* and its failure message is where the next person is told what the addition costs. It does
+not check `package-info`'s prose, which names these things in words rather than by type; that
+remains documentation, and the failure message says to go and edit it.
 
 **`api` is the only place a type crosses submodels.** A `PrinterEntity` must not leave
 `printer-management`, and the aggregate must not leave `core`.

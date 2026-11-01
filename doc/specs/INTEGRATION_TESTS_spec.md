@@ -266,7 +266,8 @@ Every reply string in `MockPrinter` is a line from
 
 | line | type it decodes to |
 |---|---|
-| `ok P15 B3` | `AdvancedOkRs(planner=15, blockQueue=3, lineNumber=null)` |
+| `ok N2 P15 B3` | `AdvancedOkRs(planner=15, blockQueue=3, lineNumber=2)` — what a **numbered** block is answered with, and so what every block this farm sends is answered with |
+| `ok P15 B3` | `AdvancedOkRs(planner=15, blockQueue=3, lineNumber=null)` — the same firmware answering an **unnumbered** block |
 | `ok` | `SimpleOkRs` |
 | `ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0` | `OkTemperatureRs` — the answer *is* the acknowledgement |
 | ` T:210.00 /210.00 …` (**leading space**) | `BareTemperatureRs` |
@@ -365,20 +366,77 @@ send. Measured against a running MarlinSim rather than assumed:
 >> N14 G1 E-2 F2400*7 << echo: cold extrusion prevented, ok N14 P15 B3
 ```
 
-**That capture also contradicts something this document and `MockPrinter.ok()` both say**, and it is
-recorded here rather than acted on, because fixing it changes the acknowledgement every test in the
-suite receives and is its own piece of work:
+### 4.2.1 How an acknowledgement names its block — #61
+
+The capture above contradicted what this document and `MockPrinter.ok()` used to say:
 
 > *"No `N` on the advanced form, because the census shows MarlinSim does not write one on an ordinary
-> `ok`"* — `MockPrinter.ok()`
+> `ok`"* — `MockPrinter.ok()`, before #61
 
-The census does mostly show `ok P15 B3`, and it also holds two `ok N2 P15 B3`. The capture above
-settles which is which: **a numbered block is answered with its number**, every time. The farm numbers
-every block it sends, so a real session is the second case throughout and `MockPrinter` reproduces the
-first. The consequence is narrow and worth naming — `CommandProcessor.applyWindowEvents` takes the
-`window.acknowledge(number)` path on a real printer and the FIFO `window.acknowledge()` path here, so
-**no test in this module exercises the numbered one**, and the comment in `GSendWindow` about a lost
-acknowledgement self-correcting is unexercised end to end. Reported with #51; not changed by it.
+**That was a census line read out of its exchange.** `ReplyCorpusProbe` sends most of its steps
+unnumbered and five of them framed, so the census records both answers side by side and the rule
+that picks between them is visible in it:
+
+| probe step | block sent | census line |
+|---|---|---|
+| `position after the move` | `M114` | `AdvancedOkRs ok P15 B3` |
+| `framed position` | `N2 M114*…` | `AdvancedOkRs ok N2 P15 B3` |
+| `the resend the error asked for` | `N3 M114*…` | `AdvancedOkRs ok N3 P15 B3` |
+| `framed temperature` | `N1 M105*…` | `OkTemperatureRs ok T:210.00 …` — no `N`, no counts |
+
+That is Marlin's `ok_to_send`: with `ADVANCED_OK` built in it always writes `P` and `B`, and it
+copies the `N` field **only when the command it is answering carried one**. `M105` never reaches
+`ok_to_send` at all — it answers from the gcode handler and returns — which is why the fourth row
+has neither. The eleven numbered blocks in the §4.2 transcript measure the same rule a second time.
+
+Put to a running MarlinSim directly, both arms and the switch between them:
+
+```
+>> M110 N0        << ok P15 B3                                  unnumbered
+>> N1 M114*38     << X:0.00 Y:0.00 …   << ok N1 P15 B3          numbered
+>> N2 M114*37     << X:0.00 Y:0.00 …   << ok N2 P15 B3          numbered
+>> M114           << X:0.00 Y:0.00 …   << ok P15 B3             unnumbered, mid-session
+>> N3 M114*36     << X:0.00 Y:0.00 …   << ok N3 P15 B3          numbered, and N3 is still accepted
+```
+
+**The fourth line corrects something the §4.2 capture is easy to over-read.** There, an unnumbered
+`G28` was answered `Error:No Checksum with line number`, a `Resend:` and a bare `ok` — but that
+capture was inside an `M28` transfer, where Marlin requires every line to be numbered and
+checksummed. Outside one, an unnumbered block is ordinary traffic: it is acknowledged without an
+`N`, it costs the sequence nothing, and the next numbered block is accepted as though it had never
+happened. So "a session that is not numbering" is not a second acknowledgement dialect — it is the
+`ok P15 B3` arm, which `MockPrinter` has and no test can reach.
+
+**So one firmware speaks two shapes and the block decides which, and this farm only ever sees the
+first.** `GSendWindow` numbers every block, so a real session is numbered throughout; the un-numbered
+`ok P15 B3` is a shape production never produces. `MockPrinter.ok()` now follows the firmware's rule
+rather than one half of it, and the unnumbered arm is kept and unreached.
+
+**What that was costing.** `CommandProcessor.applyWindowEvents` chooses between
+`window.acknowledge(number)` and the FIFO `window.acknowledge()` on whether the reply named a line.
+With the mock never naming one, **the whole suite ran the FIFO branch** and the named branch — added
+by [#30](https://github.com/qw3rtrun/p3d-web-ui/pull/30) after an `ACK = -1` sentinel in a
+`Queue<Integer>` let a stray `ok` shift the window permanently — was exercised by nothing. It is now
+the branch every test in this module takes, which is checkable rather than asserted: mutate the mock
+to answer `ok N<n+1000> P15 B3` and no block is ever released, so
+`ConnectivityIntegrationTest.connectingReachesIdleAndSendsTheOpeningHandshake` fails with
+`timed out after PT30S waiting for machine … to reach IDLE`. Before #61 that mutation could not be
+written down, because there was no number to make wrong.
+
+**The two branches only differ when the wire misbehaves**, which is why nothing in the suite changed
+when the shape did: a numbered `ok` names exactly the block FIFO order would have released, so in a
+well-behaved exchange the releases, `inFlight` and therefore `canProcess` are identical and the same
+commands go out in the same order. The difference appears on a **stray** acknowledgement — one for a
+line this host never sent — where the named branch releases nothing and the counted one releases
+whatever is at the front. `ConnectivityIntegrationTest` puts the same stray to both dialects and
+asserts the two different command lists that reach the machine: a byte-identical replay against
+`marlin()`, a second `M110 N0` against `legacyOk()`.
+
+**The census is not changed by this and must not be.** `GReplyCorpusTest` recomputes
+`marlin-replies.census.txt` from the raw capture and compares line for line, so a line can only enter
+it by being captured; hand-writing one would be forging a measurement. Nothing needed adding here —
+both shapes were already in it. What the census still lacks is covered by
+[#66](https://github.com/qw3rtrun/p3d-web-ui/issues/66).
 
 **#53's probe run settles it beyond doubt, and adds the converse.** Every one of the eleven numbered
 blocks in the `SdWriteProbe` transcript above came back as `ok N<n> P15 B3` — `ok N1 P15 B3` through
@@ -462,12 +520,16 @@ builds. Exclusivity is belt over braces today, and this module tests the braces.
 
 | Profile | `EXTRUDER_COUNT` | `Cap:SDCARD` | acknowledges with | answers at all | what it is for |
 |---|---|---|---|---|---|
-| `marlin()` | 1 | 1 | `ok P15 B3` | yes | the baseline — MarlinSim |
-| `withoutCard()` | 1 | **0** | `ok P15 B3` | yes | the Storage tab's empty state |
-| `dualExtruder()` | **2** | 1 | `ok P15 B3` | yes | a command for tool 1 is legal |
-| `legacyOk()` | 1 | 1 | **`ok`** | yes | a firmware reporting no buffer counts |
+| `marlin()` | 1 | 1 | `ok N<n> P15 B3` | yes | the baseline — MarlinSim |
+| `withoutCard()` | 1 | **0** | `ok N<n> P15 B3` | yes | the Storage tab's empty state |
+| `dualExtruder()` | **2** | 1 | `ok N<n> P15 B3` | yes | a command for tool 1 is legal |
+| `legacyOk()` | 1 | 1 | **`ok`** | yes | a firmware built without `ADVANCED_OK`: no buffer counts and no line number |
 | `mute()` | 1 | 1 | — | **no** | a terminal server with nothing behind it |
 | `deadPort()` | — | — | — | — | an address with nothing listening |
+
+`<n>` is the number of the block being answered — §4.2.1. A profile with `advancedOk` answers an
+unnumbered block `ok P15 B3`, which no row above ever reaches, because nothing in this farm sends an
+unnumbered block.
 
 A feature is driven over **every configuration where the answer should differ**, and the test says
 what the difference is. The three that have earned their place so far:
@@ -493,6 +555,21 @@ rather than a gap in the matrix. It is the one configuration where the answer ge
 differ, and what a machine without a card answers an `M28` has never been measured — the simulator
 always has one. A profile whose reply was invented and then asserted on would be a test of the
 invention. It stays uncovered and named, which is the honest state.
+
+  **The same axis decides something narrower and sharper, which is why `legacyOk()` was kept rather
+  than folded into `marlin()` when #61 made the baseline number its acknowledgements.** A firmware
+  that names the block it is acknowledging lets the host refuse a stray `ok`; one that does not
+  leaves it counting, and a single stray then shifts the correspondence permanently. The two
+  `ConnectivityIntegrationTest` tests at the end of §4.2.1 are that difference, asserted as two
+  different command lists at the machine.
+
+  **"Acknowledges without a number" was ambiguous and `legacyOk()` is the first reading of it.** It
+  is *a firmware that does not report numbers* — `ADVANCED_OK` off, a real Marlin build option, a
+  property of the machine, which is the only kind of thing a `Profile` may be. It is **not** *a
+  session that is not numbering*: that is a property of a host, no endpoint can put the farm in it
+  since `GSendWindow` numbers every block, and §4.2.1 measures that it is not a second dialect in
+  any case — an unnumbered block answers `ok P15 B3`, which is an arm `MockPrinter.ok()` already
+  has and no test can reach.
 
 Adding a profile is cheap and adding a *field* to `Profile` is the thing to be careful about: each
 one multiplies the matrix. Add one when a feature behaves differently, not when a machine could.

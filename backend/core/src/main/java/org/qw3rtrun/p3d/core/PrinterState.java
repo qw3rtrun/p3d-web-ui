@@ -4,6 +4,7 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
+import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
@@ -231,6 +232,7 @@ public class PrinterState implements PrinterAggregate {
     public void onEvent(Object event) {
         switch (event) {
             case BlockAcknowledged e -> on(e);
+            case BlocksAbandoned e -> on(e);
             case BusyRs<?> e -> on(e);
             case ErrorRs e -> on(e);
             case TemperatureRs<?> e -> {
@@ -648,6 +650,39 @@ public class PrinterState implements PrinterAggregate {
     public void on(BlockAcknowledged ack) {
         blocksInFlight = ack.inFlight();
         transition(connection.blockAcknowledged());
+    }
+
+    /**
+     * The send window restarted its numbering and the blocks it was holding went with it - passed
+     * on, and nothing else.
+     *
+     * <p><strong>The aggregate has nothing to decide about this, and this handler exists to say
+     * so.</strong> Like {@link BlockAcknowledged} it is a fact about the <em>host</em> rather than
+     * something the machine said, and what acts on it is {@code JobFeeder}, which fails the job -
+     * see {@link BlocksAbandoned} for why a job that gets one cannot be resumed from its
+     * checkpoint. So this republishes, the same shape as {@link #on(PositionRs)}.
+     *
+     * <p><strong>It deliberately moves no connection state, in either direction.</strong> A
+     * resynchronisation never arrives alone: the firmware answers a block with
+     * {@code Error:Line Number is not Last Line Number+1}, then {@code Resend:}, and the
+     * {@code Error:} has already reached {@link #on(ErrorRs)} and driven
+     * {@link ConnectionLifecycle#faulted}. Faulting again here would put one fault on the stream
+     * twice, which is the mistake {@code on(ErrorRs)} already guards from the other side.
+     *
+     * <p><strong>And not {@link #heard()} either</strong>, which is the subtler half: a reply after
+     * a fault is what <em>clears</em> a recoverable {@code ERROR}, and this is not a reply. Before
+     * this handler existed the {@code default} arm called {@code heard()} and moved the machine
+     * from {@code ERROR} straight back to {@code IDLE} on the strength of the host's own conclusion
+     * that it had lost blocks. {@code PrinterStateDispatchTest} pins that.
+     *
+     * <p>Logged at WARN rather than at the debug level {@link #republish} uses, because unlike a
+     * position this one means a print was damaged.
+     */
+    public void on(BlocksAbandoned abandoned) {
+        log.warn("{}: {} block(s) this host had framed were abandoned when the session was"
+                        + " renumbered after a Resend: for line {} it could not answer",
+                id, abandoned.blocks(), abandoned.lineNumber());
+        emitter.accept(abandoned);
     }
 
     /** {@code busy:} - the machine is working and will not answer for a while. */

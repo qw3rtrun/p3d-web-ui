@@ -328,6 +328,30 @@ with either and no handler that reads them, and a stored field with no reader is
 reads it.** The card is the live candidate: `SdPrinting`/`SdNotPrinting` reach `on(SdCardRs)` now,
 so the state `handle(ReleaseSDCard)` needs to refuse an `M22` mid-print is one field away.
 
+### A host-side fact crosses the aggregate too, and a handler can decide nothing on purpose
+
+`BlocksAbandoned` has a named `on(...)` which **republishes and moves no lifecycle state at all** -
+not `faulted()`, and, less obviously, not `heard()` either. It is a fact about the *host* rather
+than something the machine said, like `BlockAcknowledged`, and what acts on it is `JobFeeder`, which
+fails the job.
+
+Both halves of that are paid for:
+
+- **No fault.** A resynchronisation never arrives alone. The firmware answers a block with
+  `Error:Line Number is not Last Line Number+1`, then `Resend:`, and the `Error:` has already
+  reached `on(ErrorRs)` and moved the connection. Faulting again here is one fault on the stream
+  twice, which `on(ErrorRs)` already refuses from the other side.
+- **No `heard()`.** A reply after a fault is what *clears* a recoverable `ERROR`, and this is not a
+  reply. Before the handler existed the `default` arm called `heard()` and took the machine from
+  `ERROR` straight back to `IDLE` on the strength of the host's own conclusion that it had lost
+  blocks - a fault cleared by the news of its own damage. `PrinterStateDispatchTest` pins it by
+  driving the real sequence: `ErrorRs` first, then the abandonment, and the machine is still in
+  `ERROR` with the firmware's own words on it afterwards.
+
+The shape generalises: **a handler whose whole content is "the aggregate has nothing to decide
+here" still has to exist**, because the `default` arm is not neutral - it decides something, and
+for a host-side fact what it decides is wrong.
+
 ## What CQRS means here
 
 Commands change state and return nothing useful; queries return state and change nothing. The split
@@ -1043,6 +1067,41 @@ the source, not suspected.
   the process dies between the last block and the listener, the job is left `RUNNING` with nothing
   feeding it. C5 has to reconcile that at startup, and already has to for a job whose machine went
   away mid-print.
+- **A job is failed when the transport abandons blocks, and the count it is failed on is a lower
+  bound.** `BlocksAbandoned` says how many framed blocks the send window was still holding when an
+  unanswerable `Resend:` made it renumber the session; `JobFeeder.watchForAbandonedBlocks` turns the
+  first one into a `JobFeedFailed` whose reason contains the word *abandoned*, because a job that
+  lost blocks cannot be resumed from its checkpoint - a checkpoint records what was *sent*, and what
+  went missing is the difference between sent and accepted. What the count does **not** include is a
+  block released early by a stray `ok`: that one has already left the window and is gone from the
+  tally, which is reachable on the unnumbered acknowledgement dialect
+  (`ConnectivityIntegrationTest.aStrayAcknowledgementResynchronisesAnUnnumberedSession` is exactly
+  that shape and reaches the resynchronisation holding nothing at all). So the number in the reason
+  is the floor of what was lost, never the ceiling, and nothing at this layer can produce the
+  ceiling - an `ok` covers acceptance into the planner and what a firmware did with a block after
+  that is not something a host is told.
+- **A watcher started by a new feed can be handed the previous feed's last event.**
+  `PrinterReactor.updates()` is `Sinks.many().replay().latestOrDefault(...)`, so a subscriber gets
+  the stream's *latest* message before any new one. `JobFeeder.watchTheLink` tolerates that because
+  the replayed default is a linked connection state its filter drops, and `watchForAbandonedBlocks`
+  is displaced in every reachable path - a failed print is followed by `coolDown`'s five commands
+  and their acknowledgements - but neither is *guaranteed*. The clean fix is a timestamp on
+  `EventMessage`, which is a change to `:backend:api` and its own piece of work.
+- **A decision taken on `updates()` races a decision taken on the feed's own `Mono`, and on a short
+  file the race is even.** Both halves of "did this print finish or break" travel asynchronously and
+  on different threads: a `BlocksAbandoned` crosses `gEvent()`'s `publishOn(executor)` and then
+  `updates()`'s, both onto the shared `Schedulers.single()`, while the feed's completion arrives on
+  the netty thread through `PublisherQueue`. Measured against `MockPrinter`, which answers instantly:
+  the transport announced the abandonment at `T+0`, the aggregate saw it at `T+4ms`, `updates()`
+  delivered it at `T+9ms`, and an eighteen-block file ran out at `T+9ms` - so
+  `PrintJobIntegrationTest.aJobWhoseBlocksWereAbandonedFailsRatherThanReportingCompleted` passes
+  about half the time (4 of 9 runs) against a correct implementation. It is not a problem on a real
+  print, where the abandonment lands thousands of blocks before the end, and the cause is the known
+  single-scheduler debt below: the inbound drain starves the outbound one on the same thread. The
+  fix is to make the completion path consult the fact rather than race it - a count on the aggregate
+  beside `blocksInFlight`, read where `JobFeeder.finished` decides - which is one hop rather than
+  two, and still not a guarantee. A guarantee needs the transport to answer "did this session
+  abandon anything" synchronously.
 - **A move is not validated against the machine.** Nothing checks a target against the declared
   bed volume, so an operator can drive the toolhead into a frame. An absolute move could be checked
   against `MachineSpec.bedVolume`; a relative one could not without tracking position, and the

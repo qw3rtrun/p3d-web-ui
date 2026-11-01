@@ -127,7 +127,14 @@ whole line of its own. A fixture that broke that would make it quietly wrong.
 A test here **may assert on exactly two things**, and both are at the system's boundary:
 
 1. **what came back over HTTP or SSE** — the status, the JSON body, the event stream;
-2. **what reached the machine** — `MockPrinter.commands()`, the bare G-code the farm wrote.
+2. **what reached the machine** — `MockPrinter.commands()`, the bare G-code the farm wrote, and
+   `MockPrinter.written(name)`, what ended up in a file on its card.
+
+The second of those two is one observable and not a third. A card is part of the machine, and an
+upload is the one feature where *what the machine did with what it was sent* is not deducible from
+the traffic: between `M28` and `M29` a line is stored rather than run and is acknowledged either
+way, so `commands()` is identical whether exclusivity held or not. The difference is only visible in
+the file. See §4.5.
 
 It **must not** assert on anything between them. No autowired service, no repository, no
 `ApplicationEventPublisher`, no aggregate, no `PrinterDirectory` (#43 item 4). A test that needs one
@@ -273,6 +280,62 @@ Every reply string in `MockPrinter` is a line from
 | `Error:…` | `ErrorRs` |
 | `echo:Unknown command: "…"` | `UnknownCommand` |
 
+**`M28` and `M29` are measured too, and not out of the census.** #53 needed them and neither was in
+the capture, so they were measured with `SdWriteProbe` against MarlinSim bugfix-2.1.x on
+2026-11-01. Verbatim, from the transcript that run printed:
+
+```
+>> N1 M28 test.gco*107  << echo:Now fresh file: test.gco
+                        << Writing to file: test.gco
+                        << //action:notification test.gco
+                        << ok N1 P15 B3
+>> G28                  << Error:No Checksum with line number, Last Line: 1
+                        << Resend: 2
+                        << ok
+>> N2 G28*17            << ok N2 P15 B3
+>> N6 M29*30            << Done saving file.
+                        << ok N6 P15 B3
+>> N7 M20*22            << Begin file list
+                        << TEST.GCO 47
+                        << End file list
+```
+
+| line | type it decodes to |
+|---|---|
+| `echo:Now fresh file: test.gco` | `SdFreshFile` |
+| `Writing to file: test.gco` | `SdWritingToFile(file)` |
+| `//action:notification test.gco` | `ActionRs` |
+| `Done saving file.` | `SdDoneSaving` |
+
+All four are reproduced in `MockPrinter`, rather than only the two the feature reads. Unlike the
+busy notices around an `M84` — timing chatter, deliberately left out — these are a fixed part of
+`M28`'s answer.
+
+Three more facts are in that capture and all three are load-bearing:
+
+* **the wire is a file sink and every stored line is still acknowledged.** `N2 G28*17` was answered
+  `ok N2 P15 B3` and went into the file. That acknowledgement is why a stray command during a
+  transfer is invisible from the host, and it is what `MockPrinter` reproduces;
+* **the stored line carries no `N` and no `*`.** The four payloads came back as `TEST.GCO 47`, which
+  is `G28`, `M117 Created`, `M118 Done` and `M118 P0 Done-P0` plus a `CRLF` each — 5 + 14 + 11 + 17.
+  That is what lets a test compare the card's contents against a fixture's blocks directly;
+* **numbering is required while saving** and is not while executing — the bare `G28` above.
+
+**It is deliberately not added to `marlin-replies.census.txt`.** That file is a *derived snapshot*
+of `marlin-replies.txt`, which is one `ReplyCorpusProbe` session; `GReplyCorpusTest` recomputes the
+census from the corpus and compares it line for line, so a line can only be added to the census by
+being added to the capture. Hand-writing one into a capture is forging it. `ReplyCorpusProbe` does
+not send `M28` — `GCodeCorpusProbe` quarantines it for the obvious reason — and teaching it to, then
+recapturing and regenerating, is its own piece of work and churns the whole snapshot. **Measured is
+measured; here is where this measurement lives.**
+
+**UNMEASURED around it, and marked as such in `MockPrinter`:** what a machine with no card answers an
+`M28`, and what an `M29` with no file open answers. Neither could be provoked — the simulator always
+has a card, and the probe never sent a stray `M29` — so the mock acknowledges and says nothing more,
+and no test drives either. `M20` also upcases a name to DOS 8.3 (`test.gco` listed as `TEST.GCO`)
+where the mock stores it verbatim; the upload tests use names already in that form, so nothing
+depends on the difference.
+
 **Unmeasured, and marked as such in the code:**
 
 * **everything a machine with no card says.** The simulator always has a card, so the no-card replies
@@ -317,6 +380,16 @@ first. The consequence is narrow and worth naming — `CommandProcessor.applyWin
 **no test in this module exercises the numbered one**, and the comment in `GSendWindow` about a lost
 acknowledgement self-correcting is unexercised end to end. Reported with #51; not changed by it.
 
+**#53's probe run settles it beyond doubt, and adds the converse.** Every one of the eleven numbered
+blocks in the `SdWriteProbe` transcript above came back as `ok N<n> P15 B3` — `ok N1 P15 B3` through
+`ok N11 P15 B3`, with no exception, including the ones answered from inside a file save. The one
+bare `ok` in the whole run is the answer to the one line that was sent **without** a number, behind
+an `Error:` and a `Resend:`. So the rule is not "mostly numbered": the acknowledgement carries the
+number of the block it answers whenever that block had one. That is the evidence
+[#61](https://github.com/qw3rtrun/p3d-web-ui/issues/61) wants, captured while the probe was running
+for something else. `MockPrinter.ok()` is still unchanged — changing it rewrites the acknowledgement
+every test in this module receives, and that is #61's work and not #53's.
+
 ### 4.3 It is deterministic
 
 Nothing in `MockPrinter` runs on a timer. A real Marlin with `M155 S1` writes a temperature every
@@ -335,7 +408,7 @@ a running print and that the print then carries on where it was, have nothing le
 window and not a clock**: the host may not have more outstanding than the printer's buffer count
 allows — three on `marlin()`, one on `legacyOk()` — so a machine that stops acknowledging stops the
 conversation within a few blocks and stops it for good. A test can then sample what is on the wire
-and know the number will not move under it, which `PrintJobIntegrationTest.feedStalled` asserts
+and know the number will not move under it, which `FarmIntegrationTest.stalled` asserts
 rather than assumes.
 
 It is the same rule as §4.3 rather than an exception to it: the test decides when the machine
@@ -346,6 +419,39 @@ than of the mock.** `PrinterReactor.handle` applies a command on the aggregate's
 completes its `Mono` afterwards, so a 200 from `/report-temp` means the `M105` is already in the
 priority queue — before any acknowledgement is released, and therefore before the job can be handed
 another unit of demand.
+
+### 4.5 The wire as a file sink
+
+`M28` is the second feature here that is not a round trip, and it is a stranger one than a print
+job: it stops the firmware *executing* what it is sent and makes it store the lines instead,
+**acknowledging each one exactly as if it had run it**, until `M29`. `MockPrinter` reproduces that,
+which is what makes an upload assertable at all. `written(name)` is the file; `writingTo()` is the
+file that is open, or null.
+
+Three things follow, and each is a test that could not otherwise exist:
+
+* **a stray command during a transfer is invisible in the traffic.** `commands()` shows the `M105`
+  either way; whether it was *run* or *written into the G-code* is only legible in `written(name)`.
+  That is the fault the whole feature exists to prevent and the reason the file is an observable.
+* **a cancel is distinguishable from a tear-out.** A transfer stopped properly has an `M29` behind
+  it, so `writingTo()` is null and the card holds a short but closed file; one torn out leaves the
+  file open, and the next command goes into it. `SdCardIntegrationTest` asserts the second half by
+  sending an interactive command afterwards and checking the file did not grow — which is exactly
+  what `SdUploadProbe.stopRun` does against a real firmware, by asking `M23` for the size twice.
+* **the card can be listed afterwards.** The size the mock reports is the payloads plus a `CRLF`
+  each, because that is what the probe measured (§4.2) — so "it is really there, at really that
+  length" is sayable through `/sd/list` rather than by trusting the transfer.
+
+**What this level cannot prove is exclusivity itself**, and that was established by mutation rather
+than assumed. Replacing `addExclusivePublisher` with `addPublisher` in
+`PrinterReactor.uploadToCard` leaves every test in `SdCardIntegrationTest` green; demoting the
+transfer from `REALTIME` to `BACKGROUND` fails one. Both are correct, because the two mechanisms are
+not the same guarantee: priority decides who gets the *next* unit of demand, and exclusivity covers
+the case priority cannot — a source handed demand *before* the transfer was queued and still holding
+it. **No endpoint can produce that**, because every source this farm has is request-driven and
+spends what it is given at once; it takes a deliberately slow publisher, which is what
+`SdUploadProbe`'s `SlowSource` is (675 bytes against 687) and what `PublisherQueueExclusivityTest`
+builds. Exclusivity is belt over braces today, and this module tests the braces.
 
 ---
 
@@ -378,7 +484,15 @@ what the difference is. The three that have earned their place so far:
   three and `legacyOk()`'s window of one are two genuinely different ways of feeding one file, and
   `PrintJobIntegrationTest` asserts the file that comes out is identical. Nothing else about a
   printer changes what a job sends — a feed does not consult an extruder count and does not involve
-  a card — so no other profile is driven.
+  a card — so no other profile is driven. **An SD upload has the same axis and only that axis**: it
+  is the same stream of blocks through the same gate, so `marlin()` and `legacyOk()` are driven and
+  the file that lands on the card has to be identical.
+
+**`withoutCard()` is deliberately not driven against an upload**, and that is §4.2 being obeyed
+rather than a gap in the matrix. It is the one configuration where the answer genuinely should
+differ, and what a machine without a card answers an `M28` has never been measured — the simulator
+always has one. A profile whose reply was invented and then asserted on would be a test of the
+invention. It stays uncovered and named, which is the honest state.
 
 Adding a profile is cheap and adding a *field* to `Profile` is the thing to be careful about: each
 one multiplies the matrix. Add one when a feature behaves differently, not when a machine could.
@@ -463,12 +577,12 @@ through its endpoints against a mocked printer.
 | 1 | Printer management | `/api-manager` (GET, POST, PUT, DELETE) | `PrinterManagementIntegrationTest` | **covered** |
 | 2 | Connectivity | `/api-printer/{id}/connect`, `/connection`, `/stream` | `ConnectivityIntegrationTest` | **covered** |
 | 3 | Temperature control | `/set-temp`, `/set-bed-temp`, `/report-temp`, `/auto-report-temp`, `GET /api-printer/{id}` | `TemperatureControlIntegrationTest` | **covered** |
-| 4 | SD-card storage | `/sd/mount`, `/release`, `/list`, `/delete`, `/print` | `SdCardIntegrationTest` | **covered** except upload — see below |
+| 4 | SD-card storage | `/sd/mount`, `/release`, `/list`, `/delete`, `/print` | `SdCardIntegrationTest` | **covered** |
 | 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position`, `/store-settings` | `MotionControlIntegrationTest` | **covered** — and the one that asserts whole command lists, §3.3 |
 | 6 | G-code file store | `/api-files` | `GcodeFileIntegrationTest` | **covered** — and the one with no machine in it, §5.1 |
 | 7 | Print jobs and queue | `/api-jobs` | `PrintJobIntegrationTest` | **covered** |
 | 8 | Farm dashboard | `/api-farm/stream` | `FarmDashboardIntegrationTest` | **covered** — and the one with two machines in it, §5.2 |
-| 9 | SD-card *upload* | `/sd/upload`, `/sd/upload/cancel` | — | **deferred** — [#53](https://github.com/qw3rtrun/p3d-web-ui/issues/53); no longer blocked on 6, still wants `M28`/`M29` |
+| 9 | SD-card *upload* | `/sd/upload`, `/sd/upload/cancel` | `SdCardIntegrationTest` | **covered** — [#53](https://github.com/qw3rtrun/p3d-web-ui/issues/53); and the one with a file on the card as an observable, §4.5 |
 | 10 | Identity and access | `/login`, `/logout`, `/profile`, `/api-users` | `FarmSecurityTest` (`:frontend:web-ui`) | covered **elsewhere**, deliberately |
 | 11 | Pages | `/dashboard.html`, `/printers/{id}` | `MonitorPageTest` (`:frontend:web-ui`) | **out of scope** — #43 item 2 |
 | 12 | Restart recovery | *none* | `StartupAnnouncementFlowTest` | covered, **and it is the exception** — §7 |
@@ -488,16 +602,18 @@ mean putting a file into the store by some other means, which §3 forbids. **Tha
 
 **#49 is done**, and it needed nothing new: no profile, no `MockPrinter` reply and no production
 change. What it added is §3.3. **#51 is done** — it needed the fixture to be able to upload bytes
-and to stop a machine answering, and both now exist, §2.4 and §4.4. **#53** needed the first of
-those too; what is left for it is `MockPrinter` learning `M28`/`M29`, below. **#52 is done** — it
+and to stop a machine answering, and both now exist, §2.4 and §4.4. **#52 is done** — it
 needed two machines in one test, and the fixture supported that except for the parts that are only
 a question when a stream carries more than one: `Events` was id-blind, and nothing could remove a
 machine mid-test without `tidyUp()` removing it a second time. `Events.from(id)` and its id-scoped
 companions, and `deregister(id)`, are what closed that; §5.2 and §5.3 are the rest.
 
-**#53 also needs `MockPrinter` to learn `M28`/`M29`** — `Writing to file: <name>` and
-`Done saving file.` are decoded types and neither is in the reply census, so they want a probe
-against the simulator before they are written down here.
+**#53 is done**, and it needed no production change. It needed two things that did not exist:
+`M28`/`M29` measured against the simulator, because `Writing to file: <name>` and
+`Done saving file.` are decoded types that nothing had ever captured — §4.2 holds the transcript —
+and the card itself as an observable, which is §4.5. `stalled(…)` moved up to `FarmIntegrationTest`
+in the same work, because a second feature now needs it and "how long is long enough" is a question
+to answer once; `number(…)` moved with it, having been privately copied into three classes.
 
 ---
 

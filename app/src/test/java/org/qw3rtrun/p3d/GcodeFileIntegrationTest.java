@@ -308,12 +308,6 @@ class GcodeFileIntegrationTest extends FarmIntegrationTest {
         return (Map<String, Object>) slice;
     }
 
-    /** JSON has one number type; which Java box it arrives in depends on its magnitude. */
-    private static long number(Object value) {
-        assertNotNull(value, "expected a number");
-        return ((Number) value).longValue();
-    }
-
     private static double decimal(Object value) {
         assertNotNull(value, "expected a number");
         return ((Number) value).doubleValue();

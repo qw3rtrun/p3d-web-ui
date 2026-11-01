@@ -25,6 +25,7 @@ import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
@@ -690,6 +691,52 @@ abstract class FarmIntegrationTest {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Waits for the conversation to reach the block the machine stopped answering at, and then for
+     * it to <em>stop</em>. Answers with how many commands are on the wire.
+     *
+     * <p><strong>That number is the basis of every test that samples a stream mid-flight</strong> -
+     * a print being preempted, a transfer being cancelled - so it has to be one that cannot move
+     * afterwards. It is: the machine is no longer acknowledging and the send window will not pull
+     * another block until one comes back, so whatever the window still had room for lands, and then
+     * nothing further can reach the machine at all. That is the send window and not a clock, which
+     * is what makes it honest on a loaded runner.
+     *
+     * <p>Waited out until the count stops moving rather than for one fixed pause. A fixed pause is
+     * what §3.2 of the integration-test spec permits for a claim that something did not happen, and
+     * that is the claim here - but on a two-core runner the last of those writes can take longer
+     * than any single pause worth choosing, and the failure would be a wrong number rather than a
+     * timeout. Two consecutive unchanged samples is the same claim at whatever speed the machine is
+     * running, and it is <em>asserted</em>: a conversation that never stops is a failure with the
+     * evidence in its message, not a test that quietly reads the wrong thing.
+     *
+     * <p>Here rather than in one test class because two features need it and for the reason
+     * {@link #quiet()} is here: "how long is long enough" is a question to answer once.
+     */
+    protected static int stalled(MockPrinter printer, String stopsAt) {
+        await(() -> "the wire to reach " + stopsAt + ". The machine received " + printer.commands(),
+                () -> printer.sent(stopsAt));
+
+        var deadline = System.nanoTime() + PATIENCE.toNanos();
+        int sampled = -1;
+        int unchanged = 0;
+        while (unchanged < 2 && System.nanoTime() < deadline) {
+            quiet();
+            int now = printer.commands().size();
+            unchanged = now == sampled ? unchanged + 1 : 0;
+            sampled = now;
+        }
+        assertTrue(unchanged >= 2, "the machine stopped answering at " + stopsAt
+                + ", so the conversation should have stopped and it has not: " + printer.commands());
+        return sampled;
+    }
+
+    /** JSON has one number type; which Java box it arrives in depends on its magnitude. */
+    protected static long number(Object value) {
+        assertNotNull(value, "expected a number");
+        return ((Number) value).longValue();
     }
 
     protected static void await(Supplier<String> what, Duration limit, BooleanSupplier condition) {

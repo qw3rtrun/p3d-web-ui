@@ -56,6 +56,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link #holdRepliesFrom(String)} stops the conversation at a named command and lets a test move it
  * on one acknowledgement at a time. See that method: it is what makes a feeding print observable,
  * because a print that is not stopped is over before anything can be asked of it.
+ *
+ * <h2>It is also a file sink, between {@code M28} and {@code M29}</h2>
+ * A real Marlin stops <em>executing</em> what it is sent while a file is open for write and stores
+ * it instead, acknowledging each line as it goes. {@link #written(String)} is what came out of that,
+ * and it is a second observable at the same boundary: an upload is proved by the file on the card
+ * and not only by the traffic that produced it. See {@link #respond(String)}.
  */
 public final class MockPrinter implements AutoCloseable {
 
@@ -182,6 +188,25 @@ public final class MockPrinter implements AutoCloseable {
     /** The card's contents: the card's own spelling to its size in bytes. */
     private final Map<String, Integer> card = Collections.synchronizedMap(new LinkedHashMap<>());
 
+    /**
+     * What was stored in each file written with {@code M28}, one entry per line, under the monitor
+     * of {@link #card}.
+     *
+     * <p>Kept apart from {@link #commands()} on purpose: the whole claim of an upload is that these
+     * two lists are <em>different</em>. A command that reached the machine during a transfer went
+     * into the file rather than being run, and nothing on either end says which happened - so a
+     * test that only had the traffic could not tell the two apart, which is exactly the fault
+     * exclusivity exists to prevent.
+     */
+    private final Map<String, List<String>> stored =
+            Collections.synchronizedMap(new LinkedHashMap<>());
+
+    /** The file {@code M28} opened and {@code M29} has not yet closed, or null. */
+    private volatile String openFile;
+
+    /** The lines that have gone into {@link #openFile} so far. */
+    private List<String> openLines = new ArrayList<>();
+
     private final AtomicInteger sessions = new AtomicInteger();
 
     private final Object writing = new Object();
@@ -301,6 +326,34 @@ public final class MockPrinter implements AutoCloseable {
     public void forget() {
         blocks.clear();
         commands.clear();
+    }
+
+    // ------------------------------------------------------------------ what is on the card
+
+    /**
+     * The lines stored in a file written with {@code M28}, or an empty list if there is no such
+     * <em>closed</em> file.
+     *
+     * <p>Only a closed file answers. That is the distinction the cancel case turns on: a transfer
+     * that was stopped properly has an {@code M29} behind it and so has a file here, and one that
+     * was torn out leaves {@link #writingTo()} naming it forever.
+     */
+    public List<String> written(String name) {
+        synchronized (card) {
+            return List.copyOf(stored.getOrDefault(name, List.of()));
+        }
+    }
+
+    /**
+     * The file {@code M28} opened and {@code M29} has not closed, or null when the wire is a
+     * command channel again.
+     *
+     * <p>A test asserts this is null after a cancel. A file left open is the failure
+     * {@code SdUploader}'s {@code concat} exists to prevent, and from the host it is invisible -
+     * every subsequent command is acknowledged exactly as if it had been run.
+     */
+    public String writingTo() {
+        return openFile;
     }
 
     // ------------------------------------------------------------------ what the machine says
@@ -462,7 +515,68 @@ public final class MockPrinter implements AutoCloseable {
     private List<String> respond(String command) {
         var lines = new ArrayList<String>();
         var word = word(command);
+
+        // Between M28 and M29 the wire is a file sink and not a command channel: the line is
+        // stored rather than run, and it is still acknowledged. That acknowledgement is what makes
+        // the fault invisible from the host - the transfer and the stray command are answered
+        // identically, and the difference only shows up much later as a line of nonsense mid-print.
+        // Measured, with the firmware numbering requirement alongside it (SdWriteProbe, below).
+        if (openFile != null && !"M29".equals(word)) {
+            synchronized (card) {
+                openLines.add(command);
+            }
+            lines.add(ok());
+            return lines;
+        }
+
         switch (word) {
+            // Open a file for write. Three lines then the acknowledgement, verbatim from a
+            // SdWriteProbe run against MarlinSim bugfix-2.1.x on 2026-11-01:
+            //
+            //   >> N1 M28 test.gco*107  << echo:Now fresh file: test.gco
+            //                           << Writing to file: test.gco
+            //                           << //action:notification test.gco
+            //                           << ok N1 P15 B3
+            //
+            // All three are reproduced rather than trimmed to the one the feature reads. Unlike
+            // the busy notices around an M84 - timing chatter, and left out - these are a fixed
+            // part of M28's answer, and all three decode: SdFreshFile, SdWritingToFile, ActionRs.
+            case "M28" -> {
+                var name = argument(command);
+                synchronized (card) {
+                    openFile = name;
+                    openLines = new ArrayList<>();
+                }
+                lines.add("echo:Now fresh file: " + name);
+                lines.add("Writing to file: " + name);
+                lines.add("//action:notification " + name);
+                lines.add(ok());
+            }
+            // Close it. Measured in the same run:
+            //
+            //   >> N6 M29*30            << Done saving file.
+            //                           << ok N6 P15 B3
+            //
+            // The size the card then reports is the stored payloads plus a CRLF each and nothing
+            // else - that run wrote G28, M117 Created, M118 Done and M118 P0 Done-P0, and M20
+            // answered `TEST.GCO 47`, which is 5 + 14 + 11 + 17. So the N word and the checksum
+            // are stripped before the line is stored, and that is why `written` can be compared
+            // against the blocks of a fixture directly.
+            //
+            // An M29 with no file open is UNMEASURED - the probe never sent one - so it is
+            // acknowledged and nothing more, and no test drives it.
+            case "M29" -> {
+                synchronized (card) {
+                    if (openFile != null) {
+                        card.put(openFile, sizeOnCard(openLines));
+                        stored.put(openFile, List.copyOf(openLines));
+                        openFile = null;
+                        openLines = new ArrayList<>();
+                        lines.add("Done saving file.");
+                    }
+                }
+                lines.add(ok());
+            }
             case "M115" -> {
                 if (profile.firmware() != null) {
                     lines.add(profile.firmware());
@@ -608,6 +722,22 @@ public final class MockPrinter implements AutoCloseable {
             }
         }
         return text;
+    }
+
+    /**
+     * What {@code M20} will report for a file written with {@code M28}: the payloads plus a
+     * {@code CRLF} each.
+     *
+     * <p>Measured rather than assumed - see the {@code M29} arm. It matters because a listing is
+     * how a test can say the file is really there at really that length, which is the only thing
+     * that distinguishes a finished transfer from a cancelled one from outside.
+     */
+    private static int sizeOnCard(List<String> lines) {
+        var size = 0;
+        for (var line : lines) {
+            size += line.length() + 2;
+        }
+        return size;
     }
 
     /** The command word - {@code M104} out of {@code M104 S210 T0}. */

@@ -47,6 +47,11 @@ public class FarmEvents implements FarmView {
     /**
      * Multicast, lossy on a slow subscriber, and <strong>without a warm-up buffer</strong>.
      *
+     * <p>Touched by exactly one thread at a time - see {@link #outbox}. A <em>safe</em>
+     * {@code Sinks.Many} does not serialise for its caller; it refuses a concurrent emission with
+     * {@code FAIL_NON_SERIALIZED}, and this one is reached from whatever thread published the Spring
+     * event - a reactor's {@code single}, a netty loop, or {@code boundedElastic}.
+     *
      * <p>{@code directBestEffort} and emphatically not {@code onBackpressureBuffer}, which was the
      * obvious choice and leaks: that one <em>warms up</em>, buffering everything emitted while
      * nothing is subscribed and handing the whole backlog to the first subscriber that arrives. On
@@ -61,6 +66,15 @@ public class FarmEvents implements FarmView {
      */
     private final Sinks.Many<EventMessage> farm =
             Sinks.many().multicast().directBestEffort();
+
+    /**
+     * Everything on its way to {@link #farm}, so that two machines never emit at once.
+     *
+     * <p>There is no end-of-stream marker in here, unlike {@code PrinterReactor}'s outbox: this
+     * stream belongs to the farm rather than to a machine, so nothing ever terminates it. A
+     * subscriber leaves by cancelling.
+     */
+    private final Outbox<EventMessage> outbox = new Outbox<>(this::publish);
 
     /** Which machines have been announced, so a re-announcement is not a second arrival. */
     private final Set<UUID> known = ConcurrentHashMap.newKeySet();
@@ -139,15 +153,37 @@ public class FarmEvents implements FarmView {
     }
 
     /**
-     * Puts a message on the farm stream, and says so when it did not go.
+     * Parks a message for the farm stream, and publishes what is parked if nobody else is.
      *
-     * <p>{@code tryEmitNext} fails silently when it is not {@code OK} - with no subscriber that is
-     * the normal case and not worth a line, which is why only a real failure is logged.
+     * <p>It used to call {@code tryEmitNext} from whatever thread published the Spring event, and
+     * log the {@code FAIL_NON_SERIALIZED} the safe sink answered a collision with. <strong>That log
+     * line read exactly like the drop this sink was deliberately chosen for, and it was a different
+     * thing wearing the same coat.</strong> {@code directBestEffort} drops for <em>backpressure</em>
+     * - one slow browser, one event, for that subscriber only - which is wanted, and is why the sink
+     * is still lossy. A refused emission costs <em>every</em> dashboard the same event and has
+     * nothing to do with how fast anyone is reading. Two minutes of simulator traffic against one
+     * printer lost an {@code IDLE -> CONNECTING} transition that way, and the warning it left behind
+     * said the design was working as intended.
+     *
+     * @see Outbox
      */
     private void emit(EventMessage message) {
+        outbox.emit(message);
+    }
+
+    /**
+     * One message onto the sink. {@link #outbox} only, so no second thread is ever in here.
+     *
+     * <p>{@code FAIL_ZERO_SUBSCRIBER} is the normal case on a farm nobody is watching and not worth
+     * a line. Everything else now says something real: {@code FAIL_NON_SERIALIZED} is unreachable
+     * because this is the only path to the sink, and {@code directBestEffort} drops a subscriber
+     * that cannot keep up <em>without</em> failing the emission - so a warning here is a cancelled
+     * or terminated stream rather than a slow browser.
+     */
+    private void publish(EventMessage message) {
         var result = farm.tryEmitNext(message);
         if (result.isFailure() && result != Sinks.EmitResult.FAIL_ZERO_SUBSCRIBER) {
-            log.warn("the farm stream dropped {} ({})", message.type(), result);
+            log.warn("the farm stream refused {} ({}) - not the backpressure drop", message.type(), result);
         }
     }
 }

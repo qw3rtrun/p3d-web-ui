@@ -461,12 +461,24 @@ own backoff and its own bugs. Three things about it that are easy to get wrong:
 ### A safe sink refuses a concurrent emission; it does not serialise one
 
 **`PrinterReactor.onEvent` is reached from several threads and every event it is given reaches a
-subscriber of `updates()`.** That is a contract callers depend on - the SSE stream, `FarmEvents`,
-and `printer-management`'s persisted connection state all hang off it - and it is held by an
+subscriber of `updates()`. `FarmEvents` makes the same promise to `/api-farm/stream`.** Those are
+contracts callers depend on - the per-machine SSE stream, the dashboard's one stream, and
+`printer-management`'s persisted connection state all hang off them - and both are held by an
 **outbox plus a drain loop**, the same shape `HostTerminal`, `GSendWindow`'s send window and
 `PublisherQueue` use. A thread that finds another one already emitting parks its message on a
 `ConcurrentLinkedQueue` and leaves; the thread inside goes round again and picks it up. Nothing
 blocks, nothing spins, and `FAIL_NON_SERIALIZED` becomes unreachable.
+
+**`Outbox<T>` in `:backend:core` is the one implementation of that loop in this layer**, and
+anything else here that feeds a `Sinks.Many` from more than one thread uses it rather than writing
+a fourth copy: `new Outbox<>(this::publish)`, then `emit` instead of `tryEmitNext`. It is
+package-private, it holds the queue and the `AtomicInteger`, and its contract is that **the
+consumer is called by exactly one thread at a time** - which is what lets `PrinterReactor` keep
+`streamEnded` as a plain field - and that **the consumer does not run on the thread that offered
+the item**. `HostTerminal.drainBus` stays its own copy: `:backend:terminal` may not depend on
+`:backend:core`, the only home both could see is the transport itself, and moving twenty lines
+there is a module-boundary decision for `reactive-transport-dev` rather than a side effect of
+fixing a farm stream.
 
 The rules that follow, each paid for:
 
@@ -495,7 +507,15 @@ The rules that follow, each paid for:
   `printer_entity.connection_state` is persisted from exactly those messages.
 - **A terminal signal goes through the outbox too.** `stop()` parks a `StreamEnd` rather than
   calling `tryEmitComplete` from the caller's thread, so it cannot terminate the sink underneath an
-  event another thread is still publishing.
+  event another thread is still publishing. `FarmEvents` parks no such marker and needs none: the
+  farm stream belongs to the farm rather than to a machine and nothing ever ends it, so a subscriber
+  leaves by cancelling.
+- **A drop for backpressure and a drop for a collision must not read alike in the log.** The farm
+  sink is `directBestEffort` and is *meant* to drop - one slow browser, one event, for that
+  subscriber only - so `the farm stream dropped X (FAIL_NON_SERIALIZED)` read exactly like the
+  design working, while it was in fact costing *every* dashboard the same event. Once the drain
+  loop is in, `FAIL_NON_SERIALIZED` is unreachable and `FAIL_ZERO_SUBSCRIBER` is the ordinary case
+  on a farm nobody is watching; anything else says something real and the wording has to say so.
 - **The replay seed stays one element deep.** `updates` is `replay().latestOrDefault(current state)`
   and must not become a backlog. The seed answers *"where is this machine"* so a late SSE subscriber
   learns the connection state without waiting; a backlog would answer *"what has this machine said"*,
@@ -506,9 +526,11 @@ The rules that follow, each paid for:
   built, then subscribed - and what a late subscriber misses, the roster has persisted.
 - **Prove it by forcing the collision, not by hoping for one.** Reactor's serialisation guard is
   re-entrant for the thread that holds it, so a refusal needs a *different* thread inside the sink
-  at that moment. `PrinterReactorEmissionTest` parks the first emitter inside `tryEmitNext` with a
-  latch in the subscriber and emits from a second thread while it is held. That makes the race a
-  certainty rather than a 2-core-CI-runner coincidence.
+  at that moment. `PrinterReactorEmissionTest` and `FarmEventsEmissionTest` park the first emitter
+  inside `tryEmitNext` with a latch in the subscriber and emit from a second thread while it is
+  held. That makes the race a certainty rather than a 2-core-CI-runner coincidence - and the
+  farm-stream instance survived two rounds of fixing this elsewhere precisely because a test that
+  emits from two threads and hopes passes against the bug on nearly every run.
 
 ### The persisted connection state is derived, and it has a reader
 
@@ -1115,16 +1137,15 @@ the source, not suspected.
 - **A package boundary is no longer a compile error.** Six Modulith modules share one Gradle
   module, so only `ApplicationModulesTest` stands between `files` and `jobs`. It is fast and it is
   proven to bite, but it runs in `:app` - a change compiled in isolation will look fine.
-- **`FarmEvents` has the same unserialised-sink bug `PrinterReactor` was just fixed for, and it
-  fires on a laptop.** `FarmEvents.emit` calls `tryEmitNext` on a safe
-  `multicast().directBestEffort()` sink from whatever thread published the Spring event - the
-  reactor's `single`, a netty loop, or `boundedElastic` - so two machines (or one machine and a
-  registration) emitting at once get one of them refused. Observed live in a two-minute session
-  against the simulator: `FarmEvents : the farm stream dropped ConnectionStateChanged
-  (FAIL_NON_SERIALIZED)`. The log line reads like the deliberate lossiness that sink was chosen
-  for, and it is not - `directBestEffort` drops for *backpressure*, which is a slow browser, while
-  this is a concurrency defect that costs every dashboard the same event. The fix is the outbox and
-  drain loop of *A safe sink refuses a concurrent emission*; it wants its own failing test first.
+- ~~**`FarmEvents` has the same unserialised-sink bug `PrinterReactor` was just fixed for, and it
+  fires on a laptop.**~~ **Fixed.** `FarmEvents` feeds its sink through `Outbox` now, and
+  `FarmEventsEmissionTest` forces the collision. Two things it taught are kept: the bug was found
+  *live* - a two-minute simulator session dropped a real `IDLE -> CONNECTING` with
+  `the farm stream dropped ConnectionStateChanged (FAIL_NON_SERIALIZED)` - and **the log line is
+  part of the bug**, because that wording is indistinguishable from the backpressure drop
+  `directBestEffort` is chosen for. It survived two earlier rounds of fixing this exact class of
+  defect elsewhere, which is the argument for grepping for `tryEmitNext` rather than fixing the
+  instance in front of you.
 - **A listener that throws still skips the roster report behind it.** `PrinterReactor.onEvent` runs
   `roster.publishEvent(message)` then `report(event)`, and Spring's multicaster propagates a
   listener's exception - so a synchronous `@EventListener` on `EventMessage` that throws costs the

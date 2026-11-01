@@ -448,6 +448,82 @@ number of the block it answers whenever that block had one. That is the evidence
 for something else. `MockPrinter.ok()` is still unchanged — changing it rewrites the acknowledgement
 every test in this module receives, and that is #61's work and not #53's.
 
+### 4.2.2 What a firmware does when the two ends disagree about a line number — #60
+
+`MockPrinter` could not be a machine that had outlived a host session, and
+[#60](https://github.com/qw3rtrun/p3d-web-ui/issues/60) is the bug that hid behind that. A fresh
+mock starts at line 0 and a fresh host numbers from 1, so the two agree **by construction** and no
+block in this suite had ever been rejected. On a bench the opposite is the ordinary case: a printer
+remembers the number it last accepted and outlives every host that talks to it.
+
+Measured by `ResendDriftProbe` against MarlinSim bugfix-2.1.x on 2026-11-01, which pushes the
+firmware's `last_N` to a known value on a raw socket rather than waiting for the far end to happen
+to be in the state. Verbatim, in four steps:
+
+```
+### 2 - THE CASE: a fresh session's first block, N1, against last_N = 14
+  -> N1 G21*27
+     Error:Line Number is not Last Line Number+1, Last Line: 14
+     Resend: 15
+     ok
+
+### 3 - and again twice, which is what a host that cannot answer the Resend does
+  -> N1 G21*27    Error:… Last Line: 14 / Resend: 15 / ok
+  -> N1 G21*27    Error:… Last Line: 14 / Resend: 15 / ok
+
+### 4 - does M110 N0 repair it? And which N does the firmware read from it?
+  -> N7 M110 N0*122   ok N7 P15 B3
+  -> N1 G21*27        ok N1 P15 B3
+
+### 5 - the control: a Resend: the host CAN answer (bad checksum, right number)
+  -> N2 G90*19   Error:checksum mismatch, Last Line: 1 / Resend: 2 / ok
+  -> N2 G90*18   ok N2 P15 B3
+```
+
+Four facts come out of that, and each one is load-bearing somewhere:
+
+* **the `Resend:` names `last_N + 1`, not the number that was rejected.** 15 is a block this host
+  has never framed, so `GSendWindow.resendFrom(15)` finds nothing, `CommandProcessor.resynchronise`
+  starts the numbering again, and everything the window was holding is dropped. The issue's own
+  transcript reads `Resend: 1`; that was abbreviated, and the number is what decides whether the
+  window can answer;
+* **it never recovers on its own.** Step 3 is the same three lines for ever. What ends it is the
+  host's `M110`, not patience;
+* **`M110` repairs it, and the firmware reads the *parameter* `N`.** `N7 M110 N0` leaves the counter
+  at 0, so the next block may be `N1`. That is why `GSendWindow.reset(0)` framing the `M110` with
+  the number that was next and then numbering the block behind it identically — both `N1` on a fresh
+  window — is harmless on the wire, which was an open question from #67's review;
+* **a `Resend:` for a number the window *does* hold is a different thing and is fully recoverable.**
+  Step 5 is ordinary traffic on a serial line and the mechanism spec 8.5 exists for. Any change that
+  treats the two alike is wrong, which is why `PrintJobIntegrationTest` drives both.
+
+`MockPrinter.checkLineNumbersFrom(prefix, lastLine)` reproduces all four, including the rejection's
+bare `ok` — no `N`, no buffer counts, the firmware saying it is ready again and acknowledging no
+block. It is **disarmed by default**, so nothing else in the module sees any of it.
+
+**A rejected block reaches `blocks()` and not `commands()`.** It arrived on the wire and the
+firmware threw it away unread, and that difference is the whole observable of #60: a print that
+silently skipped its `G28` homed nowhere.
+
+**It is not a `Profile`**, for the reason §4.2.1 gives about the unnumbered dialect: where a
+firmware's counter stands is a property of a *session*, not of a machine.
+
+**What the opening handshake already does, measured separately** by `ResendOnReconnectProbe`, a
+second host session against the same firmware process:
+
+```
+  -> N1 M110 N0*124
+  <- ok N1 P15 B3
+  -> N1 G21*27
+```
+
+The session's `M110 N0` goes out ahead of everything and its own `ok` comes back before the first
+real block, because the send window starts at one outstanding block and `canProcess()` is zero
+while the opening is owed. So "guarantee the session is numbered before anything else is queued" —
+the third thing #60 asks to consider — **is already the behaviour**, and it is why a reconnect
+recovers at all. What it cannot prevent is the two ends disagreeing *after* the opening, which is
+why the fixture arms the drift mid-file rather than by reconnecting.
+
 ### 4.3 It is deterministic
 
 Nothing in `MockPrinter` runs on a timer. A real Marlin with `M155 S1` writes a temperature every
@@ -691,6 +767,16 @@ companions, and `deregister(id)`, are what closed that; §5.2 and §5.3 are the 
 and the card itself as an observable, which is §4.5. `stalled(…)` moved up to `FarmIntegrationTest`
 in the same work, because a second feature now needs it and "how long is long enough" is a question
 to answer once; `number(…)` moved with it, having been privately copied into three classes.
+
+**[#60](https://github.com/qw3rtrun/p3d-web-ui/issues/60) is the first entry here that needed a
+production change**, and it is worth saying why the suite could not have caught it. Every fixture
+gap closed above made a *new* fact assertable; this one was a fact the fixture made
+**unreachable**. A fresh `MockPrinter` agrees with a fresh host about line numbers by construction,
+so no block in eighty-odd tests had ever been rejected, and a whole branch of the transport — the
+one that gives up on a session and throws away what it is holding — ran in nothing. The suite was
+green and the feature was broken, which is this repository's recurring failure in its fourth shape.
+`checkLineNumbersFrom(…)` is §4.2.2 and is what makes the mock able to be a machine that outlived a
+host session.
 
 ---
 

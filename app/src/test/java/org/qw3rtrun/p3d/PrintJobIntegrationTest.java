@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -428,6 +429,166 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
         assertEquals("CANCELLED", cancelled.get("state"));
         assertEquals("the bed came loose", cancelled.get("reason"),
                 "why somebody stopped it is kept on the job");
+    }
+
+    // ---------------------------------------------------------------- when blocks are lost
+
+    /**
+     * A job whose blocks the transport abandoned fails, rather than reporting {@code COMPLETED} -
+     * issue #60.
+     *
+     * <p><strong>This is a wrong outcome and not a wrong number.</strong> The firmware rejects
+     * {@code G21}, {@code G90} and {@code G28} because its line counter is where a previous host
+     * session left it; the host cannot answer a {@code Resend:} for a block it has never framed,
+     * so {@code CommandProcessor.resynchronise} starts the numbering again and drops what it was
+     * holding; the rest of the file then prints perfectly. Before this issue the job reported
+     * {@code COMPLETED}, and a print that silently skipped its {@code G28} homed nowhere.
+     *
+     * <p><strong>Why no test caught it.</strong> A fresh {@link MockPrinter} starts at line 0 and a
+     * fresh host numbers from 1, so the two agreed by construction and the case could not arise -
+     * see {@link MockPrinter#checkLineNumbersFrom(String, int)}, which is the fixture that makes a
+     * machine able to outlive a host session, and whose every reply line is measured.
+     *
+     * <p><strong>Why the drift is armed mid-file rather than by reconnecting.</strong> On a
+     * reconnect this host opens with {@code M110 N0} and waits for its acknowledgement before any
+     * real block is pulled - the send window starts at one outstanding block, so it has to - and
+     * that genuinely repairs the sequence. Measured, on the wire, by {@code ResendOnReconnectProbe}:
+     *
+     * <pre>
+     *   -&gt; N1 M110 N0*124
+     *   &lt;- ok N1 P15 B3
+     *   -&gt; N1 G21*27
+     * </pre>
+     *
+     * <p>So prevention at the opening is not the missing piece; it is already there and it already
+     * works. What it cannot prevent is the two ends disagreeing <em>after</em> the opening - a lost
+     * {@code ok}, a half-line the firmware buffered from the previous session, an {@code Error:} on
+     * a line the window has moved past - and every one of those arrives at
+     * {@code resynchronise} the same way. One counter that is already pushed when the file's first
+     * block arrives stands for all of them, and what goes over the wire below it is exactly what
+     * the simulator produced.
+     *
+     * <p>The three assertions are three different claims: the blocks really were lost, the job says
+     * so, and it says why in words an operator can act on.
+     *
+     * <h2>Why the machine is also stopped mid-file</h2>
+     *
+     * <p><strong>Without the gate this test is a coin flip, and it was measured as one: four passes
+     * in nine runs.</strong> The abandonment crosses two {@code publishOn(executor)} hops onto the
+     * shared {@code Schedulers.single()} — {@code PrinterReactor.gEvent}'s and {@code updates()}'
+     * — while the feed's completion arrives independently on the netty thread. Against a mock that
+     * answers instantly an eighteen-block file is over in about ten milliseconds, so the two race,
+     * and whichever lands first decides whether the job reports {@code FAILED} or {@code COMPLETED}.
+     * From a failing run:
+     *
+     * <pre>
+     *   52.012 nio-4    &lt;- Resend: 15
+     *   52.013 nio-4    OUT: … abandoning 3 block(s)
+     *   52.017 single-1 PrinterState: 3 block(s) … were abandoned        (4 ms later)
+     *   52.022 single-1 PrinterReactor: &lt;- EventMessage[BlocksAbandoned] (9 ms later)
+     *   52.022 nio-4    JobFeeder: job … sent its last block (18 in all)
+     * </pre>
+     *
+     * <p><strong>That race is real but it is at fixture scale, and it is not what this test is
+     * for.</strong> On a print of any length the blocks are abandoned thousands of blocks before
+     * the file ends; the window in which the two can swap is the last few milliseconds of a job.
+     * It is recorded as debt in the {@code spring-backend-dev} skill with the measurement above,
+     * and closing it properly means making the fact synchronously available to the completion path
+     * rather than racing it — which touches the same code as
+     * [#62](https://github.com/qw3rtrun/p3d-web-ui/issues/62) and belongs with it.
+     *
+     * <p>So {@link MockPrinter#holdRepliesFrom(String)} stops the machine answering partway through
+     * the file — §4.4's tool, and the same one the preemption and pause tests use. The file then
+     * <em>cannot</em> run out, so the only terminal state this job can reach is the one the
+     * abandonment puts it in, and the assertion is about the outcome rather than about the
+     * scheduler. A regression leaves the job {@code RUNNING} and the wait says so.
+     */
+    @Test
+    void aJobWhoseBlocksWereAbandonedFailsRatherThanReportingCompleted() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("abandoned blocks", printer);
+        var file = GcodeFixture.unsliced("abandoned").named("abandoned.gcode").withBodyLines(12);
+        var blocks = file.blocks();
+
+        // From the file's first block on, this is a machine whose counter stands at 14 - which is
+        // where a machine that outlived a host session stands. The opening handshake is answered
+        // normally: M110 N0, M115 and M155 S1 are not blocks out of a file.
+        printer.checkLineNumbersFrom(blocks.getFirst(), 14);
+        // And it stops answering well after the resynchronisation, so the file cannot finish
+        // before the abandonment has been acted on. See the note above.
+        printer.holdRepliesFrom(blocks.get(8));
+
+        var job = startOn(id, printer, file);
+
+        await(() -> "job " + job + " to fail, because three of its blocks were abandoned by the"
+                        + " send window and never reached the machine. It is " + stateOf(job)
+                        + " and the machine received " + printer.commands(),
+                () -> "FAILED".equals(stateOf(job)));
+
+        var finished = fetch(job);
+        assertFalse(printer.commands().contains(blocks.getFirst()),
+                "the premise of this test is that the machine never ran the file's first block,"
+                        + " and it did: " + printer.commands());
+        assertTrue(((String) finished.get("reason")).contains("abandoned"),
+                "a failed job has to say what went wrong in words an operator can act on: "
+                        + finished.get("reason"));
+
+        printer.answerFreely();
+    }
+
+    /**
+     * A resend the host <em>can</em> answer costs the job nothing - the control for the test above.
+     *
+     * <p>Without this, "fail the job when a {@code Resend:} arrives" would pass the test above and
+     * be badly wrong: a corrupted block is ordinary traffic on a serial line, the window holds
+     * every block until the {@code ok} that accepts it, and replaying one is the mechanism spec
+     * 8.5 exists for. Measured in the same probe run as the rejection, as the control it is:
+     *
+     * <pre>
+     *   &gt;&gt; N2 G90*19  &lt;&lt; Error:checksum mismatch, Last Line: 1
+     *                 &lt;&lt; Resend: 2
+     *                 &lt;&lt; ok
+     *   &gt;&gt; N2 G90*18  &lt;&lt; ok N2 P15 B3
+     * </pre>
+     *
+     * <p>The push is the firmware's half of that, put to a session whose window is holding the
+     * block being asked for - the same shape as
+     * {@code ConnectivityIntegrationTest.aStrayAcknowledgementDoesNotShiftTheSendWindow}, with a
+     * job behind it. The block goes out a second time, byte for byte, and the job finishes.
+     */
+    @Test
+    void aResendTheHostCanAnswerDoesNotFailTheJob() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("recoverable resend", printer);
+        var file = GcodeFixture.unsliced("replayed").named("replayed.gcode").withBodyLines(12);
+        var blocks = file.blocks();
+        printer.holdRepliesFrom(blocks.get(5));
+
+        var job = startOn(id, printer, file);
+        stalled(printer, blocks.get(5));
+
+        var block = printer.blocks().getLast();
+        var number = MockPrinter.number(block);
+        assertNotNull(number, "the farm numbers every block it sends; this one is " + block);
+        printer.push("Resend: " + number);
+
+        await(() -> "block " + block + " to be replayed byte for byte. The machine received "
+                        + printer.blocks(),
+                () -> Collections.frequency(printer.blocks(), block) == 2);
+        printer.answerFreely();
+
+        await(() -> "job " + job + " to finish. It is " + stateOf(job)
+                        + " and the machine received " + printer.commands(),
+                () -> isOver(stateOf(job)));
+
+        assertEquals("COMPLETED", fetch(job).get("state"),
+                "the window held the block the firmware asked for and replayed it, so nothing was"
+                        + " lost and the job is not a failure: " + printer.commands());
+    }
+
+    /** Whether a job has reached a state it can never leave - {@code JobState.isTerminal}. */
+    private static boolean isOver(String state) {
+        return List.of("COMPLETED", "FAILED", "CANCELLED").contains(state);
     }
 
     // ---------------------------------------------------------------- driving one job

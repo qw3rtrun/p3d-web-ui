@@ -273,6 +273,23 @@ public final class MockPrinter implements AutoCloseable {
     /** Whether that command has arrived, so everything from here on is parked. */
     private boolean holding;
 
+    /**
+     * The command at which the line-number check is armed, or null while it is not.
+     *
+     * <p>{@code volatile}, where {@link #holdFrom} beside it is plain, and the difference is where
+     * they are read. The gate is consulted inside {@link #answer(String, List)}, under the
+     * {@link #writing} monitor the test thread also sets it under; this one is consulted in
+     * {@link #rejectsLineNumber(String)}, which runs before that monitor is taken. Three rare
+     * writes from a test thread, read on every block by the acceptor - the cheapest honest answer.
+     */
+    private volatile String checkFrom;
+
+    /** Whether that command has arrived, so the check applies from here on. */
+    private volatile boolean checking;
+
+    /** The line number this firmware last accepted - Marlin's {@code gcode_LastN}. */
+    private volatile int lastLine;
+
     /** One received command's answer, parked whole - the acknowledgement travels with its reply. */
     private final Deque<List<String>> parked = new ArrayDeque<>();
 
@@ -467,6 +484,65 @@ public final class MockPrinter implements AutoCloseable {
         return this;
     }
 
+    // -------------------------------------------------------------- the line-number continuity check
+
+    /**
+     * Arms Marlin's line-number continuity check from the first command starting with
+     * {@code prefix}, with this firmware's counter already standing at {@code lastLine}.
+     *
+     * <p><strong>This is the one machine state the rest of this mock cannot be in, and issue #60
+     * is the bug that hid behind it.</strong> A fresh mock starts at line 0 and a fresh host
+     * numbers from 1, so the two agree by construction and every block is accepted - which is why
+     * nothing in this suite had ever seen a firmware reject one. A real machine outlives host
+     * sessions and remembers the number it last accepted, so the disagreement is the ordinary case
+     * on a bench and the unreachable one here.
+     *
+     * <p><strong>Everything it answers is measured</strong>, by {@code ResendDriftProbe} against
+     * MarlinSim bugfix-2.1.x on 2026-11-01, with the counter pushed to 14 - see §4.2.2 of
+     * {@code doc/specs/INTEGRATION_TESTS_spec.md}:
+     *
+     * <pre>
+     *   &gt;&gt; N1 G21*27      &lt;&lt; Error:Line Number is not Last Line Number+1, Last Line: 14
+     *                     &lt;&lt; Resend: 15
+     *                     &lt;&lt; ok
+     *   &gt;&gt; N7 M110 N0*122 &lt;&lt; ok N7 P15 B3
+     *   &gt;&gt; N1 G21*27      &lt;&lt; ok N1 P15 B3
+     * </pre>
+     *
+     * <p>Three facts out of that transcript are reproduced exactly, and each one matters:
+     *
+     * <ul>
+     *   <li><strong>the {@code Resend:} names {@code last_N + 1}</strong>, which is a block the
+     *       host has never framed - so {@code GSendWindow.resendFrom} finds nothing and
+     *       {@code CommandProcessor.resynchronise} abandons what it is holding. A {@code Resend:}
+     *       for a number the host <em>does</em> hold is an entirely different thing and is fully
+     *       recoverable; that is the control in the same probe run;</li>
+     *   <li><strong>{@code M110} repairs it, and the firmware reads the parameter</strong> and not
+     *       the line's own {@code N}: {@code N7 M110 N0} leaves the counter at 0, so the next block
+     *       may be {@code N1}. That is why {@code GSendWindow.reset(0)} framing the {@code M110}
+     *       as {@code N1} and then numbering the next block {@code N1} as well is harmless on the
+     *       wire;</li>
+     *   <li><strong>the rejection's {@code ok} is bare</strong> - no {@code N}, no buffer counts.
+     *       It is the firmware saying it is ready again and acknowledges no block, which is what
+     *       {@code CommandProcessor.rewinding} consumes as credit only.</li>
+     * </ul>
+     *
+     * <p><strong>A rejected block reaches {@link #blocks()} and not {@link #commands()}</strong>,
+     * because it arrived on the wire and was thrown away unread. That difference is the whole
+     * observable of issue #60: a print that skipped its {@code G28} homed nowhere.
+     *
+     * <p>Not a {@link Profile}, for the reason the unnumbered dialect <em>is</em> one: where a
+     * firmware's counter stands is a property of a session rather than of a machine.
+     */
+    public MockPrinter checkLineNumbersFrom(String prefix, int lastLine) {
+        synchronized (writing) {
+            this.checkFrom = prefix;
+            this.checking = false;
+            this.lastLine = lastLine;
+        }
+        return this;
+    }
+
     /** How many received commands are waiting for an answer. */
     public int parkedReplies() {
         synchronized (writing) {
@@ -531,12 +607,74 @@ public final class MockPrinter implements AutoCloseable {
         }
         blocks.add(block);
         var command = bare(block);
+        answering = number(block);
+        if (rejectsLineNumber(command)) {
+            // On blocks() because it was on the wire, and deliberately not on commands(), because
+            // the firmware threw it away unread. See checkLineNumbersFrom.
+            answer(command, rejection());
+            return;
+        }
         commands.add(command);
         if (!profile.answers()) {
             return;
         }
-        answering = number(block);
         answer(command, respond(command));
+    }
+
+    /**
+     * Marlin's continuity check: whether this block is thrown away unread, advancing the counter
+     * when it is not.
+     *
+     * <p>Disarmed unless {@link #checkLineNumbersFrom(String, int)} armed it, so every other test
+     * in this module sees exactly what it saw before. A machine that does not answer at all cannot
+     * answer a rejection either, so {@link Profile#answers()} disarms it too.
+     *
+     * <p>An unnumbered block is ordinary traffic and costs the sequence nothing - §4.2.1 of the
+     * integration-test spec measures that against a running simulator. Nothing in this farm sends
+     * one.
+     */
+    private boolean rejectsLineNumber(String command) {
+        if (checkFrom == null || !profile.answers()) {
+            return false;
+        }
+        if (!checking && command.startsWith(checkFrom)) {
+            checking = true;
+        }
+        if (!checking || answering == null) {
+            return false;
+        }
+        if ("M110".equals(word(command))) {
+            // Measured: the parameter is what the counter takes, not the line's own N.
+            var target = numberAfterN(command);
+            lastLine = target == null ? 0 : target;
+            return false;
+        }
+        if (answering != lastLine + 1) {
+            return true;
+        }
+        lastLine = answering;
+        return false;
+    }
+
+    /** The rejection triple, verbatim from the probe run in {@link #checkLineNumbersFrom}. */
+    private List<String> rejection() {
+        return List.of(
+                "Error:Line Number is not Last Line Number+1, Last Line: " + lastLine,
+                "Resend: " + (lastLine + 1),
+                "ok");
+    }
+
+    /** The value of the {@code N} parameter in {@code M110 N0}, or null when it carries none. */
+    private static Integer numberAfterN(String command) {
+        var at = command.indexOf('N', word(command).length());
+        if (at < 0) {
+            return null;
+        }
+        var i = at + 1;
+        while (i < command.length() && Character.isDigit(command.charAt(i))) {
+            i++;
+        }
+        return i == at + 1 ? null : Integer.valueOf(command.substring(at + 1, i));
     }
 
     /**

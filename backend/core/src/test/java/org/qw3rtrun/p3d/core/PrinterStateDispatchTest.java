@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.core;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
+import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
 import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
@@ -192,6 +193,43 @@ class PrinterStateDispatchTest {
         assertEquals(MachineConnectionState.IDLE, printer.getConnection().state());
         assertEquals(List.of(new ConnectionStateChanged(
                 MachineConnectionState.ONLINE, MachineConnectionState.IDLE, 0, null)), emitted);
+    }
+
+    /**
+     * Blocks the transport threw away are passed on, and move nothing - issue #60.
+     *
+     * <p><strong>The aggregate has nothing to decide about this and the handler exists to say
+     * so.</strong> It is a host-side fact rather than a reply - like {@link BlockAcknowledged}, it
+     * is something only the send window can know - and what acts on it is {@code JobFeeder}, which
+     * fails the job. So the arm republishes and does nothing else, which is the same shape as
+     * {@code on(PositionRs)}.
+     *
+     * <p><strong>The machine is left in {@code ERROR} on purpose, and that is the claim.</strong>
+     * A resynchronisation never arrives alone: the firmware says
+     * {@code Error:Line Number is not Last Line Number+1}, then {@code Resend:}, and the host
+     * concludes it cannot answer. The {@code Error:} already drove {@code connection.faulted(...)},
+     * so anything this handler did to the connection would be the same fault counted twice - a
+     * {@code faulted()} re-announcing it, or a {@code heard()} <em>clearing</em> it, which is what
+     * the {@code default} arm did before this handler existed and is what this test caught.
+     */
+    @Test
+    void abandonedBlocksArePassedOnAndMoveNoConnectionState() {
+        var printer = online();
+        printer.onEvent(new ErrorRs(ErrorPrefix.ERROR,
+                "Line Number is not Last Line Number+1, Last Line: 14"));
+        emitted.clear();
+
+        var abandoned = new BlocksAbandoned(15, 3);
+        printer.onEvent(abandoned);
+
+        assertEquals(List.of(abandoned), emitted,
+                "the fact has to reach whatever fails the job, unchanged");
+        assertEquals(List.of(), sent, "the aggregate answers nothing on the wire");
+        assertEquals(MachineConnectionState.ERROR, printer.getConnection().state(),
+                "the Error: that preceded this already moved the connection; moving it again here"
+                        + " would count one fault twice");
+        assertEquals("Line Number is not Last Line Number+1, Last Line: 14",
+                printer.getConnection().reason());
     }
 
     /**

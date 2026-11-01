@@ -10,6 +10,7 @@ import org.qw3rtrun.p3d.api.jobs.JobProgressed;
 import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
+import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.springframework.context.ApplicationEventPublisher;
@@ -71,11 +72,12 @@ public class JobFeeder {
      */
     private record Feed(UUID jobId, UUID machineId, Sinks.Empty<Void> stop, AtomicLong sent,
                         AtomicBoolean cancelled, Disposable subscription, Disposable watchingTheLink,
-                        Progress progress) {
+                        Disposable watchingForAbandonment, Progress progress) {
 
         void release() {
             subscription.dispose();
             watchingTheLink.dispose();
+            watchingForAbandonment.dispose();
         }
     }
 
@@ -110,6 +112,65 @@ public class JobFeeder {
                     fail(event, sent.get(), "the connection to the machine went away while it was"
                             + " printing (" + lost.to()
                             + (lost.reason() == null ? "" : ": " + lost.reason()) + ")");
+                });
+    }
+
+    /**
+     * Fails the job when the transport throws away blocks it had already framed - issue #60.
+     *
+     * <p><strong>Nothing else would notice, and that is the whole bug.</strong> The firmware's line
+     * counter and the host's disagree, so the firmware answers with a {@code Resend:} for a number
+     * this host has never framed; the send window cannot answer it, restarts the numbering with
+     * {@code M110 N0} and drops what it was holding. The feed carries on perfectly from there, and
+     * this class counts the dropped blocks as sent - because they <em>were</em> sent - so the job
+     * reaches the end of its file and reports {@code COMPLETED}. A print that silently skipped its
+     * {@code G28} homed nowhere.
+     *
+     * <p><strong>What was lost cannot be replayed from the checkpoint</strong>, which is why this
+     * fails the job rather than retrying it: a checkpoint records what was <em>sent</em>, and what
+     * went missing is the difference between what was sent and what was accepted. Replaying from it
+     * would re-run blocks the machine already executed - a relative move sent twice is a move made
+     * twice - and skip the ones it did not. See {@link BlocksAbandoned}, whose count is a lower
+     * bound rather than an exact one.
+     *
+     * <p><strong>{@link #stop} goes before {@link #fail}, and the order is load-bearing.</strong>
+     * {@code stop} removes the feed <em>and</em> publishes one last exact {@link JobProgressed}
+     * reading; {@code fail} publishes {@link JobFeedFailed}, which {@code jobs} turns into a
+     * {@code FAILED} job, which comes back here as a {@link JobStateChanged} whose {@code stop} is
+     * then a no-op and whose {@code coolDown} turns the heaters off. Reversed, the exact reading is
+     * lost - the timer's checkpoints are up to a second stale - and a failed job's recorded
+     * position is the one thing plan item C5 has to work from.
+     *
+     * <p><strong>One thing about {@code updates()} that is folklore until it is written down.</strong>
+     * It is a {@code Sinks.many().replay().latestOrDefault(...)}, so a new subscriber is handed the
+     * stream's <em>latest</em> message before any new one - which means a watcher started by a new
+     * feed can see the previous feed's last event. {@link #watchTheLink} tolerates that because the
+     * replayed default is a linked connection state and its filter drops it. This one is displaced
+     * in every path that is actually reachable, because a failed print is followed by
+     * {@link #coolDown}'s five commands and their acknowledgements, but it is not <em>guaranteed</em>.
+     * The clean fix is a timestamp on {@code EventMessage}, which is a change to {@code :backend:api}
+     * and its own piece of work; it is on the skill's known-debt list.
+     */
+    private Disposable watchForAbandonedBlocks(JobStateChanged event, PrinterReactor reactor,
+                                               AtomicLong sent, AtomicBoolean cancelled) {
+        return reactor.updates()
+                .map(EventMessage::event)
+                .filter(BlocksAbandoned.class::isInstance)
+                .cast(BlocksAbandoned.class)
+                .next()
+                .subscribe(abandoned -> {
+                    if (!feeding.containsKey(event.jobId())) {
+                        return;
+                    }
+                    stop(event.jobId(), JobState.FAILED);
+                    cancelled.set(true);
+                    fail(event, sent.get(), abandoned.blocks() + " block(s) this host had already"
+                            + " framed were abandoned and never reached the machine: the printer"
+                            + " asked to resend line " + abandoned.lineNumber() + ", which is not a"
+                            + " block the send window still held, so the session had to be"
+                            + " renumbered. What was skipped cannot be replayed from the"
+                            + " checkpoint, because the checkpoint records what was sent and not"
+                            + " what was accepted");
                 });
     }
 
@@ -180,9 +241,10 @@ public class JobFeeder {
                 () -> finished(event, sent.get(), cancelled.get(), null));
 
         var watchingTheLink = watchTheLink(event, reactor, sent, cancelled);
+        var watchingForAbandonment = watchForAbandonedBlocks(event, reactor, sent, cancelled);
 
         feeding.put(event.jobId(), new Feed(event.jobId(), event.machineId(), stop, sent,
-                cancelled, subscription, watchingTheLink, progress));
+                cancelled, subscription, watchingTheLink, watchingForAbandonment, progress));
     }
 
     /**
@@ -273,6 +335,7 @@ public class JobFeeder {
         feed.cancelled().set(true);
         feed.stop().tryEmitEmpty();
         feed.watchingTheLink().dispose();
+        feed.watchingForAbandonment().dispose();
 
         // One last, exact reading. The timer's checkpoints are up to a second stale, and a resume
         // starts from whatever was written down - so without this a paused job restarts thousands
@@ -339,6 +402,7 @@ public class JobFeeder {
         var feed = feeding.remove(event.jobId());
         if (feed != null) {
             feed.watchingTheLink().dispose();
+            feed.watchingForAbandonment().dispose();
         }
         if (cancelled) {
             log.info("job {} stopped after {} blocks, which was asked for", event.jobId(), sent);

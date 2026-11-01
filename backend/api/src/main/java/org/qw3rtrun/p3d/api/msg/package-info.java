@@ -10,8 +10,8 @@
  *
  * <p>What remains is what {@code :gcode} has no word for, because it is about the host rather than
  * the machine: a connection moving, a block being acknowledged, the blocks a resynchronised session
- * abandoned, a machine joining or leaving the farm, and the roster news the {@code M}-prefixed
- * events carry.
+ * abandoned, how far a transfer to a machine's card has got, a machine joining or leaving the farm,
+ * and the roster news the {@code M}-prefixed events carry.
  */
 @org.springframework.modulith.NamedInterface("msg")
 package org.qw3rtrun.p3d.api.msg;

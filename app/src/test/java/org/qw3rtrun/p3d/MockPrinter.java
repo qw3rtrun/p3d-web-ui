@@ -10,8 +10,10 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +51,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * thread. {@link #commands()} and {@link #blocks()} hand back copies under the monitor, and
  * {@link #push(String)} writes under the same writer lock the responder uses, so an unsolicited
  * report can never interleave halfway through a reply.
+ *
+ * <h2>Deciding when it answers</h2>
+ * {@link #holdRepliesFrom(String)} stops the conversation at a named command and lets a test move it
+ * on one acknowledgement at a time. See that method: it is what makes a feeding print observable,
+ * because a print that is not stopped is over before anything can be asked of it.
  */
 public final class MockPrinter implements AutoCloseable {
 
@@ -181,6 +188,15 @@ public final class MockPrinter implements AutoCloseable {
     private volatile Writer out;
     private volatile Socket live;
     private volatile boolean closed;
+
+    /** The command at which the machine stops answering, or null while it answers everything. */
+    private String holdFrom;
+
+    /** Whether that command has arrived, so everything from here on is parked. */
+    private boolean holding;
+
+    /** One received command's answer, parked whole - the acknowledgement travels with its reply. */
+    private final Deque<List<String>> parked = new ArrayDeque<>();
 
     private MockPrinter(Profile profile) throws IOException {
         this.profile = profile;
@@ -315,6 +331,64 @@ public final class MockPrinter implements AutoCloseable {
         push("Error:" + text);
     }
 
+    // ------------------------------------------------------------------ the acknowledgement gate
+
+    /**
+     * Stops answering from the first command starting with {@code prefix}, inclusive.
+     *
+     * <p><strong>Why a test needs this at all.</strong> Everything else here answers instantly, so a
+     * print job started against this machine is finished before the test's next line runs - and the
+     * two facts #51 exists to prove are both about a print that is <em>still going</em>: that an
+     * interactive command overtakes it, and that it then carries on from the block it had reached.
+     * Timing the window by hand would be a race on a loaded runner, and a file big enough to be slow
+     * would make it a slower race rather than a settled one.
+     *
+     * <p><strong>What makes it deterministic is the send window, not a clock.</strong> The host may
+     * not have more blocks outstanding than the printer's buffer count allows - {@code B3} on this
+     * profile, one on {@link #legacyOk()} - so a machine that stops acknowledging stops the
+     * conversation within a few blocks and stops it for good. Nothing further can reach the machine
+     * until {@link #answerOne()} or {@link #answerFreely()} lets it, which is what lets a test
+     * sample what is on the wire and know the number will not move under it.
+     *
+     * <p>Set before the machine is dialled: the opening handshake is answered normally, because
+     * {@code M110 N0}, {@code M115} and {@code M155 S1} do not start with a block out of a file.
+     */
+    public MockPrinter holdRepliesFrom(String prefix) {
+        synchronized (writing) {
+            holdFrom = prefix;
+            holding = false;
+        }
+        return this;
+    }
+
+    /** How many received commands are waiting for an answer. */
+    public int parkedReplies() {
+        synchronized (writing) {
+            return parked.size();
+        }
+    }
+
+    /** Answers the oldest command the gate is holding, which frees exactly one slot in the window. */
+    public void answerOne() {
+        synchronized (writing) {
+            var lines = parked.pollFirst();
+            if (lines != null) {
+                lines.forEach(this::write);
+            }
+        }
+    }
+
+    /** Lifts the gate: everything parked is answered, oldest first, and the machine speaks again. */
+    public void answerFreely() {
+        synchronized (writing) {
+            holdFrom = null;
+            holding = false;
+            for (List<String> lines; (lines = parked.pollFirst()) != null; ) {
+                lines.forEach(this::write);
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ the session
 
     private void serve() {
@@ -355,8 +429,26 @@ public final class MockPrinter implements AutoCloseable {
         if (!profile.answers()) {
             return;
         }
-        for (var reply : respond(command)) {
-            write(reply);
+        answer(command, respond(command));
+    }
+
+    /**
+     * Writes one command's answer, or parks it whole when the gate is shut.
+     *
+     * <p>Parked whole rather than line by line, because a command's answer and its acknowledgement
+     * are one thing on the wire: {@code M115} is a firmware line, five capabilities and then an
+     * {@code ok}, and releasing half of that would be a machine no firmware resembles.
+     */
+    private void answer(String command, List<String> lines) {
+        synchronized (writing) {
+            if (holdFrom != null && !holding && command.startsWith(holdFrom)) {
+                holding = true;
+            }
+            if (holding) {
+                parked.addLast(lines);
+                return;
+            }
+            lines.forEach(this::write);
         }
     }
 
@@ -418,8 +510,22 @@ public final class MockPrinter implements AutoCloseable {
                 lines.add(had ? "File deleted:" + name : "Deletion failed, File: " + name + ".");
                 lines.add(ok());
             }
-            case "M110", "M22", "M24", "M104", "M140", "M155", "M106", "M107", "M500",
-                 "G28", "G1", "G0", "G90", "G91" -> lines.add(ok());
+            // Acknowledged and nothing else. G21, M83 and M84 joined this list with #51, because
+            // they are what a print job and the cool-down after a cancelled one actually send, and
+            // they were falling to the default arm below - so every print the suite drove would have
+            // put three "echo:Unknown command" lines on the event stream that a real machine does
+            // not send. Measured against MarlinSim rather than assumed:
+            //
+            //   >> N2 G21*24          << ok N2 P15 B3
+            //   >> N9 M84*22          << echo:busy: processing (x2), ok N9 P15 B3
+            //   >> N13 M83*42         << ok N13 P15 B3
+            //   >> N14 G1 E-2 F2400*7 << echo: cold extrusion prevented, ok N14 P15 B3
+            //
+            // The busy notices and the cold-extrusion echo are the simulator's own chatter around an
+            // acknowledgement rather than instead of one, and are not reproduced here - see the
+            // class note on this being a mock and not a simulator.
+            case "M110", "M22", "M24", "M83", "M84", "M104", "M140", "M155", "M106", "M107",
+                 "M500", "G21", "G28", "G1", "G0", "G90", "G91" -> lines.add(ok());
             default -> {
                 lines.add("echo:Unknown command: \"" + command + "\"");
                 lines.add(ok());

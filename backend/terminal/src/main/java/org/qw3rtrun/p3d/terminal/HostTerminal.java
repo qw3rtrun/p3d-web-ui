@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.terminal;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
+import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.g.code.core.session.GSendWindow;
 import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
@@ -215,12 +216,20 @@ public class HostTerminal {
      * {@link ReplyFlux#listing} - the markers and the entries are consumed there. A listing nothing
      * interrupted is the only thing that produces one; see that field for why.
      *
-     * <p><strong>One thing on this flux is not a reply at all.</strong> An {@code ok} that releases
-     * a block is republished as a {@link BlockAcknowledged} carrying the line number the window
-     * held against it. The justification for swallowing an {@code ok} was that it said nothing a
-     * subscriber had not already learned from the send window - and no subscriber can see a send
-     * window, so what it actually said was nothing to anybody. It is the only honest measure of
-     * progress and the only proof that this session can send; that record says why both needed it.
+     * <p><strong>Two things on this flux are not replies at all</strong>, and both are facts about
+     * the send window, which is the one thing here a subscriber cannot see into. An {@code ok} that
+     * releases a block is republished as a {@link BlockAcknowledged} carrying the line number the
+     * window held against it; the justification for swallowing an {@code ok} was that it said
+     * nothing a subscriber had not already learned from the send window, and no subscriber can see
+     * a send window, so what it actually said was nothing to anybody. It is the only honest measure
+     * of progress and the only proof that this session can send.
+     *
+     * <p>The other is {@link BlocksAbandoned}: a {@code Resend:} the window cannot answer restarts
+     * the numbering and drops everything it was holding - see
+     * {@link CommandProcessor#resynchronise} - and those are lines of a job that will never reach
+     * the machine. That too was known only inside the window, and only to a WARN, so a print whose
+     * blocks had just been thrown away still ran to the end of its file and reported
+     * {@code COMPLETED}. It is emitted only when a block really was dropped.
      *
      * <p><strong>This flux terminates when the connection does, and at no other time.</strong> An
      * {@code onError} here means the inbound side died - the socket, or the decoder - and not that
@@ -890,9 +899,28 @@ public class HostTerminal {
          * It would also be unsafe: a relative move replayed under a new number is a move made
          * twice, and nothing here knows which commands are safe to repeat.
          *
-         * <p>So the WARN is the contract for now - the layer above is not told, and plan item C5's
-         * recovery is where a job that lost blocks will need to be. Noted in the skill's debt list
-         * rather than guessed at here.
+         * <p><strong>And the layer above is told, because the WARN told nobody.</strong> The blocks
+         * dropped here are lines of a job that will never reach the machine, so a print that lost
+         * them used to run to the end of its file and report {@code COMPLETED}. A
+         * {@link BlocksAbandoned} goes on the bus instead, and {@code JobFeeder} fails the job on
+         * it - it cannot be retried from its checkpoint, which records what was <em>sent</em> and
+         * not what was accepted, and that difference is exactly what was just lost.
+         *
+         * <p>Three things about that emission are the design:
+         *
+         * <ul>
+         *   <li><strong>The count is read before the reset and the event goes out after it</strong>,
+         *       so a subscriber never sees the record in front of the state it describes.</li>
+         *   <li><strong>It goes through {@link HostTerminal#emit} on this drain loop</strong>, like
+         *       a {@link BlockAcknowledged} and for the same reason: this is the thread that is
+         *       allowed to read the window, and the order the bus sees is then the protocol's own.</li>
+         *   <li><strong>Nothing abandoned, nothing announced.</strong> A resynchronisation that
+         *       dropped no block cost nothing, the name would be untrue, and a consumer that fails
+         *       a job on this would fail one that lost nothing. It is not a rare case either: the
+         *       firmware answers each of the next blocks with the same unanswerable
+         *       {@code Resend:}, and only the first of that pile-up is holding anything - without
+         *       the gate one lost print is announced three times.</li>
+         * </ul>
          */
         private void resynchronise(int from) {
             int abandoned = window.getInFlight();
@@ -901,6 +929,9 @@ public class HostTerminal {
             log.warn("OUT: Resend: {} - not held by the send window, so the session is out of sync;"
                             + " resynchronising with {} and abandoning {} block(s) {}",
                     from, opening, abandoned, report.get());
+            if (abandoned > 0) {
+                emit(new BlocksAbandoned(from, abandoned));
+            }
         }
 
         /**

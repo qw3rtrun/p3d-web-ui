@@ -145,6 +145,46 @@ counts what it handed over is monotone across a resend - it runs ahead of the fi
 window and by nothing else. The plan's decision 3 said otherwise and was corrected; see
 `aResendReplaysWithoutPullingTheSourceAgain`, which pulls five blocks for the seven that go out.
 
+### An abandoned block is announced too, and only when one really was
+
+A `Resend:` the send window cannot answer restarts the numbering and drops everything the window was
+holding - see *Resynchronising a session that has drifted* below for why that is the right local
+answer. What is **not** local is the consequence: those are lines of a job that will never reach the
+machine, and a print that lost them used to run to the end of its file and report `COMPLETED`.
+
+So `CommandProcessor.resynchronise` publishes `BlocksAbandoned(lineNumber, blocks)` on
+`messageFlux()`:
+
+- `lineNumber` is the number the firmware's `Resend:` named - the one this host does not hold.
+- `blocks` is `GSendWindow.getInFlight()` read **before** `reset(0)`.
+
+Four things a caller depends on:
+
+- **It is emitted from the drain loop**, through `HostTerminal.emit`, like a `BlockAcknowledged` and
+  for the same reason: that is the one thread allowed to read the window, so the ordering on the bus
+  is the protocol's own. Not from the inbound thread, and not through a sink of its own.
+- **The count is read before the reset and the record goes out after it**, so a subscriber never
+  sees the event in front of the state it describes.
+- **Nothing abandoned, nothing announced.** `abandoned > 0` is the gate and it is behaviour rather
+  than tidiness: a resynchronisation that dropped nothing cost nothing, the name would be untrue,
+  and the firmware answers each of the next blocks with the *same* unanswerable `Resend:` - only the
+  first of that pile-up is holding anything, so without the gate one lost print is announced three
+  times. A consumer that fails a job on this record would then fail one that lost nothing.
+  `aResynchronisationThatDroppedNothingAnnouncesNothing` pins it, and
+  `aPrinterErrorIsPublishedAsAValueAndTheBusKeepsRunning` fails without it too.
+- **`blocks` is a lower bound, not "how many lines the firmware never ran".** It is what the window
+  was still holding. A block released early by a stray `ok` has already left the window and is not
+  counted - `ConnectivityIntegrationTest.aStrayAcknowledgementResynchronisesAnUnnumberedSession` is
+  that case and reaches `resynchronise` with `getInFlight() == 0`. There is no honest upper bound at
+  this layer: an `ok` covers acceptance into the planner and nothing here is told what happened
+  after.
+
+A job that gets one of these **cannot be resumed from its checkpoint**, which is why `JobFeeder`
+fails it rather than retrying. The checkpoint records what was *sent*; what was lost is the
+difference between what was sent and what was accepted, which is exactly what the checkpoint does
+not hold. Replaying from it would re-run blocks the machine executed and skip the ones it did not,
+and a relative move replayed under a new number is a move made twice.
+
 ### The queue hands demand to one source at a time, and says when one finishes
 
 `PublisherQueue` drains several sources into one subscriber, highest priority first, so an
@@ -186,8 +226,50 @@ than patching it, and owns the two decisions `GSendWindow` cannot make:
   itself framed in order to renumber them would put a second parser back in the transport. It would
   also be unsafe: a relative move replayed under a new number is a move made twice.
 
-**The layer above is not told.** That is the gap to close when plan item C5 builds job recovery; see
-the debt list.
+**The layer above *is* told**, as `BlocksAbandoned` - see the section above. It used to be a WARN and
+nothing else, which told nobody, so a print whose remaining blocks had just been thrown away still
+reported `COMPLETED`.
+
+**Why the host cannot simply answer the `Resend:`.** Measured against MarlinSim (Marlin
+bugfix-2.1.x) on 2026-11-01, with the firmware's `last_N` pushed to 14 and a block numbered the way
+a fresh session numbers its first:
+
+```
+  -> N1 G21*27
+     Error:Line Number is not Last Line Number+1, Last Line: 14
+     Resend: 15
+     ok
+```
+
+The `Resend:` names **`last_N + 1`** - a number this host has never framed. So after a
+session-numbering disagreement the requested block is *never* in the window, however much the window
+is holding, and `resendFrom` can only answer empty. Repeating the block produces the same three
+lines for ever. Compare the recoverable control, which is what a mistyped checksum looks like and is
+answered completely:
+
+```
+  -> N2 G90*19      Error:checksum mismatch, Last Line: 1
+                    Resend: 2
+                    ok
+  -> N2 G90*18      ok N2 P15 B3
+```
+
+**`M110 N0` repairs it, and the firmware reads the parameter rather than the line's own `N`:**
+
+```
+  -> N7 M110 N0*122    ok N7 P15 B3
+  -> N1 G21*27         ok N1 P15 B3
+```
+
+That settles a worry worth not re-raising: `GSendWindow.reset(0)` frames the `M110` with the number
+that was *next* and then numbers the following block the same, so on a fresh window both are `N1`.
+The firmware takes the counter from the parameter, so the duplicate number is harmless on the wire.
+Do not "fix" `reset` for it.
+
+Prevention is already in place and already works - the opening `M110 N0` of every session, see *A
+session opens with `M110 N0`* - and the reconnect probe shows its `ok` coming back before the first
+real block goes out. What prevention cannot cover is the two ends disagreeing *after* the opening,
+and that is what the announcement is for.
 
 ### What a caller may hand to the outbound side
 
@@ -222,12 +304,13 @@ could promise neither, and would break Reactive Streams rule 1.3 into the bargai
 was first written is gone - this is a second `onNext`, and the rule that none goes out unasked has no
 exception for a retransmission. `canProcess()` is zero while a replay is waiting for that demand.
 
-### `messageFlux()` carries one thing that is not a reply
+### `messageFlux()` carries two things that are not replies
 
-Everything else on that flux is something the machine said, as `:gcode` decoded it.
-`BlockAcknowledged` is something the transport knows - see *An acknowledged block is announced*
-above. Anything else added to the bus that is not a decoded reply wants the same justification: a
-fact the layer above needs and genuinely cannot see from here.
+Everything else on that flux is something the machine said, as `:gcode` decoded it. The two
+exceptions are both facts about the send window, which is the one thing here a subscriber cannot see
+into: `BlockAcknowledged` - see *An acknowledged block is announced* - and `BlocksAbandoned` - see
+*An abandoned block is announced too*. Anything else added to the bus that is not a decoded reply
+wants the same justification: a fact the layer above needs and genuinely cannot see from here.
 
 ### `messageFlux()` terminates when the connection does, and at no other time
 
@@ -557,13 +640,20 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   a `:gcode` type in its public signature. It compiles only because `:backend:api` declares `:gcode`
   itself; a consumer that does not would fail. The fix is `api` rather than `implementation`, which
   needs the `java-library` plugin in `p3d.java-conventions`.
-- **A resynchronised session drops the blocks it abandoned, and nothing above is told.** The
-  counter reset is in - see *Resynchronising a session that has drifted* - and the blocks the window
-  was holding are discarded with a WARN naming the count. For a bare terminal session that is the
-  honest answer; for a print it is not, because those are lines of a job that will never reach the
-  machine. Plan item C5 owns recovery and is where the signal belongs. Do not solve it by having
-  the transport re-frame them: the window holds bytes rather than commands on purpose, and a
-  relative move replayed under a new number is a move made twice.
+- ~~**A resynchronised session drops the blocks it abandoned, and nothing above is told.**~~
+  **Fixed** - it is a `BlocksAbandoned` on `messageFlux()` now, and `JobFeeder` fails the job on it.
+  The policy did not change and should not: the blocks are still dropped, because the window holds
+  bytes rather than commands on purpose and a relative move replayed under a new number is a move
+  made twice. What changed is that the conclusion leaves the module. Kept here for the half that is
+  still open, below.
+- **`BlocksAbandoned.blocks` is a lower bound and there is no upper one.** It counts what the send
+  window was still holding; a block released early by a stray `ok` is already gone from the window
+  and is not in it, which is
+  `ConnectivityIntegrationTest.aStrayAcknowledgementResynchronisesAnUnnumberedSession` - it reaches
+  `resynchronise` with `getInFlight() == 0` and so announces nothing at all. The honest count of
+  what a firmware never *ran* is not knowable from here: an `ok` covers acceptance into the planner
+  and nothing comes back afterwards. A consumer must read the number as "at least this many" and
+  not as a tally.
 - ~~**A failing expectation in a send-window test hangs the JVM instead of failing.**~~ **Fixed**,
   and the warning it came with was exactly right. `cancel()` no longer answers with
   `subscriber.onComplete()`, so a mismatched expectation now reports in about three seconds instead
@@ -584,10 +674,11 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   worth a deferred-credit counter today.
 - **The line number in a `BlockAcknowledged` restarts at 1 when a session resynchronises.** It is
   the wire's number, and `GSendWindow.reset` is what moves it - so a consumer that treats the
-  sequence as monotonic over the life of a connection is wrong after the first resync, which is also
-  the moment blocks were abandoned. Both halves belong to the same fix: C5 owns recovery and is
-  where a job learns that its numbering started again and which lines went missing. Until then, read
-  a `BlockAcknowledged` as "the firmware took this block" and not as a position in a job.
+  sequence as monotonic over the life of a connection is wrong after the first resync. The other
+  half of this is now answered: the moment the numbering restarts is the moment a `BlocksAbandoned`
+  goes out, so a consumer *is* told, and the instruction it carries is to fail the job rather than
+  to renumber against it. What is still true is the narrow reading: a `BlockAcknowledged` means "the
+  firmware took this block" and is not a position in a job.
 - **It counts blocks *queued*, not blocks executed.** `ok` covers acceptance into the planner, which
   is the whole reason a send window exists. For C4's "estimated remaining" that is the right signal
   to start from and not the right signal to stop at: at the end of a job the planner still holds

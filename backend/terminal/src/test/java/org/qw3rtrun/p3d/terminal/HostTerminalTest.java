@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.terminal;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
+import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
@@ -170,6 +171,19 @@ class HostTerminalTest {
         return published.stream()
                 .filter(BlockAcknowledged.class::isInstance)
                 .map(BlockAcknowledged.class::cast)
+                .toList();
+    }
+
+    /**
+     * Just the abandonments, for the same reason {@link #acknowledged()} filters.
+     *
+     * <p>A resynchronisation puts an {@code Error:} on the bus beside this one in any realistic
+     * sequence, and the acknowledgements that preceded it are still there too.
+     */
+    private List<BlocksAbandoned> abandoned() {
+        return published.stream()
+                .filter(BlocksAbandoned.class::isInstance)
+                .map(BlocksAbandoned.class::cast)
                 .toList();
     }
 
@@ -1158,6 +1172,122 @@ class HostTerminalTest {
                 .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
                 .then(() -> receive("Resend: 1"))
                 .expectNext("N5 M110 N0*120\n")
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * And the blocks it threw away are announced, because nothing above can see that they went.
+     *
+     * <p><strong>The state this reports was measured, not imagined.</strong> Against MarlinSim
+     * (bugfix-2.1.x) on 2026-11-01, with {@code last_N} at 14, a block numbered as a fresh session
+     * numbers its first is answered:
+     *
+     * <pre>
+     *   -&gt; N1 G21*27
+     *      Error:Line Number is not Last Line Number+1, Last Line: 14
+     *      Resend: 15
+     *      ok
+     * </pre>
+     *
+     * <p>The {@code Resend:} names {@code last_N + 1} - a number this host has never framed - so
+     * the window cannot answer it however much it is holding, and everything it is holding is
+     * dropped. Until this record existed that was a WARN and nothing else, so a print whose
+     * remaining blocks had just been thrown away still reported {@code COMPLETED}.
+     *
+     * <p>{@code Resend: 99} stands in for the real {@code last_N + 1} here: what makes a resend
+     * unanswerable is that the number is not in the window, and the window holds 2, 3 and 4.
+     */
+    @Test
+    void aResendForABlockNoLongerHeldAnnouncesTheBlocksItAbandoned() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                // 1 is acknowledged and gone; 2, 3 and 4 are what the window is still holding.
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .then(() -> assertEquals(List.of(new BlockAcknowledged(1, 0)), acknowledged(),
+                        "three blocks outstanding behind the one acknowledgement"))
+                .then(() -> receive("Resend: 99"))
+                .expectNext("N5 M110 N0*120\n")
+                .then(() -> assertEquals(List.of(new BlocksAbandoned(99, 3)), abandoned(),
+                        "the number the firmware asked for, and the three blocks that went"))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * A {@code Resend:} the window <em>can</em> answer abandons nothing and announces nothing.
+     *
+     * <p>The control, and the reason it is worth its own test: without it,
+     * {@link #aResendForABlockNoLongerHeldAnnouncesTheBlocksItAbandoned} passes just as happily
+     * against a transport that fires on every resend - which would report a lost job every time a
+     * checksum was mistyped, the one failure the send window exists to make routine.
+     *
+     * <p>So the replay is asserted beside the silence: blocks 3 and 4 go out again byte for byte,
+     * numbering carries on at 5, and the bus hears nothing about it.
+     */
+    @Test
+    void aResendTheWindowCanAnswerAbandonsNothing() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .then(() -> receive("Resend: 3"))
+                .expectNext("N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .expectNext("N5 G1 X5*96\n")
+                .then(() -> assertEquals(List.of(), abandoned(),
+                        "a resend that was answered lost nothing, so there is nothing to announce"))
+                .thenCancel()
+                .verify(TIMEOUT);
+    }
+
+    /**
+     * A resynchronisation that dropped nothing announces nothing, which is the gate and not a
+     * detail.
+     *
+     * <p>A bare {@code ok} releases the one block outstanding, so the window is empty when the
+     * {@code Resend:} for that very block arrives. It cannot be answered - the block is gone - and
+     * {@code resynchronise} runs in full: the counter goes back to zero and a second {@code M110}
+     * goes out. What did not happen is a loss, because the window was holding nothing to lose.
+     *
+     * <p>Without the {@code > 0} gate this is an event naming zero blocks, and a three-block
+     * pile-up - which is the normal shape, since the firmware answers each of the next two blocks
+     * with the same unanswerable {@code Resend:} - turns one lost print into three announcements of
+     * it. The name would also be a lie, and a consumer that fails a job on this record would fail
+     * one that lost nothing.
+     */
+    @Test
+    void aResynchronisationThatDroppedNothingAnnouncesNothing() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(1)
+                .expectNext("N1 G1 X1*96\n")
+                // The bare ok releases block 1, so the window holds nothing at all.
+                .then(() -> receive("ok"))
+                .then(() -> assertEquals(List.of(new BlockAcknowledged(1, 0)), acknowledged(),
+                        "the window is empty, which is the state this test is about"))
+                // And now the firmware asks for the block that was just released.
+                .then(() -> receive("Resend: 1"))
+                .thenRequest(1)
+                .expectNext("N2 M110 N0*127\n")
+                .then(() -> assertEquals(List.of(), abandoned(),
+                        "the session resynchronised, but no block was abandoned by it"))
                 .thenCancel()
                 .verify(TIMEOUT);
     }

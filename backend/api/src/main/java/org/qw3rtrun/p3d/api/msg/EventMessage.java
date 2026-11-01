@@ -12,7 +12,8 @@ import java.util.UUID;
  * {@code ErrorRs} - propagated by {@code :backend:terminal} exactly as the protocol decoded them,
  * since a Marlin farm has no use for a second vocabulary for what a Marlin said. The rest are the
  * farm's own facts, which no firmware can state: {@link ConnectionStateChanged},
- * {@link BlockAcknowledged}, {@link MachineJoinedFarm}, {@link MachineLeftFarm}.
+ * {@link BlockAcknowledged}, {@link BlocksAbandoned}, {@link MachineJoinedFarm},
+ * {@link MachineLeftFarm}.
  *
  * <p>No interface spans those two sets, and inventing one would mean {@code :gcode} implementing a
  * type from this module - which is the dependency that keeps the protocol portable and is not for

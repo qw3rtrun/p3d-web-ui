@@ -195,6 +195,28 @@ Three rules that were each learned by a CI failure nobody could reproduce:
 - **`:app` sets `testLogging { exceptionFormat 'full' }`** for the same reason. Gradle's default
   prints the exception class and a line number, which discards the message entirely.
 
+### 3.3 A prefix, or the whole list
+
+`MockPrinter.sent("M104")` asks whether something arrived. `assertEquals(List.of(…),
+printer.commands())` asks what the request caused and nothing else. They are not interchangeable,
+and which one a test wants follows from what the feature can get wrong:
+
+* **a prefix is enough when the command stands alone.** "`M104` went out carrying `S210`" is the
+  whole of setting a temperature; a stray extra command would be a different feature misbehaving.
+* **the whole list is required when the unit is more than one command**, because then the bugs are
+  an element *missing* and an element *extra*, and a prefix check sees neither. `M23` without its
+  `M24` selects a file and prints nothing; `G91` and a move without the closing `G90` leaves the
+  machine in relative mode, and what breaks is the *next* absolute move somebody makes. Both are
+  silent at the moment they happen.
+* **the whole list is also how a parameter letter is pinned.** `M106 S200 P1` and `M106 I1 S200`
+  both start with `M106` and both are accepted by the firmware without complaint; only one of them
+  sets fan 1.
+
+Wait on the **last element** and then compare the list, rather than waiting on the comparison. A
+wait on list equality reports a missing final command as a timeout with no diff, which is the one
+failure the form exists to diagnose; waiting on the last element names the expectation and the
+arrivals in its own message, and the `assertEquals` after it gives the diff for everything else.
+
 ---
 
 ## 4. The mocked printer
@@ -377,7 +399,7 @@ through its endpoints against a mocked printer.
 | 2 | Connectivity | `/api-printer/{id}/connect`, `/connection`, `/stream` | `ConnectivityIntegrationTest` | **covered** |
 | 3 | Temperature control | `/set-temp`, `/set-bed-temp`, `/report-temp`, `/auto-report-temp`, `GET /api-printer/{id}` | `TemperatureControlIntegrationTest` | **covered** |
 | 4 | SD-card storage | `/sd/mount`, `/release`, `/list`, `/delete`, `/print` | `SdCardIntegrationTest` | **covered** except upload — see below |
-| 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position`, `/store-settings` | — | **deferred** — [#49](https://github.com/qw3rtrun/p3d-web-ui/issues/49) |
+| 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position`, `/store-settings` | `MotionControlIntegrationTest` | **covered** — and the one that asserts whole command lists, §3.3 |
 | 6 | G-code file store | `/api-files` | `GcodeFileIntegrationTest` | **covered** — and the one with no machine in it, §5.1 |
 | 7 | Print jobs and queue | `/api-jobs` | — | **deferred** — [#51](https://github.com/qw3rtrun/p3d-web-ui/issues/51) |
 | 8 | Farm dashboard | `/api-farm/stream` | `FarmDashboardIntegrationTest` | **covered** — and the one with two machines in it, §5.2 |
@@ -399,8 +421,8 @@ mean putting a file into the store by some other means, which §3 forbids. **Tha
 
 ### 6.2 What the deferred ones need
 
-**#49** needs nothing new — it is the same shape as temperature control and was left out only for
-size. **#51** and **#53** needed the fixture to be able to upload bytes, and now it can; what is
+**#49 is done**, and it needed nothing new: no profile, no `MockPrinter` reply and no production
+change. What it added is §3.3. **#51** and **#53** needed the fixture to be able to upload bytes, and now it can; what is
 left for **#53** is `MockPrinter` learning `M28`/`M29`, below. **#52 is done** — it needed two
 machines in one test, and the fixture supported that except for the parts that are only a question
 when a stream carries more than one: `Events` was id-blind, and nothing could remove a machine

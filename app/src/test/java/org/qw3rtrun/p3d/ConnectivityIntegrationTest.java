@@ -2,11 +2,13 @@ package org.qw3rtrun.p3d;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -22,6 +24,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code IDLE} look the same from a page and mean different things - a socket, against a firmware
  * that has taken something this session sent - and the only way to tell the distinction is real is
  * to put a machine at each end of it.
+ *
+ * <p><strong>The acknowledgement dialect is the same axis one level down, and #61 added it.</strong>
+ * A machine that answers a numbered block with its number - {@code ok N2 P15 B3}, which is what
+ * every Marlin built with {@code ADVANCED_OK} does and what this farm therefore sees on every block
+ * it sends - lets the host match an {@code ok} to the block it answers. One that answers a bare
+ * {@code ok} leaves it counting. The difference is invisible while the wire behaves and decides the
+ * session when it does not, so the last two tests here put the same stray {@code ok} to each
+ * dialect and assert the two different things that then reach the machine.
  */
 class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
@@ -110,6 +120,125 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         await("the handshake to be on the wire", () -> printer.sent("M155 S1"));
         assertEquals(List.of("M110 N0", "M115", "M155 S1"), printer.commands());
+    }
+
+    // ------------------------------------------------------- how an acknowledgement names a block
+
+    /**
+     * A stray {@code ok} moves nothing, because the acknowledgement names the block it answers.
+     *
+     * <p><strong>This is the test issue #61 exists for, and it is the only one in this module that
+     * reaches {@code GSendWindow.acknowledge(number)}.</strong> Until the mock echoed the number it
+     * was sent, every {@code ok} in this suite was {@code ok P15 B3} - a shape no real session ever
+     * sees, since the farm numbers every block - so {@code CommandProcessor.applyWindowEvents} took
+     * the FIFO {@code acknowledge()} branch throughout and the named branch was exercised by
+     * nothing at all.
+     *
+     * <p><strong>Why the window has to be holding something.</strong> In a well-behaved exchange
+     * the two branches agree: the numbered {@code ok} names exactly the block FIFO order would have
+     * released, which is the whole reason this went unnoticed. They only part when something is out
+     * of step, so the test has to put the session out of step - a block outstanding, and then an
+     * {@code ok} that does not belong to it.
+     *
+     * <ul>
+     *   <li><strong>named</strong> - the window is not holding {@code N103}, so it releases nothing
+     *       and does not move. The {@code G28} is still outstanding, still has its bytes, and the
+     *       {@code Resend:} is answered with them;</li>
+     *   <li><strong>counted</strong> - {@code acknowledge()} releases whatever is at the front,
+     *       which is the {@code G28} the machine has not answered. The correspondence is off by one
+     *       from here on, the {@code Resend:} finds nothing held, and
+     *       {@code CommandProcessor.resynchronise} starts the numbering again with a second
+     *       {@code M110 N0} - abandoning the block the firmware just asked for.</li>
+     * </ul>
+     *
+     * <p>So the two branches diverge into two different command lists at the machine, which is why
+     * this can be asserted from out here at all - and the counted branch is not described but
+     * <em>run</em>, by {@link #aStrayAcknowledgementResynchronisesAnUnnumberedSession()} below. The
+     * two tests are the same stray against the two branches, and they are the mutation the issue
+     * asks for, kept in the suite rather than performed once by hand.
+     *
+     * <p><strong>What proves the mock's numbering is load-bearing is not this test.</strong> The
+     * stray below is pushed, so it would still be numbered even if {@link MockPrinter#ok()} went
+     * back to {@code ok P15 B3}. What that change buys is the other eighty-odd tests: every
+     * {@code ok} in this module now carries a number, so {@code applyWindowEvents} takes the named
+     * branch throughout and {@code connectAndWait} reaching {@code IDLE} depends on it. Measured by
+     * mutating the mock to answer {@code ok N<n+1000> P15 B3} - no block is ever released, no
+     * {@code BlockAcknowledged} is emitted, and
+     * {@link #connectingReachesIdleAndSendsTheOpeningHandshake()} fails with
+     * {@code timed out after PT30S waiting for machine … to reach IDLE}. Before #61 that mutation
+     * could not be written down, because there was no number to make wrong.
+     *
+     * <p><strong>The lines pushed are measured; the scenario is constructed.</strong>
+     * {@code ok N<n> P15 B3} and {@code Resend: n} are both census lines - §4.2 - and a stray
+     * acknowledgement is the hazard {@code acknowledge(number)} was added for by #30, after an
+     * {@code ACK = -1} sentinel in a {@code Queue<Integer>} let one shift the window permanently.
+     * Nothing waits on a clock: the machine is held silent, so the window cannot move under the
+     * test between the two pushes.
+     */
+    @Test
+    void aStrayAcknowledgementDoesNotShiftTheSendWindow() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("stray ok", printer);
+        connectAndSettle(id, printer);
+
+        // Held, so the G28 stays outstanding in the send window. A window with nothing in it
+        // releases nothing on either branch, and the two cannot be told apart.
+        printer.holdRepliesFrom("G28");
+        command(id, "/home", "{}").expectStatus().isOk();
+        await(() -> "G28 to reach the machine. It received " + printer.commands(),
+                () -> printer.sent("G28"));
+
+        var block = printer.blocks().getLast();
+        var number = MockPrinter.number(block);
+        assertNotNull(number, "the farm numbers every block it sends; this one is " + block);
+
+        // An ok naming a line this session has not sent and will not send.
+        printer.push("ok N" + (number + 100) + " P15 B3");
+        // And then the firmware asking for the block that is genuinely still outstanding.
+        printer.push("Resend: " + number);
+
+        await(() -> "block " + block + " to be replayed byte for byte."
+                        + " The machine received " + printer.commands() + " as " + printer.blocks()
+                        + ". A second M110 N0 there means the stray ok released the G28 and the"
+                        + " session was resynchronised instead of replayed",
+                () -> Collections.frequency(printer.blocks(), block) == 2);
+        assertEquals(List.of("G28", "G28"), printer.commands(),
+                "a replay is the same block again and nothing else");
+    }
+
+    /**
+     * The same stray, against a firmware that reports no number - and it costs the session.
+     *
+     * <p>The mirror of the test above and the reason {@code legacyOk()} is kept rather than
+     * deleted. A bare {@code ok} carries nothing to match on, so the window has only its FIFO order
+     * to go on and <em>cannot</em> tell a stray from the real thing. One arrives, the {@code G28}
+     * is released although the machine never acknowledged it, and the {@code Resend:} that follows
+     * finds nothing held - so the host abandons the block and starts the numbering again.
+     *
+     * <p>That is not a defect being frozen. It is what the un-numbered dialect is worth, stated
+     * once rather than assumed, and it is the assertion that would fail if this profile ever
+     * quietly started numbering: the two profiles must differ here or the matrix row is decoration.
+     */
+    @Test
+    void aStrayAcknowledgementResynchronisesAnUnnumberedSession() {
+        var printer = machine(MockPrinter.legacyOk());
+        var id = register("legacy stray ok", printer);
+        connectAndSettle(id, printer);
+
+        printer.holdRepliesFrom("G28");
+        command(id, "/home", "{}").expectStatus().isOk();
+        await(() -> "G28 to reach the machine. It received " + printer.commands(),
+                () -> printer.sent("G28"));
+
+        var number = MockPrinter.number(printer.blocks().getLast());
+        printer.push("ok");
+        printer.push("Resend: " + number);
+
+        await(() -> "the session to be resynchronised. The machine received " + printer.commands(),
+                () -> printer.sent("M110 N0"));
+        assertEquals(List.of("G28", "M110 N0"), printer.commands(),
+                "a bare ok cannot be told from a stray one, so the block is released, the resend"
+                        + " finds nothing held, and the numbering has to start again");
     }
 
     /** A machine at an address with nothing behind it keeps trying, and is never linked. */

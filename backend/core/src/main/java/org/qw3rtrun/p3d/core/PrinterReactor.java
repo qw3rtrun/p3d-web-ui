@@ -30,8 +30,6 @@ import reactor.util.retry.Retry;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
@@ -50,7 +48,7 @@ public class PrinterReactor {
     private final Scheduler retries;
 
     /**
-     * This machine's live stream, touched by exactly one thread at a time - see {@link #drainUpdates()}.
+     * This machine's live stream, touched by exactly one thread at a time - see {@link Outbox}.
      *
      * <p>A <em>safe</em> {@code Sinks.Many} does not serialise for its caller; it <strong>refuses</strong>
      * a concurrent emission with {@code FAIL_NON_SERIALIZED}. The emitters here are genuinely several
@@ -66,22 +64,17 @@ public class PrinterReactor {
     /**
      * Messages decided on but not yet put on {@link #updates}, oldest first.
      *
-     * <p>What makes {@link #drainUpdates()} possible: a thread that finds another one already
+     * <p>What makes the sink safe to feed from several threads: one that finds another already
      * emitting parks its message here and leaves, instead of being refused by the sink.
      */
-    private final Queue<Parked> outbox = new ConcurrentLinkedQueue<>();
+    private final Outbox<Parked> outbox = new Outbox<>(this::publish);
 
     /**
-     * The emission guard: zero when no thread is in {@link #drainUpdates()}, otherwise the number
-     * of calls still to be accounted for.
-     */
-    private final AtomicInteger emitting = new AtomicInteger();
-
-    /**
-     * Set once the stream has terminated, and read only inside {@link #drainUpdates()}.
+     * Set once the stream has terminated, and read only inside {@link #publish}.
      *
-     * <p>A plain field and not a volatile one: {@link #emitting} is an {@link AtomicInteger}, so the
-     * hand-off from one draining thread to the next carries the happens-before this needs.
+     * <p>A plain field and not a volatile one: {@link Outbox} calls its consumer from one thread at
+     * a time through an {@link AtomicInteger}, so the hand-off from one draining thread to the next
+     * carries the happens-before this needs.
      */
     private boolean streamEnded;
 
@@ -517,8 +510,8 @@ public class PrinterReactor {
      * later usage". Held in a static field it is expired one second after the class loads, so every
      * collision from then on threw immediately rather than retrying at all.
      *
-     * <p>Adding to a {@link ConcurrentLinkedQueue} throws nothing, blocks nothing and spins nothing,
-     * and whichever thread is draining will publish what was parked. So the volatile half of
+     * <p>Parking in the {@link Outbox} throws nothing, blocks nothing and spins nothing, and
+     * whichever thread is draining will publish what was parked. So the volatile half of
      * {@code onEvent} cannot skip the durable halves twice over: by construction, because this
      * cannot fail, and by order, because the roster has already been told by the time it runs.
      *
@@ -527,41 +520,14 @@ public class PrinterReactor {
      * one has got as far as the roster. With the roster first, what it is told arrives in the order
      * the aggregate decided it - and {@code printer-management} persists a connection state from
      * exactly those messages, so a reordering there is a stale state written over a current one.
+     *
+     * @see Outbox
      */
     private void emit(Parked parked) {
-        outbox.add(parked);
-        drainUpdates();
+        outbox.emit(parked);
     }
 
-    /**
-     * Publishes what is parked, one thread at a time.
-     *
-     * <p>The same shape {@code HostTerminal} uses one layer down, and the same one the send window
-     * and {@code PublisherQueue} use: the first caller in runs the loop, a caller that arrives while
-     * it is running leaves a mark and returns with its message safely in the outbox, and the thread
-     * inside goes round again to pick it up.
-     *
-     * <p>Because this is the only path to the sink, {@code FAIL_NON_SERIALIZED} is unreachable: a
-     * failure reaching the log in {@link #publish} means a cancelled or already-terminated stream,
-     * which says something real.
-     */
-    private void drainUpdates() {
-        if (emitting.getAndIncrement() != 0) {
-            return;
-        }
-        int missed = 1;
-        for (; ; ) {
-            for (Parked parked; (parked = outbox.poll()) != null; ) {
-                publish(parked);
-            }
-            missed = emitting.addAndGet(-missed);
-            if (missed == 0) {
-                return;
-            }
-        }
-    }
-
-    /** One parked item onto the sink. Drain loop only, so {@link #streamEnded} is plain. */
+    /** One parked item onto the sink. {@link Outbox} only, so {@link #streamEnded} is plain. */
     private void publish(Parked parked) {
         switch (parked) {
             case Parked.StreamEnd _ -> {

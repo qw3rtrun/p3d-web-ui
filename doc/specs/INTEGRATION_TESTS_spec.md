@@ -172,7 +172,10 @@ expires.
 
 A fixed pause is permitted **only where the claim is that something did not happen**, and must say
 so at the call site. Waiting a fixed time for a result is a test that is slow when it passes and
-flaky when it fails.
+flaky when it fails. It is `quiet()` on the fixture and nowhere else: four classes had grown a
+private copy at two different durations, which made "how long is long enough to disprove this"
+something each one answered on its own instead of once, against the positive case it is measured
+against — a dial, a handshake and a round trip on loopback.
 
 Three rules that were each learned by a CI failure nobody could reproduce:
 
@@ -307,6 +310,60 @@ Two consequences, and both are fine:
   made, so there is no `await` in it at all. That is the exception rather than the rule — see §3.2 —
   and it is worth noticing which features are asynchronous and which only look it.
 
+### 5.2 A feature whose configuration is a second machine
+
+`FarmDashboardIntegrationTest` drives over **no profile distinction either**, and for the mirror
+image of §5.1's reason: a connection state is announced the same way by a machine with a card and
+one without, so no row of the table above changes any answer. The axis that does is one no other
+class varies — **how many machines** — because `GET /api-farm/stream` exists so that a dashboard
+holds one `EventSource` rather than one per printer, and a farm that put every machine's events
+under the first id it thought of would pass every other test in this module.
+
+So the matrix for that feature is *one machine against two*, and the pairs are deliberately two
+different profiles so the demultiplexing is proved across machines that are genuinely not the same.
+Three things it can assert that a single-machine test cannot:
+
+* **each machine's events arrive under its own `EventMessage.id`.** Asking one machine for a
+  temperature and finding the reading under the other is a failure one stream can have and forty
+  cannot — a per-printer stream is addressed by the id in its URL and cannot mislabel anything;
+* **each machine's own order survives the merge.** A page told `ONLINE` after `IDLE` draws a
+  machine that has just become unusable;
+* **a removal reaches one id and not the rest.** On a shared stream, a `MachineLeftFarm` that went
+  to every subscriber's every row is the whole farm vanishing from a page while the printers carry
+  on printing.
+
+**Subscribing dials nothing, and that is the feature's own assertion.** The obvious wiring for a
+farm view is `PrinterControl.updates(id)` per machine, which instantiates a runtime as a side effect
+— forty reactors to render a page that is only looking. `FarmEvents` listens on the application
+event bus instead. What is observable from out here is the *dial* and not the reactor: whether a
+runtime exists is visible through no endpoint, and §3 forbids reaching in to look, so the assertion
+is `MockPrinter.sessions() == 0`.
+
+### 5.3 The farm stream has no replay, and what a test must do about it
+
+Two consequences that only bite on `/api-farm/stream`, both written into `watchTheFarm()`:
+
+* **register the machines first.** A per-printer sink replays the machine's current state, so a
+  subscriber is handed something immediately. This one has no replay — a replaying sink would hold
+  the *farm's* last event rather than each machine's, which is whichever printer spoke most
+  recently and is useless — and what a subscriber gets instead is a snapshot built per subscription
+  from the machines the farm knows about *at that moment*. Subscribe before registering and the
+  stream is correct and silent;
+* **wait for the snapshot before causing anything.** `FarmEvents.updates()` is the snapshot
+  `concatWith` the live sink, so the sink is subscribed only once the snapshot completes. Each
+  machine's snapshot entry arriving is therefore the only signal a test gets that the subscription
+  is live.
+
+**There is a window between those two**, milliseconds wide, in which an event reaches nobody — see
+[#52](https://github.com/qw3rtrun/p3d-web-ui/issues/52). It is open, closing it means subscribing
+the sink before prepending the snapshot, and **no test may depend on it in either direction.** The
+way to not depend on it is to cause every asserted live event with *a request made after the
+snapshot has arrived*: an HTTP round trip is orders of magnitude outside the window, where a direct
+push to a mock is not.
+
+A snapshot entry is also distinguishable from a transition, which is worth knowing when asserting
+on one: it states where a machine *is*, so `from` and `to` are the same state.
+
 ---
 
 ## 6. Feature inventory and coverage
@@ -323,7 +380,7 @@ through its endpoints against a mocked printer.
 | 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position`, `/store-settings` | — | **deferred** — [#49](https://github.com/qw3rtrun/p3d-web-ui/issues/49) |
 | 6 | G-code file store | `/api-files` | `GcodeFileIntegrationTest` | **covered** — and the one with no machine in it, §5.1 |
 | 7 | Print jobs and queue | `/api-jobs` | — | **deferred** — [#51](https://github.com/qw3rtrun/p3d-web-ui/issues/51) |
-| 8 | Farm dashboard | `/api-farm/stream` | — | **deferred** — [#52](https://github.com/qw3rtrun/p3d-web-ui/issues/52) |
+| 8 | Farm dashboard | `/api-farm/stream` | `FarmDashboardIntegrationTest` | **covered** — and the one with two machines in it, §5.2 |
 | 9 | SD-card *upload* | `/sd/upload`, `/sd/upload/cancel` | — | **deferred** — [#53](https://github.com/qw3rtrun/p3d-web-ui/issues/53); no longer blocked on 6, still wants `M28`/`M29` |
 | 10 | Identity and access | `/login`, `/logout`, `/profile`, `/api-users` | `FarmSecurityTest` (`:frontend:web-ui`) | covered **elsewhere**, deliberately |
 | 11 | Pages | `/dashboard.html`, `/printers/{id}` | `MonitorPageTest` (`:frontend:web-ui`) | **out of scope** — #43 item 2 |
@@ -344,8 +401,11 @@ mean putting a file into the store by some other means, which §3 forbids. **Tha
 
 **#49** needs nothing new — it is the same shape as temperature control and was left out only for
 size. **#51** and **#53** needed the fixture to be able to upload bytes, and now it can; what is
-left for **#53** is `MockPrinter` learning `M28`/`M29`, below. **#52** needs two machines in one
-test, which the fixture already supports but nothing has needed yet.
+left for **#53** is `MockPrinter` learning `M28`/`M29`, below. **#52 is done** — it needed two
+machines in one test, and the fixture supported that except for the parts that are only a question
+when a stream carries more than one: `Events` was id-blind, and nothing could remove a machine
+mid-test without `tidyUp()` removing it a second time. `Events.from(id)` and its id-scoped
+companions, and `deregister(id)`, are what closed that; §5.2 and §5.3 are the rest.
 
 **#53 also needs `MockPrinter` to learn `M28`/`M29`** — `Writing to file: <name>` and
 `Done saving file.` are decoded types and neither is in the reply census, so they want a probe

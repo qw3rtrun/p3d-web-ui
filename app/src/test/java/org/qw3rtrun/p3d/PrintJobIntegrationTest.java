@@ -316,7 +316,7 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
         printer.holdRepliesFrom(blocks.get(5));
 
         var job = startOn(id, printer, file);
-        var onTheWire = feedStalled(printer, blocks.get(5));
+        var onTheWire = stalled(printer, blocks.get(5));
 
         command(id, "/report-temp").expectStatus().isOk();
         printer.answerFreely();
@@ -360,7 +360,7 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
         printer.holdRepliesFrom(blocks.get(5));
 
         var job = startOn(id, printer, file);
-        var onTheWire = feedStalled(printer, blocks.get(5));
+        var onTheWire = stalled(printer, blocks.get(5));
 
         farm.post().uri("/api-jobs/{id}/pause", job).exchange().expectStatus().isOk();
 
@@ -404,7 +404,7 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
         printer.holdRepliesFrom(blocks.get(5));
 
         var job = startOn(id, printer, file);
-        var onTheWire = feedStalled(printer, blocks.get(5));
+        var onTheWire = stalled(printer, blocks.get(5));
 
         farm.delete()
                 .uri(uri -> uri.path("/api-jobs/" + job).queryParam("reason", "the bed came loose").build())
@@ -451,42 +451,6 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
                 .exchange().expectStatus().isOk());
         assertEquals("RUNNING", running.get("state"), "the job did not start: " + running);
         return job;
-    }
-
-    /**
-     * Waits for the feed to reach the block the machine stopped answering at, and then for the
-     * conversation to stop. Answers with how many blocks are on the wire.
-     *
-     * <p><strong>That number is the whole basis of the three tests above</strong>, so it has to be
-     * one that cannot move afterwards. It is: the machine is no longer acknowledging and the send
-     * window will not pull another block until one comes back, so whatever the window still had room
-     * for - at most the printer's buffer count - lands, and then nothing further can reach the
-     * machine at all.
-     *
-     * <p>Waited out until the count stops moving rather than for one fixed pause. A fixed pause is
-     * what §3.2 of the integration-test spec permits for a claim that something did not happen, and
-     * that is the claim here - but on a two-core runner the last of those writes can take longer
-     * than any single pause worth choosing, and the failure would be a wrong number rather than a
-     * timeout. Two consecutive unchanged samples is the same claim, made at whatever speed the
-     * machine is running at, and it is <em>asserted</em>: a conversation that never stops is a
-     * failure with the evidence in its message, not a test that quietly reads the wrong thing.
-     */
-    private int feedStalled(MockPrinter printer, String stopsAt) {
-        await(() -> "the feed to reach " + stopsAt + ". The machine received " + printer.commands(),
-                () -> printer.sent(stopsAt));
-
-        var deadline = System.nanoTime() + PATIENCE.toNanos();
-        int sampled = -1;
-        int unchanged = 0;
-        while (unchanged < 2 && System.nanoTime() < deadline) {
-            quiet();
-            int now = printer.commands().size();
-            unchanged = now == sampled ? unchanged + 1 : 0;
-            sampled = now;
-        }
-        assertTrue(unchanged >= 2, "the machine stopped answering at " + stopsAt
-                + ", so the conversation should have stopped and it has not: " + printer.commands());
-        return sampled;
     }
 
     // ---------------------------------------------------------------- the endpoints, as a browser
@@ -543,11 +507,5 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
         var requires = job.get("requires");
         assertNotNull(requires, "requires is never null - a job that asks for nothing carries any()");
         return (Map<String, Object>) requires;
-    }
-
-    /** JSON has one number type; which Java box it arrives in depends on its magnitude. */
-    private static long number(Object value) {
-        assertNotNull(value, "expected a number");
-        return ((Number) value).longValue();
     }
 }

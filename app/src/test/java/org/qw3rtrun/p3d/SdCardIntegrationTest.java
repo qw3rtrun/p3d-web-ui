@@ -211,12 +211,4 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         return files(listing).stream().map(f -> (String) ((Map<?, ?>) f).get("name")).toList();
     }
 
-    /** A pause used only where the claim is that something did not arrive. */
-    private static void quiet() {
-        try {
-            Thread.sleep(500);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
 }

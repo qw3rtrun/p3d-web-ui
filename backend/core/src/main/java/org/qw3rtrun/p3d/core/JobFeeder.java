@@ -308,14 +308,44 @@ public class JobFeeder {
      */
     @Scheduled(fixedDelayString = "${p3d.jobs.progress-interval:1000}")
     public void reportProgress() {
-        feeding.values().forEach(feed -> {
-            var reactor = reactors.runtimeOf(feed.machineId());
-            if (reactor != null) {
-                feed.progress().acknowledged(reactor.blocksInFlight());
-            }
-            events.publishEvent(new JobProgressed(feed.jobId(), feed.machineId(),
-                    feed.progress().snapshot()));
-        });
+        feeding.values().forEach(this::checkpoint);
+    }
+
+    /**
+     * Writes down where a feed has got to, right now.
+     *
+     * <p><strong>Every way a feed can end goes through this, and that is the point</strong> - issue
+     * #62. It used to be the timer's body, plus a copy in {@link #stop} taking one exact reading
+     * because the timer's are up to a second stale, and <em>nothing at all</em> on the path a job
+     * takes when it ends normally: {@link #finished} removed the feed before {@code stop} could
+     * have published one. So the last number written down about a completed job was whatever the
+     * timer happened to be holding - {@code 4} on a measured twelve-block job, and {@code 0} on
+     * one that finished inside a single tick.
+     *
+     * <p><strong>The reading is exact in both halves.</strong> {@code blocksSent} comes from the
+     * counter the source increments, so it is the count at this instant rather than at the last
+     * tick; and {@code inFlight} is re-read from the aggregate here rather than left as the
+     * tick's, because {@link JobProgress#blocksAccepted()} is {@code blocksSent - inFlight} and
+     * pairing a fresh count with a stale gap is a third number that was never true.
+     *
+     * <p><strong>So a finished job routinely records a non-zero {@code inFlight}, and that is the
+     * field doing its job.</strong> A feed ends when the <em>file</em> runs out, not when the
+     * firmware has caught up - a live twelve-block print records {@code blocksSent 12, inFlight 2}
+     * - and plan item C4 reports that gap rather than hiding it precisely so that "sent" is never
+     * read as "printed".
+     *
+     * <p><strong>A feed is checkpointed once.</strong> Both callers that end a feed remove it from
+     * {@link #feeding} first and only checkpoint what they removed, so the abandonment path -
+     * {@code stop} from the watcher, then {@code finished} when the source runs out behind it -
+     * publishes one reading and not two.
+     */
+    private void checkpoint(Feed feed) {
+        var reactor = reactors.runtimeOf(feed.machineId());
+        if (reactor != null) {
+            feed.progress().acknowledged(reactor.blocksInFlight());
+        }
+        events.publishEvent(new JobProgressed(feed.jobId(), feed.machineId(),
+                feed.progress().snapshot()));
     }
 
     /**
@@ -340,7 +370,7 @@ public class JobFeeder {
         // One last, exact reading. The timer's checkpoints are up to a second stale, and a resume
         // starts from whatever was written down - so without this a paused job restarts thousands
         // of blocks early and extrudes over what it already printed.
-        events.publishEvent(new JobProgressed(jobId, feed.machineId(), feed.progress().snapshot()));
+        checkpoint(feed);
     }
 
     /**
@@ -397,12 +427,34 @@ public class JobFeeder {
                 "G1 E-2 F2400"));
     }
 
-    /** What the end of a feed means, reported as the fact {@code jobs} acts on. */
+    /**
+     * What the end of a feed means, reported as the fact {@code jobs} acts on.
+     *
+     * <p><strong>The exact reading goes first, exactly as it does in {@link #stop}</strong> - issue
+     * #62. This is the path a job takes when it ends <em>normally</em>, and it was the one path
+     * that wrote nothing down: the feed was removed here before {@code stop} could have taken a
+     * reading, so a {@code COMPLETED} job recorded whatever the once-a-second timer was holding.
+     * Measured live: twelve blocks fed, {@code blocksSent = 4}; a shorter job, {@code 0}.
+     *
+     * <p><strong>Before and not after, because what follows moves the job.</strong>
+     * {@link JobFeedCompleted} is what {@code jobs} turns into a {@code COMPLETED} job and
+     * {@link JobFeedFailed} into a {@code FAILED} one; the checkpoint has to be in the row by the
+     * time an operator can see the state that says the job is over. It is the same ordering
+     * argument {@link #watchForAbandonedBlocks} makes for putting {@code stop} before {@code fail},
+     * and the reason it holds without a lock is that both are published from this one thread, in
+     * this order, to a synchronous listener.
+     *
+     * <p>So a completed job's {@code blocksSent} is now the file's block count exactly - the same
+     * number {@link JobFeedCompleted#lines()} carries, because both are read from the counter the
+     * source increments. {@code JobFeederTest.aJobThatFinishesWritesDownEveryBlockItSent} asserts
+     * the two against each other rather than against a plausible figure.
+     */
     private void finished(JobStateChanged event, long sent, boolean cancelled, Throwable error) {
         var feed = feeding.remove(event.jobId());
         if (feed != null) {
             feed.watchingTheLink().dispose();
             feed.watchingForAbandonment().dispose();
+            checkpoint(feed);
         }
         if (cancelled) {
             log.info("job {} stopped after {} blocks, which was asked for", event.jobId(), sent);

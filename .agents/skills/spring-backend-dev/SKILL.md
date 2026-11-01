@@ -1111,9 +1111,11 @@ the source, not suspected.
   machine profile richer than B4's, and getting either wrong breaks a part or a printer.
 - **A pause does not park either**, so the nozzle sits over the part and will ooze onto it. Real
   firmware has `M125`/`M601` for this and both need safe coordinates the farm does not know.
-- **Progress is approximate by design, and the column names do not say so.** `blocks_sent` and the
-  rest are a checkpoint written about once a second, not a ledger - a restart reads them to within
-  one interval. Anything that needs an exact count needs a different mechanism and a reason.
+- **Progress is approximate while a job runs and exact once it ends, and the column names say
+  neither.** `blocks_sent` and the rest are a checkpoint written about once a second, not a ledger,
+  so a *running* job is read to within one interval and anything needing an exact count mid-print
+  needs a different mechanism and a reason. **A job that has ended is different and is now a
+  contract**: see *every way a feed ends writes down an exact reading* below.
 - **Resuming after a *disconnect* is still not implemented, and resuming after a *pause* is.** The
   difference is whether the machine kept its state. A paused printer is connected, hot and
   positioned, so a resume is a seek - skip the blocks it has and carry on. A reconnected one has
@@ -1125,6 +1127,37 @@ the source, not suspected.
   takes one exact reading when it stops and the checkpoint is monotone rather than state-gated.
   **A "latest wins" checkpoint is a different thing from a "highest wins" one, and only the second
   is safe to resume from.**
+- **Every way a feed ends writes down an exact reading, through one method** - `JobFeeder.checkpoint`,
+  called by the timer, by `stop` and by `finished`. That is a contract callers may rely on: **a job
+  in a terminal state records the blocks it actually sent, not a timer reading**, and on a
+  `COMPLETED` job that number is the file's block count exactly - the same number
+  `JobFeedCompleted.lines()` carries, because both read the counter the source increments.
+  It took issue #62 to get there, and the shape of the mistake is the thing to remember: the exact
+  reading **existed and was correct** and simply was not on the path a job takes when it ends
+  *normally*, because `finished` removed the feed before `stop` could have published one. Pause had
+  it; completion did not. Measured live at a 60-second checkpoint interval, a twelve-block file
+  finished `COMPLETED` with `blocksSent 0, bytesSent 0/0`, and with `blocksSent 12, bytesSent
+  136/136` after. **Nothing read the number, which is why it survived** - a resume reads it and a
+  resume only follows a pause - so a field with one reader on one path is a field that is wrong on
+  every other path and nobody notices.
+- **The exact reading goes *before* the event that moves the job, on every path.** `JobFeedCompleted`
+  and `JobFeedFailed` are what `jobs` turns into a terminal state, so a checkpoint published after
+  one lands on a row an operator has already been shown as finished. `watchForAbandonedBlocks`
+  stated this for `stop`-before-`fail`; it is the same argument and it now holds in `finished` too.
+- **`inFlight` on a `COMPLETED` job is routinely non-zero, and that is the field working.** A feed
+  ends when the *file* runs out, not when the firmware has caught up, so the last exact reading
+  genuinely records a gap - live runs show `blocksSent 12, inFlight 2`. `blocksSent` is blocks this
+  host handed to the transport and `blocksAccepted()` is what came back; reading the first as "what
+  the machine printed" is the mistake plan item C4 exposed the second to prevent.
+- **On the abandoned-blocks path `blocksSent` still means *sent*, and nothing subtracts from it.**
+  The window had framed those blocks and written them; it then renumbered the session and dropped
+  what it held. `BlocksAbandoned.blocks` is a lower bound on what was lost - a block released early
+  by a stray `ok` has already left the window and is gone from the tally - and subtracting a lower
+  bound from `blocksSent` would produce a figure that is neither what was sent nor what was
+  accepted, which a resume would then seek to. So the number stays honest about sending, the job is
+  `FAILED` rather than resumable, and the reason says in words why its checkpoint cannot be resumed
+  from. **Nothing at this layer can produce the number of blocks the machine actually ran; do not
+  invent one.**
 - **A session carries serialised Java objects**, so changing a class that ends up in one - the
   security context, a principal - can make existing sessions undeserialisable on the next deploy.
   The failure mode is everybody signed out at once, which is survivable, but it is a reason not to

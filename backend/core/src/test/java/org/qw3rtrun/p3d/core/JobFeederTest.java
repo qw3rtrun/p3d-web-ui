@@ -7,6 +7,7 @@ import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobFeedCompleted;
 import org.qw3rtrun.p3d.api.jobs.JobFeedFailed;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
+import org.qw3rtrun.p3d.api.jobs.JobProgressed;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.qw3rtrun.p3d.api.jobs.JobState;
@@ -30,6 +31,7 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -171,6 +173,95 @@ class JobFeederTest {
         assertEquals(List.of(), publishedOf(JobFeedFailed.class), "published " + published);
         assertEquals(1, publishedOf(JobFeedCompleted.class).size(), "published " + published);
         assertEquals(3L, publishedOf(JobFeedCompleted.class).getFirst().lines());
+    }
+
+    /**
+     * A job that reaches the end of its file writes down every block it sent - issue #62.
+     *
+     * <p><strong>This is the {@code 0} case, exactly as it was measured live.</strong> The
+     * checkpoint {@code jobs} persists is written from {@link JobProgressed}, and the only thing
+     * that published one was a timer running about once a second. Nothing in this test runs that
+     * timer - no {@code @Scheduled} and no context - which makes it the shortest job imaginable:
+     * three blocks, over before the first tick. Before the fix it published no checkpoint at all
+     * and a {@code COMPLETED} job recorded {@code blocksSent = 0}; on the live run that produced
+     * the issue a twelve-block job recorded {@code 4}, which is the same bug with one tick in it.
+     *
+     * <p><strong>The number and its order are two separate claims.</strong> {@code blocksSent} on
+     * the last reading has to equal what the feed actually sent - the same count
+     * {@link JobFeedCompleted#lines()} carries, which is the assertable form of "a completed job's
+     * progress is its file's block count". And the reading has to be published <em>before</em> the
+     * completion, because the completion is what moves the job to {@code COMPLETED}: published
+     * after, the exact number would land on a row an operator had already been shown.
+     *
+     * <p>Nothing here sleeps or awaits. The file is a sink this test completes by hand and both of
+     * the reactor's schedulers are {@link Schedulers#immediate()}, so the whole end of the feed
+     * happens on the test thread inside {@code tryEmitComplete}.
+     */
+    @Test
+    void aJobThatFinishesWritesDownEveryBlockItSent() {
+        feeder.onJobStateChanged(started());
+        theFileSays("G21\nG90\nG28\n");
+        file.tryEmitComplete();
+
+        var readings = publishedOf(JobProgressed.class);
+        assertFalse(readings.isEmpty(),
+                "a job that ended before the progress timer ever ticked still has to write down"
+                        + " where it got to; published " + published);
+        var last = readings.getLast();
+        assertEquals(jobId, last.jobId());
+        assertEquals(machineId, last.machineId());
+        assertEquals(3L, last.progress().blocksSent(),
+                "the last reading written down is the exact count, not a stale timer reading");
+        assertEquals(publishedOf(JobFeedCompleted.class).getFirst().lines(),
+                last.progress().blocksSent(),
+                "the checkpoint and the completion are the same number or one of them is lying");
+        assertTrue(published.indexOf(last) < published.indexOf(publishedOf(JobFeedCompleted.class).getFirst()),
+                "the exact reading goes before the completion that moves the job to COMPLETED,"
+                        + " or the record is briefly wrong where an operator reads it; published "
+                        + published);
+    }
+
+    /**
+     * A job that ends because its blocks were abandoned writes down what it <em>sent</em> - and
+     * that is not what the machine ran.
+     *
+     * <p><strong>Both endings publish one exact reading now, so what the reading means has to be
+     * said out loud.</strong> {@code blocksSent} is, and remains, blocks this host handed to the
+     * transport. On the completed path that is also what the machine was given. Here it is not:
+     * the send window had framed all three, could not answer a {@code Resend:} for a line it had
+     * never numbered, renumbered the session and dropped what it was holding. The three blocks
+     * were sent; some number of them never ran.
+     *
+     * <p><strong>The honest number for what was lost does not exist at this layer</strong>, which
+     * is why none is invented here. {@code BlocksAbandoned.blocks} is what the window happened to
+     * be holding - a lower bound, as #68 documented it, because a block released early by a stray
+     * {@code ok} has already left the window and is gone from the tally. Subtracting a lower bound
+     * from {@code blocksSent} would produce a figure that is neither what was sent nor what was
+     * accepted, and a resume would then seek to it. So the checkpoint keeps saying "sent", the job
+     * is {@code FAILED} rather than resumable, and the reason says in words why its checkpoint
+     * cannot be resumed from.
+     *
+     * <p>One reading, not two: {@code stop} removes the feed and checkpoints it, and the
+     * {@code finished} that follows when the source runs out finds nothing to checkpoint.
+     */
+    @Test
+    void aJobFailedByAbandonedBlocksWritesDownWhatItSentRatherThanWhatArrived() {
+        feeder.onJobStateChanged(started());
+        theFileSays("G21\nG90\nG28\n");
+
+        printer.onEvent(new BlocksAbandoned(15, 3));
+
+        var readings = publishedOf(JobProgressed.class);
+        assertEquals(1, readings.size(),
+                "one exact reading when the feed stops, and the finished() behind it must not add"
+                        + " a second; published " + published);
+        assertEquals(3L, readings.getFirst().progress().blocksSent(),
+                "all three blocks were sent - the window dropping them afterwards does not unsend"
+                        + " them, and nothing here can say how many the machine actually ran");
+        var failed = publishedOf(JobFeedFailed.class).getFirst();
+        assertTrue(published.indexOf(readings.getFirst()) < published.indexOf(failed),
+                "the reading goes before the failure that moves the job, or the number lands on a"
+                        + " row already showing FAILED; published " + published);
     }
 
     // ------------------------------------------------------------------ the collaborators

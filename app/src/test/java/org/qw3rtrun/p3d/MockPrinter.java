@@ -35,11 +35,20 @@ import java.util.concurrent.atomic.AtomicInteger;
  * real blocks, {@code MarlinRsDecoder} reads real reply lines, and the aggregate routes them. It is
  * also the only arrangement that needs <strong>no production change at all</strong>.
  *
- * <p><strong>What it says is measured, not invented.</strong> Every reply string below is a line
- * from {@code gcode/src/test/resources/marlin-replies.census.txt}, which was captured from a running
- * MarlinSim and carries the decoded type beside each line. Where a line is <em>not</em> in the
- * census it is marked UNMEASURED here and in {@code doc/specs/INTEGRATION_TESTS_spec.md}, and no
- * test is allowed to assert on its exact text - see {@link Profile#sdCard} for the one that matters.
+ * <p><strong>What it says is measured, and where it is not it says so.</strong> Every reply string
+ * below is a line from {@code gcode/src/test/resources/marlin-replies.census.txt}, which was
+ * captured from a running MarlinSim and carries the decoded type beside each line. Where a line is
+ * <em>not</em> in the census it is marked UNMEASURED here and in
+ * {@code doc/specs/INTEGRATION_TESTS_spec.md}, and no test is allowed to assert on its exact text -
+ * see {@link Profile#sdCard} for the one that matters.
+ *
+ * <p>That claim used to be made of the whole file and it was not true of {@link #ok()}, which is
+ * what issue #61 is about. <strong>A census line is a line in the exchange it was captured
+ * from</strong>, and carrying one into a different exchange can be wrong even though the string is
+ * real. Most of the census's {@code ok P15 B3} lines answer blocks {@code ReplyCorpusProbe} sent
+ * <em>without</em> a number, and this farm numbers every block it sends - so the mock was speaking
+ * a shape that never occurs in production. Being measured is therefore a property of the rule a
+ * string is chosen by, and not of the string alone.
  *
  * <p><strong>It is an observable, not a probe.</strong> {@link #commands()} is what reached the
  * machine, which is the far boundary of the system under test, exactly as the HTTP response is the
@@ -78,9 +87,11 @@ public final class MockPrinter implements AutoCloseable {
      *                     assert on the <em>absence</em> of {@code SdCardOk}/{@code SdFileList},
      *                     which is what the Storage tab actually keys on, and never on the echo
      *                     string itself
-     * @param advancedOk   {@code ok P15 B3} when true (what MarlinSim sends), a bare {@code ok}
-     *                     when false - a firmware that reports no buffer counts, which holds the
-     *                     send window at one block
+     * @param advancedOk   whether this firmware was built with {@code ADVANCED_OK}. True is
+     *                     MarlinSim: {@code ok N2 P15 B3} for a numbered block and {@code ok P15 B3}
+     *                     for an unnumbered one, which is {@link #ok()}'s whole subject. False is a
+     *                     bare {@code ok} to everything - no number and no buffer counts, which
+     *                     holds the send window at one block
      * @param answers      false for a machine that accepts the socket and then says nothing. That
      *                     is a terminal server with nothing plugged into it, and it is the case
      *                     that distinguishes {@code ONLINE} from {@code IDLE}
@@ -152,11 +163,34 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * A firmware that acknowledges with a bare {@code ok} and reports no buffer counts.
+     * A firmware that acknowledges with a bare {@code ok} - no buffer counts and no line number.
      *
      * <p>The host's window then stays at the one block {@code AdvancedOkRs(1, 1, null)} starts it
      * at, so this is the configuration that proves the farm does not <em>require</em> Marlin's
      * advanced acknowledgement to make progress.
+     *
+     * <p><strong>It is also the un-numbered dialect, and issue #61 asked for that to be kept rather
+     * than deleted.</strong> Two readings of "acknowledges without a number" were available and
+     * this is the first of them:
+     *
+     * <ul>
+     *   <li><strong>a firmware that does not report numbers</strong> - {@code ADVANCED_OK} off, so
+     *       {@code ok} carries nothing, ever. That is this profile, it is a build option a real
+     *       Marlin ships with, and it is a property of the machine, which is what a {@link Profile}
+     *       is allowed to be;</li>
+     *   <li><strong>a session that is not numbering</strong> - rejected, on two grounds. It is not
+     *       a property of a machine, so a {@link Profile} is the wrong place for it; and no
+     *       endpoint can put the farm in it anyway, because {@code GSendWindow} numbers every
+     *       block. It is also not a second dialect: put to the simulator, an unnumbered block in
+     *       the middle of a numbered session is answered {@code ok P15 B3} and the numbering
+     *       carries straight on, which is the arm {@link #ok()} already has for it. §4.2.1 of the
+     *       integration-test spec has the transcript.</li>
+     * </ul>
+     *
+     * <p>So the cost of this dialect is real and is asserted rather than described -
+     * {@code ConnectivityIntegrationTest.aStrayAcknowledgementResynchronisesAnUnnumberedSession}
+     * drives the same stray {@code ok} against this profile and against {@link #marlin()}, and the
+     * two outcomes differ.
      */
     public static Profile legacyOk() {
         return new Profile("legacy-bare-ok", MARLIN_SIM_M115, simCapabilities(true),
@@ -213,6 +247,25 @@ public final class MockPrinter implements AutoCloseable {
     private volatile Writer out;
     private volatile Socket live;
     private volatile boolean closed;
+
+    /**
+     * The {@code N} of the block being answered right now, or null when it carried none.
+     *
+     * <p>A field rather than a parameter threaded through {@link #respond(String)}, and the reason
+     * is ownership rather than convenience: {@link #serve()} reads one line at a time on one
+     * acceptor thread, and {@link #receive(String)} is the only writer. Every read is on that same
+     * thread, inside the {@link #respond(String)} call {@link #receive(String)} makes, so it is
+     * plain and needs no {@code volatile}.
+     *
+     * <p>It also keeps {@link #ok()} a no-argument method, which is what lets a new arm in
+     * {@link #respond(String)} answer with the right number without knowing this exists.
+     *
+     * <p>A parked answer carries its number with it, because {@link #respond(String)} renders the
+     * whole answer to strings before {@link #answer(String, List)} decides whether to write it -
+     * so {@link #answerOne()} releasing a reply much later still releases the number that reply
+     * was built with.
+     */
+    private Integer answering;
 
     /** The command at which the machine stops answering, or null while it answers everything. */
     private String holdFrom;
@@ -482,6 +535,7 @@ public final class MockPrinter implements AutoCloseable {
         if (!profile.answers()) {
             return;
         }
+        answering = number(block);
         answer(command, respond(command));
     }
 
@@ -649,15 +703,50 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * The acknowledgement, in whichever of the two shapes this machine speaks.
+     * The acknowledgement, in whichever shape this machine speaks - issue #61.
      *
-     * <p>No {@code N} on the advanced form, because the census shows MarlinSim does not write one
-     * on an ordinary {@code ok} - {@code ok P15 B3}. The host's send window then falls back to its
-     * FIFO order to decide which block was released, which is the common case on real firmware and
-     * the one worth exercising.
+     * <p><strong>Marlin's rule, not an assumption.</strong> {@code ok_to_send} writes the advanced
+     * fields when the firmware was built with {@code ADVANCED_OK}, and inside that it copies the
+     * {@code N} field <em>only if the command it is answering carried one</em>. So one firmware
+     * speaks two shapes and the block decides which:
+     *
+     * <pre>
+     * N2 M114*21  -&gt; ok N2 P15 B3     a numbered block, answered with its number
+     * M114        -&gt; ok P15 B3        the same firmware, an unnumbered block
+     * </pre>
+     *
+     * <p><strong>Both halves are in the census, from the same probe run.</strong>
+     * {@code ReplyCorpusProbe} sends most of its steps unnumbered and five of them framed, and
+     * {@code marlin-replies.census.txt} records the answers side by side - twenty-odd
+     * {@code AdvancedOkRs ok P15 B3}, and {@code ok N2 P15 B3} / {@code ok N3 P15 B3} against the
+     * probe's "framed position" and "the resend" steps. §4.2.1 of
+     * {@code doc/specs/INTEGRATION_TESTS_spec.md} has that table and two further transcripts that
+     * measure the same rule against a running MarlinSim. Nothing here is hand-written.
+     *
+     * <p><strong>What that fixes.</strong> This used to answer {@code ok P15 B3} always, which is
+     * a reply shape a real session never sees - the farm numbers every block - and it meant
+     * {@code CommandProcessor.applyWindowEvents} took the FIFO {@code window.acknowledge()} branch
+     * in every test in this module, so {@code GSendWindow.acknowledge(number)} was exercised by
+     * nothing. See {@code ConnectivityIntegrationTest.aStrayAcknowledgementDoesNotShiftTheSendWindow}
+     * for what that branch is worth.
+     *
+     * <p>The unnumbered arm stays reachable in principle and is not reached in practice, because
+     * nothing in this farm sends an unnumbered block. It is kept because it is the firmware's rule
+     * and deleting half of a rule is how the first version of this method went wrong.
+     *
+     * <p>{@code M105} is the one acknowledgement that does <strong>not</strong> come through here,
+     * and that is measured too: Marlin answers {@code M105} from the gcode handler and returns
+     * before {@code ok_to_send}, so a framed {@code N1 M105*…} is answered
+     * {@code ok T:210.00 /210.00 …} with neither a number nor buffer counts - which is the census
+     * line the {@code M105} arm above replies with, verbatim.
+     *
+     * @see #answering
      */
     private String ok() {
-        return profile.advancedOk() ? "ok P15 B3" : "ok";
+        if (!profile.advancedOk()) {
+            return "ok";
+        }
+        return answering == null ? "ok P15 B3" : "ok N" + answering + " P15 B3";
     }
 
     private void write(String line) {
@@ -738,6 +827,37 @@ public final class MockPrinter implements AutoCloseable {
             size += line.length() + 2;
         }
         return size;
+    }
+
+    /**
+     * The line number a framed block carries: {@code N1 M110 N0*124} to {@code 1}, or null.
+     *
+     * <p>The other half of {@link #bare(String)} and written to agree with it exactly - the same
+     * walk over the same leading digits, so a block one of them accepts as numbered is one the
+     * other does too. They answer the two halves of one question, which is why this is a sibling
+     * and not a second parser: {@code bare} is what the host asked for and this is what it called
+     * it, and a block the firmware acknowledges by number has to have both read the same way.
+     *
+     * <p>Deliberately not a checksum check, for {@link #bare(String)}'s reason: verifying it here
+     * would make every acknowledgement in this module a test of {@code :gcode}'s checksum, and a
+     * failure would surface as a stalled send window rather than as a bad checksum.
+     *
+     * <p>Null for a block with no {@code N}, which is what {@link #ok()} answers without a number.
+     * Nothing in this farm sends one - see {@link #ok()}.
+     */
+    static Integer number(String block) {
+        var text = block.trim();
+        if (text.length() < 2 || text.charAt(0) != 'N') {
+            return null;
+        }
+        var i = 1;
+        while (i < text.length() && Character.isDigit(text.charAt(i))) {
+            i++;
+        }
+        if (i == 1 || i >= text.length() || text.charAt(i) != ' ') {
+            return null;
+        }
+        return Integer.valueOf(text.substring(1, i));
     }
 
     /** The command word - {@code M104} out of {@code M104 S210 T0}. */

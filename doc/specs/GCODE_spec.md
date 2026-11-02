@@ -976,6 +976,20 @@ its own letters, and reads its lettered parameters from `beforeStringArg()` - th
 so that a `P1` inside a message is text rather than a parameter. The DSL writes one with
 `bareString(text)`, which the encoder emits undelimited and last.
 
+In the **writing** direction `bareString` is also the one builder that refuses characters, because
+an undelimited string is the one value a caller can use to write a different command than the one it
+asked for — and its text is usually a filename or a message a person typed. It throws, naming the
+character and its position, for a `CR` or `LF` ([§1.2](#12-end-of-line)), which would split the block
+and leave the `N` word on one side of the break and the checksum on the other; for `;`
+([§3.4](#34-string-values)a, [§6](#6-comments)), which comments out the checksum a transport appends
+behind it; for `*` ([§8.3](#83-what-the-checksum-covers)), which is the checksum delimiter itself;
+and for anything outside printable ASCII ([§1.1](#11-character-set-and-encoding)). Spaces are *not*
+refused — [§3.4](#34-string-values)a admits them and a long filename or an `M117` message is mostly
+spaces — and length is not checked here, because it belongs to the whole block (B.5). The escape
+hatch is [§3.4](#34-string-values)b: a quoted string is delimited, composes with other parameters
+and can hold a `;`, so `text(…)` says what a bare string may not, where the command takes a quoted
+argument.
+
 Head matching on that layer is [§2.2](#22-case)-tolerant in the reading direction: `GRqDecoder` and
 `MarlinCommands.decode` compare through `headKey()`, which folds the command letter
 to upper case, so `m104 s200` and `M104 S200` decode to the same command. The **number** keeps its

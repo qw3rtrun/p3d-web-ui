@@ -574,6 +574,68 @@ The rules that follow, each paid for:
   farm-stream instance survived two rounds of fixing this elsewhere precisely because a test that
   emits from two threads and hopes passes against the bug on nearly every run.
 
+### One aggregate, one thread - and a listener is never on it
+
+Issue #54. Two properties, two mechanisms, and they are separate on purpose.
+
+- **A scheduler is allocated per `PrinterReactor`, not shared across the farm.** `PrinterThreads`
+  is the factory and `CoreConfiguration` declares it as a bean, so an assembly can replace the
+  threading model without any class in `core` gaining a property to read.
+  `virtualPerPrinter()` hands out **two single-threaded virtual-thread executors per machine** -
+  `p3d-printer-<uuid>` for the aggregate, `p3d-listener-<uuid>` for its listeners. Java 25 is the
+  toolchain and a serialised virtual thread costs almost nothing idle, which is what makes this
+  hold at forty machines rather than one.
+- **The thread is named for the printer, with the whole UUID.** A farm-wide stall is diagnosed from
+  a thread dump; `single-1` says nothing, and a short prefix says something ambiguous, which is
+  worse because it reads as certain. The name can be pasted into the roster.
+- **`PrinterThreads` is a factory, not a cache.** Each call returns a new scheduler; the reactor
+  that asked owns it and `stop()` disposes it. `release(id)` followed by `openReactor(id)` must get
+  live threads, which a cache would not give it.
+- **A listener never blocks the aggregate's thread.** `PrinterReactor.onEvent` offers to a
+  `Handoff` instead of calling `ApplicationEventPublisher.publishEvent` inline. Before #54 the
+  roster's `@Transactional` JPA writes ran on the aggregate's thread, which was the farm's.
+- **Ordering is per aggregate and deliberately not global.** It comes from a **single consumer per
+  printer**, not from `@Async` - a `ThreadPoolTaskExecutor` with more than one thread reorders
+  freely. Events from different printers have no relative order worth preserving, and enforcing one
+  rebuilds the shared thread this change removed. Say that in the code when it comes up.
+- **The two hand-offs have opposite overflow policies, and that is the decision rather than an
+  accident.** *A browser missing an event is a refresh; the roster missing one is a fact about the
+  machine that is gone for good.* So the **farm SSE stream** (`EventMessage`, ~1-2/s/machine) is
+  `Handoff.droppable` at 256 - bounded, drops, and counts the drop so it is visible - and the
+  **roster facts** (`MFirmwareReportedEvent`, `MCapabilityReportedEvent`, `MConnectionChangedEvent`)
+  are `Handoff.lossless`. 256 is `publishOn`'s prefetch, which is the bound this replaces; what
+  changed is the consequence, because overflowing `publishOn` raised an `onError` that **terminated
+  that session's reply stream**.
+- **Both hand-offs are on the same listener thread**, so a stuck roster write also fills the farm
+  queue. The WARN that logs a farm-stream drop therefore does not only mean "a slow browser"; it
+  can equally mean a JPA write is stuck.
+- **A roster event is built on the aggregate's thread, including its `LocalDateTime.now()`.** The
+  timestamp says when the machine said it, not when the database got round to it - and the gap is
+  longest exactly when somebody would be reading those timestamps to find out what happened.
+- **A scheduler is disposed by scheduling the disposal as a task on it**, never by calling
+  `dispose()` directly. `DelegateServiceScheduler.dispose()` is `shutdownNow()`, which discards the
+  queue - and `tryEmitComplete()` has just handed `onComplete` to each subscriber's `publishOn`
+  worker *as a task on that scheduler*, so a direct dispose leaves an SSE browser on a deleted
+  printer waiting forever. `Schedulers.immediate()`, `single()`, `parallel()` and every cached
+  scheduler have a **no-op `dispose()`** (verified in reactor-core 3.8.7), so a test that passes one
+  in is unaffected.
+- **And it is disposed from `PrinterReactor.publish`, not from `stop()`** - queueing behind the
+  completion only helps if the completion is already queued. `stop()` *parks* a `StreamEnd`, and
+  `Outbox.emit` drains only when no other thread is already draining; a machine being deleted
+  mid-conversation has its aggregate thread inside that loop, so `stop()` returns with the marker
+  still queued and nothing completed. Disposing from there schedules `shutdownNow()` onto an
+  executor whose queue is *empty* - the `onComplete` does not exist yet - so it runs at once, and
+  the completion the other thread produces a moment later is submitted to a scheduler that has
+  gone. **The same browser waits forever, one thread later.** So whichever thread drains the marker
+  calls `tryEmitComplete()` and then, on that thread and strictly after it, schedules both
+  disposals. `PrinterReactorManagerTest.aReleasedReactorCompletesItsUpdateStream` cannot see this -
+  nothing else is emitting there, so the marker is published inline and the order is accidentally
+  right; `PrinterReactorThreadingTest.aStopThatRacesAnEmissionStillCompletesTheUpdateStream` holds
+  a subscriber inside the sink and releases the printer from another thread, which makes it
+  certain. **A guard that admits one caller is what makes "dispose once" true** - `stop()`'s
+  `stopped` flag means exactly one `StreamEnd` is ever parked, so the `streamEnded` early exit in
+  front of the disposal is unreachable for it.
+
 ### The persisted connection state is derived, and it has a reader
 
 `printer_entity.connection_state` is written from `MConnectionChangedEvent` and from nowhere else -
@@ -589,6 +651,43 @@ same defect in a new place.
 **A connection change is deliberately not re-announced**, unlike a firmware report. The fact came
 from `core`, and handing it back to the module that redials on announcements has exactly one
 possible effect.
+
+**A roster announcement is acted on once, when this module has no runtime for the machine, and a
+machine that is already running is left entirely alone.** That is a contract, not an optimisation.
+`MRegisteredEvent` is a statement of current fact re-published about seven times per connect - once
+per firmware report, once per capability line, each from a `@Transactional` listener in
+`MachineManagementImpl` that reads the row back and announces it again - so `onRegistered` sees "it
+was linked" long after it stopped being true. The javadoc used to argue the repetition was harmless
+because `connect()` "declines to start a second attempt while one is in flight"; that clause was
+load-bearing and false at the one moment it mattered, because `disconnect()` disposes the attempt
+and nulls it, so a republication queued behind a disconnect found nothing in flight and redialled.
+Thirty "dialling it again" lines and eleven `-> CONNECTING` transitions in one test window, and
+`ConnectivityIntegrationTest.disconnectingClosesTheSocket` timing out after thirty seconds on a
+machine that never settled.
+
+**The gate is whether a runtime exists; the announcement's own `getState()` cannot be it.** That
+state is the *persisted* one and it lags the live aggregate by however much of the printer's
+listener queue is still in front of the `MConnectionChangedEvent` that would correct it - the
+republication triggers and the connection fact travel the same single-consumer queue, and the
+triggers are ahead. The copies that still say `IDLE` for a machine told to disconnect a millisecond
+ago are exactly the ones that do the damage. Whether the module holds a runtime is not stale: at
+startup there is none, and afterwards there is one that has already been told what to do by
+something closer to the truth.
+
+**The startup redial crosses the aggregate, like every other operating command.**
+`openReactor(id).handleConnectCmd(new ConnectCmd(true))`, not `openReactor(id).connect()`. The bare
+`connect()` was the write side going round `PrinterState.handle(ConnectCmd)`, and it cost two
+things: the intent was never set, so a stale announcement could redial a machine whose aggregate
+said OFFLINE; and `connect()`'s own `Retry.backoff(...).filter(cause ->
+printer.wantsToBeConnected())` was consulting an intent nobody had established, so **a machine
+redialled at startup gave up after its first refusal** and nothing said so. Nothing covered that,
+which is why it was never seen.
+
+**`PrinterReactor.connect()` refuses to dial a machine whose aggregate has not asked for a
+connection**, as its first statement and before the in-flight check, and it logs the refusal. That
+is what makes its "safe to call in any state" claim true rather than nearly true, and it is the
+backstop for any future caller that skips the aggregate the way the startup redial did. It is not
+silent because thirty seconds of a test timing out is what the silence cost.
 
 Two rules for anything that touches the runtime:
 
@@ -1108,15 +1207,17 @@ the source, not suspected.
 - **A decision taken on `updates()` races a decision taken on the feed's own `Mono`, and on a short
   file the race is even.** Both halves of "did this print finish or break" travel asynchronously and
   on different threads: a `BlocksAbandoned` crosses `gEvent()`'s `publishOn(executor)` and then
-  `updates()`'s, both onto the shared `Schedulers.single()`, while the feed's completion arrives on
+  `updates()`'s, both onto that machine's aggregate thread - the shared `Schedulers.single()` when
+  this was measured, its own `p3d-printer-<id>` since #54 - while the feed's completion arrives on
   the netty thread through `PublisherQueue`. Measured against `MockPrinter`, which answers instantly:
   the transport announced the abandonment at `T+0`, the aggregate saw it at `T+4ms`, `updates()`
   delivered it at `T+9ms`, and an eighteen-block file ran out at `T+9ms` - so
   `PrintJobIntegrationTest.aJobWhoseBlocksWereAbandonedFailsRatherThanReportingCompleted` passes
   about half the time (4 of 9 runs) against a correct implementation. It is not a problem on a real
-  print, where the abandonment lands thousands of blocks before the end, and the cause is the known
-  single-scheduler debt below: the inbound drain starves the outbound one on the same thread. The
-  fix is to make the completion path consult the fact rather than race it - a count on the aggregate
+  print, where the abandonment lands thousands of blocks before the end. **#54 did not close it**:
+  the per-printer thread removed the farm's queueing from the gap and left the race itself exactly
+  as measured - it is two paths, not two speeds. The fix is to make the completion path consult the
+  fact rather than race it - a count on the aggregate
   beside `blocksInFlight`, read where `JobFeeder.finished` decides - which is one hop rather than
   two, and still not a guarantee. A guarantee needs the transport to answer "did this session
   abandon anything" synchronously.
@@ -1285,11 +1386,39 @@ the source, not suspected.
   `NullPointerException` out of a REST call. The window is microseconds and has always existed;
   deferring the start widened it slightly. The honest fix is in `:backend:terminal` - `stop()` on a
   terminal that never started should be a no-op - which is `reactive-transport-dev`'s to make.
-- **One `Schedulers.single()` serialises every aggregate in the farm.** `Schedulers.single()`
-  returns the JVM-wide shared scheduler, not a new one, so forty printers' replies, commands and
-  state changes all queue behind one thread. It is correct - each aggregate is touched by one
-  thread - and it does not scale: one slow handler stalls every machine. A scheduler per reactor,
-  or `Schedulers.newSingle` partitioned by machine, is the shape; neither is worth doing before
-  something measures the queue.
+- ~~**One `Schedulers.single()` serialises every aggregate in the farm.**~~ **Fixed** by issue #54 -
+  see *One aggregate, one thread* above. The entry is kept because the shape of the mistake is
+  worth remembering: `Schedulers.single()` reads like "a single thread for this" and returns the
+  **JVM-wide cached one**, so a per-object scheduler was never allocated and nothing said so. The
+  symptom was farm-wide and the code looked per-printer.
+- **A concurrent `connect()` and `disconnect()` can still both decide to act.** `PrinterReactor.attempts`
+  is volatile now, which it had to become once a listener thread could reach `connect()` - the
+  roster's `@Transactional` `on(MFirmwareReportedEvent)` republishes `MRegisteredEvent`, which
+  `PrinterReactorManager.onRegistered` turns into a dial - so three threads reach it: an HTTP
+  thread, the aggregate's own, and the listener's. Volatile buys the happens-before and not
+  atomicity: "is an attempt already in flight" remains a check-then-act. Closing it means deciding
+  what a concurrent connect and disconnect *mean*, which is a command-semantics question rather
+  than a threading one. **The two gates above narrow it without closing it**: the listener thread
+  now reaches `connect()` only for a machine with no runtime at all, and the intent check makes a
+  dial that races a disconnect lose whenever the disconnect's `wanted = false` is visible first.
+  It is still a check-then-act on two fields.
+- **A stale `MachineSpec` can overwrite a fresh edit, in `PrinterReactorManager.redeclare`.** It
+  takes the same republished `MRegisteredEvent` the redial is now gated against, and hands its spec
+  to a running aggregate - so an edit that commits between the republication's `repo.findById` and
+  its listeners running is overwritten. The window is one transaction rather than the whole listener
+  queue, because the republication reads the row fresh at publication time, which is why this is
+  lower stakes than the connection case and is left alone. The same shape, and no observed failure.
+- **`PrinterDirectory.Entry.state` has no production reader.** `PrinterReactorManager` reads
+  `event.getState()`, `FarmEvents` reads the runtime, and `CoreConfiguration.aggregates()` reads
+  only `profile()` and `spec()`; the one reader anywhere is `StartupAnnouncementFlowTest` in `:app`.
+  So the stale announcement that overwrites it costs nothing today - but it is a write-only field,
+  which is the defect B3 removed from `PrinterEntity.connected`, and the next person to read it
+  will read a value that can be behind the aggregate.
+- **Three methods still touch the aggregate from the caller's thread.** `handleConnectCmd(ConnectCmd)`
+  calls `printer.handle(cmd)` on the HTTP thread - and, since the startup redial became a command,
+  on the printer's listener thread as well - and `declared(spec)` and `blocksInFlight()` read
+  the aggregate from whatever thread arrives. #54 did not close these - they predate it and fixing
+  them changes command semantics (a POST would stop being able to report a refusal synchronously).
+  So "one aggregate, one thread" is true of the *reply* path and aspirational on the command path.
 - **There is no written spec for this layer.** This skill is the only authority, so a behaviour that
   callers come to depend on gets written down here, in the change that establishes it.

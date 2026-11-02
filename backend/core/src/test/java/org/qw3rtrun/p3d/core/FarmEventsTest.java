@@ -228,6 +228,9 @@ class FarmEventsTest {
                         .take(1))
                 .assertNext(FarmEventsTest::assertState)
                 .verifyComplete();
+
+        // The only reactor this file opens, and a reactor owns two threads now - see #54.
+        reactors.release(id);
     }
 
     private static BareTemperatureRs temperature(double hotend) {

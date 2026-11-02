@@ -7,6 +7,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import reactor.core.scheduler.Schedulers;
 
 /**
  * The core submodel's beans: the per-printer runtime and what it is built from.
@@ -39,11 +40,30 @@ public class CoreConfiguration {
         return ConnectionPolicy.standard();
     }
 
+    /**
+     * Which threads a machine's runtime runs on, in one place rather than per reactor.
+     *
+     * <p>A bean for the same reason {@link #connectionPolicy()} is one: an assembly can replace
+     * the threading model - put the whole farm back on one scheduler to reproduce something, or
+     * hand out platform threads on a JVM where virtual ones are awkward - without any class in
+     * this module gaining a property to read.
+     *
+     * <p>The default is one virtual thread per printer for the aggregate and one more for its
+     * listeners. Until #54 it was {@code Schedulers.single()} for the entire farm, which is the
+     * JVM-wide shared thread and not a fresh one.
+     */
+    @Bean
+    public PrinterThreads printerThreads() {
+        return PrinterThreads.virtualPerPrinter();
+    }
+
     @Bean
     public PrinterReactorManager printer(PrinterDirectory directory, PrinterAggregateManager aggregates,
                                          ApplicationEventPublisher roster,
-                                         ConnectionPolicy policy) {
-        return new PrinterReactorManager(directory, aggregates, roster, policy);
+                                         ConnectionPolicy policy,
+                                         PrinterThreads threads) {
+        return new PrinterReactorManager(directory, aggregates, roster, policy,
+                threads, Schedulers.parallel());
     }
 
     /** The only way into this module from the web - see {@link PrinterControlService}. */

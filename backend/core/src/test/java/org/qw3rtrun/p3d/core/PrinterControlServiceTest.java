@@ -63,5 +63,8 @@ class PrinterControlServiceTest {
         assertNotNull(thread, "the directory was never consulted, so the test proved nothing");
         assertTrue(thread.startsWith("boundedElastic"),
                 "the runtime was opened on '" + thread + "', which is the caller's thread");
+
+        // The runtime that was opened owns two threads of its own since #54, so it is let go of.
+        manager.release(id);
     }
 }

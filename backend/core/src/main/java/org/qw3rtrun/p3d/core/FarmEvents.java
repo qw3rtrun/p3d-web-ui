@@ -50,7 +50,8 @@ public class FarmEvents implements FarmView {
      * <p>Touched by exactly one thread at a time - see {@link #outbox}. A <em>safe</em>
      * {@code Sinks.Many} does not serialise for its caller; it refuses a concurrent emission with
      * {@code FAIL_NON_SERIALIZED}, and this one is reached from whatever thread published the Spring
-     * event - a reactor's {@code single}, a netty loop, or {@code boundedElastic}.
+     * event - which since #54 is each machine's own {@code p3d-listener-<id>}, so the number of
+     * threads that can collide here is the size of the farm rather than one.
      *
      * <p>{@code directBestEffort} and emphatically not {@code onBackpressureBuffer}, which was the
      * obvious choice and leaks: that one <em>warms up</em>, buffering everything emitted while

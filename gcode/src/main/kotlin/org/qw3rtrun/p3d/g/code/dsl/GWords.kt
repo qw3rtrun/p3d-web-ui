@@ -1204,18 +1204,62 @@ fun text(value: String): GValue = GQuotedString(value)
  * rather than a `word(letter, ...)`, and it renders undelimited: `M(117, bareString("Hello World"))`
  * is `M117 Hello World`.
  *
- * Two rules the call site owns, because nothing below can check them: it goes **last** in a
- * command, since everything to the end of the line belongs to it, and it cannot contain `;`, which
- * every parser reads as the start of a comment (spec 3.4a).
+ * One rule the call site owns, because nothing below can check it: it goes **last** in a command,
+ * since everything to the end of the line belongs to it. That is a property of the command being
+ * built; what the string may contain is a property of the string, and is checked here.
+ *
+ * **It is the one value that can write a different command than the caller asked for**, and its
+ * text is usually a filename or a message someone typed, so four characters are refused with the
+ * position they were found at:
+ *
+ * - `\n` and `\r` end the line (spec 1.2), so `M30 a.gco\nM112` is a delete *and* an emergency
+ *   stop, with the `N` word on one side of the break and the checksum on the other;
+ * - `;` starts a comment (spec 3.4a, 6) that runs to the end of the line and swallows the checksum
+ *   a transport appends behind it, so the block is rejected and resent forever;
+ * - `*` is the checksum delimiter (spec 3.4a, 8.3), so the firmware reads part of the text as the
+ *   checksum;
+ * - anything outside printable ASCII `0x20`-`0x7E`, because that is the portable wire (spec 1.1).
+ *
+ * A refused string is not necessarily unsendable: spec 3.4b quoted strings are delimited, compose
+ * with other parameters and may hold a `;`, so [text] is the way to say one where the command takes
+ * a quoted argument. Length is **not** checked here - it depends on the whole block and on the line
+ * number the transport will prepend, which `GLineLimit.payloadBudget` answers for the caller.
  *
  * ```
  * GEncoder.encode(M(117, bareString("Hello World")))   // "M117 Hello World"
+ * GEncoder.encode(M(23, bareString("A LONG NAME.GCO")))   // "M23 A LONG NAME.GCO" - spaces are fine
+ * bareString("a.gco;M112")                             // throws IllegalArgumentException
  * ```
  *
  * @param value the text, to the end of the line
  * @return the letterless word carrying it
+ * @throws IllegalArgumentException when [value] holds a character that would change what the block
+ *   means, naming the character and its position
  */
-fun bareString(value: String): GWord = GUnnamedStr(GUnquotedString(value))
+fun bareString(value: String): GWord {
+    for (i in value.indices) {
+        val c = value[i]
+        val why = when {
+            c == '\n' || c == '\r' ->
+                "spec 1.2: it ends the line, so everything after it becomes a second command and " +
+                    "the checksum lands on the wrong side of the break"
+            c == ';' ->
+                "spec 3.4a: it starts a comment, which swallows the checksum a transport appends"
+            c == '*' ->
+                "spec 8.3: it is the checksum delimiter, so the firmware would read what follows " +
+                    "as the checksum"
+            c < ' ' || c > '~' ->
+                "spec 1.1: the wire carries printable ASCII, 0x20 to 0x7E, and this is outside it"
+            else -> null
+        }
+        require(why == null) {
+            val shown = if (c >= ' ' && c <= '~') "'$c'" else "U+%04X".format(c.code)
+            "a bare rest-of-line string cannot contain $shown at position $i - $why. " +
+                "Where the command takes a quoted argument, text(\"...\") can carry it (spec 3.4b)."
+        }
+    }
+    return GUnnamedStr(GUnquotedString(value))
+}
 
 /**
  * An expression value (spec 3.5), wrapped in braces.

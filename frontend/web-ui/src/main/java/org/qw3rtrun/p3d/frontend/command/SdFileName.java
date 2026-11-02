@@ -1,35 +1,27 @@
 package org.qw3rtrun.p3d.frontend.command;
 
 import org.qw3rtrun.p3d.g.code.core.block.GLineLimit;
+import org.qw3rtrun.p3d.g.code.dsl.GWordsKt;
 
 /**
  * Checks a filename the browser sent before it is put on the wire.
  *
- * <p><strong>A filename reaches the printer verbatim.</strong> {@code M23}, {@code M30} and
- * {@code M28} all take it as a bare rest-of-line string - no letter, no quoting, everything to the
- * end of the line belongs to it - so whatever the browser posts is what the firmware reads. That
- * makes it the one field on this surface where a character can mean something:
+ * <p><strong>Which characters a filename may hold is not this class's rule.</strong> {@code M23},
+ * {@code M30} and {@code M28} all take a filename as a bare rest-of-line string, and
+ * {@code bareString} in {@code :gcode}'s DSL is what refuses the characters that would change what
+ * the block means - a line terminator that splits it, a {@code ;} that comments out the checksum, a
+ * {@code *} that is read as the checksum delimiter, and anything outside printable ASCII. This asks
+ * that function rather than keeping a second copy of the list, because two validators for one rule
+ * drift apart and the one further from the wire is the one that goes stale. It is asked
+ * <em>here</em>, at the request boundary, only so that a bad filename is a 400 on the request that
+ * carried it rather than an exception raised on the far side of the aggregate.
  *
- * <ul>
- *   <li><strong>A line terminator splits the block.</strong> {@code "a.gco\nM112"} is not a
- *       filename, it is a delete <em>and</em> an emergency stop, and the transport frames what it is
- *       given without parsing it - so the {@code N} word lands on one side of the break and the
- *       checksum on the other. This is the one that matters.
- *   <li><strong>A {@code ;} starts a comment</strong> that runs to end of line and swallows the
- *       checksum field the transport appends behind it, so the firmware rejects the block and asks
- *       for it again, forever.
- *   <li><strong>A {@code *} is the checksum delimiter</strong> (spec 8.3), so a name containing one
- *       makes the firmware read part of the name as the checksum.
- * </ul>
- *
- * <p>Everything outside printable ASCII goes too, because the wire is 7-bit (spec 1.1) and a card
- * that reports {@code TEST.GCO} in DOS 8.3 has no use for the rest of Unicode anyway.
- *
- * <p><strong>And the whole block has to fit.</strong> Spec 1.3: Marlin's buffer is 96 bytes
- * including the {@code N} word and the checksum, and a line over it is truncated rather than
- * refused - so a long name would silently become a different name. {@link GLineLimit#payloadBudget}
- * is what says how much of that a payload may use; this takes the worst case, which is a six-digit
- * line number.
+ * <p><strong>The whole block has to fit, and that rule is this class's.</strong> Spec 1.3: Marlin's
+ * buffer is 96 bytes including the {@code N} word and the checksum, and a line over it is truncated
+ * rather than refused - so a long name would silently become a different name. The DSL cannot check
+ * this, because the length a payload may use depends on the whole block and on the line number the
+ * transport will prepend; {@link GLineLimit#payloadBudget} is what answers it, and this takes the
+ * worst case, a six-digit line number.
  */
 public final class SdFileName {
 
@@ -56,6 +48,10 @@ public final class SdFileName {
      * record's compact constructor - and a bad filename is a bad request rather than a state the
      * application carries around. WebFlux turns a failure to construct a request body into a 400.
      *
+     * <p>The character check is the bare-string builder's own, asked for its refusal and not for
+     * the word it returns: if the name cannot be built into the command that will carry it, it
+     * cannot be sent, and the message it raises names the character and where it was found.
+     *
      * @param name what the browser sent
      * @return the same name with surrounding blanks removed
      */
@@ -71,17 +67,7 @@ public final class SdFileName {
             throw new IllegalArgumentException("the filename is " + trimmed.length()
                     + " characters, and a G-code block has room for " + MAX_LENGTH);
         }
-        for (int i = 0; i < trimmed.length(); i++) {
-            char c = trimmed.charAt(i);
-            if (c < ' ' || c > '~') {
-                throw new IllegalArgumentException(
-                        "the filename contains a character the wire cannot carry at position " + i);
-            }
-            if (c == ';' || c == '*') {
-                throw new IllegalArgumentException(
-                        "the filename contains '" + c + "', which G-code reads as punctuation");
-            }
-        }
+        GWordsKt.bareString(trimmed);
         return trimmed;
     }
 }

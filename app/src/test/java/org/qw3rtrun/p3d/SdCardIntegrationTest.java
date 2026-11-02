@@ -1,6 +1,8 @@
 package org.qw3rtrun.p3d;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.web.reactive.server.WebTestClient;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,6 +46,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * two: {@link MockPrinter#written(String)}, the file on the card. The whole claim of the feature is
  * that it differs from {@link MockPrinter#commands()} - the traffic carried the transfer and one
  * interactive command, and only the transfer is in the file.
+ *
+ * <h2>When a transfer is refused - issue #65</h2>
+ *
+ * <p>The last group of tests is about the answers that are <em>not</em> 200, and it exists because
+ * all four of them used to be <strong>500</strong>: a file the store does not hold, a machine the
+ * farm does not have, a machine nothing has dialled, and a second transfer onto a card that is
+ * already being written. None of those is a server fault - each is an ordinary outcome of somebody
+ * clicking a button - and a 500 is the one answer {@code client.ts} has no path for.
+ *
+ * <p>Each asserts three things, and the third is what has teeth: the <strong>status</strong>, the
+ * <strong>refusal the body states</strong>, and that <strong>nothing happened to the machine</strong>.
+ * The third matters most for the disconnected case, which did not even 500 - it answered 200 and
+ * then announced a transfer that had never started, so a page drew a progress bar and flipped it to
+ * failed a moment later. A test that stopped at the status would have called that fixed.
+ *
+ * <p>The body's field names are the contract: {@code refusal} is {@code ABSENT} when what was named
+ * is not there and {@code WRONG_STATE} when it is there and cannot do this now, and {@code reason}
+ * is the sentence the browser shows. They are asserted as the strings a browser reads rather than
+ * bound to {@code ControlOutcome}, which would be the server agreeing with itself.
  *
  * <p>Nothing here is timed. Every mid-transfer assertion stops the machine answering with
  * {@link MockPrinter#holdRepliesFrom(String)} and lets the send window stop the conversation, the
@@ -500,6 +521,206 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         quiet();
         assertFalse(printer.sent("M28"), "a refused name must not open a file on the card");
         assertNull(printer.writingTo());
+    }
+
+    // ---------------------------------------------------------------- refusals - issue #65
+
+    /**
+     * A file the farm does not hold is a 404, and no file is opened on the card.
+     *
+     * <p>It used to be a 500: {@code SdUploader.start} threw {@code IllegalArgumentException}, no
+     * handler in {@code :frontend:web-ui} caught it, and the browser - which has no path for a 500
+     * at all - showed nothing useful. The store not holding a file is an ordinary outcome of a
+     * stale file picker, not a server fault.
+     *
+     * <p>The second half is what makes this more than a status assertion. A refusal that still sent
+     * an {@code M28} would leave a file open on the card with nothing to close it, and every
+     * command the machine was given next would be written into it.
+     */
+    @Test
+    void writingAFileTheFarmDoesNotHoldIsRefusedAsNotFound() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("asked for a file it has not got", printer);
+        var events = connectAndSettle(id, printer);
+
+        var refusal = absent(command(id, "/sd/upload",
+                "{\"fileId\":\"" + UUID.randomUUID() + "\",\"name\":\"GHOST.GCO\"}"));
+        assertEquals(id.toString(), refusal.get("machineId"), "the refusal names the machine asked");
+
+        quiet();
+        assertFalse(printer.sent("M28"),
+                "a file that does not exist opened one on the card: " + printer.commands());
+        assertNull(printer.writingTo());
+        assertFalse(events.saw("SdUploadProgressed"),
+                "a transfer that was refused must not be announced as one: " + events.types());
+    }
+
+    /**
+     * An upload addressed to a machine the farm does not have is a 404, and reaches no machine.
+     *
+     * <p>The witness is the registered printer beside it: the claim is not only that the request
+     * was refused but that the file went to <em>nobody</em>. An id that fell back to "whichever
+     * machine is around" would be the worst version of this bug, and it would be invisible from the
+     * status alone.
+     */
+    @Test
+    void writingToTheCardOfAMachineTheFarmDoesNotHaveIsRefusedAsNotFound() {
+        var witness = machine(MockPrinter.marlin());
+        var id = register("a bystander", witness);
+        connectAndSettle(id, witness);
+        var stored = idOf(upload(GcodeFixture.unsliced("sd-upload-nomachine").named("nomachine.gcode")));
+        var nobody = UUID.randomUUID();
+
+        var refusal = absent(command(nobody, "/sd/upload",
+                "{\"fileId\":\"" + stored + "\",\"name\":\"NOWHERE.GCO\"}"));
+        assertEquals(nobody.toString(), refusal.get("machineId"));
+
+        quiet();
+        assertEquals(List.of(), witness.commands(),
+                "a transfer addressed to nobody reached a machine that was not asked");
+    }
+
+    /**
+     * A machine nothing has dialled refuses the transfer with a 409, and announces nothing.
+     *
+     * <p><strong>This one never was a 500, and that is what makes it the worst of the four.</strong>
+     * The request was answered 200, the transfer was registered, {@code UPLOADING} went out on the
+     * event stream, and the failure arrived a moment later as {@code SdUploadProgressed(FAILED)}
+     * from inside {@code PrinterReactor.uploadToCard} - so the page drew a progress panel for a
+     * transfer that had never begun and then flipped it to failed. The farm knew the machine was
+     * offline before it answered; it simply had no way to say so.
+     *
+     * <p>409 rather than 404 because the machine is <em>there</em>. Connecting it and asking again
+     * is the whole of what the operator has to do, and a 404 would say the printer does not exist.
+     */
+    @Test
+    void writingToTheCardOfAMachineThatIsNotConnectedIsRefusedAsAConflict() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("never dialled", printer);
+        var events = watch(id);
+        var file = GcodeFixture.unsliced("sd-upload-offline").named("offline.gcode").withBodyLines(4);
+        var stored = idOf(upload(file));
+
+        wrongState(command(id, "/sd/upload",
+                "{\"fileId\":\"" + stored + "\",\"name\":\"OFFLINE.GCO\"}"));
+
+        quiet();
+        assertFalse(printer.sessionOpen(), "a refused transfer dialled the machine anyway");
+        assertEquals(List.of(), printer.commands());
+        assertFalse(events.saw("SdUploadProgressed"),
+                "a transfer that never started was announced to the browser as one: "
+                        + events.types());
+    }
+
+    /**
+     * A second transfer onto a card that is already being written is a 409, and never opens.
+     *
+     * <p>One at a time per machine is not a policy of the endpoint, it is what {@code M28} does to
+     * the wire: a second {@code M28} arriving between the first one and its {@code M29} is
+     * <em>written into the first file</em> and acknowledged as if it had run. So the claim with
+     * teeth is the card's contents - the first file holds the first file, and the second name was
+     * never opened at all.
+     *
+     * <p>Stated by stopping the machine answering rather than by timing anything: from
+     * {@code holdRepliesFrom} the first transfer cannot finish, so the second request is
+     * demonstrably made while it is running.
+     */
+    @Test
+    void aSecondTransferIsRefusedWhileTheFirstIsStillRunning() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("one card at a time", printer);
+        var file = GcodeFixture.unsliced("sd-upload-first").named("first.gcode").withBodyLines(24);
+        var blocks = file.blocks();
+        printer.holdRepliesFrom(blocks.get(5));
+        var events = connectAndSettle(id, printer);
+
+        writeToCard(id, file, "FIRST.GCO");
+        stalled(printer, blocks.get(5));
+
+        var second = idOf(upload(GcodeFixture.unsliced("sd-upload-second")
+                .named("second.gcode").withBodyLines(2)));
+        var refusal = wrongState(command(id, "/sd/upload",
+                "{\"fileId\":\"" + second + "\",\"name\":\"SECOND.GCO\"}"));
+        assertEquals(id.toString(), refusal.get("machineId"));
+
+        printer.answerFreely();
+        awaitTransfer(events, "DONE");
+        closed(printer, "FIRST.GCO");
+
+        assertEquals(1, printer.commands().stream().filter(c -> c.startsWith("M28")).count(),
+                "the refused request opened a second file on the card: " + printer.commands());
+        assertEquals(blocks, printer.written("FIRST.GCO"),
+                "the first file has to be the first file, whole");
+        assertEquals(List.of(), printer.written("SECOND.GCO"),
+                "the refused transfer wrote a file anyway");
+    }
+
+    /**
+     * Stopping a transfer on a machine the farm does not have is a 404.
+     *
+     * <p>The only refusal this endpoint has. Everything else about it is deliberately an
+     * acceptance - see below.
+     */
+    @Test
+    void stoppingATransferOnAMachineTheFarmDoesNotHaveIsRefusedAsNotFound() {
+        var nobody = UUID.randomUUID();
+
+        var refusal = absent(command(nobody, "/sd/upload/cancel"));
+
+        assertEquals(nobody.toString(), refusal.get("machineId"));
+    }
+
+    /**
+     * Stopping a transfer that is not running is <strong>200</strong>, and that is deliberate.
+     *
+     * <p>Pinned here because the obvious reading of issue #65 is that every "you cannot do that"
+     * becomes a 409, and this one must not. The page's Cancel button and the machine's state are
+     * different clocks: a transfer that finished while the click was in flight is not an error the
+     * operator caused, and answering 409 would put a warning in front of somebody whose file
+     * arrived.
+     *
+     * <p>The second assertion is the other half: accepting it must not put anything on the wire -
+     * no {@code M29} for a file nobody opened.
+     */
+    @Test
+    void stoppingATransferThatIsNotRunningIsStillAccepted() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("nothing to stop", printer);
+        connectAndSettle(id, printer);
+
+        command(id, "/sd/upload/cancel").expectStatus().isOk();
+
+        quiet();
+        assertEquals(List.of(), printer.commands(),
+                "a cancel with nothing to cancel reached the machine: " + printer.commands());
+    }
+
+    // ---------------------------------------------------------------- reading a refusal
+
+    /**
+     * A 404 whose body says what was not there.
+     *
+     * <p>Both halves are asserted every time: the status is what a client branches on, and the
+     * {@code refusal} is what says <em>which</em> of the two kinds it was. A mapping that regressed
+     * to answering 404 for everything would pass on the status alone.
+     */
+    private static Map<String, Object> absent(WebTestClient.ResponseSpec response) {
+        return refusal(response.expectStatus().isNotFound(), "ABSENT");
+    }
+
+    /** A 409 whose body says what state the machine is actually in. */
+    private static Map<String, Object> wrongState(WebTestClient.ResponseSpec response) {
+        return refusal(response.expectStatus().isEqualTo(HttpStatus.CONFLICT), "WRONG_STATE");
+    }
+
+    private static Map<String, Object> refusal(WebTestClient.ResponseSpec response, String kind) {
+        var body = json(response);
+        assertEquals(kind, body.get("refusal"), "the wrong kind of refusal: " + body);
+        var reason = (String) body.get("reason");
+        assertNotNull(reason, "a refusal with no sentence in it is one the browser cannot show");
+        assertFalse(reason.isBlank(), "a refusal with no sentence in it is one the browser "
+                + "cannot show: " + body);
+        return body;
     }
 
     // ---------------------------------------------------------------- driving one transfer

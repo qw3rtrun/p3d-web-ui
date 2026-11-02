@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -26,6 +27,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       field in a replica. Here it means a command for tool 1 reaching the wire on a machine whose
  *       firmware reports one extruder - which is the reason the override exists.</li>
  * </ul>
+ *
+ * <p>It also holds the roster's half of issue #65: asking for a machine the farm does not have is a
+ * <strong>404</strong> and not a 500. That one is a status and nothing else, so it is the one
+ * feature here with no second observable - there is no machine to have been touched.
  *
  * <p>The one thing not carried over is the assertion that {@code announceTheFarm()} re-announces a
  * spec at startup. It has no endpoint, and a test here cannot restart a context. It stays covered
@@ -222,6 +227,48 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
         var roster = farm.get().uri("/api-manager").exchange()
                 .expectBody(String.class).returnResult().getResponseBody();
         assertFalse(roster.contains(id.toString()), "and the farm should have forgotten it");
+    }
+
+    /**
+     * Asking for a machine the farm does not have is a 404 - issue #65.
+     *
+     * <p>It was a <strong>500</strong>, and the cause was in the signature rather than in the
+     * handler: {@code MachineManagementService.fetch} answered with a {@code Descriptor} and ended
+     * in {@code orElseThrow}, so there was no value for "no such machine" to arrive as and the
+     * {@code NoSuchElementException} reached the default handler. The three GET-by-id endpoints
+     * beside it - a job, a file, a file's content - all answered 404 already; this was the outlier,
+     * and it was written down as known debt in {@code spring-backend-dev} for long enough to bite
+     * four times.
+     *
+     * <p>The empty body is part of the claim. A query's absence is said entirely by the status, and
+     * the browser reaches this through {@code getJson}, which calls {@code response.json()} on
+     * whatever arrives - so 200 with nothing in it surfaces as a parse error rather than as
+     * something a caller can branch on.
+     */
+    @Test
+    void askingForAMachineTheFarmDoesNotHaveIsNotFound() {
+        farm.get().uri("/api-manager/{id}", UUID.randomUUID()).exchange()
+                .expectStatus().isNotFound()
+                .expectBody().isEmpty();
+    }
+
+    /**
+     * And a machine that <em>was</em> there answers 404 once it has been deleted.
+     *
+     * <p>The realistic version of the test above: nobody types a random UUID, but a page left open
+     * on a printer somebody has since removed asks for exactly this, and used to be told the server
+     * was broken. It also pins the before-and-after in one test, so a regression that made every
+     * id a 404 would fail on the first line.
+     */
+    @Test
+    void aMachineThatHasBeenDeletedIsNotFoundAfterwards() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("here and then gone", printer);
+        assertEquals("here and then gone", describe(id).get("name"));
+
+        deregister(id);
+
+        farm.get().uri("/api-manager/{id}", id).exchange().expectStatus().isNotFound();
     }
 
     // ---------------------------------------------------------------- helpers

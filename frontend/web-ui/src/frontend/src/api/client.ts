@@ -42,7 +42,12 @@ function signedOut(response: Response): boolean {
     return false
 }
 
-/** Thrown for a server refusal the caller is expected to show - a 403, a 400, a 409. */
+/**
+ * Thrown for a server refusal the caller is expected to show - a 403, a 400, a 404, a 409.
+ *
+ * The `message` is whatever `describe` could make of the body; for this application's own
+ * refusals that is the server's `reason` sentence, written to be read by an operator.
+ */
 export class RequestFailed extends Error {
     constructor(readonly status: number, message: string) {
         super(message)
@@ -73,7 +78,17 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
     return response
 }
 
-/** A server error as something worth putting in front of a person. */
+/**
+ * A server error as something worth putting in front of a person.
+ *
+ * **`reason` is this application's own field for a refusal, and it is read first.** A print queue
+ * declining a job (`JobOutcome.Refused`) and an SD upload answering 404 or 409 both carry a
+ * sentence meant for the operator - *"printer 6f0b... is not connected, so nothing can be written
+ * to its card"* - under `reason`. `message` and `error` are Spring's generic fields and stay as
+ * the fallback: when a body carries both, the generic one only restates the status (*"Conflict"*)
+ * while `reason` says what the farm actually refused and why, so reading `message` first would
+ * throw away the only part worth showing.
+ */
 async function describe(response: Response): Promise<string> {
     if (response.status === 403) {
         // The filter chain refused it. On a correct page this should be unreachable: it means the
@@ -81,8 +96,8 @@ async function describe(response: Response): Promise<string> {
         return 'You are not allowed to do that.'
     }
     try {
-        const body = await response.json() as { message?: string; error?: string }
-        return body.message ?? body.error ?? `Request failed (${response.status})`
+        const body = await response.json() as { reason?: string; message?: string; error?: string }
+        return body.reason ?? body.message ?? body.error ?? `Request failed (${response.status})`
     } catch {
         return `Request failed (${response.status})`
     }

@@ -6,7 +6,6 @@ import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobService;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -29,12 +28,9 @@ import java.util.function.Supplier;
  *
  * <p><strong>A refused transition is a 409 with its reason, not a 500.</strong> That is the whole
  * point of {@link JobOutcome} being a sealed type: the service answers "a job that is COMPLETED
- * cannot become PAUSED" as a value, and this turns it into a status a browser can act on and a
- * sentence it can show. Letting it arrive as an exception would mean this layer guessing from the
- * exception's class which of "not found", "illegal" and "the database said no" had happened.
- *
- * <p>The common cause is an ordinary race - somebody clicks Pause as the last line is acknowledged -
- * so the right answer is to tell them where the job actually got to, which the body carries.
+ * cannot become PAUSED" as a value, and something turns it into a status a browser can act on.
+ * That something is {@link Outcomes}, which is where the argument for each status is written and
+ * where this module's <em>only</em> status mapping lives.
  */
 @Slf4j
 @RestController
@@ -50,19 +46,14 @@ public class JobController {
     }
 
     /**
-     * Maps an outcome onto a response.
+     * Runs the move off the event loop and lets {@link Outcomes} say what its answer is worth.
      *
-     * <p>409 and not 400: the request was well formed and the caller was entitled to make it; the
-     * job simply is not where they thought. 404 when the job or the file does not exist at all,
-     * which {@code Refused} distinguishes by having no state to report.
+     * <p>The 404/409 argument used to be written out here; it lives in {@code Outcomes} now,
+     * beside the identical decision the control surface makes, because one copy per controller is
+     * how a module ends up with three mappings and one endpoint with none.
      */
     private Mono<ResponseEntity<?>> respond(Supplier<JobOutcome> action) {
-        return offLoop(action).map(outcome -> switch (outcome) {
-            case JobOutcome.Done done -> ResponseEntity.ok((Object) done.job());
-            case JobOutcome.Refused refused -> ResponseEntity
-                    .status(refused.state() == null ? HttpStatus.NOT_FOUND : HttpStatus.CONFLICT)
-                    .body((Object) refused);
-        });
+        return offLoop(action).map(Outcomes::of);
     }
 
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
@@ -73,9 +64,7 @@ public class JobController {
 
     @GetMapping(value = "/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Job>> fetch(@PathVariable UUID id) {
-        return offLoop(() -> jobs.fetch(id))
-                .map(found -> found.map(ResponseEntity::ok)
-                        .orElseGet(() -> ResponseEntity.notFound().build()));
+        return offLoop(() -> jobs.fetch(id)).map(Outcomes::found);
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)

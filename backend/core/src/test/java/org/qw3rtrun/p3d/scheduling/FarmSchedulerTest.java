@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.scheduling;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.control.ControlOutcome;
 import org.qw3rtrun.p3d.api.control.PrinterControl;
 import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
@@ -182,8 +183,8 @@ class FarmSchedulerTest {
 
     private class MachineManagementStub implements MachineManagementService {
         @Override
-        public Descriptor fetch(UUID uuid) {
-            return farm.get(uuid);
+        public Optional<Descriptor> fetch(UUID uuid) {
+            return Optional.ofNullable(farm.get(uuid));
         }
 
         @Override
@@ -239,13 +240,13 @@ class FarmSchedulerTest {
             // Writing to a card is nothing to do with scheduling a job onto a machine, so these
             // two are here to satisfy the interface and for no other reason.
             @Override
-            public Publisher<Void> uploadToCard(UUID id, UUID fileId, String cardName) {
-                return Mono.empty();
+            public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName) {
+                return Mono.just(ControlOutcome.accepted(id));
             }
 
             @Override
-            public Publisher<Void> cancelCardUpload(UUID id) {
-                return Mono.empty();
+            public Publisher<ControlOutcome> cancelCardUpload(UUID id) {
+                return Mono.just(ControlOutcome.accepted(id));
             }
         };
     }

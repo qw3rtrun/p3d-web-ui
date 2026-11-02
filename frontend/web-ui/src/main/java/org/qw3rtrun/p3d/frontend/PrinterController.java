@@ -24,6 +24,7 @@ import org.qw3rtrun.p3d.frontend.command.StoreSettings;
 import org.qw3rtrun.p3d.frontend.command.UploadToCard;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -235,10 +236,27 @@ public class PrinterController {
      * <p><strong>The machine takes nothing else until it is over.</strong> That is not a policy of
      * this endpoint, it is what {@code M28} does to the wire, and the transport enforces it by
      * holding the connection exclusively for the transfer.
+     *
+     * <p><strong>There are three ways this is refused, and none of them is a 500 any more.</strong>
+     * A machine the farm does not have and a file the store does not hold are both <em>404</em>; a
+     * machine that is not connected, and one that is already writing to its card, are both
+     * <em>409</em> - the request was well formed and the caller was entitled to make it, the
+     * printer simply is not where they thought. The body is the refusal, with a sentence a page can
+     * show. {@link Outcomes} is where that mapping is decided, once for this module.
+     *
+     * <p><strong>Accepted is 200 with an empty body and not 202</strong>, which it arguably should
+     * be. That is the contract the browser and the tests beside it already hold, and changing it is
+     * a separate decision from stopping this endpoint answering 500 to a disconnected printer. Left
+     * alone deliberately.
+     *
+     * <p>A name that would corrupt the block is still a <em>400</em>, raised by
+     * {@link UploadToCard}'s compact constructor while the body is being bound - a decoding failure
+     * rather than an outcome, and nothing about it goes through {@code Outcomes}.
      */
     @PostMapping("/sd/upload")
-    public Mono<Void> uploadToCard(@PathVariable UUID id, @RequestBody Mono<UploadToCard> command) {
-        return command.flatMap(c -> Mono.from(printers.uploadToCard(id, c.fileId(), c.name())));
+    public Mono<ResponseEntity<?>> uploadToCard(@PathVariable UUID id, @RequestBody Mono<UploadToCard> command) {
+        return command.flatMap(c -> Mono.from(printers.uploadToCard(id, c.fileId(), c.name())))
+                .map(Outcomes::of);
     }
 
     /**
@@ -250,11 +268,16 @@ public class PrinterController {
      * would be written into it.
      *
      * <p>Answers OK whether or not anything was running. The page's button and the machine's state
-     * are different clocks.
+     * are different clocks, so nothing to stop is <em>accepted</em> rather than refused.
+     *
+     * <p>The one refusal it can give is a <em>404</em>, for a machine the farm does not have. There
+     * is no 409 here by construction - see {@code PrinterControl.cancelCardUpload}, which records
+     * why. As above, accepted is 200 with an empty body rather than 202, because that is what the
+     * browser already expects.
      */
     @PostMapping("/sd/upload/cancel")
-    public Mono<Void> cancelCardUpload(@PathVariable UUID id) {
-        return Mono.from(printers.cancelCardUpload(id));
+    public Mono<ResponseEntity<?>> cancelCardUpload(@PathVariable UUID id) {
+        return Mono.from(printers.cancelCardUpload(id)).map(Outcomes::of);
     }
 
     @PostMapping("/connect")

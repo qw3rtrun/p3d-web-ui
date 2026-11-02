@@ -115,7 +115,9 @@ class StartupAnnouncementFlowTest {
     @Test
     void theAnnouncementCarriesWhatSomebodyDeclared() {
         var id = add("described");
-        var port = machines.fetch(id).connection().port();
+        // orElseThrow because this one was just added: fetch answers with an Optional since #65,
+        // where "the farm has no such machine" became a value instead of an exception.
+        var port = machines.fetch(id).orElseThrow().connection().port();
         machines.update(id, "described", new ConnectionDetails("localhost", port),
                 new MachineSpec(null, 2, List.of(0.4), Set.of("PETG"), Set.of("prusa-shelf")));
 

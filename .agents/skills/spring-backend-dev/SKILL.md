@@ -782,20 +782,45 @@ show.
   `/api-printer/{id}` for one machine.
 - **An empty `Mono` returned from a handler is 200 with a zero-length body, not 404.** A GET-by-id
   answers for an id the farm does not hold by mapping the `Optional` its service returns onto a
-  `ResponseEntity`:
-  `offLoop(() -> svc.fetch(id)).map(found -> found.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build()))`.
-  The browser reaches these endpoints through `getJson`, which calls `response.json()` on whatever
-  arrives and throws a syntax error on nothing at all, so the 200-and-empty version surfaces in the
-  UI as a parse failure instead of as a status a caller can act on. The three GET-by-id handlers
-  that can answer *not here* agree on it: `JobController.fetch`, `GcodeFileController.download`
-  (`/api-files/{id}/content`, via `defaultIfEmpty`) and `GcodeFileController.fetch`.
+  `ResponseEntity`, which is `Outcomes.found(Optional)` and nothing else. The browser reaches these
+  endpoints through `getJson`, which calls `response.json()` on whatever arrives and throws a
+  syntax error on nothing at all, so the 200-and-empty version surfaces in the UI as a parse
+  failure instead of as a status a caller can act on.
   **It is not signalled by an exception** - no `ResponseStatusException` and no `@ResponseStatus`;
-  nothing in the package throws for this, and a second mechanism for the same answer is what this
-  skill exists to prevent. **The blocking lookup still goes through `offLoop`** - the status
+  nothing on the REST surface throws for this, and a second mechanism for the same answer is what
+  this skill exists to prevent. **The blocking lookup still goes through `offLoop`** - the status
   decision is a `map` downstream of the subscription, so choosing it moves no JPA call back onto an
-  event loop. `/api-manager/{uuid}` is the outlier and 500s on an unknown id, because
-  `MachineManagementService.fetch` returns a `Descriptor` and throws rather than returning an
-  `Optional`.
+  event loop.
+- **`Optional`-returning `fetch` is the shape of every GET-by-id now, and there is no outlier
+  left.** The roster, the file store and the job queue all answer one id with an `Optional`, and
+  all four handlers map it the same way: `FDMPrinterManagementController.fetch`,
+  `JobController.fetch`, `GcodeFileController.fetch` and `GcodeFileController.download` (which uses
+  `defaultIfEmpty` because its body is a stream rather than a record). `/api-manager/{uuid}` was
+  the outlier until issue #65 and answered **500** on an unknown id, because
+  `MachineManagementService.fetch` returned a `Descriptor` and ended in `orElseThrow` - the
+  signature, not the handler, was the bug. `MachineManagementService.update` still `orElseThrow`s
+  and is deliberately untouched; it is adjacent work, not this rule.
+- **The module's status mapping is stated once, in `Outcomes`, and nowhere else.**
+  `ABSENT`/absent -> **404**, `WRONG_STATE` -> **409** with a legible body, accepted -> 200. 409
+  and not 400 because the request was well formed and the caller was entitled to make it - the job,
+  the file or the machine simply is not where they thought. A refused *command* carries the
+  `Refused` record as its body, because it has a sentence worth putting in front of a person; an
+  absent *query* carries nothing, because its status says the whole of it. Both `of` methods are
+  exhaustive switches over a sealed type with no `default`, so a third variant fails the build.
+- **A service states a refusal as a value and the REST layer maps the value.** `JobOutcome` for the
+  queue, `ControlOutcome` for the control surface - sealed, with a `reason` a page can show.
+  **An `@ExceptionHandler`, a `@RestControllerAdvice` keyed on exception class, a `@ResponseStatus`
+  or a `ResponseStatusException` on the REST surface is forbidden here**: an exception-to-status
+  table drifts away from the code it describes, and it makes the web layer guess which of "not
+  found", "that is not allowed" and "the database said no" an `IllegalStateException` meant. Before
+  #65, `POST /api-printer/{id}/sd/upload` answered 500 to a file the store did not hold and to a
+  printer that was not connected, both ordinary outcomes of clicking a button.
+- **`MvcPrinterController.edit` is the one place a `ResponseStatusException` appears, and it is not
+  the same mechanism.** It is an HTML page stating a 404 at the point it knows the fact - the
+  roster answered empty - rather than a handler classifying something thrown at it from below.
+  Nothing there catches an exception; it creates one because a Thymeleaf handler's return type is a
+  view name and has no room for a status. The REST surface maps the identical empty `Optional`
+  through `Outcomes.found`.
 - **SSE is what the UI actually uses**: `produces = TEXT_EVENT_STREAM_VALUE` on
   `/api-printer/{id}/stream`, consumed by `EventSource` in `static/js/lib/client.js`. It is the
   working live channel and the one to extend. **The replay sink is seeded with the current

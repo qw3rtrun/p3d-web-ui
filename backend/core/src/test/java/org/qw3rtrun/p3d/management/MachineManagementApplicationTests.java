@@ -71,7 +71,7 @@ class MachineManagementApplicationTests {
     void aFreshlyRegisteredMachineIsOffline() {
         var added = service.add("never dialled", new ConnectionDetails("host", 123));
 
-        assertEquals(MachineConnectionState.OFFLINE, service.fetch(added.uuid()).state());
+        assertEquals(MachineConnectionState.OFFLINE, service.fetch(added.uuid()).orElseThrow().state());
     }
 
     /**
@@ -88,7 +88,7 @@ class MachineManagementApplicationTests {
             publisher.publishEvent(new MConnectionChangedEvent(
                     added.uuid(), state, "under test", LocalDateTime.now()));
 
-            assertEquals(state, service.fetch(added.uuid()).state());
+            assertEquals(state, service.fetch(added.uuid()).orElseThrow().state());
         }
     }
 

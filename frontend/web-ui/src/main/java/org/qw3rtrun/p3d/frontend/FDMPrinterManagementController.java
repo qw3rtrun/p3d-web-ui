@@ -7,6 +7,7 @@ import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -44,9 +45,24 @@ public class FDMPrinterManagementController {
         return Mono.<Void>fromRunnable(blocking).subscribeOn(Schedulers.boundedElastic());
     }
 
+    /**
+     * One machine's record, or a 404.
+     *
+     * <p><strong>This endpoint used to answer 500 for an id the farm does not hold.</strong>
+     * {@link MachineManagementService#fetch} returned a {@code Descriptor} and ended in
+     * {@code orElseThrow}, so a page left open on a deleted printer reached the framework's default
+     * handler and was told the server was broken. It answers an {@code Optional} now, and
+     * {@link Outcomes#found} turns the empty case into the status a client can act on - the same
+     * one the file store and the job queue already give.
+     *
+     * <p><strong>The blocking lookup stays inside {@code offLoop}.</strong> The status decision is
+     * a {@code map} downstream of the subscription, so choosing it moves no JDBC call back onto an
+     * event loop - which is the trap in the obvious alternative of deciding the status where the
+     * {@code Optional} is produced.
+     */
     @GetMapping(value = "/{uuid}")
-    public Mono<Descriptor> fetch(@PathVariable UUID uuid) {
-        return offLoop(() -> management.fetch(uuid));
+    public Mono<ResponseEntity<Descriptor>> fetch(@PathVariable UUID uuid) {
+        return offLoop(() -> management.fetch(uuid)).map(Outcomes::found);
     }
 
     @GetMapping

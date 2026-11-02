@@ -17,6 +17,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -26,8 +27,8 @@ public class MachineManagementImpl implements MachineManagementService {
     private final MachineEventBus eventBus;
     private final PrinterRepository repo;
 
-    public Descriptor fetch(UUID uuid) {
-        return repo.findById(uuid).map(MachineManagementImpl::map).orElseThrow();
+    public Optional<Descriptor> fetch(UUID uuid) {
+        return repo.findById(uuid).map(MachineManagementImpl::map);
     }
 
     @Transactional

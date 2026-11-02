@@ -11,6 +11,7 @@ import org.qw3rtrun.p3d.frontend.mvc.MvcPrinterController;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.ui.ConcurrentModel;
 
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -65,9 +66,9 @@ class BlockingBoundaryTest {
     private MachineManagementService recordingService() {
         return new MachineManagementService() {
             @Override
-            public Descriptor fetch(UUID uuid) {
+            public Optional<Descriptor> fetch(UUID uuid) {
                 record();
-                return descriptor;
+                return Optional.of(descriptor);
             }
 
             @Override

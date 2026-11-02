@@ -4,12 +4,27 @@ import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
 
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 
 public interface MachineManagementService {
 
-    Descriptor fetch(UUID uuid);
+    /**
+     * One machine's record, or empty when the farm holds no such machine.
+     *
+     * <p><strong>Empty is a real answer and not an error.</strong> A page left open on a printer
+     * somebody has since deleted will ask for it, and that is an ordinary thing for a farm to be
+     * asked rather than a fault in it. This used to return a {@link Descriptor} and end in
+     * {@code orElseThrow}, so the one way to say "no such machine" was an exception - and
+     * {@code GET /api-manager/{uuid}} answered <strong>500</strong> for an unknown id, which is the
+     * status that means "this server is broken".
+     *
+     * <p>The caller decides what to say about it, which is how {@code GcodeFileService.fetch} and
+     * {@code JobService.fetch} already read - so every GET-by-id in this application now has the
+     * same shape and the web layer makes the same decision in one place.
+     */
+    Optional<Descriptor> fetch(UUID uuid);
 
     /**
      * Registers a machine nobody has described yet.

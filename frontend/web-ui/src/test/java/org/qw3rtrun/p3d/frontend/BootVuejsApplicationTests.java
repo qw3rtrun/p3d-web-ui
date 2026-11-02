@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.frontend;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.control.FarmView;
+import org.qw3rtrun.p3d.api.control.ControlOutcome;
 import org.qw3rtrun.p3d.api.control.PrinterControl;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
@@ -91,12 +92,12 @@ class BootVuejsApplicationTests {
                 }
 
                 @Override
-                public Publisher<Void> uploadToCard(UUID id, UUID fileId, String cardName) {
+                public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public Publisher<Void> cancelCardUpload(UUID id) {
+                public Publisher<ControlOutcome> cancelCardUpload(UUID id) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
             };
@@ -151,7 +152,7 @@ class BootVuejsApplicationTests {
         MachineManagementService machines() {
             return new MachineManagementService() {
                 @Override
-                public Descriptor fetch(UUID uuid) {
+                public Optional<Descriptor> fetch(UUID uuid) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 

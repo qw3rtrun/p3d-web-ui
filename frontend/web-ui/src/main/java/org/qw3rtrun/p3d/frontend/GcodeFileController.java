@@ -104,13 +104,11 @@ public class GcodeFileController {
      * throws a syntax error on nothing at all. So a missing id surfaced in the UI as a parse
      * failure instead of as a status, and the status is the only part of the answer a client can
      * act on without guessing. {@code download} below and {@code JobController.fetch} beside it
-     * both already say it this way.
+     * both already say it this way, and {@link Outcomes#found} is now where all three say it.
      */
     @GetMapping(value = "/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<GcodeFile>> fetch(@PathVariable UUID id) {
-        return offLoop(() -> files.fetch(id))
-                .map(found -> found.map(ResponseEntity::ok)
-                        .orElseGet(() -> ResponseEntity.notFound().build()));
+        return offLoop(() -> files.fetch(id)).map(Outcomes::found);
     }
 
     /**

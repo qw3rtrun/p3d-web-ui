@@ -85,23 +85,26 @@ abstract class FarmIntegrationTest {
     /**
      * Long enough for a dial, a handshake and a round trip on a loaded build agent.
      *
-     * <p><strong>Thirty seconds, and the reason is a real bottleneck rather than nerves.</strong>
-     * Every {@code PrinterReactor} in the process uses {@code Schedulers.single()} as its aggregate
-     * executor - that is Reactor's <em>JVM-wide cached single thread</em>, not one per printer - and
-     * the inbound path runs a blocking JPA write on it: a reply reaches
-     * {@code PrinterState.onEvent}, which publishes {@code MFirmwareReportedEvent}, which
-     * {@code MachineManagementImpl} handles with a synchronous {@code @Transactional} save on the
+     * <p><strong>Thirty seconds, and it used to be a real bottleneck rather than nerves.</strong>
+     * Until issue #54 every {@code PrinterReactor} in the process used {@code Schedulers.single()}
+     * as its aggregate executor - Reactor's <em>JVM-wide cached single thread</em>, not one per
+     * printer - and the inbound path ran a blocking JPA write on it: a reply reached
+     * {@code PrinterState.onEvent}, which published {@code MFirmwareReportedEvent}, which
+     * {@code MachineManagementImpl} handled with a synchronous {@code @Transactional} save on the
      * calling thread. A connect does that seven times - one firmware report and five capabilities,
-     * each also re-publishing {@code MRegisteredEvent}.
+     * each also re-publishing {@code MRegisteredEvent} - so every reply, every command and every
+     * connection query for every machine in the suite queued behind one thread that was also
+     * talking to a database.
      *
-     * <p>So every reply, every command and every connection query for every machine in the suite is
-     * serialised behind one thread that is also talking to a database. On a two-core CI runner
-     * sharing those cores with Gradle, netty and H2, a backlog of seconds is entirely possible, and
-     * the window a test actually gets is much smaller than the number here suggests.
+     * <p><strong>Both halves of that are gone, and neither is a reason to shorten this.</strong>
+     * A machine now has its own virtual thread for its aggregate ({@code p3d-printer-<id>}) and its
+     * own for the listeners it feeds ({@code p3d-listener-<id>}), so one machine's database write
+     * no longer delays another machine's replies - but a suite that registers a dozen machines
+     * against H2 on a two-core runner sharing its cores with Gradle and netty still has a database
+     * to wait for, and that wait is now per machine rather than farm-wide only because the queueing
+     * moved, not because the work got smaller.
      *
      * <p>It costs nothing when a test passes and only lengthens a failure, which is the right trade.
-     * The bottleneck itself is {@code :backend:core}'s and is reported as a finding rather than
-     * worked around further here.
      */
     protected static final Duration PATIENCE = Duration.ofSeconds(30);
 
@@ -367,9 +370,11 @@ abstract class FarmIntegrationTest {
      *       was processed - and that happens on the <em>netty inbound thread</em>, inside
      *       {@code CommandProcessor.handleBackpressure}, which pulls and writes the next block
      *       directly. The {@code FirmwareInfoRs} from the same reply went the other way, queued onto
-     *       {@code Schedulers.single()} by {@code PrinterReactor}'s {@code publishOn(executor)}.
+     *       this machine's aggregate thread by {@code PrinterReactor}'s {@code publishOn(executor)}.
      *       Two threads, and no happens-before from the one to the other: the next command can be on
-     *       the wire before the aggregate has looked at the report.</li>
+     *       the wire before the aggregate has looked at the report. Issue #54 gave that executor a
+     *       thread per machine instead of one for the farm, which changes how long the gap is and
+     *       not that there is one.</li>
      * </ul>
      *
      * <p>What <em>is</em> a guarantee is the report arriving on this machine's own event stream,

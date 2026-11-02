@@ -19,10 +19,16 @@ import java.util.UUID;
  * The running printers, and the thing that owns them.
  *
  * <p>A reactor is a <strong>resource</strong>, not a value: it holds a TCP connection, a send
- * window, a command queue and a replay sink that keeps every SSE subscriber referenced. This map
- * used to only ever grow - {@code computeIfAbsent} and nothing else - so deleting a printer through
- * the management API left all of that behind, connected to a machine the farm no longer knew about.
- * Over a long-running process that is a socket and a sink per printer ever registered.
+ * window, a command queue, a replay sink that keeps every SSE subscriber referenced, and - since
+ * #54 - <strong>two threads of its own</strong>. This map used to only ever grow -
+ * {@code computeIfAbsent} and nothing else - so deleting a printer through the management API left
+ * all of that behind, connected to a machine the farm no longer knew about. Over a long-running
+ * process that is a socket and a sink per printer ever registered.
+ *
+ * <p>{@link #release(UUID)} is what returns all of it, and the threads are the newest and least
+ * obvious part of the list: {@link PrinterThreads} is a factory rather than a cache, so every
+ * {@link #openReactor(UUID)} that misses allocates a scheduler pair that nothing else will ever
+ * dispose. The reactor disposes them in {@code stop()}; this is what calls it.
  */
 @Slf4j
 public class PrinterReactorManager {
@@ -35,7 +41,14 @@ public class PrinterReactorManager {
 
     private final ConnectionPolicy policy;
 
-    private final Scheduler executor;
+    /**
+     * Where a machine's runtime is allowed to run - one thread for its aggregate, one for its
+     * listeners, per machine.
+     *
+     * <p>Held instead of a single {@code Scheduler} since #54. The old field was the farm's one
+     * shared {@code Schedulers.single()}, handed to every reactor this class built.
+     */
+    private final PrinterThreads threads;
 
     private final Scheduler retries;
 
@@ -48,17 +61,35 @@ public class PrinterReactorManager {
 
     public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
                                  ApplicationEventPublisher roster, ConnectionPolicy policy) {
-        this(directory, aggregateManager, roster, policy, Schedulers.single(), Schedulers.parallel());
+        this(directory, aggregateManager, roster, policy,
+                PrinterThreads.virtualPerPrinter(), Schedulers.parallel());
+    }
+
+    /**
+     * The form that still takes one scheduler for everything, which is what a test wants.
+     *
+     * <p>Kept so that the seam a {@code VirtualTimeScheduler} or a {@code Schedulers.immediate()}
+     * reaches the reactor through survives #54 unchanged. It is
+     * {@link PrinterThreads#shared(Scheduler)}: every machine on the one handed in, and the
+     * listeners on it too, which is exactly the arrangement the farm had before.
+     *
+     * <p>Unambiguous against the overload below because {@code Scheduler} and
+     * {@link PrinterThreads} are unrelated types.
+     */
+    public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
+                                 ApplicationEventPublisher roster, ConnectionPolicy policy,
+                                 Scheduler executor, Scheduler retries) {
+        this(directory, aggregateManager, roster, policy, PrinterThreads.shared(executor), retries);
     }
 
     public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
                                  ApplicationEventPublisher roster, ConnectionPolicy policy,
-                                 Scheduler executor, Scheduler retries) {
+                                 PrinterThreads threads, Scheduler retries) {
         this.directory = directory;
         this.aggregateManager = aggregateManager;
         this.roster = roster;
         this.policy = policy;
-        this.executor = executor;
+        this.threads = threads;
         this.retries = retries;
     }
 
@@ -177,11 +208,20 @@ public class PrinterReactorManager {
         }
     }
 
+    /**
+     * Builds one machine's runtime, on threads allocated for that machine alone.
+     *
+     * <p>The two schedulers are asked for here and nowhere else, so the reactor that gets them is
+     * the one thing that could dispose them - which is what makes "a reactor owns its threads"
+     * true rather than aspirational. {@code retries} is shared on purpose: it only ever holds a
+     * timer, it does no work of this printer's, and giving every machine its own would be a thread
+     * per printer for nothing.
+     */
     private PrinterReactor startReactor(UUID uuid) {
         var entry = directory.find(uuid).orElseThrow(() ->
                 new IllegalArgumentException("no machine known with id " + uuid));
         var aggregate = (PrinterState) aggregateManager.loadState(uuid);
         return new PrinterReactor(new TerminalManager(entry.connection()), aggregate, roster,
-                policy, executor, retries);
+                policy, threads.aggregateOf(uuid), threads.listenersOf(uuid), retries);
     }
 }

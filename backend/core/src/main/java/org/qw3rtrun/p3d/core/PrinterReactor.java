@@ -30,10 +30,27 @@ import reactor.util.retry.Retry;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 public class PrinterReactor {
+
+    /**
+     * How many farm-stream messages may be waiting on the listener thread before one is dropped.
+     *
+     * <p>At the one or two messages a second a machine actually produces - a temperature
+     * auto-report and whatever the aggregate thought worth announcing, not every acknowledged
+     * block - this is minutes of backlog. A browser or a dashboard that is behind by minutes is
+     * not behind, it is gone.
+     *
+     * <p>It is 256 because that is {@code publishOn}'s prefetch, which is the bound this replaces.
+     * The difference is what happens at the bound: {@code publishOn} overflowing raised an
+     * {@code onError} and <em>terminated the reply stream for that session</em>, so a slow
+     * consumer took the machine's whole conversation with it. This drops one message and counts it.
+     */
+    private static final int FARM_STREAM_BACKLOG = 256;
 
     private final TerminalManager manager;
     private final PrinterState printer;
@@ -41,8 +58,28 @@ public class PrinterReactor {
 
     private HostTerminal terminal;
 
-    /** Where replies and state changes are handled, so the aggregate is touched by one thread. */
+    /**
+     * Where replies and state changes are handled, so the aggregate is touched by one thread.
+     *
+     * <p><strong>This machine's own thread, and that is the whole of #54.</strong> It used to be
+     * {@code Schedulers.single()}, which is not a new single thread but the JVM-wide shared one -
+     * so a query about printer A queued behind printer B's decoded replies, and one slow handler
+     * anywhere stalled the farm. {@link PrinterThreads} hands each reactor its own, and this
+     * reactor disposes it once {@link #stop()}'s {@code StreamEnd} has been published - see
+     * {@link #publish}.
+     */
     private final Scheduler executor;
+
+    /**
+     * Where this machine's listeners are called, so that none of them is charged to the aggregate.
+     *
+     * <p>A roster listener is {@code @Transactional} and blocking - it writes a firmware report, a
+     * capability or a connection state into the database - and until #54 it ran inline on
+     * {@link #executor}, which was shared. A single thread, because a single consumer is the whole
+     * of the ordering guarantee: what this aggregate decided reaches its listeners in the order it
+     * decided it. See {@link PrinterThreads}.
+     */
+    private final Scheduler listeners;
 
     /** Where the backoff between connection attempts is timed. A virtual one in tests. */
     private final Scheduler retries;
@@ -96,6 +133,11 @@ public class PrinterReactor {
          * while a drain might still have had an event to publish - which terminates the sink under
          * it, and that event is then refused with {@code FAIL_TERMINATED}. A terminal signal is the
          * last thing on this stream, so it queues like everything else.
+         *
+         * <p>It carries the machine's two threads with it: whichever thread publishes this one
+         * disposes {@link #executor} and {@link #listeners} immediately afterwards, because that
+         * is the only place in the class where {@code tryEmitComplete()} is known to have run.
+         * See {@link #publish}.
          */
         record StreamEnd() implements Parked {
         }
@@ -108,20 +150,64 @@ public class PrinterReactor {
      * subscription holding a timer, so cancelling the intent means disposing it; without this
      * handle a machine told to disconnect mid-backoff would come back a few seconds later, and the
      * only trace would be a connection nobody asked for.
+     *
+     * <p><strong>Volatile because three different threads write it and there is no lock.</strong>
+     * {@link #connect()} and {@link #disconnect()} both read and write it, and after #54 they are
+     * reached from: an HTTP thread, through {@code handleConnectCmd}; this machine's own
+     * {@link #executor}; and now the <em>listener</em> thread, because
+     * {@code MachineManagementImpl.on(MFirmwareReportedEvent)} is {@code @Transactional} and
+     * re-publishes {@code MRegisteredEvent}, which {@code PrinterReactorManager.onRegistered}
+     * consumes and turns into a {@code connect()}. Before the listener hand-off that last one
+     * arrived on the aggregate's thread, so two of the three were the same.
+     *
+     * <p>Volatile buys the happens-before and not atomicity: {@code connect()}'s
+     * "is an attempt already in flight" is still a check-then-act and two threads can still both
+     * decide to dial. That is a wider problem than #54 - closing it means deciding what a
+     * concurrent connect and disconnect <em>mean</em> - and is deliberately left open rather than
+     * half-fixed here.
      */
-    private Disposable attempts;
-
-    private PublisherQueue<String, Priority> commandQueue = new PublisherQueue<>();
+    private volatile Disposable attempts;
 
     /**
-     * Where facts about the machine itself go: to the roster, which keeps them.
+     * Set by the first {@link #stop()}, so a second one is not a second disposal.
      *
-     * <p>{@code core} is the only module that can learn what a printer is, because learning it
-     * means asking the printer. {@code printer-management} is where static facts about a machine
-     * belong. So this is the seam where the one hands to the other - as an event, because a
-     * submodel does not call another.
+     * <p>Stopping this reactor shuts two schedulers down. Running it twice would schedule a
+     * disposal on a scheduler that has already gone, which is a
+     * {@code RejectedExecutionException} on a path whose whole job is to leave nothing behind.
+     *
+     * <p>It is load-bearing for {@link #publish} too, and for a second reason: because exactly one
+     * caller gets past it, exactly one {@code StreamEnd} is ever parked, so the arm that disposes
+     * those two schedulers is reached once and cannot be short-circuited by the
+     * {@code streamEnded} guard in front of it.
      */
-    private final ApplicationEventPublisher roster;
+    private final AtomicBoolean stopped = new AtomicBoolean();
+
+    /**
+     * This machine's events, on their way to the farm-wide stream - <strong>droppable</strong>.
+     *
+     * <p>Together with {@link #toRoster} this is the seam where {@code core} hands a fact to
+     * whoever keeps it. {@code core} is the only module that can learn what a printer is, because
+     * learning it means asking the printer; {@code printer-management} is where static facts about
+     * a machine belong. It crosses as an event, because a submodel does not call another - the
+     * {@code ApplicationEventPublisher} is not held as a field any more, only as the two
+     * hand-offs' consumer, so there is no way left to publish one of these inline by accident.
+     *
+     * <p>A dashboard missing a temperature reading is a refresh. See {@link #onEvent} for why the
+     * two hand-offs have opposite overflow policies and {@link #FARM_STREAM_BACKLOG} for what the
+     * bound buys.
+     */
+    private final Handoff<EventMessage> toFarm;
+
+    /**
+     * The roster's facts about this machine - <strong>never dropped</strong>.
+     *
+     * <p>Each of these is a state change, and together they are what makes
+     * {@code printer_entity.connection_state} <em>derived</em> rather than a second opinion. A
+     * dropped one is not a late update, it is a fact about the machine that is gone for good.
+     */
+    private final Handoff<Object> toRoster;
+
+    private PublisherQueue<String, Priority> commandQueue = new PublisherQueue<>();
 
     public PrinterReactor(TerminalManager manager, PrinterState printer) {
         this(manager, printer, event -> {
@@ -132,14 +218,48 @@ public class PrinterReactor {
         this(manager, printer, roster, ConnectionPolicy.standard(), Schedulers.single(), Schedulers.parallel());
     }
 
+    /**
+     * The six-argument form, kept working and kept <strong>synchronous</strong>.
+     *
+     * <p>Nothing in production calls this any more - {@code PrinterReactorManager} goes through
+     * {@link PrinterThreads} - so a direct caller is a test, and what a test wants from the
+     * listener side is an inline hand-off. {@code Schedulers.immediate()} gives it one: a parked
+     * item is drained on the thread that offered it, so a test can assert what the roster was told
+     * on the line after the emission instead of having to await it. Every existing test here
+     * passes {@code Schedulers.immediate()} or a virtual-time scheduler through this constructor
+     * and stays exactly as deterministic as it was.
+     */
     public PrinterReactor(TerminalManager manager, PrinterState printer, ApplicationEventPublisher roster,
                           ConnectionPolicy policy, Scheduler executor, Scheduler retries) {
-        this.roster = roster;
+        this(manager, printer, roster, policy, executor, Schedulers.immediate(), retries);
+    }
+
+    /**
+     * One machine's runtime, on one machine's threads.
+     *
+     * <p>{@code executor} is where the aggregate is touched and {@code listeners} is where the
+     * consequences are charged - see {@link PrinterThreads} for why those are two schedulers and
+     * why each is a single thread. Both are this reactor's to dispose; stopping it does, from
+     * {@link #publish} once the terminal signal is on the sink.
+     */
+    public PrinterReactor(TerminalManager manager, PrinterState printer, ApplicationEventPublisher roster,
+                          ConnectionPolicy policy, Scheduler executor, Scheduler listeners, Scheduler retries) {
         this.manager = manager;
         this.printer = printer;
         this.policy = policy;
         this.executor = executor;
+        this.listeners = listeners;
         this.retries = retries;
+        // Both hand-offs on the same listener scheduler, deliberately: one thread per printer, not
+        // two. The drop policy on the farm queue is exactly what covers the case that costs - a
+        // slow @Transactional roster write holding the only listener thread while the machine goes
+        // on auto-reporting. So the WARN that the farm queue logs does not only mean "a browser
+        // stopped reading": it can equally mean a JPA write is stuck, and a farm whose dashboards
+        // are dropping messages is worth looking at the database for.
+        this.toFarm = Handoff.droppable("the farm stream of " + printer.getId(), FARM_STREAM_BACKLOG,
+                listeners, roster::publishEvent);
+        this.toRoster = Handoff.lossless("the roster's facts about " + printer.getId(),
+                listeners, roster::publishEvent);
         // One element of history, deliberately, and not the 256-deep backlog HostTerminal needed.
         // The seed here answers "where is this machine", so that a browser attaching to the SSE
         // stream learns the connection state without waiting for something to happen; a backlog
@@ -258,11 +378,70 @@ public class PrinterReactor {
      *
      * <p>The completion goes through the outbox like any other emission, so it cannot terminate the
      * sink underneath an event another thread is still publishing - see {@link Parked.StreamEnd}.
+     *
+     * <p><strong>And this method disposes nothing, deliberately.</strong> It <em>parks</em> a
+     * {@code StreamEnd}; it does not necessarily publish one, because {@link Outbox#emit} drains
+     * only when no other thread is already draining, and on a machine being deleted in the middle
+     * of a conversation the aggregate's own thread usually is. Returning the two threads is
+     * the business of whichever thread drains that marker, and it happens in {@link #publish}, on
+     * the statement after {@code tryEmitComplete()}. <strong>Moving it back up here reinstates the
+     * bug {@link #disposeWhenIdle} exists to prevent, one thread later</strong>; {@link #publish}
+     * spells out how.
+     *
+     * <p>The two {@code close()} calls stay here and stay last, which costs a window of a few
+     * instructions: when the drain does run inline, the schedulers are disposed inside
+     * {@code emit} and the hand-offs are closed just after, so a roster fact offered by another
+     * thread in between is rejected by a dead worker rather than refused by a closed queue.
+     * The item is not published either way, and putting the closes first would only start that
+     * window earlier.
+     *
+     * @see #disposeWhenIdle(Scheduler)
      */
     public void stop() {
+        if (!stopped.compareAndSet(false, true)) {
+            return;
+        }
         log.info("stop()");
         disconnect();
         emit(new Parked.StreamEnd());
+        toFarm.close();
+        toRoster.close();
+    }
+
+    /**
+     * Shuts a scheduler down <em>after</em> whatever is already queued on it has run.
+     *
+     * <p><strong>Not {@code scheduler.dispose()}, and the next reader will want to simplify it to
+     * that.</strong> Disposing a {@code DelegateServiceScheduler} calls {@code shutdownNow()} on
+     * its executor, which discards the queue. Its caller has just put two kinds of work on these
+     * schedulers that have not run yet - the {@code onComplete} that {@code tryEmitComplete}
+     * handed to each subscriber's {@code publishOn} worker, and the roster facts still parked in
+     * the lossless hand-off - so an immediate {@code shutdownNow} throws both away. The first of
+     * those is pinned by {@code PrinterReactorManagerTest.aReleasedReactorCompletesItsUpdateStream},
+     * which is a browser holding an SSE connection to a printer that has just been deleted: with a
+     * direct dispose it waits forever.
+     *
+     * <p><strong>Queueing behind the completion only helps if the completion is already
+     * queued</strong>, which is why this is called from {@link #publish} and not from
+     * {@link #stop()}. {@code PrinterReactorThreadingTest.aStopThatRacesAnEmissionStillCompletesTheUpdateStream}
+     * is that distinction as a test.
+     *
+     * <p>Scheduling the disposal as the last task on the scheduler itself is what orders it. These
+     * are single-threaded executors, so everything already submitted runs, then this runs, then
+     * the thread exits.
+     *
+     * <p>{@code RejectedExecutionException} means the scheduler is already gone, in which case
+     * there is nothing queued to protect and a direct dispose is the honest answer. With
+     * {@code Schedulers.immediate()} - what the six-argument constructor hands in, so what every
+     * test gets - {@code schedule} runs the task inline and {@code dispose()} is an empty method,
+     * so the test seam is unaffected either way.
+     */
+    private static void disposeWhenIdle(Scheduler scheduler) {
+        try {
+            scheduler.schedule(scheduler::dispose);
+        } catch (RejectedExecutionException alreadyGone) {
+            scheduler.dispose();
+        }
     }
 
     private Mono<Void> onConnected(HostTerminal terminal) {
@@ -474,9 +653,24 @@ public class PrinterReactor {
      * One event from the aggregate: to the farm, to the roster, and then to this machine's own
      * subscribers.
      *
-     * <p><strong>In that order, because the last of the three is the only volatile one.</strong>
-     * A browser missing an event is a refresh; the roster missing one is a fact about the machine
-     * that is gone for good. See {@link #emit} for what that order is paid for.
+     * <p><strong>All three are now non-blocking offers that cannot fail, and none of them calls a
+     * listener on this thread.</strong> The first two park an item on a {@link Handoff} and the
+     * third parks one on the {@link Outbox}; whatever the roster's listeners cost - and they cost
+     * a {@code @Transactional} JPA write - is charged to {@link #listeners} and not to the thread
+     * that is reading this machine's replies off the wire. Before #54 the first two were inline
+     * calls to {@code ApplicationEventPublisher}, on a scheduler shared by the whole farm.
+     *
+     * <p><strong>The durability difference is carried by the two queues' overflow policies now,
+     * not by the order of these statements.</strong> {@link #toFarm} is bounded and drops;
+     * {@link #toRoster} is unbounded and does not. <em>A browser missing an event is a refresh;
+     * the roster missing one is a fact about the machine that is gone for good</em> - that is the
+     * argument for the split, and the policies are where it is now written down rather than in
+     * which line comes first.
+     *
+     * <p>The order is kept because it is still the order the facts were decided in, which is what
+     * a reader of two queues sees. {@code printer-management} persists a connection state from
+     * exactly these messages, and the lossless queue has a single consumer, so what reaches it
+     * reaches it in the order this aggregate produced it.
      *
      * <p>The farm hop is the application event bus rather than a second sink handed in here, which
      * keeps plan item D2's farm view from having to be wired into every reactor as it is built -
@@ -486,7 +680,7 @@ public class PrinterReactor {
      */
     private void onEvent(Object report) {
         var message = new EventMessage(printer.getId(), report);
-        roster.publishEvent(message);
+        toFarm.emit(message);
         report(report);
         emit(new Parked.Update(message));
     }
@@ -513,13 +707,17 @@ public class PrinterReactor {
      * <p>Parking in the {@link Outbox} throws nothing, blocks nothing and spins nothing, and
      * whichever thread is draining will publish what was parked. So the volatile half of
      * {@code onEvent} cannot skip the durable halves twice over: by construction, because this
-     * cannot fail, and by order, because the roster has already been told by the time it runs.
+     * cannot fail, and by order, because {@link #toFarm} and {@link #toRoster} have already been
+     * offered their items by the time it runs. Since #54 those two are hand-offs as well, so
+     * "already told" is now "already queued on a single-consumer queue that does not drop" - which
+     * is the same guarantee for the roster and a weaker one, deliberately, for the farm stream.
      *
      * <p>The order matters for a second reason, which a test found rather than a reader: the drain
      * loop can hand a <em>later</em> event to a subscriber before the thread carrying the earlier
-     * one has got as far as the roster. With the roster first, what it is told arrives in the order
-     * the aggregate decided it - and {@code printer-management} persists a connection state from
-     * exactly those messages, so a reordering there is a stale state written over a current one.
+     * one has got as far as the roster. With the roster offered first, what it is told arrives in
+     * the order the aggregate decided it - and {@code printer-management} persists a connection
+     * state from exactly those messages, so a reordering there is a stale state written over a
+     * current one.
      *
      * @see Outbox
      */
@@ -527,7 +725,42 @@ public class PrinterReactor {
         outbox.emit(parked);
     }
 
-    /** One parked item onto the sink. {@link Outbox} only, so {@link #streamEnded} is plain. */
+    /**
+     * One parked item onto the sink. {@link Outbox} only, so {@link #streamEnded} is plain.
+     *
+     * <p><strong>It is also where this machine's two threads are returned, and that is an ordering
+     * requirement rather than tidiness.</strong> {@code tryEmitComplete()} delivers nothing
+     * itself: it hands an {@code onComplete} to each subscriber's {@code publishOn} worker
+     * <em>as a task on {@link #executor}</em>, and {@link #disposeWhenIdle} is built so the
+     * disposal queues behind that task. That argument holds only while {@code tryEmitComplete()}
+     * has actually run by the time the disposal is scheduled - and {@link #stop()} cannot promise
+     * it.
+     *
+     * <p><strong>The race, which on a busy machine is the ordinary case.</strong> {@code stop()}
+     * parks a {@code StreamEnd} and {@link Outbox#emit} drains only if no other thread is already
+     * draining. A machine being deleted mid-conversation has its aggregate thread inside that
+     * loop publishing a reply, so {@code emit} returns at once with the marker still queued and
+     * nothing completed. Were {@code stop()} to dispose from there it would schedule
+     * {@code shutdownNow()} on an executor whose queue is <em>empty</em> - there is no
+     * {@code onComplete} in it yet - so it runs immediately. The other thread then publishes the
+     * {@code StreamEnd}, {@code tryEmitComplete()} submits the {@code onComplete} to a scheduler
+     * that is already gone, and it is discarded. <em>A browser holding an SSE connection to a
+     * printer that has just been deleted waits forever</em> - which is the exact failure
+     * {@code disposeWhenIdle} was written to prevent, arrived at one thread later.
+     * {@code PrinterReactorManagerTest.aReleasedReactorCompletesItsUpdateStream} does not catch it
+     * because nothing else is emitting there.
+     *
+     * <p>So the disposal is ordered through the same outbox that orders everything else on this
+     * stream. Whichever thread drains the marker calls {@code tryEmitComplete()} and then, on that
+     * same thread and strictly after it, schedules the two disposals - which is the happens-before
+     * the design assumed and never had.
+     *
+     * <p><strong>It runs exactly once.</strong> {@code stop()}'s {@link #stopped} guard admits one
+     * caller, so exactly one {@code StreamEnd} is ever parked and the {@code streamEnded} early
+     * exit below is unreachable for it - it cannot swallow the disposal with it. {@link Outbox}
+     * calls this from one thread at a time, so the pair is scheduled once, and {@code stop()}'s
+     * own guard means there is no second {@code stop()} to reject a task onto a dead scheduler.
+     */
     private void publish(Parked parked) {
         switch (parked) {
             case Parked.StreamEnd _ -> {
@@ -539,6 +772,12 @@ public class PrinterReactor {
                 if (result.isFailure()) {
                     log.warn("the update stream did not complete ({})", result);
                 }
+                // Strictly after tryEmitComplete, on this thread, for the reason above. The order
+                // between the two is stop()'s and nothing depends on it: each disposal queues
+                // behind its own scheduler's work and the two schedulers queue nothing on
+                // each other.
+                disposeWhenIdle(listeners);
+                disposeWhenIdle(executor);
             }
             case Parked.Update(EventMessage message) -> {
                 if (streamEnded) {
@@ -566,14 +805,24 @@ public class PrinterReactor {
      * <p>The connection state is the B3 addition, and it is what makes the roster's persisted
      * column <em>derived</em> rather than a second opinion. Nothing else can tell the roster this:
      * knowing whether a machine is connected means holding the socket, which only this module does.
+     *
+     * <p><strong>Each event is built here, on the aggregate's thread, and only then handed over -
+     * including its {@code LocalDateTime.now()}.</strong> The timestamp is meant to say when the
+     * machine said it. Building the record on the listener thread would make it say when the
+     * database got round to it, and the gap is exactly as long as whatever is making the listener
+     * slow - which is to say, longest in the case somebody would later be reading these timestamps
+     * to understand.
+     *
+     * <p>These three are the lossless half of {@link #onEvent}: {@link #toRoster} is unbounded and
+     * refuses nothing, because each one is a state change rather than a sample.
      */
     private void report(Object event) {
         switch (event) {
-            case FirmwareInfoRs firmware -> roster.publishEvent(new MFirmwareReportedEvent(
+            case FirmwareInfoRs firmware -> toRoster.emit(new MFirmwareReportedEvent(
                     printer.getId(), firmware.getKeyValues(), LocalDateTime.now()));
-            case CapabilityRs capability -> roster.publishEvent(new MCapabilityReportedEvent(
+            case CapabilityRs capability -> toRoster.emit(new MCapabilityReportedEvent(
                     printer.getId(), capability.getCapability(), capability.getEnabled(), LocalDateTime.now()));
-            case ConnectionStateChanged change -> roster.publishEvent(new MConnectionChangedEvent(
+            case ConnectionStateChanged change -> toRoster.emit(new MConnectionChangedEvent(
                     printer.getId(), change.to(), change.reason(), LocalDateTime.now()));
             default -> {
             }

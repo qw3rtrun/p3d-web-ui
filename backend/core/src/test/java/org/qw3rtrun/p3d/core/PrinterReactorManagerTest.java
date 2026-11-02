@@ -1,5 +1,6 @@
 package org.qw3rtrun.p3d.core;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
@@ -45,6 +46,18 @@ class PrinterReactorManagerTest {
     private final PrinterReactorManager manager =
             new PrinterReactorManager(directory, PrinterState::new, event -> {
             });
+
+    /**
+     * A reactor now owns two schedulers, so a test that opens one and walks away leaks two threads.
+     *
+     * <p>Idempotent and a no-op for a machine nothing opened, which is most of these. Virtual
+     * threads are daemon so a leak would not hang the suite - this is tidiness, and a reminder that
+     * {@code release} is the pair of {@code openReactor} for threads now as well as for sockets.
+     */
+    @AfterEach
+    void letGo() {
+        manager.release(id);
+    }
 
     private void theFarmHas(UUID machine) {
         directory.onRegistered(new MRegisteredEvent(machine, "a printer", "localhost", 8099,
@@ -153,6 +166,7 @@ class PrinterReactorManagerTest {
         owner.onRegistered(announcing(new MachineSpec(null, 2, List.of(), Set.of(), Set.of())));
 
         assertEquals(2, aggregates.get(id).extruderCount());
+        owner.release(id);
     }
 
     /**

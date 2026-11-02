@@ -475,8 +475,8 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
      *
      * <p><strong>Without the gate this test is a coin flip, and it was measured as one: four passes
      * in nine runs.</strong> The abandonment crosses two {@code publishOn(executor)} hops onto the
-     * shared {@code Schedulers.single()} — {@code PrinterReactor.gEvent}'s and {@code updates()}'
-     * — while the feed's completion arrives independently on the netty thread. Against a mock that
+     * aggregate's thread — {@code PrinterReactor.gEvent}'s and {@code updates()}' — while the feed's
+     * completion arrives independently on the netty thread. Against a mock that
      * answers instantly an eighteen-block file is over in about ten milliseconds, so the two race,
      * and whichever lands first decides whether the job reports {@code FAILED} or {@code COMPLETED}.
      * From a failing run:
@@ -488,6 +488,11 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
      *   52.022 single-1 PrinterReactor: &lt;- EventMessage[BlocksAbandoned] (9 ms later)
      *   52.022 nio-4    JobFeeder: job … sent its last block (18 in all)
      * </pre>
+     *
+     * <p>The capture is from before issue #54, when that executor was the farm-wide
+     * {@code Schedulers.single()} — hence {@code single-1}. The same two hops now land on this
+     * machine's own {@code p3d-printer-<id>} thread, which removes the farm's queueing from the gap
+     * and leaves the race itself exactly as measured: it is two paths, not two speeds.
      *
      * <p><strong>That race is real but it is at fixture scale, and it is not what this test is
      * for.</strong> On a print of any length the blocks are abandoned thousands of blocks before

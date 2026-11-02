@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import {computed, onMounted, onUnmounted, ref} from 'vue'
 import {files as fileStore, printer, RequestFailed, watchPrinter, type Subscription} from '../api/client'
-import type {EventMessage, FarmRole, SdFile, SdFileList, SdUploadProgressed} from '../api/types'
+import type {EventMessage, FarmRole, GcodeFile, SdFile, SdFileList, SdUploadProgressed} from '../api/types'
+import {estimate, fileSize, filamentUsed, sliceDetail} from '../format'
 
 /**
  * The machine's SD card: what is on it, and what can be done to it.
@@ -52,6 +53,22 @@ const unknownContents = computed(() => listed.value === null && !waitingForList.
 const emptyCard = computed(() => listed.value !== null && listed.value.length === 0)
 const onTheCard = computed<SdFile[]>(() => listed.value ?? [])
 
+/**
+ * What the **server** holds, which is a different store from the card above it.
+ *
+ * Every upload lands here first - `/api-files` takes the bytes, the machine takes them afterwards -
+ * and a stored file can be written to any number of machines without being uploaded again. Until
+ * this list existed the store was invisible: the only way to put a file on a card was to send its
+ * bytes over the network a second time, and the only `GcodeFile` the UI ever held was the one
+ * `upload()` handed back, which it read an id out of and threw away.
+ *
+ * `storedKnown` is false until the server has actually answered, so an empty table reads as
+ * "nothing stored" only when that is what it said - the same distinction the card listing draws
+ * between an empty card and a machine that never replied.
+ */
+const stored = ref<GcodeFile[]>([])
+const storedKnown = ref(false)
+
 const upload = ref<SdUploadProgressed | null>(null)
 const chosen = ref<File | null>(null)
 const sending = ref(false)
@@ -71,16 +88,6 @@ const percent = computed(() => {
     }
     return Math.min(100, Math.round((progress.bytesSent / progress.bytesTotal) * 100))
 })
-
-function size(bytes: number): string {
-    if (bytes < 1024) {
-        return `${bytes} B`
-    }
-    if (bytes < 1024 * 1024) {
-        return `${(bytes / 1024).toFixed(1)} KB`
-    }
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
 
 function onMessage(message: EventMessage) {
     if (message.id !== props.uuid) {
@@ -166,6 +173,12 @@ function refresh() {
     })
 }
 
+/** The server's own store. A plain GET; nothing is asked of the machine. */
+const loadStored = () => guarded(async () => {
+    stored.value = await fileStore.all()
+    storedKnown.value = true
+})
+
 const release = () => guarded(async () => {
     await api.releaseCard()
     card.value = 'absent'
@@ -209,8 +222,31 @@ function send() {
     upload.value = null
     void guarded(async () => {
         try {
-            const stored = await fileStore.upload(file)
-            await api.uploadToCard(stored.id, file.name)
+            const held = await fileStore.upload(file)
+            // The store has one more file in it, and its summary is worth showing even if the
+            // transfer below fails. Awaited rather than fired off, so this cannot clear the
+            // failure the next line may be about to report.
+            await loadStored()
+            await api.uploadToCard(held.id, file.name)
+        } catch (error) {
+            sending.value = false
+            throw error
+        }
+    })
+}
+
+/**
+ * Write a file the server already holds to this machine's card.
+ *
+ * The same second request `send()` makes, without the first: the bytes are on the server already,
+ * so sending a file to a second printer costs nothing but the wire to that printer.
+ */
+function sendStored(file: GcodeFile) {
+    sending.value = true
+    upload.value = null
+    void guarded(async () => {
+        try {
+            await api.uploadToCard(file.id, file.name)
         } catch (error) {
             sending.value = false
             throw error
@@ -226,6 +262,7 @@ onMounted(() => {
     subscription = watchPrinter(props.uuid, onMessage)
     mount()
     refresh()
+    void loadStored()
 })
 
 onUnmounted(() => {
@@ -289,7 +326,7 @@ onUnmounted(() => {
         </div>
 
         <p v-if="upload" class="text-muted small mb-0 mt-2">
-          {{ size(upload.bytesSent) }} of {{ size(upload.bytesTotal) }},
+          {{ fileSize(upload.bytesSent) }} of {{ fileSize(upload.bytesTotal) }},
           {{ upload.blocksSent.toLocaleString() }} blocks sent
         </p>
 
@@ -331,7 +368,7 @@ onUnmounted(() => {
         <tbody>
         <tr v-for="file in onTheCard" :key="file.name">
           <td>{{ file.name }}</td>
-          <td class="text-muted">{{ size(file.size) }}</td>
+          <td class="text-muted">{{ fileSize(file.size) }}</td>
           <td class="text-end">
             <div v-if="mayControl" class="btn-group btn-group-sm">
               <button type="button" class="btn btn-outline-primary"
@@ -346,6 +383,62 @@ onUnmounted(() => {
         </tbody>
       </table>
     </template>
+
+    <!--
+      The server's own store, which is where every upload lands before a machine sees it.
+
+      This is the one place a GcodeFile is shown, so it is where what the slicer said belongs. Two
+      columns earn the space - how long it takes and how much filament it eats - because those are
+      the figures somebody picking a file to print is actually choosing between. The program that
+      sliced it and the layer height are true but are detail, and ride in the row's title.
+
+      A file nothing could be read from says "not stated" in both columns. Not "0 min", which would
+      claim the print is instant, and not an error: a file with no slicer comments in it is a
+      perfectly printable file, and `slice.known` is how it says so.
+    -->
+    <div class="pt-3 border-top">
+      <h5 class="mb-1">On the server</h5>
+      <p class="text-muted small">
+        Stored once and sendable to any machine - a file here needs no second upload.
+      </p>
+
+      <p v-if="!storedKnown" class="text-muted">Reading the server's files…</p>
+      <p v-else-if="stored.length === 0" class="text-muted">
+        No files are stored yet. One uploaded below is kept here too.
+      </p>
+
+      <table v-else class="table table-sm align-middle">
+        <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Size</th>
+          <th scope="col">Estimated time</th>
+          <th scope="col">Filament</th>
+          <th scope="col" class="text-end"></th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr v-for="file in stored" :key="file.id" :title="sliceDetail(file.slice)">
+          <td>{{ file.name }}</td>
+          <td class="text-muted">{{ fileSize(file.sizeBytes) }}</td>
+          <td :class="file.slice.estimatedSeconds === null ? 'text-muted fst-italic' : ''">
+            {{ estimate(file.slice) }}
+          </td>
+          <td :class="file.slice.filamentMillimetres === null ? 'text-muted fst-italic' : ''">
+            {{ filamentUsed(file.slice) }}
+          </td>
+          <td class="text-end">
+            <!-- There is nowhere to send it with no card in the slot, so the control says so. -->
+            <button v-if="mayControl" type="button" class="btn btn-sm btn-outline-primary"
+                    :disabled="!canAct || card === 'absent'"
+                    :title="card === 'absent' ? 'Mount a card first.' : 'Write this file to the card'"
+                    @click="sendStored(file)">Send to card
+            </button>
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
 
     <!--
       Upload. No extension is required of the operator: the server adds a printable one when it is

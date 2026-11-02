@@ -234,7 +234,47 @@ export interface SdFileOpened {
  */
 export type SdCardOk = Record<string, never>
 
-/** One file the server holds - `api.files.GcodeFile`. `sizeBytes` is an upload's denominator. */
+/**
+ * What the slicer said about a stored file - `api.files.SliceInfo`.
+ *
+ * **All four values are nullable by design, and null is not zero.** A slicer writes what it feels
+ * like in comments it invented and there is no standard for any of it, so a file produced by
+ * something this host has never heard of carries none of them - `SliceInfo.unknown()` is a real
+ * value rather than a failure, and the file is still perfectly printable. Rendering a missing
+ * estimate as "0 min" would state that the print takes no time, which is a worse answer than
+ * saying nobody said.
+ *
+ * `known` is the discriminator and it is **the server's `isKnown()` getter**, which Jackson
+ * serialises as a property - so there are five fields on the wire, not four. It is true when any
+ * one of the others was read. **`slice` itself is never absent and never null**: `GcodeFile`'s
+ * compact constructor substitutes `SliceInfo.unknown()`, so a renderer checks `known`, not the
+ * object.
+ *
+ * Units and types, as Jackson actually puts them on the wire:
+ *
+ * - `estimatedSeconds` is a JSON number - `3661`, from Java's `Long`. Seconds, never formatted.
+ * - `filamentMillimetres` is a JSON number carrying the scale `BigDecimal` kept - `1234.5000` in
+ *   the response text, which `JSON.parse` gives back as `1234.5`. **Millimetres**, whatever unit
+ *   the file used: Cura's `;Filament used: 1.2345m` is stored as `1234.5000`. Never render it raw.
+ * - `layerHeight` is a JSON number in millimetres - `0.2`.
+ *
+ * `format.ts` turns the first two into something a person reads.
+ */
+export interface SliceInfo {
+    slicer: string | null
+    estimatedSeconds: number | null
+    filamentMillimetres: number | null
+    layerHeight: number | null
+    known: boolean
+}
+
+/**
+ * One file the server holds - `api.files.GcodeFile`. `sizeBytes` is an upload's denominator.
+ *
+ * Seven fields, matching the record's seven components. The browser's copy carried six for a
+ * while, and the one it dropped was `slice` - so everything the slicer said was parsed, stored,
+ * serialised and then discarded in the browser. `GcodeFileContractTest` is what notices now.
+ */
 export interface GcodeFile {
     id: string
     name: string
@@ -242,6 +282,7 @@ export interface GcodeFile {
     sizeBytes: number
     lineCount: number
     uploadedAt: string
+    slice: SliceInfo
 }
 
 /**

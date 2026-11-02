@@ -23,6 +23,7 @@ import org.springframework.web.reactive.function.BodyInserters;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -79,8 +80,8 @@ class MonitorPageTest {
         MachineManagementService rosterWithOneMachine() {
             return new MachineManagementService() {
                 @Override
-                public Descriptor fetch(UUID uuid) {
-                    return descriptor();
+                public Optional<Descriptor> fetch(UUID uuid) {
+                    return Optional.of(descriptor());
                 }
 
                 @Override

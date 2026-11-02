@@ -14,6 +14,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -110,9 +111,62 @@ public class PrinterReactorManager {
      * <p>Throws when the machine is unknown to this module. That is a different statement from
      * "the farm has no such machine" - it can also mean this module has not been told yet - and the
      * caller gets to see the difference rather than receiving a reactor pointed at nowhere.
+     *
+     * <p>A caller that would rather answer an unknown machine than be thrown at asks
+     * {@link #openReactorIfKnown(UUID)}, which is what this is built on.
      */
     public synchronized PrinterReactor openReactor(UUID uuid) {
-        return running.computeIfAbsent(uuid, this::startReactor);
+        return openReactorIfKnown(uuid)
+                .orElseThrow(() -> new IllegalArgumentException("no machine known with id " + uuid));
+    }
+
+    /**
+     * The printer's runtime, started if this is the first caller - or empty when there is no such
+     * machine.
+     *
+     * <p>The same resource {@link #openReactor(UUID)} opens, with absence as a value instead of an
+     * exception. That matters because the absence is ordinary: a page left open on a printer
+     * somebody deleted posts to it, and the caller wants to answer "the farm has no machine X"
+     * rather than catch an {@code IllegalArgumentException} and guess what it meant.
+     *
+     * <p><strong>One {@code synchronized} step, and that is the point of it being here rather than
+     * composed at the call site.</strong> {@code knows(id)} followed by {@code openReactor(id)}
+     * would be a check-then-act with a window for a concurrent {@code MDeletedEvent} to land in,
+     * and the loser of that race opens a reactor nothing will ever release.
+     *
+     * <p>It still does not dial. Whatever this opens, {@link #release(UUID)} closes.
+     */
+    public synchronized Optional<PrinterReactor> openReactorIfKnown(UUID uuid) {
+        var already = running.get(uuid);
+        if (already != null) {
+            return Optional.of(already);
+        }
+        return directory.find(uuid).map(entry -> {
+            var reactor = startReactor(entry);
+            running.put(uuid, reactor);
+            return reactor;
+        });
+    }
+
+    /**
+     * Whether this module has been told about the machine at all - and <strong>opens nothing</strong>.
+     *
+     * <p>Separate from {@link #openReactorIfKnown(UUID)} because some questions do not deserve a
+     * runtime. A <em>cancel</em> has to be able to answer "there is no such machine" without
+     * building one, and building one costs a socket's worth of resource - a terminal manager, a
+     * command queue, a replay sink that keeps every subscriber referenced and, since #54, two
+     * threads of this machine's own. Allocating all of that to tell a caller that a transfer which
+     * is not running is not running would be the opposite of {@link #release(UUID)}'s whole point.
+     *
+     * <p><strong>It is {@code core}'s replica answering, and that is the only roster this module
+     * is allowed to consult</strong> - rule 2 of {@code doc/sub_boundaries.txt}.
+     * {@link PrinterDirectory} is fed by {@code MRegisteredEvent} and {@code MDeletedEvent}, so
+     * "known" here means "this module has been told", which can lag the database by a transaction
+     * and never by more. Asking {@code MachineManagementService} instead would be {@code core}
+     * naming another submodel, and it would be a blocking JDBC call besides.
+     */
+    public boolean knows(UUID uuid) {
+        return directory.find(uuid).isPresent();
     }
 
     /**
@@ -269,10 +323,14 @@ public class PrinterReactorManager {
      * true rather than aspirational. {@code retries} is shared on purpose: it only ever holds a
      * timer, it does no work of this printer's, and giving every machine its own would be a thread
      * per printer for nothing.
+     *
+     * <p><strong>It takes the directory entry rather than finding it.</strong> The caller has just
+     * looked the machine up in order to decide whether there is one at all, and looking it up
+     * again here would be a second answer to a question already asked - which on a replica fed by
+     * events is not guaranteed to be the same answer.
      */
-    private PrinterReactor startReactor(UUID uuid) {
-        var entry = directory.find(uuid).orElseThrow(() ->
-                new IllegalArgumentException("no machine known with id " + uuid));
+    private PrinterReactor startReactor(PrinterDirectory.Entry entry) {
+        var uuid = entry.id();
         var aggregate = (PrinterState) aggregateManager.loadState(uuid);
         return new PrinterReactor(new TerminalManager(entry.connection()), aggregate, roster,
                 policy, threads.aggregateOf(uuid), threads.listenersOf(uuid), retries);

@@ -14,6 +14,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -53,8 +54,8 @@ class MachineSpecBindingTest {
     private WebTestClient client() {
         MachineManagementService management = new MachineManagementService() {
             @Override
-            public Descriptor fetch(UUID uuid) {
-                return described();
+            public Optional<Descriptor> fetch(UUID uuid) {
+                return Optional.of(described());
             }
 
             @Override

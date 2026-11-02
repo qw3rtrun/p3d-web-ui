@@ -646,6 +646,32 @@ public class PrinterReactor {
         return Mono.defer(() -> Mono.just(printer.getConnection())).publishOn(executor);
     }
 
+    /**
+     * Whether there is a link to the machine right now.
+     *
+     * <p><strong>The precondition {@link #feed} and {@link #uploadToCard} already impose, asked
+     * before the work is started rather than discovered inside it.</strong> Discovering it inside
+     * is what made an upload to a disconnected printer answer <em>200</em> and then fail a moment
+     * later as {@code SdUploadProgressed(FAILED)} - so a page drew a progress panel, with a
+     * denominator and a cancel button, for a transfer that never began. A caller that can refuse
+     * the request outright should.
+     *
+     * <p><strong>It is the aggregate's own answer</strong>, not a second opinion read off
+     * {@code terminal == null}. {@code MachineConnectionState.isLinked()}'s javadoc calls that
+     * state "what decides whether a command can be sent at all"; keeping a parallel truth beside
+     * it is the four-booleans arrangement the connection enum was introduced to end.
+     *
+     * <p><strong>It is a snapshot, and reading it from the caller's thread is deliberate.</strong>
+     * Since #54 the aggregate is touched by the printer's own thread, and this read is the same one
+     * {@link #connection()} already makes from whatever thread subscribes. The link can drop
+     * between this answer and the first block, and that case is <em>not this method's to
+     * cover</em>: it still arrives as {@code SdUploadProgressed(FAILED)} on the stream. The value
+     * answers the request; the event answers the transfer.
+     */
+    public boolean linked() {
+        return printer.getConnection().linked();
+    }
+
     public Flux<EventMessage> updates() {
         return updates.asFlux()
                 .publishOn(executor)

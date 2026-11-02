@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.qw3rtrun.p3d.api.control.ControlOutcome;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.msg.SdUploadProgressed;
@@ -107,37 +108,59 @@ public class SdUploader {
     }
 
     /**
-     * Starts writing {@code fileId} to {@code machineId}'s card, and completes once it is queued.
+     * Starts writing {@code fileId} to {@code machineId}'s card, and answers whether it was taken
+     * on.
      *
      * <p>It deliberately does not wait for the transfer. Every line is a round trip inside the send
      * window, so a real file takes minutes and an HTTP request held open for it would time out.
      * What the caller gets back is "this started"; what says it finished is
      * {@link SdUploadProgressed} on the machine's event stream.
      *
+     * <p><strong>Every way this can decline is a {@link ControlOutcome}, not an exception.</strong>
+     * Two of the three are ordinary - a stale page naming a file the store no longer holds, a
+     * printer somebody unplugged - and as exceptions they left the web layer with nothing to do but
+     * guess a status from a class name, which it did by answering 500 to both.
+     *
+     * <p><strong>The order of the checks is a decision and not an accident</strong>: the machine is
+     * known (the caller's, since it is the caller that holds the runtime map), then the link, then
+     * the file, then "one at a time". Cheapest and most certain first - the first two are field
+     * reads and the third is a database round trip - and <em>the link check in front of the file
+     * lookup is what keeps a blocking store lookup off the path for a machine that could not have
+     * taken the file anyway</em>. A farm whose printers are mostly idle and mostly unplugged is the
+     * normal case, not the exceptional one.
+     *
+     * @param reactor   the machine's runtime, which the caller has already opened
      * @param requested what the operator asked to call it, which may lack an extension
      */
-    public Mono<Void> start(UUID machineId, UUID fileId, String requested) {
-        return Mono.fromCallable(() -> files.fetch(fileId).orElseThrow(() ->
-                        new IllegalArgumentException("there is no file " + fileId + " to upload")))
-                .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(file -> begin(machineId, fileId, file, requested));
+    public Mono<ControlOutcome> start(PrinterReactor reactor, UUID machineId, UUID fileId, String requested) {
+        return Mono.defer(() -> reactor.linked()
+                ? Mono.fromCallable(() -> files.fetch(fileId))
+                        .subscribeOn(Schedulers.boundedElastic())
+                        .map(found -> found
+                                .map(file -> begin(reactor, machineId, fileId, file, requested))
+                                .orElseGet(() -> ControlOutcome.absent(machineId,
+                                        "there is no file " + fileId + " to upload")))
+                : Mono.just(ControlOutcome.wrongState(machineId, "printer " + machineId
+                        + " is not connected, so nothing can be written to its card")));
     }
 
-    private Mono<Void> begin(UUID machineId, UUID fileId, GcodeFile file, String requested) {
-        var reactor = reactors.runtimeOf(machineId);
-        if (reactor == null) {
-            return Mono.error(new IllegalStateException(
-                    "printer " + machineId + " is not connected, so nothing can be written to its card"));
-        }
-
+    /**
+     * Queues the transfer, or says why it could not be.
+     *
+     * <p>Returns a value rather than a {@code Mono} because nothing in it is asynchronous - it is
+     * a map insert, a subscription and an announcement. It still runs on {@code boundedElastic},
+     * because it is called from inside the {@code map} the file lookup was scheduled on.
+     */
+    private ControlOutcome begin(PrinterReactor reactor, UUID machineId, UUID fileId,
+                                 GcodeFile file, String requested) {
         var cardName = cardNameFor(requested);
         var transfer = new Transfer(cardName, file.sizeBytes());
 
         // One at a time, per machine. A second would have its M28 written into the first one's
         // file, which is the same corruption from a different direction.
         if (running.putIfAbsent(machineId, transfer) != null) {
-            return Mono.error(new IllegalStateException(
-                    "printer " + machineId + " is already writing to its card"));
+            return ControlOutcome.wrongState(machineId,
+                    "printer " + machineId + " is already writing to its card");
         }
 
         Flux<String> content = GcodeLines.blocksOf(
@@ -160,7 +183,7 @@ public class SdUploader {
                         transfer.cancelled.get() ? SdUploadState.CANCELLED : SdUploadState.DONE,
                         null));
 
-        return Mono.empty();
+        return ControlOutcome.accepted(machineId);
     }
 
     /**

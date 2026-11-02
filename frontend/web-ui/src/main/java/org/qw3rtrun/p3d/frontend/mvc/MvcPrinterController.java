@@ -8,12 +8,14 @@ import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
@@ -79,10 +81,18 @@ public class MvcPrinterController {
      * with when it was learned. A reader can then see that a machine reports one extruder while
      * somebody has declared two, which is a thing worth knowing and which a single merged set of
      * fields could not show.
+     *
+     * <p><strong>An unknown machine is a 404 page, and this is the HTML surface stating a status at
+     * the point it knows the fact.</strong> It is <em>not</em> the REST mapping: nothing here
+     * catches an exception or classifies one - the roster answered an empty {@code Optional}, and a
+     * page that has nothing to render says so. The REST side never throws for this; it maps the
+     * same empty value in {@code Outcomes}.
      */
     @GetMapping("/printers/{uuid}/edit.html")
     public Mono<String> edit(@PathVariable UUID uuid, Model model) {
-        return Mono.fromSupplier(() -> manager.fetch(uuid))
+        return Mono.fromSupplier(() -> manager.fetch(uuid)
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                                "the farm has no machine " + uuid)))
                 .subscribeOn(Schedulers.boundedElastic())
                 .doOnNext(machine -> {
                     model.addAttribute("machine", MachineInfo.of(machine));

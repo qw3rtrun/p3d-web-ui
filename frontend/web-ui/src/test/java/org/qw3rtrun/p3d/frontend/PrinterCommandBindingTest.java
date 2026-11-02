@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.frontend;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.control.ControlOutcome;
 import org.qw3rtrun.p3d.api.control.PrinterControl;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
@@ -9,6 +10,7 @@ import org.qw3rtrun.p3d.g.code.core.GEncoder;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.reactivestreams.Publisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
@@ -53,6 +55,15 @@ class PrinterCommandBindingTest {
 
     private final AtomicBoolean cancelled = new AtomicBoolean();
 
+    /**
+     * What the stubbed runtime answers an upload with - accepted unless a test says otherwise.
+     *
+     * <p>A field rather than a second stub class, because the three tests that drive a refusal want
+     * the <em>real</em> controller and the real Jackson encoding of the record underneath it. What
+     * they assert is the status and the bytes of the body, which is all a browser can see.
+     */
+    private final AtomicReference<ControlOutcome> uploadAnswers = new AtomicReference<>();
+
     private WebTestClient client() {
         PrinterControl control = new PrinterControl() {
             @Override
@@ -85,15 +96,16 @@ class PrinterCommandBindingTest {
             }
 
             @Override
-            public Publisher<Void> uploadToCard(UUID id, UUID fileId, String cardName) {
+            public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName) {
                 uploaded.set(fileId + " -> " + cardName);
-                return Mono.empty();
+                var answer = uploadAnswers.get();
+                return Mono.just(answer == null ? ControlOutcome.accepted(id) : answer);
             }
 
             @Override
-            public Publisher<Void> cancelCardUpload(UUID id) {
+            public Publisher<ControlOutcome> cancelCardUpload(UUID id) {
                 cancelled.set(true);
-                return Mono.empty();
+                return Mono.just(ControlOutcome.accepted(id));
             }
         };
         return WebTestClient.bindToController(new PrinterController(control)).build();
@@ -355,5 +367,52 @@ class PrinterCommandBindingTest {
                 .expectStatus().isBadRequest();
 
         assertEquals(List.of(), received.get(), "nothing may reach the printer");
+    }
+
+    // ------------------------------------------------- the refusals (issue #65)
+
+    /** Posts an upload the runtime will answer with {@code outcome}, and hands back the response. */
+    private WebTestClient.ResponseSpec uploadAnswering(ControlOutcome outcome) {
+        uploadAnswers.set(outcome);
+        return client().post().uri("/api-printer/" + id + "/sd/upload")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"fileId\":\"" + UUID.randomUUID() + "\",\"name\":\"BENCHY.GCO\"}")
+                .exchange();
+    }
+
+    /**
+     * A refusal that names something absent is a 404, and the body says which kind and why.
+     *
+     * <p><strong>If this failed, the browser would be told the server was broken.</strong> That is
+     * what it used to be told: the uploader threw {@code IllegalArgumentException} for a file the
+     * store does not hold, nothing classified it, and a stale file picker read as a 500. The field
+     * names are the part that can rot silently - {@code refusal} and {@code reason} are what
+     * {@code client.ts} reads, and nothing in this build compiles that file.
+     */
+    @Test
+    void anAbsentUploadTargetIsNotFoundWithItsReasonInTheBody() {
+        uploadAnswering(ControlOutcome.absent(id, "there is no file to upload"))
+                .expectStatus().isNotFound()
+                .expectBody()
+                .jsonPath("$.machineId").isEqualTo(id.toString())
+                .jsonPath("$.refusal").isEqualTo("ABSENT")
+                .jsonPath("$.reason").isEqualTo("there is no file to upload");
+    }
+
+    /**
+     * A refusal that names a machine in the wrong state is a 409, with the same body shape.
+     *
+     * <p>409 and not 404: the printer is <em>there</em>, and connecting it is the whole of what the
+     * operator has to do. A failure here would mean a page telling somebody their machine does not
+     * exist because it happened to be unplugged.
+     */
+    @Test
+    void anUploadToAMachineInTheWrongStateIsAConflict() {
+        uploadAnswering(ControlOutcome.wrongState(id, "printer " + id + " is not connected"))
+                .expectStatus().isEqualTo(HttpStatus.CONFLICT)
+                .expectBody()
+                .jsonPath("$.machineId").isEqualTo(id.toString())
+                .jsonPath("$.refusal").isEqualTo("WRONG_STATE")
+                .jsonPath("$.reason").isEqualTo("printer " + id + " is not connected");
     }
 }

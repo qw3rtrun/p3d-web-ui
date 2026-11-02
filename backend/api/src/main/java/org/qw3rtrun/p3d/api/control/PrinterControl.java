@@ -55,13 +55,19 @@ public interface PrinterControl {
     Publisher<Void> send(UUID id, List<GRq<?>> commands);
 
     /**
-     * Writes a stored G-code file onto the machine's SD card, and completes when it is <em>queued</em>.
+     * Writes a stored G-code file onto the machine's SD card, and answers whether it was taken on.
      *
      * <p><strong>It does not complete when the transfer does</strong>, and it must not: every line
      * of an upload is a round trip inside the send window, so a real file takes minutes. A request
-     * held open for that is a request that times out. What this answers is "the transfer started";
-     * what answers "it finished" is {@code SdUploadProgressed} on {@link #updates(UUID)}, which is
-     * where the progress goes too.
+     * held open for that is a request that times out. What this answers is whether the transfer was
+     * <em>taken on</em>; what answers "it finished" is {@code SdUploadProgressed} on
+     * {@link #updates(UUID)}, which is where the progress goes too.
+     *
+     * <p><strong>A {@link ControlOutcome} and not a {@code Publisher<Void>}, because the old shape
+     * had no way to say no.</strong> There are two ordinary reasons this cannot start - the store
+     * does not hold the file, the machine is not connected - and with nothing to return them in
+     * they became exceptions, and the browser was told 500 for both. They are
+     * {@link ControlOutcome.Refusal#ABSENT} and {@link ControlOutcome.Refusal#WRONG_STATE} now.
      *
      * <p><strong>The file is one already on the server</strong>, named by {@code fileId} - this
      * takes no bytes. The browser uploads to {@code /api-files} first, which streams to a
@@ -79,7 +85,7 @@ public interface PrinterControl {
      * @param cardName what to call it on the card, which is what will be listed, printed and
      *                 deleted afterwards
      */
-    Publisher<Void> uploadToCard(UUID id, UUID fileId, String cardName);
+    Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName);
 
     /**
      * Stops a transfer that is running, leaving a short but closed file on the card.
@@ -89,10 +95,14 @@ public interface PrinterControl {
      * behind it. Tearing the transfer out instead would leave the file <em>open</em>, and every
      * command the machine was given next would be written into it.
      *
-     * <p>Completes whether or not a transfer was running. Nothing to stop is not an error - the
-     * page's button and the machine's state are different clocks.
+     * <p><strong>Nothing to stop stays {@link ControlOutcome.Accepted}.</strong> The page's button
+     * and the machine's state are different clocks, and a transfer that ended a moment before the
+     * click is not something to report at the operator. So the only refusal this can give is
+     * {@link ControlOutcome.Refusal#ABSENT}, for a machine the farm does not have - the outcome
+     * type is here to say that one thing, and to say it as a value rather than as an exception a
+     * web layer would have to classify.
      */
-    Publisher<Void> cancelCardUpload(UUID id);
+    Publisher<ControlOutcome> cancelCardUpload(UUID id);
 
     /** Connects to the machine, or disconnects from it. */
     Publisher<Void> connect(UUID id, ConnectCmd command);

@@ -5,18 +5,23 @@ import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
+import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import reactor.test.StepVerifier;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -36,8 +41,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * need a fake {@code MachineManagementService} - or, before that, a fake command gateway - purely
  * to answer one question about where to dial.
  *
- * <p>No connection is opened by any of this: {@code openReactor} no longer dials anything, and
+ * <p>No connection is opened by most of this: {@code openReactor} no longer dials anything, and
  * {@link org.qw3rtrun.p3d.terminal.TerminalManager}'s constructor only builds a {@code TcpClient}.
+ * The two redial tests at the end are the exception - dialling is the behaviour they are about -
+ * and they point at port 1 rather than at {@code theFarmHas}'s 8099, where the Marlin simulator a
+ * developer has running would answer for real.
  */
 class PrinterReactorManagerTest {
 
@@ -46,6 +54,15 @@ class PrinterReactorManagerTest {
     private final PrinterReactorManager manager =
             new PrinterReactorManager(directory, PrinterState::new, event -> {
             });
+
+    /**
+     * The manager a test builds for itself, when it needs to hold the aggregate it asserts on.
+     *
+     * <p>Released below alongside the shared one. The redial tests open a runtime through an
+     * announcement rather than through {@code openReactor}, so nothing else in the test would
+     * know to let its two threads and its retry subscription go.
+     */
+    private PrinterReactorManager dialled;
 
     /**
      * A reactor now owns two schedulers, so a test that opens one and walks away leaks two threads.
@@ -57,6 +74,9 @@ class PrinterReactorManagerTest {
     @AfterEach
     void letGo() {
         manager.release(id);
+        if (dialled != null) {
+            dialled.release(id);
+        }
     }
 
     private void theFarmHas(UUID machine) {
@@ -192,6 +212,104 @@ class PrinterReactorManagerTest {
     private MRegisteredEvent announcing(MachineSpec spec) {
         return new MRegisteredEvent(id, "a printer", "localhost", 8099,
                 MachineProfile.unknown(), spec, MachineConnectionState.OFFLINE, LocalDateTime.now());
+    }
+
+    /**
+     * Five attempts an hour apart, which in a test means one attempt and then nothing.
+     *
+     * <p>The dial below is refused - nothing listens on port 1 - and what that refusal does is the
+     * reason for the hour. With a single-attempt policy the series would end on the refusal,
+     * {@code gaveUp} would take the intent away, and a test asserting the intent would be racing a
+     * netty thread. With more attempts in hand the refusal reaches {@code doBeforeRetry} instead,
+     * which leaves the machine in {@code CONNECTING} and still wanting a connection - so both
+     * assertions below hold whichever side of the race the dial lands on.
+     */
+    private static final ConnectionPolicy ONE_SLOW_SERIES =
+            new ConnectionPolicy(5, Duration.ofHours(1), Duration.ofHours(1));
+
+    /**
+     * Port 1, because the owner's Marlin simulator really is listening on 8099 on this machine.
+     *
+     * <p>{@code theFarmHas} points at 8099, which is fine for every test above because none of
+     * them dials. These two do, so they point somewhere nothing can answer -
+     * {@code PrinterReactorEmissionTest} uses the same port for the same reason.
+     */
+    private MRegisteredEvent announcing(MachineConnectionState state) {
+        return new MRegisteredEvent(id, "a printer", "localhost", 1,
+                MachineProfile.unknown(), MachineSpec.undeclared(), state, LocalDateTime.now());
+    }
+
+    private PrinterReactorManager aFarmThatDials(Map<UUID, PrinterState> aggregates) {
+        directory.onRegistered(announcing(MachineConnectionState.OFFLINE));
+        dialled = new PrinterReactorManager(directory,
+                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
+        }, ONE_SLOW_SERIES);
+        return dialled;
+    }
+
+    /**
+     * A stale announcement must not redial a machine that was told to disconnect.
+     *
+     * <p><strong>This is the construction-time version of a test that previously only caught it by
+     * timing.</strong> {@code ConnectivityIntegrationTest.disconnectingClosesTheSocket} in
+     * {@code :app} failed with "timed out after PT30S waiting for the machine to report OFFLINE":
+     * the aggregate reached {@code OFFLINE} immediately and was dialled straight back out of it,
+     * thirty times in one test window, so the await expired on a machine that never settled.
+     *
+     * <p>The sequence is the one that happens on a real farm. The roster republishes
+     * {@code MRegisteredEvent} about seven times per connect - once per firmware report, once per
+     * capability - and since #54 those republications are queued on the printer's listener thread
+     * rather than running inline on the aggregate's, so a copy of "it was linked" can arrive
+     * <em>after</em> a disconnect the user asked for in between. It always could; the hand-off
+     * changed the interleaving from unlikely to every run.
+     *
+     * <p>The observable is the aggregate's intent and its state, not whether a socket opened.
+     * {@code handleConnectCmd} puts {@code printer.handle(cmd)} first, synchronously on the
+     * calling thread and before anything touches netty, so a redial that happened at all would be
+     * visible here whatever the dial did afterwards.
+     */
+    @Test
+    void aStaleAnnouncementDoesNotRedialAMachineThatWasToldToDisconnect() {
+        var aggregates = new HashMap<UUID, PrinterState>();
+        var farm = aFarmThatDials(aggregates);
+        var linked = announcing(MachineConnectionState.IDLE);
+        farm.onRegistered(linked);
+
+        farm.runtimeOf(id).handleConnectCmd(new ConnectCmd(false));
+        farm.onRegistered(linked);
+
+        assertEquals(MachineConnectionState.OFFLINE, aggregates.get(id).getConnection().state(),
+                "a republication that arrived late is not a reason to dial");
+        assertFalse(aggregates.get(id).wantsToBeConnected(),
+                "and it is not a reason to want a connection either");
+    }
+
+    /**
+     * The first announcement of a linked machine does dial it, which is the whole point.
+     *
+     * <p>Nothing covered this before. {@code StartupAnnouncementFlowTest} in {@code :app} asserts
+     * the directory entry's state and stops there, and no test anywhere said that this branch
+     * opens a runtime or asks it for a connection - so the intent gate in
+     * {@code PrinterReactor.connect()} could have killed the startup redial outright and the whole
+     * suite would have stayed green.
+     *
+     * <p>It also pins the half of the fix that is not about staleness: the redial crosses the
+     * aggregate now, so the intent is <em>set</em>. It never used to be, which left
+     * {@code connect()}'s own retry filter asking whether a connection was wanted on a machine
+     * nobody had said so about - and a machine redialled at startup therefore gave up after its
+     * first refusal.
+     */
+    @Test
+    void aFirstAnnouncementOfALinkedMachineDialsIt() {
+        var aggregates = new HashMap<UUID, PrinterState>();
+        var farm = aFarmThatDials(aggregates);
+
+        farm.onRegistered(announcing(MachineConnectionState.IDLE));
+
+        assertNotNull(farm.runtimeOf(id), "the startup redial is what stands the runtime up");
+        assertTrue(aggregates.get(id).wantsToBeConnected(),
+                "the redial is a command, so it sets the intent the retry filter reads");
+        assertEquals(MachineConnectionState.CONNECTING, aggregates.get(id).getConnection().state());
     }
 
     /**

@@ -312,6 +312,53 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
         await("the socket to close at the machine", () -> !printer.sessionOpen());
     }
 
+    /**
+     * A machine told to disconnect stays disconnected, and the roster catching up does not dial it.
+     *
+     * <p><strong>This is the claim {@link #disconnectingClosesTheSocket()} above was making by
+     * accident, and it was making it as a timeout.</strong> That test awaited {@code OFFLINE} and
+     * spent thirty seconds not getting it, because the machine reached {@code OFFLINE} at once and
+     * was dialled straight back out of it - thirty "dialling it again" lines and eleven
+     * {@code -> CONNECTING} transitions in one test window. A timeout says the farm is slow; it
+     * took reading the log to find that the farm was redialling a printer nobody had asked it to.
+     *
+     * <p>So the fact is stated at the far boundary instead, where it cannot be mistaken for
+     * slowness: <strong>the machine counts the sessions opened to it, and there must still be
+     * exactly one</strong>. A redial is a second TCP connection and the mock sees every one -
+     * {@link #aMachineCanBeDialledAgainAfterADisconnect()} below is the same counter reading two,
+     * deliberately, which is what makes one here mean anything.
+     *
+     * <p><strong>Why a disconnect is the moment this breaks.</strong> {@code MRegisteredEvent} is a
+     * statement of current fact, and the roster republishes it about seven times per connect - once
+     * per firmware report, once per capability line - while {@code PrinterReactorManager} dials
+     * anything it sees announced as linked. Since issue #54 those republications are queued on the
+     * printer's own listener thread rather than running inline on the aggregate's, so copies of
+     * "it was linked" arrive <em>after</em> a disconnect asked for in between, each carrying a
+     * connection state that was true a moment ago and is not any more. The hole was always there;
+     * the hand-off changed the odds of falling into it from long to certain.
+     *
+     * <p>{@link #quiet()} rather than an await, per the integration-test spec's rule for a claim
+     * that something does <em>not</em> happen: the only honest way to make it is to give the thing
+     * long enough to have happened. The redial was immediate on every failing run.
+     */
+    @Test
+    void aDisconnectedMachineIsNotRedialledWhenTheRosterCatchesUp() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("left alone", printer);
+        connectAndWait(id);
+        assertEquals(1, printer.sessions(), "one dial is one session; the claim below starts here");
+
+        disconnect(id);
+        await("the machine to report OFFLINE", () -> "OFFLINE".equals(connectionState(id)));
+        quiet();
+
+        assertEquals("OFFLINE", connectionState(id),
+                "nothing asked this machine to reconnect, so nothing may have put it back on the line");
+        assertEquals(1, printer.sessions(),
+                "a redial is a second session at the machine, and the only thing that could have"
+                        + " ordered one is a roster announcement that arrived after the disconnect");
+    }
+
     /** And it can be dialled again afterwards, which is a second session at the machine. */
     @Test
     void aMachineCanBeDialledAgainAfterADisconnect() {

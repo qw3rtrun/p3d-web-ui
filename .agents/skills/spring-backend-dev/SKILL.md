@@ -652,6 +652,43 @@ same defect in a new place.
 from `core`, and handing it back to the module that redials on announcements has exactly one
 possible effect.
 
+**A roster announcement is acted on once, when this module has no runtime for the machine, and a
+machine that is already running is left entirely alone.** That is a contract, not an optimisation.
+`MRegisteredEvent` is a statement of current fact re-published about seven times per connect - once
+per firmware report, once per capability line, each from a `@Transactional` listener in
+`MachineManagementImpl` that reads the row back and announces it again - so `onRegistered` sees "it
+was linked" long after it stopped being true. The javadoc used to argue the repetition was harmless
+because `connect()` "declines to start a second attempt while one is in flight"; that clause was
+load-bearing and false at the one moment it mattered, because `disconnect()` disposes the attempt
+and nulls it, so a republication queued behind a disconnect found nothing in flight and redialled.
+Thirty "dialling it again" lines and eleven `-> CONNECTING` transitions in one test window, and
+`ConnectivityIntegrationTest.disconnectingClosesTheSocket` timing out after thirty seconds on a
+machine that never settled.
+
+**The gate is whether a runtime exists; the announcement's own `getState()` cannot be it.** That
+state is the *persisted* one and it lags the live aggregate by however much of the printer's
+listener queue is still in front of the `MConnectionChangedEvent` that would correct it - the
+republication triggers and the connection fact travel the same single-consumer queue, and the
+triggers are ahead. The copies that still say `IDLE` for a machine told to disconnect a millisecond
+ago are exactly the ones that do the damage. Whether the module holds a runtime is not stale: at
+startup there is none, and afterwards there is one that has already been told what to do by
+something closer to the truth.
+
+**The startup redial crosses the aggregate, like every other operating command.**
+`openReactor(id).handleConnectCmd(new ConnectCmd(true))`, not `openReactor(id).connect()`. The bare
+`connect()` was the write side going round `PrinterState.handle(ConnectCmd)`, and it cost two
+things: the intent was never set, so a stale announcement could redial a machine whose aggregate
+said OFFLINE; and `connect()`'s own `Retry.backoff(...).filter(cause ->
+printer.wantsToBeConnected())` was consulting an intent nobody had established, so **a machine
+redialled at startup gave up after its first refusal** and nothing said so. Nothing covered that,
+which is why it was never seen.
+
+**`PrinterReactor.connect()` refuses to dial a machine whose aggregate has not asked for a
+connection**, as its first statement and before the in-flight check, and it logs the refusal. That
+is what makes its "safe to call in any state" claim true rather than nearly true, and it is the
+backstop for any future caller that skips the aggregate the way the startup redial did. It is not
+silent because thirty seconds of a test timing out is what the silence cost.
+
 Two rules for anything that touches the runtime:
 
 - **A reactor is a resource and must be released.** `PrinterReactorManager` owns the map and
@@ -1361,9 +1398,25 @@ the source, not suspected.
   thread, the aggregate's own, and the listener's. Volatile buys the happens-before and not
   atomicity: "is an attempt already in flight" remains a check-then-act. Closing it means deciding
   what a concurrent connect and disconnect *mean*, which is a command-semantics question rather
-  than a threading one.
+  than a threading one. **The two gates above narrow it without closing it**: the listener thread
+  now reaches `connect()` only for a machine with no runtime at all, and the intent check makes a
+  dial that races a disconnect lose whenever the disconnect's `wanted = false` is visible first.
+  It is still a check-then-act on two fields.
+- **A stale `MachineSpec` can overwrite a fresh edit, in `PrinterReactorManager.redeclare`.** It
+  takes the same republished `MRegisteredEvent` the redial is now gated against, and hands its spec
+  to a running aggregate - so an edit that commits between the republication's `repo.findById` and
+  its listeners running is overwritten. The window is one transaction rather than the whole listener
+  queue, because the republication reads the row fresh at publication time, which is why this is
+  lower stakes than the connection case and is left alone. The same shape, and no observed failure.
+- **`PrinterDirectory.Entry.state` has no production reader.** `PrinterReactorManager` reads
+  `event.getState()`, `FarmEvents` reads the runtime, and `CoreConfiguration.aggregates()` reads
+  only `profile()` and `spec()`; the one reader anywhere is `StartupAnnouncementFlowTest` in `:app`.
+  So the stale announcement that overwrites it costs nothing today - but it is a write-only field,
+  which is the defect B3 removed from `PrinterEntity.connected`, and the next person to read it
+  will read a value that can be behind the aggregate.
 - **Three methods still touch the aggregate from the caller's thread.** `handleConnectCmd(ConnectCmd)`
-  calls `printer.handle(cmd)` on the HTTP thread, and `declared(spec)` and `blocksInFlight()` read
+  calls `printer.handle(cmd)` on the HTTP thread - and, since the startup redial became a command,
+  on the printer's listener thread as well - and `declared(spec)` and `blocksInFlight()` read
   the aggregate from whatever thread arrives. #54 did not close these - they predate it and fixing
   them changes command semantics (a POST would stop being able to report a refusal synchronously).
   So "one aggregate, one thread" is true of the *reply* path and aspirational on the command path.

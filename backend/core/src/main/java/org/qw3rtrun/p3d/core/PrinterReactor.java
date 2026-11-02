@@ -324,8 +324,28 @@ public class PrinterReactor {
      *
      * <p>{@code maxAttempts} on the policy counts the first dial, which Reactor's
      * {@code Retry.backoff} does not - it counts retries - hence the minus one.
+     *
+     * <p><strong>The intent is the first gate, and it is what makes "safe to call in any state"
+     * actually true.</strong> {@link PrinterState#wantsToBeConnected()} is already the authority
+     * the retry filter below consults, so a series that is running stops the moment the intent is
+     * withdrawn; until now the <em>start</em> of a series consulted nothing. The difference showed
+     * up as a printer that was told to disconnect and dialled straight back out of {@code OFFLINE}:
+     * {@link #disconnect()} disposes {@link #attempts} and nulls it, so the check below finds
+     * nothing in flight and a caller arriving a moment later is made perfectly welcome. The caller
+     * that arrives is {@code PrinterReactorManager.onRegistered}, on this machine's listener
+     * thread, carrying a roster announcement that was queued before the disconnect was asked for.
+     *
+     * <p>It is logged rather than silent because the cost of the silence was measured:
+     * {@code ConnectivityIntegrationTest.disconnectingClosesTheSocket} spent thirty seconds waiting
+     * for a machine to report {@code OFFLINE} that was being redialled out of it, and the log said
+     * only that the farm was connecting.
      */
     public void connect() {
+        if (!printer.wantsToBeConnected()) {
+            log.info("{} has not been asked to be connected, so it is not being dialled",
+                    printer.getId());
+            return;
+        }
         if (attempts != null && !attempts.isDisposed()) {
             log.debug("already connecting to {}", printer.getId());
             return;

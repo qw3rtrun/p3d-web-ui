@@ -64,19 +64,16 @@ frontend {
     nodeInstallDirectory = file("${projectDir}/.node")
     assembleScript.set("run build")
 //    cleanScript.set("run clean")
-//    checkScript.set("run check")
+    checkScript.set("run type-check")
 }
 
-tasks.register("copyVueFiles") {
-    doLast {
-        copy {
-            from "${buildDir}/dist/"
-            into "${buildDir}/resources/main/static"
-        }
-    }
+tasks.register("copyVueFiles", Copy) {
+    dependsOn("assembleFrontend")
+    from "${buildDir}/dist"
+    into "${buildDir}/resources/main/static"
 }
 
-tasks.withType(JavaCompile).configureEach {
+tasks.named("processResources") {
     dependsOn("copyVueFiles")
 }
 

@@ -3,51 +3,24 @@ package org.qw3rtrun.p3d.core;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
+import org.qw3rtrun.p3d.api.model.MachineProfile;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
-import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
-import org.qw3rtrun.p3d.api.model.MachineProfile;
-import org.qw3rtrun.p3d.api.model.MachineSpec;
-import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
-import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
-import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
-import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
-import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.command.*;
+import org.qw3rtrun.p3d.g.marlin.event.*;
 import org.qw3rtrun.p3d.g.protocol.BusyRs;
 import org.qw3rtrun.p3d.g.protocol.ErrorRs;
+import org.qw3rtrun.p3d.g.protocol.GEventRs;
 import org.qw3rtrun.p3d.g.protocol.GRq;
-import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
-import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
-import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
-import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
-import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
-import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
-import org.qw3rtrun.p3d.g.marlin.command.FanOff;
-import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
-import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition;
-import org.qw3rtrun.p3d.g.marlin.command.InitSDCard;
-import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
-import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
-import org.qw3rtrun.p3d.g.marlin.command.RelativePositioning;
-import org.qw3rtrun.p3d.g.marlin.command.ReleaseSDCard;
-import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
-import org.qw3rtrun.p3d.g.marlin.command.SelectSDFile;
-import org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed;
-import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber;
-import org.qw3rtrun.p3d.g.marlin.command.StartOrResumeSDPrint;
-import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
-import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
-import org.qw3rtrun.p3d.g.marlin.event.SdCardRs;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
 import java.math.RoundingMode;
-import java.util.UUID;
+import java.time.LocalDateTime;
+import java.util.*;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -115,7 +88,9 @@ public class PrinterState implements PrinterAggregate {
         this.connection = connection;
     }
 
-    /** What this machine reported about itself, never null. */
+    /**
+     * What this machine reported about itself, never null.
+     */
     public MachineProfile getProfile() {
         return profile;
     }
@@ -130,12 +105,16 @@ public class PrinterState implements PrinterAggregate {
      */
     private volatile int blocksInFlight;
 
-    /** See {@link #blocksInFlight}. */
+    /**
+     * See {@link #blocksInFlight}.
+     */
     public int getBlocksInFlight() {
         return blocksInFlight;
     }
 
-    /** What a human declared about this machine, never null. */
+    /**
+     * What a human declared about this machine, never null.
+     */
     public MachineSpec getSpec() {
         return spec;
     }
@@ -151,22 +130,30 @@ public class PrinterState implements PrinterAggregate {
         this.spec = declared == null ? MachineSpec.undeclared() : declared;
     }
 
-    /** How many tools to believe this machine has - see {@link MachineSpec#extruderCountOr}. */
+    /**
+     * How many tools to believe this machine has - see {@link MachineSpec#extruderCountOr}.
+     */
     public int extruderCount() {
         return spec.extruderCountOr(profile);
     }
 
-    /** Where the machine's connection is, as a value a caller can be handed. */
+    /**
+     * Where the machine's connection is, as a value a caller can be handed.
+     */
     public ConnectionStatus getConnection() {
         return connection.status();
     }
 
-    /** The current connection state as the event that would have announced it. */
+    /**
+     * The current connection state as the event that would have announced it.
+     */
     public ConnectionStateChanged connectionAsEvent() {
         return connection.current();
     }
 
-    /** Whether a connection is still wanted - what makes a dropped link worth retrying. */
+    /**
+     * Whether a connection is still wanted - what makes a dropped link worth retrying.
+     */
     public boolean wantsToBeConnected() {
         return connection.wanted();
     }
@@ -398,7 +385,11 @@ public class PrinterState implements PrinterAggregate {
         return temperatureControl.getHotend();
     }
 
-/**
+    public Collection<GEventRs<?>> state() {
+        return Collections.singleton(temperatureControl.get());
+    }
+
+    /**
      * Two decimals.
      *
      * <p>The {@code String.format("%.2f", …)} in the encoder this replaces used the default locale,
@@ -455,7 +446,9 @@ public class PrinterState implements PrinterAggregate {
 
     // ------------------------------------------------------------------ motion, fans, settings
 
-    /** {@code G28} - home the axes the command names, or all of them. */
+    /**
+     * {@code G28} - home the axes the command names, or all of them.
+     */
     public void handle(AutoHome home) {
         passThrough(home);
     }
@@ -484,27 +477,37 @@ public class PrinterState implements PrinterAggregate {
         passThrough(relative);
     }
 
-    /** {@code G90} - absolute mode. The other half of the modal pair above. */
+    /**
+     * {@code G90} - absolute mode. The other half of the modal pair above.
+     */
     public void handle(AbsolutePositioning absolute) {
         passThrough(absolute);
     }
 
-    /** {@code M106} - fan speed, on Marlin's 0..255 PWM scale with the fan index in {@code P}. */
+    /**
+     * {@code M106} - fan speed, on Marlin's 0..255 PWM scale with the fan index in {@code P}.
+     */
     public void handle(SetFanSpeed fan) {
         passThrough(fan);
     }
 
-    /** {@code M107} - fan off. */
+    /**
+     * {@code M107} - fan off.
+     */
     public void handle(FanOff fan) {
         passThrough(fan);
     }
 
-    /** {@code M500} - write the settings to EEPROM. */
+    /**
+     * {@code M500} - write the settings to EEPROM.
+     */
     public void handle(SaveSettings save) {
         passThrough(save);
     }
 
-    /** {@code M114} - where is the toolhead. Answered by a {@code PositionRs} into {@link #on}. */
+    /**
+     * {@code M114} - where is the toolhead. Answered by a {@code PositionRs} into {@link #on}.
+     */
     public void handle(GetCurrentPosition position) {
         passThrough(position);
     }
@@ -544,7 +547,9 @@ public class PrinterState implements PrinterAggregate {
         passThrough(list);
     }
 
-    /** {@code M30 <name>} - delete a file from the card. */
+    /**
+     * {@code M30 <name>} - delete a file from the card.
+     */
     public void handle(DeleteSDFile delete) {
         passThrough(delete);
     }
@@ -561,7 +566,9 @@ public class PrinterState implements PrinterAggregate {
         passThrough(select);
     }
 
-    /** {@code M24} - start or resume printing the selected file. */
+    /**
+     * {@code M24} - start or resume printing the selected file.
+     */
     public void handle(StartOrResumeSDPrint start) {
         passThrough(start);
     }
@@ -637,7 +644,9 @@ public class PrinterState implements PrinterAggregate {
         transition(connection.linkFailed(why));
     }
 
-    /** The attempts ran out. Nothing retries after this until someone asks again. */
+    /**
+     * The attempts ran out. Nothing retries after this until someone asks again.
+     */
     public void onGaveUp(String why) {
         this.g = null;
         transition(connection.gaveUp(why));
@@ -685,7 +694,9 @@ public class PrinterState implements PrinterAggregate {
         emitter.accept(abandoned);
     }
 
-    /** {@code busy:} - the machine is working and will not answer for a while. */
+    /**
+     * {@code busy:} - the machine is working and will not answer for a while.
+     */
     public void on(BusyRs<?> busy) {
         transition(connection.busyReported(busy.getReason()));
     }
@@ -762,12 +773,16 @@ public class PrinterState implements PrinterAggregate {
         this.emitter = emitter;
     }
 
-    /** The machine said something, whatever it was. See {@link #onEvent}. */
+    /**
+     * The machine said something, whatever it was. See {@link #onEvent}.
+     */
     private void heard() {
         transition(connection.replyReceived());
     }
 
-    /** Announces a transition, if there was one. A null is "nothing moved" and not a failure. */
+    /**
+     * Announces a transition, if there was one. A null is "nothing moved" and not a failure.
+     */
     private void transition(ConnectionStateChanged change) {
         if (change == null) {
             return;

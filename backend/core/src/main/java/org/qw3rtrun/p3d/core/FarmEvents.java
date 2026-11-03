@@ -4,12 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.control.FarmView;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
-import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
-import org.qw3rtrun.p3d.api.msg.EventMessage;
-import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
-import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
-import org.qw3rtrun.p3d.api.msg.MachineJoinedFarm;
-import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
+import org.qw3rtrun.p3d.api.msg.*;
 import org.reactivestreams.Publisher;
 import org.springframework.context.event.EventListener;
 import reactor.core.publisher.Flux;
@@ -17,8 +12,8 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * One stream for the whole farm - plan item D2.
@@ -77,7 +72,9 @@ public class FarmEvents implements FarmView {
      */
     private final Outbox<EventMessage> outbox = new Outbox<>(this::publish);
 
-    /** Which machines have been announced, so a re-announcement is not a second arrival. */
+    /**
+     * Which machines have been announced, so a re-announcement is not a second arrival.
+     */
     private final Set<UUID> known = ConcurrentHashMap.newKeySet();
 
     /**
@@ -121,13 +118,17 @@ public class FarmEvents implements FarmView {
                 .defaultIfEmpty(offline());
     }
 
-    /** Nothing has dialled it, so there is nothing it could be doing. */
+    /**
+     * Nothing has dialled it, so there is nothing it could be doing.
+     */
     private static ConnectionStateChanged offline() {
         return new ConnectionStateChanged(
                 MachineConnectionState.OFFLINE, MachineConnectionState.OFFLINE, 0, null);
     }
 
-    /** Everything a machine says, on its way to whoever is watching the whole farm. */
+    /**
+     * Everything a machine says, on its way to whoever is watching the whole farm.
+     */
     @EventListener
     public void onMachineEvent(EventMessage message) {
         emit(message);

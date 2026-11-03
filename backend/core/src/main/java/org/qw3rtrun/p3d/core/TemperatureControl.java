@@ -19,11 +19,7 @@ import java.util.Objects;
 @Getter
 public class TemperatureControl {
 
-    /** Null until the machine has reported one. */
-    private HeaterReading hotend;
-
-    /** Null until the machine has reported one, which some builds never do. */
-    private HeaterReading bed;
+    private TemperatureRs<?> current;
 
     /**
      * Takes a report, and says whether it changed anything.
@@ -32,11 +28,20 @@ public class TemperatureControl {
      * the reply made: no bed reading is not a bed reading of zero.
      */
     public boolean on(TemperatureRs<?> event) {
-        var isChanged = !Objects.equals(hotend, event.getHotend())
-                || !Objects.equals(bed, event.getBed());
-        this.hotend = event.getHotend();
-        this.bed = event.getBed();
+        var isChanged = !Objects.equals(current, event);
+        this.current = event;
         return isChanged;
     }
 
+    public HeaterReading getHotend() {
+        return current.getHotend();
+    }
+
+    public HeaterReading getBed() {
+        return current.getBed();
+    }
+
+    public TemperatureRs<?> get() {
+        return current;
+    }
 }

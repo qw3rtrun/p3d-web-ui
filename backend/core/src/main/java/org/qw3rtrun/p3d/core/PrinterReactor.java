@@ -1,16 +1,9 @@
 package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
-import org.qw3rtrun.p3d.api.model.MachineSpec;
-import org.reactivestreams.Publisher;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
-import org.qw3rtrun.p3d.api.msg.ConnectCmd;
-import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
-import org.qw3rtrun.p3d.api.msg.EventMessage;
-import org.qw3rtrun.p3d.api.msg.MCapabilityReportedEvent;
-import org.qw3rtrun.p3d.api.msg.MConnectionChangedEvent;
-import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
-import org.springframework.context.ApplicationEventPublisher;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
+import org.qw3rtrun.p3d.api.msg.*;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
@@ -20,6 +13,8 @@ import org.qw3rtrun.p3d.terminal.HostTerminal;
 import org.qw3rtrun.p3d.terminal.PublisherQueue;
 import org.qw3rtrun.p3d.terminal.TerminalManager;
 import org.qw3rtrun.p3d.terminal.msg.Priority;
+import org.reactivestreams.Publisher;
+import org.springframework.context.ApplicationEventPublisher;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -81,7 +76,9 @@ public class PrinterReactor {
      */
     private final Scheduler listeners;
 
-    /** Where the backoff between connection attempts is timed. A virtual one in tests. */
+    /**
+     * Where the backoff between connection attempts is timed. A virtual one in tests.
+     */
     private final Scheduler retries;
 
     /**
@@ -624,7 +621,9 @@ public class PrinterReactor {
         return printer.getBlocksInFlight();
     }
 
-    /** Passes an edited spec to the aggregate - see {@code PrinterReactorManager.redeclare}. */
+    /**
+     * Passes an edited spec to the aggregate - see {@code PrinterReactorManager.redeclare}.
+     */
     public void declared(MachineSpec spec) {
         printer.declared(spec);
     }
@@ -641,7 +640,9 @@ public class PrinterReactor {
         return Mono.defer(() -> Mono.justOrEmpty(printer.getTemperature())).publishOn(executor);
     }
 
-    /** Where the machine's connection is, answered without opening the stream. */
+    /**
+     * Where the machine's connection is, answered without opening the stream.
+     */
     public Mono<ConnectionStatus> connection() {
         return Mono.defer(() -> Mono.just(printer.getConnection())).publishOn(executor);
     }
@@ -677,6 +678,12 @@ public class PrinterReactor {
                 .publishOn(executor)
                 .doOnNext(rep -> log.info("<- {}", rep));
     }
+
+    public Flux<EventMessage> current() {
+        return Flux.fromIterable(printer.state())
+                .map(state -> new EventMessage(printer.getId(), state));
+    }
+
 
     /**
      * One application command, as the Marlin commands that carry it, applied as a single task.

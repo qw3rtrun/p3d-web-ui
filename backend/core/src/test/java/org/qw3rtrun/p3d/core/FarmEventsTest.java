@@ -13,6 +13,7 @@ import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.api.msg.MachineJoinedFarm;
 import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
@@ -21,6 +22,7 @@ import reactor.test.StepVerifier;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -230,6 +232,38 @@ class FarmEventsTest {
                 .verifyComplete();
 
         // The only reactor this file opens, and a reactor owns two threads now - see #54.
+        reactors.release(id);
+    }
+
+    /**
+     * A machine that has reported a temperature is drawn with it, and with nothing else it said.
+     *
+     * <p>The row's two figures - where the connection is and how hot the machine is - arrive
+     * before anything live, so a dashboard opened on an idle farm is not a column of blanks until
+     * the next auto-report. The firmware the machine also reported is in its own snapshot and
+     * deliberately not in the farm's: forty machines' capabilities on every page load is a few
+     * thousand messages that no row draws.
+     */
+    @Test
+    void aMachineThatHasReportedATemperatureIsDrawnWithIt() {
+        var id = theFarmHas("alpha");
+        var aggregates = new HashMap<UUID, PrinterState>();
+        reactors = new PrinterReactorManager(directory,
+                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
+        });
+        farm = new FarmEvents(directory, reactors);
+        reactors.openReactor(id);
+        aggregates.get(id).onEvent(new FirmwareInfoRs(Map.of("FIRMWARE_NAME", "Marlin 2.1.2")));
+        aggregates.get(id).onEvent(temperature(210));
+
+        StepVerifier.create(Flux.from(farm.updates()).take(Duration.ofMillis(200)))
+                .assertNext(FarmEventsTest::assertState)
+                .assertNext(message -> {
+                    assertEquals(id, message.id());
+                    assertEquals(temperature(210), message.event());
+                })
+                .verifyComplete();
+
         reactors.release(id);
     }
 

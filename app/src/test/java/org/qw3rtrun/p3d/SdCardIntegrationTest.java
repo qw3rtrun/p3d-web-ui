@@ -244,6 +244,50 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         await("M22 to reach the machine", () -> printer.sent("M22"));
     }
 
+    // ---------------------------------------------------------------- a page opened later - #85
+
+    /**
+     * A Storage tab opened after the card was listed shows the card at once.
+     *
+     * <p>The listing is asked for and answered on one stream; a second stream is opened afterwards
+     * and the machine says nothing more. So what it shows can only have come from what the
+     * aggregate holds, which is the point: before #85 a late page drew an empty table until
+     * somebody pressed "list" again.
+     */
+    @Test
+    void aPageOpenedLaterIsHandedTheCard() {
+        var printer = machine(MockPrinter.marlin()).withFile("TEST.GCO", 47);
+        var id = register("listed earlier", printer);
+        var events = connectAndSettle(id, printer);
+        command(id, "/sd/list").expectStatus().isOk();
+        events.await("SdFileList");
+
+        var late = watch(id);
+
+        var listing = late.await("SdFileList");
+        assertEquals(List.of("TEST.GCO"), names(listing));
+        assertTrue(late.saw("SdCardOk"), "a listed card is a mounted one: " + late.types());
+    }
+
+    /** And once {@code M22} has gone out, a page opened afterwards is not shown a card that is not there. */
+    @Test
+    void aReleasedCardIsNotHandedToALatePage() {
+        var printer = machine(MockPrinter.marlin()).withFile("TEST.GCO", 47);
+        var id = register("released earlier", printer);
+        var events = connectAndSettle(id, printer);
+        command(id, "/sd/list").expectStatus().isOk();
+        events.await("SdFileList");
+        command(id, "/sd/release").expectStatus().isOk();
+        await("M22 to reach the machine", () -> printer.sent("M22"));
+
+        var late = watch(id);
+
+        late.await("ConnectionStateChanged");
+        quiet();
+        assertFalse(late.saw("SdFileList"), "the card was released: " + late.types());
+        assertFalse(late.saw("SdCardOk"), "the card was released: " + late.types());
+    }
+
     // ---------------------------------------------------------------- writing a file to the card
 
     /**

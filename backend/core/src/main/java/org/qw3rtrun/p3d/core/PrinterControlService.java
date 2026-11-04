@@ -63,7 +63,7 @@ public class PrinterControlService implements PrinterControl {
 
     @Override
     public Flux<EventMessage> updates(UUID id) {
-        return reactor(id).flatMapMany(pr -> Flux.concat(pr.current(), pr.updates()));
+        return reactor(id).flatMapMany(PrinterReactor::updates);
     }
 
     @Override

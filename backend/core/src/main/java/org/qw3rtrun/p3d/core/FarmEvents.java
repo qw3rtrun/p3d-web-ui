@@ -4,16 +4,21 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.control.FarmView;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
-import org.qw3rtrun.p3d.api.msg.*;
+import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
+import org.qw3rtrun.p3d.api.msg.EventMessage;
+import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
+import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
+import org.qw3rtrun.p3d.api.msg.MachineJoinedFarm;
+import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
+import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
 import org.reactivestreams.Publisher;
 import org.springframework.context.event.EventListener;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.UUID;
 
 /**
  * One stream for the whole farm - plan item D2.
@@ -72,9 +77,7 @@ public class FarmEvents implements FarmView {
      */
     private final Outbox<EventMessage> outbox = new Outbox<>(this::publish);
 
-    /**
-     * Which machines have been announced, so a re-announcement is not a second arrival.
-     */
+    /** Which machines have been announced, so a re-announcement is not a second arrival. */
     private final Set<UUID> known = ConcurrentHashMap.newKeySet();
 
     /**
@@ -90,45 +93,53 @@ public class FarmEvents implements FarmView {
      */
     @Override
     public Publisher<EventMessage> updates() {
-        return Flux.defer(() -> Flux.fromIterable(directory.all()))
-                .concatMap(entry -> currentStateOf(entry.id())
-                        .map(change -> new EventMessage(entry.id(), change)))
-                .concatWith(farm.asFlux())
+        return CatchUp.snapshotThenLive("the farm stream",
+                        () -> Flux.defer(() -> Flux.fromIterable(directory.all()))
+                                .concatMap(entry -> currentStateOf(entry.id())),
+                        farm.asFlux(), SUBSCRIBER_BACKLOG)
                 .doOnSubscribe(s -> log.info("a farm-wide subscriber attached"));
     }
 
     /**
-     * Where one machine is, as the event that would have announced it.
-     *
-     * <p><strong>A {@code Mono} and not a blocking read, which is not a style preference.</strong>
-     * The first version called {@code reactor.connection().block()} while building the snapshot,
-     * and a snapshot is built on whichever thread subscribed - for an SSE endpoint that is a netty
-     * event loop. Reactor's own non-blocking-thread check turned it into a 500 rather than letting
-     * it stall the loop, which is the only reason it was a bug report instead of a farm that went
-     * quiet under load. The unit test missed it because a test subscribes on an ordinary thread.
+     * How far one dashboard may fall behind the farm before it loses a message. Forty machines
+     * auto-reporting once a second is a few seconds of this, and a dashboard that far behind is
+     * one that has stopped reading.
      */
-    private Mono<ConnectionStateChanged> currentStateOf(UUID machineId) {
-        var runtime = reactors.runtimeOf(machineId);
-        if (runtime == null) {
-            return Mono.just(offline());
-        }
-        return runtime.connection()
-                .map(status -> new ConnectionStateChanged(
-                        status.state(), status.state(), status.attempt(), status.reason()))
-                .defaultIfEmpty(offline());
-    }
+    private static final int SUBSCRIBER_BACKLOG = 1024;
 
     /**
-     * Nothing has dialled it, so there is nothing it could be doing.
+     * What a dashboard draws for one machine: where its connection is, and its last temperature if
+     * it has reported one - both as the events that would have announced them.
+     *
+     * <p><strong>A dashboard's share of the machine's snapshot, not all of it.</strong>
+     * {@link PrinterReactor#snapshot()} also carries the firmware and every capability, which a
+     * printer's own page may want and a row on a forty-machine dashboard does not; forty of those
+     * on every page load is a few thousand messages nobody draws.
+     *
+     * <p><strong>Non-blocking, which is not a style preference.</strong> The first version called
+     * {@code reactor.connection().block()} while building the snapshot, and a snapshot is built on
+     * whichever thread subscribed - for an SSE endpoint that is a netty event loop. Reactor's own
+     * non-blocking-thread check turned it into a 500 rather than letting it stall the loop, which
+     * is the only reason it was a bug report instead of a farm that went quiet under load. The
+     * snapshot read is built from volatile references and queues behind nothing.
      */
+    private Flux<EventMessage> currentStateOf(UUID machineId) {
+        var runtime = reactors.runtimeOf(machineId);
+        if (runtime == null) {
+            return Flux.just(new EventMessage(machineId, offline()));
+        }
+        return runtime.snapshot()
+                .filter(message -> message.event() instanceof ConnectionStateChanged
+                        || message.event() instanceof TemperatureRs<?>);
+    }
+
+    /** Nothing has dialled it, so there is nothing it could be doing. */
     private static ConnectionStateChanged offline() {
         return new ConnectionStateChanged(
                 MachineConnectionState.OFFLINE, MachineConnectionState.OFFLINE, 0, null);
     }
 
-    /**
-     * Everything a machine says, on its way to whoever is watching the whole farm.
-     */
+    /** Everything a machine says, on its way to whoever is watching the whole farm. */
     @EventListener
     public void onMachineEvent(EventMessage message) {
         emit(message);

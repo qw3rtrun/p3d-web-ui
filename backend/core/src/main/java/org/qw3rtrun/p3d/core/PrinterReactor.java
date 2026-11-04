@@ -3,7 +3,12 @@ package org.qw3rtrun.p3d.core;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
-import org.qw3rtrun.p3d.api.msg.*;
+import org.qw3rtrun.p3d.api.msg.ConnectCmd;
+import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
+import org.qw3rtrun.p3d.api.msg.EventMessage;
+import org.qw3rtrun.p3d.api.msg.MCapabilityReportedEvent;
+import org.qw3rtrun.p3d.api.msg.MConnectionChangedEvent;
+import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
@@ -47,6 +52,12 @@ public class PrinterReactor {
      */
     private static final int FARM_STREAM_BACKLOG = 256;
 
+    /**
+     * How far one subscriber of {@link #updates()} may fall behind before it loses a message - the
+     * same bound, for the same reason, one browser at a time. See {@link CatchUp}.
+     */
+    private static final int SUBSCRIBER_BACKLOG = 256;
+
     private final TerminalManager manager;
     private final PrinterState printer;
     private final ConnectionPolicy policy;
@@ -76,9 +87,7 @@ public class PrinterReactor {
      */
     private final Scheduler listeners;
 
-    /**
-     * Where the backoff between connection attempts is timed. A virtual one in tests.
-     */
+    /** Where the backoff between connection attempts is timed. A virtual one in tests. */
     private final Scheduler retries;
 
     /**
@@ -90,10 +99,22 @@ public class PrinterReactor {
      * netty's on a dropped link - so a collision is a question of load and not of correctness.
      *
      * <p>It is kept safe and fed through an outbox, rather than being made {@code unsafe()}: the
-     * {@code replay} sink's subscriber list is what an unsafe sink would leave unguarded, and the
-     * drain loop costs one atomic per event.
+     * sink's subscriber list is what an unsafe sink would leave unguarded, and the drain loop costs
+     * one atomic per event.
+     *
+     * <p><strong>Multicast, and it replays nothing.</strong> It used to be
+     * {@code replay().latestOrDefault(currentConnectionState)}, which handed a new subscriber
+     * <em>whatever was said last</em> - the connection state if nothing had happened, but otherwise
+     * a temperature, a position or a {@code BlocksAbandoned} from a job that was already over,
+     * presented as news. A late subscriber now gets the aggregate's
+     * {@link PrinterState#snapshot() snapshot} instead, which is facts rather than history - see
+     * {@link #updates()}.
+     *
+     * <p>{@code directBestEffort} because nothing is lost by it: the only subscriber of this sink
+     * is {@link CatchUp}'s feed, which requests everything and keeps the bounded per-subscriber
+     * buffer itself.
      */
-    private final Sinks.Many<EventMessage> updates;
+    private final Sinks.Many<EventMessage> updates = Sinks.many().multicast().directBestEffort();
 
     /**
      * Messages decided on but not yet put on {@link #updates}, oldest first.
@@ -257,17 +278,6 @@ public class PrinterReactor {
                 listeners, roster::publishEvent);
         this.toRoster = Handoff.lossless("the roster's facts about " + printer.getId(),
                 listeners, roster::publishEvent);
-        // One element of history, deliberately, and not the 256-deep backlog HostTerminal needed.
-        // The seed here answers "where is this machine", so that a browser attaching to the SSE
-        // stream learns the connection state without waiting for something to happen; a backlog
-        // would answer "what has this machine said", which on a farm running for days with nobody
-        // watching is every temperature reading since boot, handed to the first page that opens.
-        // The transport's case is the opposite one: its caller cannot subscribe until start() has
-        // already begun reading the socket, so a one-element history lost the opening exchange.
-        // Nothing here races a subscriber in that way - a reactor is built, then subscribed - and
-        // what a late subscriber would miss (firmware, capabilities) the roster has persisted.
-        this.updates = Sinks.many().replay()
-                .latestOrDefault(new EventMessage(printer.getId(), printer.connectionAsEvent()));
         this.printer.setEmitter(this::onEvent);
     }
 
@@ -621,9 +631,7 @@ public class PrinterReactor {
         return printer.getBlocksInFlight();
     }
 
-    /**
-     * Passes an edited spec to the aggregate - see {@code PrinterReactorManager.redeclare}.
-     */
+    /** Passes an edited spec to the aggregate - see {@code PrinterReactorManager.redeclare}. */
     public void declared(MachineSpec spec) {
         printer.declared(spec);
     }
@@ -640,9 +648,7 @@ public class PrinterReactor {
         return Mono.defer(() -> Mono.justOrEmpty(printer.getTemperature())).publishOn(executor);
     }
 
-    /**
-     * Where the machine's connection is, answered without opening the stream.
-     */
+    /** Where the machine's connection is, answered without opening the stream. */
     public Mono<ConnectionStatus> connection() {
         return Mono.defer(() -> Mono.just(printer.getConnection())).publishOn(executor);
     }
@@ -673,15 +679,38 @@ public class PrinterReactor {
         return printer.getConnection().linked();
     }
 
+    /**
+     * Where this machine is now, then everything it does next.
+     *
+     * <p><strong>A snapshot and not a replay.</strong> A subscriber - a browser opening a printer's
+     * page, or a job watching its machine - is handed the aggregate's {@link #snapshot()} first:
+     * the connection state, the profile, the card, the last temperature. So a page draws the printer as it
+     * is the moment it attaches, rather than a blank until the next auto-report, and a watcher is
+     * never handed a stale event from before it existed as if it had just happened.
+     *
+     * <p>The connection state is always first, which is what a subscriber can wait for to know
+     * the subscription is live.
+     *
+     * <p>The live half is listened to before the snapshot is read - see {@link CatchUp} for why
+     * that order, and what it costs, which is at most one repeated value.
+     */
     public Flux<EventMessage> updates() {
-        return updates.asFlux()
+        return CatchUp.snapshotThenLive("the update stream of " + printer.getId(),
+                        this::snapshot, updates.asFlux(), SUBSCRIBER_BACKLOG)
                 .publishOn(executor)
                 .doOnNext(rep -> log.info("<- {}", rep));
     }
 
-    public Flux<EventMessage> current() {
-        return Flux.fromIterable(printer.state())
-                .map(state -> new EventMessage(printer.getId(), state));
+    /**
+     * What this machine is right now, as the events that would have announced it - see
+     * {@link PrinterState#snapshot()}.
+     *
+     * <p>Read when subscribed, not when called, and read without a hop: it is built from volatile
+     * references to immutable values, so asking does not queue behind this machine's replies.
+     */
+    public Flux<EventMessage> snapshot() {
+        return Flux.defer(() -> Flux.fromIterable(printer.snapshot()))
+                .map(fact -> new EventMessage(printer.getId(), fact));
     }
 
 
@@ -840,7 +869,9 @@ public class PrinterReactor {
                     return;
                 }
                 Sinks.EmitResult result = updates.tryEmitNext(message);
-                if (result.isFailure()) {
+                // Nobody watching is the normal case for a machine no page has open, and with
+                // nothing replayed there is nothing to keep it for.
+                if (result.isFailure() && result != Sinks.EmitResult.FAIL_ZERO_SUBSCRIBER) {
                     log.warn("event dropped ({}): {}", result, message);
                 }
             }

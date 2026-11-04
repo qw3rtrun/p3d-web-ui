@@ -500,15 +500,17 @@ abstract class FarmIntegrationTest {
     /**
      * Opens the farm-wide channel - the one a dashboard holds instead of one per machine.
      *
-     * <p><strong>Register the machines first.</strong> Unlike a per-printer stream, this one has no
-     * replay sink behind it: what a late subscriber receives is a snapshot built from the machines
-     * the farm knows about at that moment, and nothing at all when it knows about none. Opening it
-     * before registering therefore produces a stream that is correct and silent, and the first thing
-     * a test asserts on it would be waiting for an event the subscription was too early to hear.
+     * <p><strong>Register the machines first.</strong> What a subscriber receives first is a
+     * snapshot built from the machines the farm knows about at that moment - each one's connection
+     * state and, if it has reported one, its last temperature - and nothing at all when it knows
+     * about none. Opening it before registering therefore produces a stream that is correct and
+     * silent, and the first thing a test asserts on it would be waiting for an event the
+     * subscription was too early to hear.
      *
      * <p>It is also the one guarantee a test gets that the subscription is <em>live</em>: the live
-     * sink is subscribed only when the snapshot completes. Wait for each machine's snapshot entry
-     * before causing anything, and cause it with a request rather than with a direct push.
+     * sink is subscribed before the snapshot is built, so once a machine's snapshot entry has
+     * arrived anything caused afterwards will be heard. Wait for it before causing anything, and
+     * cause it with a request rather than with a direct push.
      */
     protected Events watchTheFarm() {
         var events = new Events("/api-farm/stream");

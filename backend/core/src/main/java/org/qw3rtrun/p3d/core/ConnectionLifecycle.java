@@ -48,7 +48,14 @@ public final class ConnectionLifecycle {
     private final Duration busyTimeout;
     private final Clock clock;
 
-    private MachineConnectionState state = OFFLINE;
+    /*
+     * Volatile, and the next four with it, because they are read from threads that do not write
+     * them: a snapshot for a subscriber, PrinterReactor.connection() and linked() all read from
+     * whichever thread asks. Volatile buys visibility, not a consistent set - a reader can pair a
+     * new state with the previous reason for an instant - which is enough for a value that the
+     * next event on the stream corrects. The transitions themselves still need one thread.
+     */
+    private volatile MachineConnectionState state = OFFLINE;
 
     /**
      * Whether a connection is wanted, which is not the same question as whether there is one.
@@ -57,11 +64,11 @@ public final class ConnectionLifecycle {
      * running out of attempts. It is what {@link #linkFailed(String)} consults to decide between
      * retrying and resting.
      */
-    private boolean wanted;
+    private volatile boolean wanted;
 
-    private int attempt;
-    private String reason;
-    private LocalDateTime since;
+    private volatile int attempt;
+    private volatile String reason;
+    private volatile LocalDateTime since;
     private LocalDateTime lastBusyAt;
 
     public ConnectionLifecycle() {
@@ -95,9 +102,9 @@ public final class ConnectionLifecycle {
     /**
      * The current state as the event that would have announced it.
      *
-     * <p>What a late subscriber is handed: the replay sink behind {@code PrinterReactor.updates()}
-     * is seeded with this, so a browser attaching to a printer learns where it is immediately
-     * instead of waiting for the next thing to happen to it.
+     * <p>What a late subscriber is handed first: it leads {@code PrinterState.snapshot()}, so a
+     * browser attaching to a printer learns where it is immediately instead of waiting for the next
+     * thing to happen to it.
      */
     public ConnectionStateChanged current() {
         return new ConnectionStateChanged(state, state, attempt, reason);

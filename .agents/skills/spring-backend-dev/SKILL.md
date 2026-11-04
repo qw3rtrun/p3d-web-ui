@@ -558,14 +558,20 @@ The rules that follow, each paid for:
   design working, while it was in fact costing *every* dashboard the same event. Once the drain
   loop is in, `FAIL_NON_SERIALIZED` is unreachable and `FAIL_ZERO_SUBSCRIBER` is the ordinary case
   on a farm nobody is watching; anything else says something real and the wording has to say so.
-- **The replay seed stays one element deep.** `updates` is `replay().latestOrDefault(current state)`
-  and must not become a backlog. The seed answers *"where is this machine"* so a late SSE subscriber
-  learns the connection state without waiting; a backlog would answer *"what has this machine said"*,
-  which on a farm running for days with nobody watching is every temperature reading since boot
-  handed to the first page that opens. `HostTerminal` needed the opposite (256) for the opposite
-  reason: its caller cannot subscribe until `start()` has already begun reading the socket, so a
-  one-element history lost the opening exchange. Nothing races a subscriber here - a reactor is
-  built, then subscribed - and what a late subscriber misses, the roster has persisted.
+- **A late subscriber gets a snapshot, never a replay.** `PrinterReactor.updates` is a multicast
+  `directBestEffort` sink that keeps nothing; `updates()` opens with `PrinterState.snapshot()` -
+  connection state first, then firmware, capabilities, the card and the last temperature - built from what
+  the aggregate *holds*. It answers *"where is this machine"*; a replay answers *"what did it last
+  say"*, which hands a position or a `BlocksAbandoned` from an earlier job to a new watcher as if it
+  had just happened (#85), and a backlog is every temperature since boot handed to the first page
+  that opens. A new fact for the snapshot belongs in a `*Control` beside `TemperatureControl`,
+  `ProfileControl` and `SdCardControl`, with an `on(report)` and a `snapshot()`, never in a field
+  nothing hands out. Whether a repeat is re-announced is the reply's business: a temperature that
+  did not move is suppressed, a card reply never is - someone asked for it and is waiting.
+  `SdCardControl` forgets everything on a new session and on `M22`. **The live half is subscribed before the snapshot is read** (`CatchUp`): the other
+  order loses whatever is emitted between the two, and the cost of this one is at most a repeated
+  value. `HostTerminal` keeps a 256-deep replay for the opposite reason: its caller cannot subscribe
+  until `start()` has already begun reading the socket.
 - **Prove it by forcing the collision, not by hoping for one.** Reactor's serialisation guard is
   re-entrant for the thread that holds it, so a refusal needs a *different* thread inside the sink
   at that moment. `PrinterReactorEmissionTest` and `FarmEventsEmissionTest` park the first emitter
@@ -823,9 +829,9 @@ show.
   through `Outcomes.found`.
 - **SSE is what the UI actually uses**: `produces = TEXT_EVENT_STREAM_VALUE` on
   `/api-printer/{id}/stream`, consumed by `EventSource` in `static/js/lib/client.js`. It is the
-  working live channel and the one to extend. **The replay sink is seeded with the current
-  connection state**, so a late subscriber learns where a machine is without waiting for something
-  to happen to it; `GET /api-printer/{id}/connection` answers the same question without a stream.
+  working live channel and the one to extend. **It opens with the aggregate's snapshot** - the
+  connection state, the profile and the last temperature - so a late subscriber learns where a
+  machine is without waiting for something to happen to it; `GET /api-printer/{id}/connection` answers the same question without a stream.
 - **The farm-wide stream is `GET /api-farm/stream`** (plan item D2), and it is what a dashboard
   should hold instead of one `EventSource` per machine. **It opens nothing**: `FarmEvents` listens
   on the application event bus, where every machine's events already go, rather than subscribing
@@ -1222,13 +1228,12 @@ the source, not suspected.
   is the floor of what was lost, never the ceiling, and nothing at this layer can produce the
   ceiling - an `ok` covers acceptance into the planner and what a firmware did with a block after
   that is not something a host is told.
-- **A watcher started by a new feed can be handed the previous feed's last event.**
-  `PrinterReactor.updates()` is `Sinks.many().replay().latestOrDefault(...)`, so a subscriber gets
-  the stream's *latest* message before any new one. `JobFeeder.watchTheLink` tolerates that because
-  the replayed default is a linked connection state its filter drops, and `watchForAbandonedBlocks`
-  is displaced in every reachable path - a failed print is followed by `coolDown`'s five commands
-  and their acknowledgements - but neither is *guaranteed*. The clean fix is a timestamp on
-  `EventMessage`, which is a change to `:backend:api` and its own piece of work.
+- **A watcher started by a new feed is no longer handed the previous feed's last event** (#85).
+  `PrinterReactor.updates()` used to replay its latest message, so `watchForAbandonedBlocks` could
+  see an earlier job's `BlocksAbandoned`. It now opens with the snapshot, which carries no event
+  about blocks, and `watchTheLink` sees a linked connection state its filter drops. Keep it that
+  way: nothing that *happened* - as opposed to something the aggregate *holds* - goes into
+  `PrinterState.snapshot()`.
 - **A decision taken on `updates()` races a decision taken on the feed's own `Mono`, and on a short
   file the race is even.** Both halves of "did this print finish or break" travel asynchronously and
   on different threads: a `BlocksAbandoned` crosses `gEvent()`'s `publishOn(executor)` and then

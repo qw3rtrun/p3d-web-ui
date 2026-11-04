@@ -98,6 +98,37 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
+     * A page opened on a warm printer shows its temperature at once - #85.
+     *
+     * <p>The stream used to replay only whatever was said last, so a page opened between two
+     * auto-reports drew no temperature until the next one - and with {@code M155} off, never. It
+     * now opens with what the aggregate holds, and the last reading is part of that. The reading is
+     * made <em>before</em> the stream is opened, and the machine says nothing after it, so the
+     * figure can only have come from the snapshot.
+     */
+    @Test
+    void aPageOpenedLaterIsHandedTheLastReading() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("warm", printer);
+        connectAndWait(id);
+
+        printer.reportTemperature("198.40", "210.00", "59.80", "60.00");
+        await("the aggregate to take the reading", () -> {
+            var body = farm.get().uri("/api-printer/{id}", id).exchange()
+                    .expectBody(String.class).returnResult().getResponseBody();
+            return body != null && body.contains("198.40");
+        });
+
+        var late = watch(id);
+
+        var reading = late.await("BareTemperatureRs");
+        assertEquals(198.4, degrees(hotend(reading), "current"));
+        assertEquals(59.8, degrees(bed(reading), "current"));
+        assertEquals("ConnectionStateChanged", late.types().get(0),
+                "the connection state leads the snapshot: " + late.types());
+    }
+
+    /**
      * The last reading is also answerable without a stream.
      *
      * <p>A page rendering a printer wants the current figure once; a page watching one wants every

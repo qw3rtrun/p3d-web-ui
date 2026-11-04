@@ -141,15 +141,13 @@ public class JobFeeder {
      * lost - the timer's checkpoints are up to a second stale - and a failed job's recorded
      * position is the one thing plan item C5 has to work from.
      *
-     * <p><strong>One thing about {@code updates()} that is folklore until it is written down.</strong>
-     * It is a {@code Sinks.many().replay().latestOrDefault(...)}, so a new subscriber is handed the
-     * stream's <em>latest</em> message before any new one - which means a watcher started by a new
-     * feed can see the previous feed's last event. {@link #watchTheLink} tolerates that because the
-     * replayed default is a linked connection state and its filter drops it. This one is displaced
-     * in every path that is actually reachable, because a failed print is followed by
-     * {@link #coolDown}'s five commands and their acknowledgements, but it is not <em>guaranteed</em>.
-     * The clean fix is a timestamp on {@code EventMessage}, which is a change to {@code :backend:api}
-     * and its own piece of work; it is on the skill's known-debt list.
+     * <p><strong>A previous feed's {@code BlocksAbandoned} cannot fail this one.</strong> Until #85
+     * {@code updates()} was a replay sink, so a new subscriber was handed the stream's latest
+     * message first - which could be the last feed's abandonment, presented as news. It now opens
+     * with the aggregate's snapshot, which holds facts rather than history: the connection state,
+     * the profile and the last temperature, never an event about blocks. {@link #watchTheLink}
+     * sees that snapshot's connection state, which is linked while a feed can run, and its filter
+     * drops it.
      */
     private Disposable watchForAbandonedBlocks(JobStateChanged event, PrinterReactor reactor,
                                                AtomicLong sent, AtomicBoolean cancelled) {

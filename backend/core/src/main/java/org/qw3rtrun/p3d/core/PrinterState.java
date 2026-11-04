@@ -3,24 +3,12 @@ package org.qw3rtrun.p3d.core;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
+import org.qw3rtrun.p3d.api.model.MachineProfile;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
-import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
-import org.qw3rtrun.p3d.api.model.MachineProfile;
-import org.qw3rtrun.p3d.api.model.MachineSpec;
-import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
-import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
-import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
-import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
-import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
-import org.qw3rtrun.p3d.g.protocol.BusyRs;
-import org.qw3rtrun.p3d.g.protocol.ErrorRs;
-import org.qw3rtrun.p3d.g.protocol.GRq;
-import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
-import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
-import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
 import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
 import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
 import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
@@ -32,21 +20,32 @@ import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
 import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.RelativePositioning;
 import org.qw3rtrun.p3d.g.marlin.command.ReleaseSDCard;
+import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
 import org.qw3rtrun.p3d.g.marlin.command.SelectSDFile;
+import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed;
 import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber;
+import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.StartOrResumeSDPrint;
 import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
+import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
+import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
 import org.qw3rtrun.p3d.g.marlin.event.SdCardRs;
+import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
+import org.qw3rtrun.p3d.g.protocol.BusyRs;
+import org.qw3rtrun.p3d.g.protocol.ErrorRs;
+import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.terminal.GSender;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -56,20 +55,14 @@ public class PrinterState implements PrinterAggregate {
     @Getter
     private final UUID id;
 
-    /**
-     * What this machine is, as far as anyone knows.
-     *
-     * <p><strong>Seeded from the roster, not discovered from nothing.</strong> It used to be two
-     * objects - a {@code FirmwareInfo} wrapping a nullable report and a {@code CapabilitiesInfo}
-     * wrapping a map - both starting empty every time the process did. So the extruder-count check
-     * below had nothing to read until a machine had been dialled, and a command sent to one that
-     * had not blew up on a null rather than being refused.
-     *
-     * <p>The profile is now a single value that {@code printer-management} persists and announces,
-     * so a restart knows what each machine is before anything connects to it. It is replaced
-     * wholesale on each change, which is what makes it safe to hand out.
-     */
-    private MachineProfile profile;
+    /** What this machine is, as far as anyone knows - see {@link ProfileControl}. */
+    private final ProfileControl profile;
+
+    /** The last temperature report - see {@link TemperatureControl}. */
+    private final TemperatureControl temperature = new TemperatureControl();
+
+    /** What the card is, as far as its replies have said - see {@link SdCardControl}. */
+    private final SdCardControl card = new SdCardControl();
 
     /**
      * Where this machine is in its connection lifecycle - one enum, and the only answer.
@@ -93,7 +86,11 @@ public class PrinterState implements PrinterAggregate {
      *
      * <p>It is here for one live reason - the tool-index check below honours a declared extruder
      * count - and one that is coming, which is plan item D1 matching a job against it.
+     * -- GETTER --
+     * What a human declared about this machine, never null.
+
      */
+    @Getter
     private MachineSpec spec;
 
     public PrinterState(UUID id) {
@@ -110,14 +107,14 @@ public class PrinterState implements PrinterAggregate {
 
     public PrinterState(UUID id, MachineProfile seed, MachineSpec declared, ConnectionLifecycle connection) {
         this.id = id;
-        this.profile = seed == null ? MachineProfile.unknown() : seed;
+        this.profile = new ProfileControl(seed);
         this.spec = declared == null ? MachineSpec.undeclared() : declared;
         this.connection = connection;
     }
 
     /** What this machine reported about itself, never null. */
     public MachineProfile getProfile() {
-        return profile;
+        return profile.get();
     }
 
     /**
@@ -127,18 +124,13 @@ public class PrinterState implements PrinterAggregate {
      * report what is still in flight rather than claiming that everything sent has been printed.
      * It is a snapshot of the transport's send window and nothing derives from it - the aggregate
      * makes no decision on this number.
+     * -- GETTER --
+     * See
+     * .
+
      */
+    @Getter
     private volatile int blocksInFlight;
-
-    /** See {@link #blocksInFlight}. */
-    public int getBlocksInFlight() {
-        return blocksInFlight;
-    }
-
-    /** What a human declared about this machine, never null. */
-    public MachineSpec getSpec() {
-        return spec;
-    }
 
     /**
      * Records an edit, which is the one thing that may change the spec.
@@ -153,7 +145,7 @@ public class PrinterState implements PrinterAggregate {
 
     /** How many tools to believe this machine has - see {@link MachineSpec#extruderCountOr}. */
     public int extruderCount() {
-        return spec.extruderCountOr(profile);
+        return spec.extruderCountOr(profile.get());
     }
 
     /** Where the machine's connection is, as a value a caller can be handed. */
@@ -170,8 +162,6 @@ public class PrinterState implements PrinterAggregate {
     public boolean wantsToBeConnected() {
         return connection.wanted();
     }
-
-    private TemperatureControl temperatureControl = new TemperatureControl();
 
     /**
      * Where state changes go, once anything is listening.
@@ -394,11 +384,38 @@ public class PrinterState implements PrinterAggregate {
         log.warn("{} was not sent to {}: {}", command, id, why);
     }
 
+    /** The active hotend's last reading, or null when the machine has not reported one. */
     public HeaterReading getTemperature() {
-        return temperatureControl.getHotend();
+        return temperature.getHotend();
     }
 
-/**
+    /**
+     * Everything this aggregate holds, as the events that would have announced it.
+     *
+     * <p>What a subscriber arriving late is handed before anything live - see
+     * {@code PrinterReactor.updates()}. In a fixed order: where the connection is, what the machine
+     * is (firmware, then each capability), what its card is, and its last temperature. A part that is not known yet
+     * is absent rather than null or zero, the same rule {@link TemperatureControl} keeps for a
+     * sensor: no report is not a report of nothing.
+     *
+     * <p><strong>Facts, not history.</strong> Only what the aggregate keeps is here. A position, a
+     * card listing, an acknowledged block or a batch of abandoned blocks is something that
+     * <em>happened</em>, and handing one to a subscriber that arrived later would tell it that it
+     * had just happened again.
+     *
+     * <p>Built from immutable values behind volatile references, so it can be called from any
+     * thread; it is a moment's view and may already be one event behind by the time it is read.
+     */
+    public List<Object> snapshot() {
+        var facts = new ArrayList<Object>();
+        facts.add(connection.current());
+        facts.addAll(profile.snapshot());
+        facts.addAll(card.snapshot());
+        temperature.current().ifPresent(facts::add);
+        return facts;
+    }
+
+    /**
      * Two decimals.
      *
      * <p>The {@code String.format("%.2f", …)} in the encoder this replaces used the default locale,
@@ -526,12 +543,16 @@ public class PrinterState implements PrinterAggregate {
      * {@code M22} - release the card.
      *
      * <p><strong>Should be refused while a print is running from that card, and is not.</strong>
-     * Releasing mid-print stops the print. The aggregate holds no SD print state to decide it on;
-     * {@code SdPrinting}/{@code SdNotPrinting} now reach {@link #on(SdCardRs)}, so the state this
-     * needs is one field away. Recorded rather than half-done.
+     * Releasing mid-print stops the print. {@link SdCardControl} now holds the last
+     * {@code SdPrinting}/{@code SdNotPrinting}, so the state this needs is there; the rule itself is
+     * a behaviour change on the wire and is left for its own issue.
+     *
+     * <p>Sending it forgets the card - see {@link SdCardControl#released()} for why a command and
+     * not a reply.
      */
     public void handle(ReleaseSDCard release) {
         passThrough(release);
+        card.released();
     }
 
     /**
@@ -592,6 +613,7 @@ public class PrinterState implements PrinterAggregate {
      */
     public void onOnline(GSender g) {
         this.g = g;
+        card.sessionStarted();
         var change = connection.linkEstablished();
         if (change == null) {
             return;
@@ -701,7 +723,7 @@ public class PrinterState implements PrinterAggregate {
     }
 
     public void on(TemperatureRs<?> tempEvent) {
-        if (temperatureControl.on(tempEvent)) {
+        if (temperature.on(tempEvent)) {
             emitter.accept(tempEvent);
         }
     }
@@ -729,33 +751,26 @@ public class PrinterState implements PrinterAggregate {
      * Routing on the family rather than on concrete classes is the same rule the transport follows
      * for {@code OkRs} and {@code BusyRs}.
      *
-     * <p>Republished and not kept, for now. The card's state - mounted, what is on it, what is
-     * printing - is a thing this aggregate could usefully hold, and the first rule that needs it
-     * is refusing {@code M22} while a print is running from the card. Until something reads it,
-     * storing it would be a write-only field.
+     * <p><strong>Kept, and republished every time.</strong> {@link SdCardControl} holds what the
+     * card is, so a page opened later is handed it in {@link #snapshot()}. Unlike a temperature,
+     * a repeat is not suppressed: these are answers to a question someone just asked - a mount, a
+     * listing - and the page that asked is waiting for one, whether or not it says anything new.
      */
-    public void on(SdCardRs<?> card) {
-        emitter.accept(card);
+    public void on(SdCardRs<?> reply) {
+        card.on(reply);
+        emitter.accept(reply);
     }
 
     public void on(FirmwareInfoRs report) {
-        var updated = new MachineProfile(report.getKeyValues(), profile.capabilities(), LocalDateTime.now());
-        if (updated.firmware().equals(profile.firmware())) {
-            return;
+        if (profile.on(report)) {
+            emitter.accept(report);
         }
-        profile = updated;
-        emitter.accept(report);
     }
 
     public void on(CapabilityRs report) {
-        var previous = profile.capabilities().get(report.getCapability());
-        if (previous != null && previous == report.getEnabled()) {
-            return;
+        if (profile.on(report)) {
+            emitter.accept(report);
         }
-        var merged = new HashMap<>(profile.capabilities());
-        merged.put(report.getCapability(), report.getEnabled());
-        profile = new MachineProfile(profile.firmware(), Map.copyOf(merged), LocalDateTime.now());
-        emitter.accept(report);
     }
 
     protected void setEmitter(Consumer<Object> emitter) {

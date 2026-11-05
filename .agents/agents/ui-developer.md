@@ -62,6 +62,10 @@ from here.
   build. Types on anything that crossed the wire; no `any` at the boundary.
 - **A component releases what it acquires.** Listeners added in `onMounted` come off in
   `onUnmounted`, the same rule the backend applies to sockets and reactors.
+- **A prop's type is its documentation.** One block at the top of `<script setup>` or the module,
+  and nothing on a `ref` or a handler; on a controller, one block on the class and empty handlers.
+  The facts worth writing down are the ones a browser depends on — event type names, endpoint paths,
+  one stream for the farm — said once. `vue-ui-dev`'s *Documentation duty* is the authority.
 
 ## The one thing you must not do
 

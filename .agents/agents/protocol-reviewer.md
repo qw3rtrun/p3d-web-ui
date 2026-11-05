@@ -100,6 +100,14 @@ Known-and-logged entries are not findings — check the queue issues and `doc/gc
 
 **Missing coverage that the diff creates**, not coverage that was already missing.
 
+**Comments, against the four rules** (issue #86, and each layer skill's *Documentation duty*): one
+block before the class; full javadoc only on a cross-module surface; a public member documented only
+where the code genuinely cannot say it; a one-line `//` where something is unusual. Javadoc that
+restates a signature, a `@param` that is its own parameter name in a sentence, and prose narrating
+the next statement are findings. **So is the opposite** — a diff that deleted a measured number, a
+captured wire line, a firmware version or a spec citation has lost evidence, and that is the more
+expensive finding of the two.
+
 ## IMPORTANT — what is NOT a finding
 
 This module is written in a deliberate **C-in-Kotlin house style**: dense, few functions, locals and

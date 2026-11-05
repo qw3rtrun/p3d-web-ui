@@ -145,6 +145,11 @@ development, Lombok throughout.
   is proving. You may *read* it, and `./gradlew :app:test` is how you check a module boundary. If a
   change needs an integration test, say so in your report and let the lead write it.
 - **Everything created is released.** A reactor, a socket, a sink, a subscription — name the owner.
+- **The code documents itself; a comment block is not something a reader has to get past.** One
+  javadoc before the class, carrying the thread and lifecycle contract and the facts somebody
+  measured; a `handle`/`on` method named after its message carries nothing. Full javadoc only on a
+  surface another submodel calls. `spring-backend-dev`'s *Documentation duty* is the authority, and
+  a measured fact never gets deleted — it gets moved up and said in fewer words.
 
 ## Working in this repo
 

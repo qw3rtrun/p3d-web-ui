@@ -140,6 +140,45 @@ class FarmSecurityTest {
                 "an operator should have been let through to the printer");
     }
 
+    /**
+     * A viewer may not change a setting either - and the path has <strong>two</strong> segments.
+     *
+     * <p>The matcher is {@code POST /api-printer/**}, and {@code **} spans separators, so
+     * {@code /api-printer/{id}/settings/steps-per-unit} is covered without the chain being touched.
+     * That is worth an assertion rather than a reading of the configuration: a single-{@code *}
+     * pattern would match {@code /store-settings} and <em>not</em> this, so every endpoint issue
+     * #88 adds would have been open to a viewer while the one it moved stayed shut - and nothing
+     * else in this build looks at a two-segment command path.
+     *
+     * <p>Read and validate are asserted beside the setter because they are the ones that look
+     * harmless. They are not: each puts a command on a wire the machine is using, and
+     * {@code /settings/defaults} on the same prefix discards a calibration.
+     */
+    @Test
+    void aViewerMayNotReachATwoSegmentCommandPath() {
+        var session = new Session().signIn("viewer");
+
+        session.post("/api-printer/" + MACHINE + "/settings/steps-per-unit", "{\"x\":81}")
+                .expectStatus().isForbidden();
+        session.post("/api-printer/" + MACHINE + "/settings/defaults", "{}")
+                .expectStatus().isForbidden();
+        session.post("/api-printer/" + MACHINE + "/settings/read", "{}")
+                .expectStatus().isForbidden();
+        session.post("/api-printer/" + MACHINE + "/settings/validate", "{}")
+                .expectStatus().isForbidden();
+    }
+
+    /** And an operator gets through to it - the stub throwing is the proof. */
+    @Test
+    void anOperatorMayChangeASetting() {
+        var session = new Session().signIn("operator");
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR,
+                session.post("/api-printer/" + MACHINE + "/settings/steps-per-unit", "{\"x\":81}")
+                        .returnResult(String.class).getStatus(),
+                "an operator should have been let through to the setting");
+    }
+
     /** An operator may not change what the farm is. */
     @Test
     void anOperatorMayNotRegisterAMachine() {

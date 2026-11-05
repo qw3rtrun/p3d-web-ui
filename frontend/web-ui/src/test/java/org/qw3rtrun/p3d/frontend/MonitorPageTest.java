@@ -34,7 +34,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * What the monitor page actually renders for the Storage tab - in the markup, not by eye.
+ * What the monitor page actually renders for its capability-gated tabs - in the markup, not by eye.
+ *
+ * <p>Two of them, gated the same way on two different capabilities: Storage on {@code Cap:SDCARD}
+ * and Settings on {@code Cap:EEPROM}.
  *
  * <p><strong>The claim worth testing is the negative one.</strong> A machine whose firmware reports
  * no card reader must get a dead tab <em>and no island</em>, and an island that mounted behind a
@@ -125,10 +128,21 @@ class MonitorPageTest {
                 .responseTimeout(Duration.ofSeconds(20)).build();
     }
 
-    /** A machine whose firmware answered, with {@code Cap:SDCARD} set as given. */
+    /** A machine whose firmware answered, with {@code Cap:SDCARD} set as given and no EEPROM. */
     private static MachineProfile reporting(boolean sdCard) {
+        return reporting(sdCard, false);
+    }
+
+    /**
+     * A machine whose firmware answered, with both capabilities set as given.
+     *
+     * <p>The two are independent and the tests below prove they are read independently: a machine
+     * can perfectly well have a card reader and no EEPROM, or the reverse, and a gate that read the
+     * wrong key would still pass every test that only ever set both to the same value.
+     */
+    private static MachineProfile reporting(boolean sdCard, boolean eeprom) {
         return new MachineProfile(Map.of("FIRMWARE_NAME", "Marlin"),
-                Map.of("SDCARD", sdCard), LocalDateTime.now());
+                Map.of("SDCARD", sdCard, "EEPROM", eeprom), LocalDateTime.now());
     }
 
     private String monitorPage() {
@@ -207,6 +221,126 @@ class MonitorPageTest {
 
         assertTrue(page.contains("data-bs-toggle=\"tooltip\""),
                 "without this attribute startTheme() has nothing to attach a tooltip to");
+    }
+
+    // ---------------------------------------------------------------- the Settings tab
+
+    /**
+     * A machine whose firmware reports an EEPROM gets the Settings tab and the island behind it.
+     *
+     * <p>The capability's name on the wire is {@code EEPROM}. Issue #88 calls it
+     * {@code EEPROM_SETTINGS}, which is Marlin's build macro and never leaves the compiler - so
+     * this profile sets {@code EEPROM}, and the test below proves the macro spelling is not what
+     * the page reads.
+     */
+    @Test
+    void aMachineWithAnEepromGetsTheSettingsTabAndTheIsland() {
+        PROFILE.set(reporting(false, true));
+
+        var page = monitorPage();
+
+        assertTrue(page.contains("href=\"#settings\""), "the tab should link to the pane");
+        assertTrue(page.contains("id=\"settings\""), "the pane should be rendered");
+        assertTrue(page.contains("data-p3d=\"settings-tab\""), "the island should be mounted");
+    }
+
+    /**
+     * A machine whose firmware reports no EEPROM gets a dead tab and <strong>no island</strong>.
+     *
+     * <p>Same claim as the Storage tab's negative case and the same reason it is the one worth
+     * testing: a mounted island would open a per-printer event stream, instantiating a runtime
+     * server-side, behind a tab nobody can open - and then offer {@code M500} to a machine that
+     * cannot store anything.
+     */
+    @Test
+    void aMachineWithNoEepromGetsADeadSettingsTabAndNoIsland() {
+        PROFILE.set(reporting(false, false));
+
+        var page = monitorPage();
+
+        assertTrue(page.contains("This firmware reports no EEPROM, so it has no settings to store."),
+                "the tooltip should say why");
+        assertFalse(page.contains("data-p3d=\"settings-tab\""),
+                "no island may be mounted behind a tab that cannot be opened");
+        assertFalse(page.contains("href=\"#settings\""),
+                "and nothing should link to a pane that is not there");
+        assertTrue(page.contains(">Settings</a>"),
+                "the tab is still named, so the absence is explained rather than hidden");
+    }
+
+    /**
+     * {@code EEPROM_SETTINGS} is not the capability, and a page that read it would be wrong always.
+     *
+     * <p>Marlin's {@code M115} writes {@code Cap:EEPROM:0|1} under
+     * {@code ENABLED(EEPROM_SETTINGS)} - the macro is the {@code #define} in
+     * {@code Configuration.h}, the capability is the name on the wire. Issue #88's checklist says
+     * the macro, so this is the assertion that catches a gate written from the issue instead of
+     * from the measurement: a firmware reporting only the macro spelling has, as far as this farm
+     * can tell, no EEPROM.
+     */
+    @Test
+    void theBuildMacroSpellingIsNotTheCapabilityThePageReads() {
+        PROFILE.set(new MachineProfile(Map.of("FIRMWARE_NAME", "Marlin"),
+                Map.of("EEPROM_SETTINGS", true), LocalDateTime.now()));
+
+        var page = monitorPage();
+
+        assertFalse(page.contains("data-p3d=\"settings-tab\""),
+                "Cap:EEPROM_SETTINGS is not a line any firmware writes");
+        assertTrue(page.contains("This firmware reports no EEPROM, so it has no settings to store."));
+    }
+
+    /** An unreached machine gets the other sentence here too, for the Storage tab's reason. */
+    @Test
+    void anUnreachedMachineIsNotReportedAsHavingNoEeprom() {
+        PROFILE.set(MachineProfile.unknown());
+
+        var page = monitorPage();
+
+        assertTrue(page.contains("This machine has not reported yet. Connect it and reload."));
+        assertFalse(page.contains("This firmware reports no EEPROM, so it has no settings to store."),
+                "an unreached machine must not be reported as unsupported hardware");
+        assertFalse(page.contains("data-p3d=\"settings-tab\""));
+    }
+
+    /**
+     * The two capabilities are read independently, which a test setting both alike would not show.
+     *
+     * <p>A machine with a card reader and no EEPROM must get a live Storage tab and a dead Settings
+     * one. This is the shape of mistake the gates could make silently - both reading
+     * {@code hasSdCard()}, or one copied from the other - and it would pass every test above.
+     */
+    @Test
+    void aCardReaderDoesNotImplyAnEepromOrTheOtherWayRound() {
+        PROFILE.set(reporting(true, false));
+        var cardOnly = monitorPage();
+
+        assertTrue(cardOnly.contains("data-p3d=\"storage-tab\""));
+        assertFalse(cardOnly.contains("data-p3d=\"settings-tab\""));
+
+        PROFILE.set(reporting(false, true));
+        var eepromOnly = monitorPage();
+
+        assertFalse(eepromOnly.contains("data-p3d=\"storage-tab\""));
+        assertTrue(eepromOnly.contains("data-p3d=\"settings-tab\""));
+    }
+
+    /**
+     * The store button left the Monitor tab rather than being duplicated onto the Settings one.
+     *
+     * <p>Item 1 of issue #88. The monitor island is a Vue component, so its markup is in the
+     * bundle and not in this page - which is exactly why the assertion is worth making here: the
+     * string the operator reads is gone from the page a browser is served, and a move that left the
+     * original behind would show up as two ways to do one irreversible thing.
+     */
+    @Test
+    void theMonitorTabNoLongerOffersToStoreTheSettings() {
+        PROFILE.set(reporting(false, true));
+
+        var page = monitorPage();
+
+        assertFalse(page.contains("Store settings (M500)"),
+                "the Monitor tab's store button moved rather than being duplicated");
     }
 
     // ---------------------------------------------------------------- the browser's flow

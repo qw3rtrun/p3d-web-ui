@@ -52,6 +52,34 @@
                                 <a class="nav-link disabled" aria-disabled="true" tabindex="-1">Storage</a>
                             </span>
                         </li>
+                        <!--
+                          Settings, gated the same two-sided way Storage is, and for the same
+                          reason: `Cap:EEPROM` is true at request time, so the server is the one
+                          that decides whether the tab is live and whether the island exists.
+
+                          The capability is spelled `EEPROM` on the wire. Issue #88 calls it
+                          `EEPROM_SETTINGS`, which is Marlin's build macro - a `#define` that never
+                          leaves the compiler - and a gate written against that name would be false
+                          on every machine there is. Measured against MarlinSim and cross-checked
+                          against Marlin's own `M115.cpp`; `MachineProfile.hasEeprom()` carries the
+                          whole note.
+
+                          Whether `M503` exists is a *third* question and no capability answers it:
+                          `DISABLE_M503` strips the report out of a firmware that still stores
+                          settings. The island learns that from the machine refusing the command,
+                          which is why it is not part of this gate.
+                        -->
+                        <li class="nav-item" th:with="eeprom=${printer.profile.hasEeprom()}">
+                            <a th:if="${eeprom}" class="nav-link" id="settings-tab" data-bs-toggle="tab"
+                               href="#settings" role="tab" aria-controls="settings"
+                               aria-selected="false">Settings</a>
+                            <span th:unless="${eeprom}" data-bs-toggle="tooltip" data-bs-placement="bottom"
+                                  th:title="${printer.profile.isKnown()}
+                                            ? 'This firmware reports no EEPROM, so it has no settings to store.'
+                                            : 'This machine has not reported yet. Connect it and reload.'">
+                                <a class="nav-link disabled" aria-disabled="true" tabindex="-1">Settings</a>
+                            </span>
+                        </li>
                         <li class="nav-item">
                             <a class="nav-link" id="contact-tab" data-bs-toggle="tab" href="#demographics" role="tab"
                                aria-selected="false">Firmware</a>
@@ -75,6 +103,22 @@
                     <div class="tab-pane fade" id="storage" role="tabpanel" aria-labelledby="storage-tab"
                          th:if="${printer.profile.hasSdCard()}">
                         <div data-p3d="storage-tab"
+                             th:attr="data-uuid=${printer.uuid},
+                                      data-role=${currentRole}"></div>
+                    </div>
+
+                    <!--
+                      The settings - an island, because the report arrives on the event stream one
+                      line at a time and changes whenever anybody reads, reverts or resets.
+
+                      Rendered only when the firmware reports an EEPROM, which is the other half of
+                      the gate on the tab above. An island behind a dead tab would open a stream to
+                      a machine whose M500 and M501 cannot work, and nothing on the page would show
+                      that it had.
+                    -->
+                    <div class="tab-pane fade" id="settings" role="tabpanel" aria-labelledby="settings-tab"
+                         th:if="${printer.profile.hasEeprom()}">
+                        <div data-p3d="settings-tab"
                              th:attr="data-uuid=${printer.uuid},
                                       data-role=${currentRole}"></div>
                     </div>

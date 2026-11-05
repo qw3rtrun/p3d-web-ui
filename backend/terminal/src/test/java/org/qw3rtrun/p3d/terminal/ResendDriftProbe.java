@@ -14,12 +14,10 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * The firmware half of issue #60, on a raw socket, with nothing of this host's stack in the way.
- *
- * <p>{@link ResendOnReconnectProbe} drives the real transport and therefore only reaches the case
- * when the far end happens to be in it. This one <em>puts</em> the far end in it: it pushes the
- * firmware's {@code last_N} to a known value and then sends a block numbered as a fresh session
- * would number it. What comes back is the {@code Error:} / {@code Resend:} pair the issue quotes,
- * measured rather than taken from the issue's three lines.
+ * {@link ResendOnReconnectProbe} drives the real transport and only reaches the case when the far
+ * end happens to be in it; this one puts the far end in it, pushing {@code last_N} to a known value
+ * and sending a block numbered as a fresh session would - measuring the {@code Error:}/{@code Resend:}
+ * pair the issue quotes rather than taking it from the issue's three lines.
  *
  * <p>Four questions, in order, and each one decides part of the fix:
  *

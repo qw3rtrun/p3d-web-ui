@@ -5,31 +5,23 @@ import reactor.core.publisher.Operators;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * A non-negative, saturating counter shared by everything in this module that keeps a count of
- * outstanding work: demand asked for, demand passed upstream, and commands in flight.
+ * A non-negative, saturating counter for outstanding work shared across this module: demand
+ * requested, demand passed upstream, commands in flight.
  *
- * <p><strong>Every operation is atomic.</strong> This used to be a plain {@code long} with no
- * synchronisation, read-modify-written from {@code request}, {@code onNext},
- * {@code handleBackpressure} and {@code cancel} - four methods that in a live terminal run on at
- * least two threads, the producer and the netty inbound loop. A lost update there is not a
- * cosmetic slip: the send window is {@code blockQueue - sentWithoutAck - requestedFromGCode}, so a
- * dropped decrement closes the window by one for the rest of the session and a dropped increment
- * opens it by one past what the printer can hold. Marlin answers an overrun by silently dropping
- * commands, and there is no exception to catch.
+ * <p>Every operation is atomic ({@link AtomicLong} + CAS), not a plain read-modify-written
+ * {@code long}: {@code request}, {@code onNext}, {@code handleBackpressure} and {@code cancel} run
+ * on at least two threads (the producer and the netty inbound loop), and a lost update here would
+ * silently narrow or widen the send window ({@code blockQueue - sentWithoutAck -
+ * requestedFromGCode}) - Marlin drops an overrun with no exception to catch.
  *
- * <p>Two rules it keeps from the version it replaces, both of which the send window depends on:
- *
+ * <p>Two invariants the send window depends on:
  * <ul>
- *   <li><strong>{@link Long#MAX_VALUE} is unbounded and is absorbing.</strong> Reactive Streams
- *       rule 3.17 lets a subscriber ask for an effectively infinite amount; once a counter reaches
- *       it, no further {@code inc} or {@code dec} moves it. {@link Operators#addCap} is the
- *       saturating add Reactor uses for the same purpose, so an overflowing {@code inc} now lands
- *       on "unbounded" rather than wrapping to a negative count.
- *   <li><strong>It never goes below zero.</strong> {@code dec} clamps. More acknowledgements than
- *       sends is the shape of a race the transport cannot rule out - a {@code busy:} zeroes the
- *       in-flight count while an {@code ok} for a command sent before the stall is still on the
- *       wire - and a negative count would widen the window past the printer's buffer, which is the
- *       failure that has no symptom until a command goes missing.
+ *   <li>{@link Long#MAX_VALUE} is unbounded and absorbing, per Reactive Streams rule 3.17;
+ *       {@link Operators#addCap} saturates an overflowing {@code inc} there instead of wrapping
+ *       to negative.
+ *   <li>It never goes below zero - {@code dec} clamps, because more acknowledgements than sends is
+ *       a real race (a {@code busy:} zeroes in-flight while an earlier {@code ok} is still on the
+ *       wire), and a negative count would widen the window past the printer's buffer.
  * </ul>
  */
 public class Requested {
@@ -37,11 +29,8 @@ public class Requested {
     private final AtomicLong n = new AtomicLong();
 
     /**
-     * Adds {@code i}, saturating at {@link Long#MAX_VALUE}.
-     *
-     * <p>A compare-and-set loop and not {@code addAndGet}, because the "unbounded is absorbing"
-     * rule makes this a conditional update: the new value depends on the old one in a way an
-     * atomic add cannot express.
+     * Adds {@code i}, saturating at {@link Long#MAX_VALUE} - a CAS loop, not {@code addAndGet},
+     * because the saturating add is a conditional update on the old value.
      */
     public void inc(long i) {
         for (; ; ) {

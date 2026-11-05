@@ -24,45 +24,27 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Uploads a file to the card through the whole transport stack while a slow source competes for the
- * wire, and measures whether anything leaked into it.
+ * wire, and measures whether anything leaked into it. A hand-run probe, not a test - it needs a
+ * listener and writes to the card, so never part of {@code check}. {@code SdWriteProbe} established
+ * what the firmware does over a raw socket; this one goes through {@link TerminalManager},
+ * {@link HostTerminal} and {@link PublisherQueue}, the only way to exercise the thing measured.
  *
- * <p>A hand-run probe and not a test: it needs a listener on the far end and it writes to the card,
- * so it must never be part of {@code check}. {@code SdWriteProbe} does the same exchange over a raw
- * socket to establish what the firmware does; this one goes through {@link TerminalManager},
- * {@link HostTerminal} and {@link PublisherQueue}, which is the only way to exercise the thing being
- * measured.
+ * <p><b>Why a byte count settles it.</b> {@code M28 <name>} turns the wire into a file sink until
+ * {@code M29}, so a command from another source reaching the wire in between is silently stored in
+ * the file. The firmware strips the {@code N} word and checksum before writing ({@code SdWriteProbe}
+ * established this), so a finished file is exactly its payloads plus a {@code CRLF} each - making
+ * the size an exact measure: one byte over what was uploaded is a file something got into. The size
+ * is read with {@code M23}'s decoded {@code File opened: <name> Size: <n>}; {@code M20}'s listing is
+ * reported alongside it as the only live exercise of the transport's assembly of that reply.
  *
- * <h2>Why a byte count settles it</h2>
- *
- * <p>{@code M28 <name>} turns the wire into a file sink: every line sent after it is <em>written
- * into the file</em> rather than executed, until {@code M29}. A command from another source that
- * reaches the wire in between is stored in the G-code, and nothing on either end reports it - the
- * printer takes it happily and the fault surfaces much later as a line of nonsense mid-print.
- *
- * <p>The firmware strips the {@code N} word and the checksum before writing, which
- * {@code SdWriteProbe} established, so a finished file is exactly its payloads plus a {@code CRLF}
- * each. That makes the size an <strong>exact</strong> measure: one byte over what was uploaded is a
- * file something got into.
- *
- * <p>The size is read with {@code M23}, whose {@code File opened: <name> Size: <n>} is a decoded
- * reply. {@code M20}'s listing is reported alongside it, which is the only live exercise of the
- * transport's assembly of that reply - the entry lines are deliberately not claimable replies, so
- * before {@code ReplyFlux} learned to assemble them nothing downstream could see a listing at all.
- *
- * <h2>Why the competitor is a slow source and not a stream of one-shot commands</h2>
- *
- * <p>Because a stream of one-shot commands <em>cannot</em> demonstrate the failure, which the first
- * version of this probe found out the hard way: each {@code Mono.just} spends its unit of demand the
- * instant it is given one and completes, so nothing is ever left holding demand and the upload's
- * priority alone keeps it at the head. The transcript came back clean and proved nothing.
- *
- * <p>The hazard is <strong>demand already handed out to a source that has not spent it yet</strong>
- * - a print reading blocks off a file, which is given a few units and produces them a moment later.
- * {@link SlowSource} is that, and nothing more: it emits one line per tick and only while it has
- * demand, so it is well-behaved and never overruns.
- *
- * <p>The shared run is the control and is meant to come back too long. Without it this could not
- * tell "the mechanism works" from "the race did not fire today", and the failure mode is a race.
+ * <p><b>Why the competitor is a slow source, not one-shot commands.</b> A stream of
+ * {@code Mono.just} spends its demand instantly and completes, so nothing is ever left holding
+ * demand and priority alone keeps the upload at the head - the first version of this probe tried
+ * that and came back clean, proving nothing. The real hazard is demand already handed out to a
+ * source that has not spent it yet (a print reading blocks off a file); {@link SlowSource} emits one
+ * line per tick and only while it has demand, well-behaved and never overrunning. The shared run is
+ * the control and is meant to come back too long - without it this cannot tell "the mechanism works"
+ * from "the race did not fire today".
  *
  * <p>Usage: {@code SdUploadProbe [host] [port]}, defaulting to {@code localhost 8099}.
  */
@@ -130,22 +112,14 @@ public final class SdUploadProbe {
     }
 
     /**
-     * Stops a transfer part-way and proves the firmware really closed the file.
-     *
-     * <p><strong>The claim no unit test can make.</strong> A stop must not cancel the transfer - it
-     * ends the <em>content</em> and lets {@code M29} follow, which is what
-     * {@code SdUploader.transferOf} builds and {@code SdUploaderTest} pins. What that test cannot
-     * show is the half that lives in the firmware: that the {@code M29} actually closed the file,
-     * so the next command is executed rather than appended to it.
-     *
-     * <p>So this measures the file twice. Once right after the stop, and once after sending an
-     * ordinary command. <strong>If the size does not move, the file was closed.</strong> If it grew
-     * by the length of that command, it was not, and every command the machine is given from now on
-     * is being written into a G-code file nobody is reading.
-     *
-     * <p>The shape is built here rather than imported because {@code :backend:terminal} cannot see
-     * {@code :backend:core}. That split is deliberate: this probe owns the firmware half of the
-     * claim and {@code SdUploaderTest} owns the "production builds this shape" half.
+     * Stops a transfer part-way and proves the firmware really closed the file - the claim no unit
+     * test can make. A stop must end the <em>content</em> and let {@code M29} follow
+     * ({@code SdUploader.transferOf} builds that shape, {@code SdUploaderTest} pins it), but only the
+     * firmware can say whether that {@code M29} actually closed the file. So this measures the file
+     * twice, once right after the stop and once after an ordinary command: unchanged means closed; a
+     * size that grew means every command from now on is being written into an unread G-code file.
+     * The shape is rebuilt here rather than imported since {@code :backend:terminal} cannot see
+     * {@code :backend:core} - this probe owns the firmware half of the claim.
      */
     private static boolean stopRun(String host, int port, String file) throws Exception {
         System.out.println();
@@ -174,8 +148,8 @@ public final class SdUploadProbe {
         var stop = Sinks.<Void>empty();
         var sent = new java.util.concurrent.atomic.AtomicInteger();
 
-        // The same arrangement SdUploader builds: the content is ended by takeUntilOther and the
-        // close is concatenated behind it, so M29 goes out either way.
+        // The same arrangement SdUploader builds: takeUntilOther ends the content, M29 is
+        // concatenated behind it, so M29 goes out either way.
         Flux<String> content = Flux.fromIterable(lines)
                 .doOnNext(block -> {
                     if (sent.incrementAndGet() == stopAfter) {
@@ -262,9 +236,8 @@ public final class SdUploadProbe {
                 opened.set(reply);
                 sawSize.countDown();
             }
-            // The listing is the transport's own assembly of several lines - see HostTerminal's
-            // ReplyFlux. Nothing downstream could see one at all before that was built, so this is
-            // the live check on it.
+            // The listing is HostTerminal.ReplyFlux's own assembly of several lines; nothing
+            // downstream could see one before that was built.
             if (message instanceof SdFileList files) {
                 listing.set(files);
                 sawListing.countDown();
@@ -272,10 +245,9 @@ public final class SdUploadProbe {
         });
         Disposable sending = terminal.start(Flux.from(queue)).subscribe();
 
-        // Mount, and clear any leftover of this name - and WAIT for it. The first version of this
-        // probe queued the cleanup and went straight on to the upload, which put an `M30` for the
-        // file *after* the `M28` that created it, because REALTIME outranks REGULAR and the queue
-        // did exactly what it was told. The file was deleted the moment it was written.
+        // Mount and clear any leftover of this name, and WAIT for it - the first version of this
+        // probe queued the cleanup and went straight to the upload, so REALTIME outranked REGULAR
+        // and M30 ran after the M28 that created the file, deleting it the moment it was written.
         queue.addPublisher(Priority.REGULAR, Flux.just("M21", "M30 " + file)).block(Duration.ofSeconds(20));
 
         var lines = content();
@@ -284,9 +256,8 @@ public final class SdUploadProbe {
         transfer.addAll(lines);
         transfer.add("M29");
 
-        // The competitor, running before the upload is queued so that it is already holding demand
-        // when the transfer starts. That is the hazard: priority decides who gets the *next* unit,
-        // not who is holding one already.
+        // The competitor runs before the upload is queued, so it already holds demand when the
+        // transfer starts - priority decides who gets the *next* unit, not who already holds one.
         var pest = new SlowSource("M105");
         queue.addPublisher(Priority.BACKGROUND, pest);
         Thread.sleep(200);
@@ -309,9 +280,8 @@ public final class SdUploadProbe {
         queue.addPublisher(Priority.EMERGENCY, Mono.just("M23 " + file));
         boolean answered = sawSize.await(30, TimeUnit.SECONDS);
 
-        // And M20, whose answer is several lines the transport assembles into one reply. Reported
-        // rather than asserted: what this run is measuring is the upload, and the listing is here
-        // because it is the only live exercise of that assembly.
+        // M20's answer is several lines the transport assembles into one reply - reported rather
+        // than asserted, since what this run measures is the upload.
         queue.addPublisher(Priority.EMERGENCY, Mono.just("M20"));
         if (sawListing.await(30, TimeUnit.SECONDS)) {
             System.out.printf("  M20 assembled into one reply: %d file(s) %s%n",
@@ -341,17 +311,11 @@ public final class SdUploadProbe {
     }
 
     /**
-     * A source that produces one line per tick, and only while it has demand.
-     *
-     * <p>A stand-in for a print feeding blocks off a file: it is asked for several and answers a
-     * moment later, which is the whole shape of the problem. Deliberately well-behaved - it never
-     * emits without demand, so it never trips {@link PublisherQueue}'s overrun guard and never
-     * clouds the measurement with a cancelled source.
-     *
-     * <p>{@code Flux.interval} would not do: it produces on a clock whatever the demand, so with
-     * the queue withholding demand during an exclusive transfer it would overflow, error, and take
-     * the whole queue down with it - a failure of the test fixture that would read as a failure of
-     * the thing under test.
+     * A source that produces one line per tick, only while it has demand - a stand-in for a print
+     * feeding blocks off a file. Deliberately well-behaved (never emits without demand, so never
+     * trips {@link PublisherQueue}'s overrun guard). {@code Flux.interval} would not do: it produces
+     * on a clock regardless of demand, so withheld demand during an exclusive transfer would overflow
+     * it and take the whole queue down - a fixture failure reading as a failure of the thing tested.
      */
     private static final class SlowSource implements Publisher<String> {
 

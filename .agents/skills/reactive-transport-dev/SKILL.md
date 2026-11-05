@@ -570,6 +570,24 @@ with `handle`, `concatMap`, `limitRate`, `onBackpressureBuffer` or a `Sinks` typ
 version to write. `CommandProcessor` is hand-written because its demand depends on the *reply*
 stream, which no operator knows about - that is a real reason. "It was easier to see" is not.
 
+### Documentation duty
+
+The code documents itself; the comment block is not allowed to get in its way. One class-level
+block per type - `HostTerminal`, `CommandProcessor`, `PublisherQueue` - carries the demand contract,
+which thread signals and which drains, and what a terminal signal means; it is not restated per
+method. `HostTerminal`, `GSender` and `TerminalManager` keep compressed javadoc on the public
+methods `:backend:core` actually calls - a description and a corner case, not an essay. Everywhere
+else a method needs nothing beyond its name and signature.
+
+A one-line `//` naming a Reactive Streams rule number - `// Rule 3.9: ...`, `// rule 2.4 forbids a
+terminal signal here` - is the sanctioned exception: it is doing real work nothing else on the line
+does, and it survives a trim. Prose that only restates the next statement does not.
+
+A probe's header comment is its specification, not decoration: what it measures, how to run it
+(`[host] [port]`, defaulting to `localhost 8099`), and the numbers or wire lines it captured. A
+captured number - `675` against `687` bytes, a firmware version, a date - is evidence a design was
+built on, and losing it in a tidy-up is a regression, not a cleanup.
+
 ## Testing
 
 `reactor-test` is a dependency and is used in exactly one place (`PublisherQueueTest`). It should be

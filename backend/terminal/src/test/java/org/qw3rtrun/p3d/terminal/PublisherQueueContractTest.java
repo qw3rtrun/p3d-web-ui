@@ -38,17 +38,10 @@ class PublisherQueueContractTest {
 
     private final PublisherQueue<String, Priority> queue = new PublisherQueue<>();
 
-    /**
-     * A source whose {@code onSubscribe} arrives on another thread.
-     *
-     * <p>The old code read {@code subscription.request(n)} on the line after {@code subscribe()},
-     * which works only while every source calls back synchronously from inside {@code subscribe}.
-     * <strong>Every Reactor operator tried here does</strong> - {@code publishOn},
-     * {@code delaySubscription} and {@code Mono.fromFuture} all hand over a subscription
-     * immediately and defer only the values - so this needs a publisher written to defer it, which
-     * Reactive Streams explicitly permits and a hand-written one may well do. Against the previous
-     * implementation it NullPointers.
-     */
+    /** A source whose {@code onSubscribe} arrives on another thread - the old code read
+     * {@code subscription.request(n)} on the next line, which NullPointers here. Every Reactor
+     * operator tried ({@code publishOn}, {@code delaySubscription}, {@code Mono.fromFuture}) hands
+     * over the subscription immediately, so this needs a publisher written to defer it. */
     @Test
     void aSourceThatSubscribesAsynchronouslyIsNotLost() {
         var future = new CompletableFuture<String>();
@@ -62,13 +55,8 @@ class PublisherQueueContractTest {
                 .verify(Duration.ofSeconds(5));
     }
 
-    /**
-     * A publisher that calls {@code onSubscribe} from another thread, some time later.
-     *
-     * <p>Written out because no Reactor operator does it: the specification allows
-     * {@code onSubscribe} to arrive whenever the publisher likes, and a subscriber that assumes
-     * otherwise is correct only by the grace of its sources.
-     */
+    /** Calls {@code onSubscribe} from another thread, some time later - written out because no
+     * Reactor operator does it, though the specification allows it. */
     private static final class LateSubscription implements Publisher<String> {
         private final CompletableFuture<String> value;
 
@@ -170,14 +158,9 @@ class PublisherQueueContractTest {
         assertEquals(List.of(), sub.values, "and nothing was emitted");
     }
 
-    /**
-     * Rule 2.4: nothing is signalled after a cancel.
-     *
-     * <p>A guard rather than a regression test: the previous implementation happened not to emit
-     * here either, because its {@code cancel} zeroed the demand and the path it then took read
-     * that zero and returned. It got the right answer for a reason that had nothing to do with
-     * the rule, which is exactly the kind of thing that stops being true after an unrelated edit.
-     */
+    /** Rule 2.4: nothing is signalled after a cancel. A guard, not a regression test: the previous
+     * implementation got this right by accident (its {@code cancel} zeroed demand, and the path
+     * that followed read the zero and returned), which an unrelated edit could easily undo. */
     @Test
     void nothingIsSignalledAfterACancel() {
         var sub = new Recording();
@@ -194,14 +177,9 @@ class PublisherQueueContractTest {
         assertEquals(0, sub.completions);
     }
 
-    /**
-     * Rule 1.7: one terminal signal, and nothing after it.
-     *
-     * <p>The shape that worried the skill was real - {@code onError} signalled the subscriber and
-     * <em>then</em> handed demand on - but it did not fire, because the cancel one line above had
-     * already zeroed the count it passed. A guard, then, and not a fixed bug: the ordering is now
-     * impossible rather than harmless by accident.
-     */
+    /** Rule 1.7: one terminal signal, and nothing after it. The shape that worried the skill was
+     * real - {@code onError} signalled and <em>then</em> handed demand on - but never fired, since
+     * the cancel one line above had already zeroed the count passed; now impossible, not accidental. */
     @Test
     void nothingIsSignalledAfterAnError() {
         var sub = new Recording();
@@ -218,13 +196,8 @@ class PublisherQueueContractTest {
         assertEquals(List.of(), sub.values, "and the next source was not drained into a dead stream");
     }
 
-    /**
-     * A source that over-produces is cancelled, and its excess never reaches the wire.
-     *
-     * <p>Forwarding it would be an {@code onNext} the send window never asked for, and the send
-     * window is the thing that stops the printer's buffer being overrun - which Marlin answers by
-     * dropping commands in silence. A loud drop is the better of two bad outcomes.
-     */
+    /** A source that over-produces is cancelled, its excess never reaching the wire - forwarding it
+     * would overrun the send window, which Marlin answers by dropping commands in silence. */
     @Test
     void aSourceThatEmitsWithoutDemandIsCancelledRatherThanForwarded() {
         var sub = new Recording();
@@ -241,13 +214,8 @@ class PublisherQueueContractTest {
         assertEquals(0, sub.errors, "and the session survived it");
     }
 
-    /**
-     * A source announces when it is finished, which is what plan item C3 needs.
-     *
-     * <p>The queue removed an exhausted source and told nobody, so a print that reached the end of
-     * its file was invisible to the layer that queued it - and {@code JobService.complete} would
-     * never have been called by anything.
-     */
+    /** A source announces when it is finished - the queue used to remove it and tell nobody, so a
+     * print reaching end of file was invisible to the layer that queued it. */
     @Test
     void anExhaustedSourceTellsWhoeverQueuedIt() {
         var done = queue.addPublisher(REGULAR, Flux.just("G1 X1", "G1 X2"));

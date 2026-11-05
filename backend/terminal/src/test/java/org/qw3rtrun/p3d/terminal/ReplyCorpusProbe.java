@@ -29,24 +29,21 @@ import java.util.List;
 
 /**
  * Captures what a printer <i>says</i> into {@code gcode/src/test/resources/marlin-replies.txt} - the
- * reply-side counterpart of {@code marlin.gcode}, which is what it was <i>told</i>.
+ * reply-side counterpart of {@code marlin.gcode}, which is what it was <i>told</i>. A hand-run tool,
+ * not a test - it needs a listener, so never part of {@code check}. Where {@link GCodeLiveProbe}
+ * sweeps the command surface and prints what each answer decoded to, and {@link GCodeCorpusProbe}
+ * replays the whole command corpus and histograms what nothing claimed, this one keeps the bytes so
+ * the conversation is re-runnable after the module changes.
  *
- * <p>A hand-run tool and not a test: it needs a listener on the far end, so it must never be part of
- * {@code check}. Where {@link GCodeLiveProbe} sweeps the command surface and prints what each answer
- * decoded to, and {@link GCodeCorpusProbe} replays the whole command corpus and histograms what
- * nothing claimed, this one keeps the bytes. Those two tell you how much of a conversation the module
- * understands today; this one makes the conversation re-runnable after the module changes.
- *
- * <p><b>Every received line is written exactly as it arrived</b>, in arrival order, including the
- * ones this module cannot read - those are the point. The only lines in the file this probe did not
- * receive are the {@code ;}-prefixed header it writes first, which records what was sent and when.
- * Marlin never begins a reply with {@code ;}, so the census can drop that prefix without a rule that
- * could swallow a real line; {@code //} and {@code echo:} are real reply prefixes and are kept.
+ * <p>Every received line is written exactly as it arrived, in arrival order, including the ones this
+ * module cannot read - those are the point. The only lines not received are the {@code ;}-prefixed
+ * header written first; Marlin never begins a reply with {@code ;}, so that prefix is droppable
+ * without risking a real line ({@code //} and {@code echo:} are real reply prefixes and are kept).
  *
  * <p>The session is the one <a href="https://github.com/qw3rtrun/p3d-web-ui/issues/10">issue 10</a>
  * asks for: a connect, {@code M115}, an {@code M155}/{@code M154} auto-report run, a homing move, a
- * deliberate checksum failure, and a disconnect - plus the queries whose replies have types in this
- * module, so the corpus can tell a decoder that stopped claiming a line from one that never did.
+ * deliberate checksum failure, and a disconnect - plus the queries whose replies have types here, so
+ * the corpus can tell a decoder that stopped claiming a line from one that never did.
  *
  * <p>Usage: {@code ReplyCorpusProbe [host] [port]}, defaulting to {@code localhost 8099}.
  */
@@ -125,21 +122,16 @@ public final class ReplyCorpusProbe {
         }
     }
 
-    /**
-     * The session, in order.
-     *
-     * <p>Commands that have a class in this module are built and encoded through it, the way
-     * {@link GCodeLiveProbe} does, so the corpus is a record of this project talking to a printer
-     * rather than of hand-typed lines. The rest are typed because the point of them is a shape no
-     * command class would produce.
-     */
+    /** The session, in order. Commands with a class in this module are built and encoded through it,
+     * the way {@link GCodeLiveProbe} does, so the corpus records this project talking to a printer
+     * rather than hand-typed lines; the rest are typed because their point is a shape no command
+     * class would produce. */
     private static List<Step> session() {
         var s = new ArrayList<Step>();
 
-        // Quiet the machine first. An auto-report survives a client disconnect, so without this the
-        // capture opens mid-stream with reports belonging to whatever ran last - and the shape of
-        // the corpus then depends on what someone else did, which is the one thing a fixture must
-        // not do. Their own replies are captured deliberately further down.
+        // Quiet the machine first: an auto-report survives a client disconnect, so without this the
+        // capture opens mid-stream with reports belonging to whatever ran last, making the corpus
+        // depend on what someone else did. Their own replies are captured further down.
         s.add(new Step("stop any temperature auto-report still running", "M155 S0"));
         s.add(new Step("stop any position auto-report still running", "M154 S0"));
 
@@ -153,9 +145,9 @@ public final class ReplyCorpusProbe {
         s.add(new Step("endstop states", enc(new EndstopStates())));
         s.add(new Step("SD print status", enc(new ReportSDPrintStatus())));
 
-        // The SD surface, because issue 12 is holding a format question open on it: the RepRap wiki
-        // lists `SD init fail` and Marlin 2.1.x is said to send `No SD card`. Captured rather than
-        // argued - and if this machine answers neither, that is itself the answer for this firmware.
+        // The SD surface: issue 12 has a format question open on it (RepRap wiki lists
+        // `SD init fail`, Marlin 2.1.x is said to send `No SD card`) - captured rather than argued,
+        // and answering neither is itself the answer for this firmware.
         s.add(new Step("initialise the card", "M21"));
         s.add(new Step("list the card", "M20"));
         s.add(new Step("the file the card is positioned on", "M27 C"));
@@ -211,16 +203,13 @@ public final class ReplyCorpusProbe {
 
     /**
      * Everything up to and including the {@code ok} that ends the answer, or until [budget] runs out.
+     * Marlin does not frame its replies, so the acknowledgement is the only end marker - a fixed
+     * timeout would mis-attribute a slow command's answer ({@code G28} takes seconds) to the next step.
      *
-     * <p>Marlin does not frame its replies, so the acknowledgement is the only end marker. Reading to
-     * a fixed timeout instead mis-attributes a slow command's answer to the next step: {@code G28}
-     * takes seconds, and its {@code ok} would otherwise land after whatever was sent next.
-     *
-     * <p><b>The budget is not belt-and-braces.</b> A machine with an auto-report left running from
-     * an earlier session talks continuously and the {@code ok} being waited for has already gone
-     * past, so every individual read succeeds inside the socket timeout and the loop never ends -
-     * which is exactly how the first run of this probe hung. The socket timeout bounds one read; the
-     * budget bounds the wait, and that is a different thing.
+     * <p>The budget is not belt-and-braces: a machine with an auto-report left running from an
+     * earlier session talks continuously and the {@code ok} waited for has already gone past, so
+     * every individual read succeeds inside the socket timeout and the loop never ends - exactly how
+     * the first run of this probe hung. The socket timeout bounds one read; the budget bounds the wait.
      */
     private static List<String> drain(BufferedReader in, long budget) {
         var lines = new ArrayList<String>();

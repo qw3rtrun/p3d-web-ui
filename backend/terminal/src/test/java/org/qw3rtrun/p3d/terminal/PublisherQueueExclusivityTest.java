@@ -17,20 +17,14 @@ import static org.qw3rtrun.p3d.terminal.msg.Priority.REALTIME;
 import static org.qw3rtrun.p3d.terminal.msg.Priority.REGULAR;
 
 /**
- * A source that may not be interleaved, and what it costs.
+ * A source that may not be interleaved, and what it costs. {@code M28 <name>} redirects every line
+ * that follows into a file on the card instead of executing it, until {@code M29} - so any other
+ * command reaching the wire in between is written into the file and surfaces later as nonsense
+ * mid-print ({@code GCodeCorpusProbe} already quarantines {@code M28} for this reason).
  *
- * <p><strong>The failure this guards against writes a corrupt file and says nothing.</strong>
- * {@code M28 <name>} redirects every line that follows into a file on the card instead of executing
- * it, until {@code M29}. So any other command that reaches the wire in between is <em>written into
- * the G-code file</em> - the printer stores it happily, and the fault surfaces much later as a line
- * of nonsense mid-print. {@code GCodeCorpusProbe} already quarantines {@code M28} for this reason.
- *
- * <p>Priority alone does not prevent it, and that is the point of these tests. Queueing an upload
- * above everything else keeps it at the head of the heap, but <strong>a source that was already
- * given demand keeps that demand</strong> and emits on it whenever it likes - so a print streaming
- * at {@code BACKGROUND}, or an interactive command that was handed a unit a moment earlier, lands
- * in the middle of the transfer. {@link #anUploadWaitsForDemandAlreadyOutWithOtherSources} is that
- * case, and it is the one the mechanism exists for.
+ * <p>Priority alone does not prevent it: a source already given demand keeps it and may emit
+ * whenever it likes, queueing order notwithstanding -
+ * {@link #anUploadWaitsForDemandAlreadyOutWithOtherSources} is the case the mechanism exists for.
  *
  * @see PublisherQueue#addExclusivePublisher
  */
@@ -45,17 +39,9 @@ class PublisherQueueExclusivityTest {
         return Flux.just("M28 test.gco", "G28", "M118 P0 done", "M29");
     }
 
-    /**
-     * The case priority cannot cover: demand that was handed out before the upload existed.
-     *
-     * <p>The print is given two units and spends one. The upload is then queued above it, and the
-     * heap duly puts the upload at the head - but the print is still holding a unit and may emit on
-     * it at any moment, which on the wire means a {@code G1} written into the file.
-     *
-     * <p>So the upload does not start. It waits until no other source is holding demand, and only
-     * then takes the connection. That is the whole guarantee: <em>while an exclusive source holds
-     * the wire, nothing else has demand to emit on.</em>
-     */
+    /** The case priority cannot cover: the print is given two units and spends one, then the upload
+     * is queued above it - but the print still holds a unit and could emit it into the file. So the
+     * upload waits until no other source holds demand before taking the connection. */
     @Test
     void anUploadWaitsForDemandAlreadyOutWithOtherSources() {
         var print = TestPublisher.<String>create();
@@ -86,13 +72,9 @@ class PublisherQueueExclusivityTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * Once it holds the wire, nothing queued behind it gets a single unit until it is finished.
-     *
-     * <p>Three interactive commands arrive mid-transfer, which is the ordinary case - the Monitor
-     * screen posts each one as its own source. All three wait, and the demand that would have gone
-     * to them goes to the transfer instead.
-     */
+    /** Once it holds the wire, nothing queued behind it gets a unit until it is finished - three
+     * interactive commands (the ordinary case: the Monitor screen posts each as its own source) wait
+     * while the demand that would have gone to them goes to the transfer instead. */
     @Test
     void nothingQueuedBehindAnUploadReachesTheWireUntilItIsDone() {
         queue.addExclusivePublisher(REALTIME, upload());
@@ -115,21 +97,11 @@ class PublisherQueueExclusivityTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * An emergency stop goes through, and the transfer is abandoned rather than resumed.
-     *
-     * <p><strong>Holding an {@code M112} until a transfer finishes is not an option</strong> - a
-     * real file is tens of thousands of lines at a round trip each, so the stop would arrive
-     * minutes late, which is not a stop. So a source of strictly higher priority preempts an
-     * exclusive one.
-     *
-     * <p>And preempting it <strong>aborts</strong> it. Marlin's emergency parser reads
-     * {@code M112} out of the serial bytes as they arrive, before the queue and before the SD
-     * redirect - so the stop does fire, and the same bytes are also written into the file. The file
-     * is corrupt the moment anything else reaches the wire, and a transfer that is already
-     * half-written cannot be picked up where it left off. Telling the caller is the honest answer:
-     * the {@code Mono} that {@code addExclusivePublisher} returned errors.
-     */
+    /** An emergency stop goes through and the transfer is abandoned, not resumed: holding
+     * {@code M112} for a transfer to finish would arrive minutes late, so a higher-priority source
+     * preempts an exclusive one - and since Marlin's emergency parser reads {@code M112} off the
+     * serial bytes ahead of the SD redirect anyway, the bytes are also written into the now-corrupt
+     * file, so the caller is told via the {@code Mono} erroring rather than left to assume completion. */
     @Test
     void anEmergencyPreemptsAnUploadAndAbortsIt() {
         var transfer = queue.addExclusivePublisher(REALTIME, upload());
@@ -151,12 +123,8 @@ class PublisherQueueExclusivityTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * Two transfers do not interleave with each other either; the second waits for the first.
-     *
-     * <p>It falls out of the same rule rather than needing one of its own: the second is not the
-     * head, so it is given nothing.
-     */
+    /** Two transfers do not interleave either - the second is simply not the head, so it is given
+     * nothing, by the same rule rather than one of its own. */
     @Test
     void aSecondExclusiveSourceWaitsForTheFirst() {
         queue.addExclusivePublisher(REALTIME, Flux.just("M28 one.gco", "G28", "M29"));
@@ -170,12 +138,8 @@ class PublisherQueueExclusivityTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * The {@code Mono} completes normally when the transfer finishes, as for any other source.
-     *
-     * <p>Which is how a caller tells a finished upload from an aborted one, and the only way it
-     * can: the queue carries no other signal back.
-     */
+    /** The {@code Mono} completes normally when the transfer finishes - the only way a caller can
+     * tell a finished upload from an aborted one, since the queue carries no other signal back. */
     @Test
     void anUploadThatFinishesCompletesItsMono() {
         var transfer = queue.addExclusivePublisher(REALTIME, upload());
@@ -194,19 +158,9 @@ class PublisherQueueExclusivityTest {
         StepVerifier.create(transfer).expectComplete().verify(TIMEOUT);
     }
 
-    /**
-     * A transfer cut off by the session ending says so, rather than going quiet.
-     *
-     * <p><strong>This was the gap.</strong> Ending the queue cancelled every source still in it and
-     * told none of them, so the {@code Mono} each caller holds simply never signalled - a wait with
-     * no end, for the life of the process. Nothing noticed while nobody subscribed to those; an
-     * upload is the first thing whose entire report to the user <em>is</em> that signal, and a
-     * connection dropping mid-transfer is exactly the case it cannot afford to lose.
-     *
-     * <p>The file left open on the card is the other half of why the caller has to hear about it:
-     * there is no {@code M29} coming, so what is on the card is a truncated file that the next
-     * listing will show at whatever length it reached.
-     */
+    /** A transfer cut off by the session ending says so rather than going quiet - ending the queue
+     * used to cancel every source and tell none of them, so the {@code Mono} simply never signalled.
+     * No {@code M29} is coming, so the card is left with a truncated file. */
     @Test
     void aTransferCutOffByTheSessionEndingReportsIt() {
         var transfer = queue.addExclusivePublisher(REALTIME, upload());
@@ -221,14 +175,9 @@ class PublisherQueueExclusivityTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * An ordinary source is still preempted mid-flight, which is what makes a print interruptible.
-     *
-     * <p>Characterisation, and the contrast that says exclusivity is a departure rather than the
-     * rule: the same arrangement without {@code addExclusivePublisher} lets the later, more urgent
-     * source cut in. A print is <em>meant</em> to be interrupted by a temperature change; a
-     * transfer is not.
-     */
+    /** The contrast that makes exclusivity a departure rather than the rule: without
+     * {@code addExclusivePublisher} a more urgent source cuts in mid-flight, which is what makes a
+     * print interruptible by a temperature change. */
     @Test
     void anOrdinarySourceIsStillPreemptedMidFlight() {
         queue.addPublisher(BACKGROUND, Flux.just("G1 X1", "G1 X2", "G1 X3"));

@@ -30,21 +30,19 @@ import java.util.function.Consumer;
  * is about what a real firmware actually sends:
  *
  * <ul>
- *   <li><strong>The session stays in sync.</strong> {@link HostTerminal.CommandProcessor} now puts
- *       an {@code N} field and a {@code *} checksum on every block, so Marlin's sequence and
- *       checksum checks apply to this host for the first time. If the numbering or the covered
- *       range were wrong, the firmware would say so on the very first block - and before this
- *       change nothing on the wire was checkable, so nothing said anything.</li>
+ *   <li><strong>The session stays in sync.</strong> {@link HostTerminal.CommandProcessor} puts an
+ *       {@code N} field and a {@code *} checksum on every block, so Marlin's sequence and checksum
+ *       checks apply to this host for the first time - before that nothing on the wire was
+ *       checkable, so nothing said anything.</li>
  *   <li><strong>A rejected block comes back.</strong> One block is corrupted <em>on the wire</em>,
  *       after the window framed it, so the firmware answers {@code Error:checksum mismatch} and
- *       {@code Resend: n} for a block the host still holds. The check is that the same bytes go out
- *       a second time and the session carries on afterwards. That is spec 8.5 step 5 end to end,
- *       and it is the half that cannot be tested without a peer that rejects something.</li>
+ *       {@code Resend: n} for a block the host still holds; the check is that the same bytes go out
+ *       a second time and the session carries on - spec 8.5 step 5 end to end, the half that cannot
+ *       be tested without a peer that rejects something.</li>
  *   <li><strong>{@code echo:busy:} reaches the send window.</strong> {@code G28} takes seconds and
- *       Marlin fills the wait with it. Before the fix only the bare {@code busy:} was recognised,
- *       so the window was never told the machine had stalled. Both spellings arrive here as one
- *       {@link BusyRs}, because both are that interface in `:gcode` - the transport matches the
- *       family rather than one concrete spelling.</li>
+ *       Marlin fills the wait with it; before the fix only the bare {@code busy:} was recognised, so
+ *       the window was never told the machine had stalled. Both spellings arrive here as one
+ *       {@link BusyRs}, since both answer that interface in {@code :gcode}.</li>
  * </ul>
  *
  * <p>It builds its own connection rather than going through {@link TerminalManager}, because
@@ -123,13 +121,9 @@ public final class TerminalRecoveryProbe {
                 && !acked.isEmpty() && distinct == acked.size() ? 0 : 1);
     }
 
-    /**
-     * The wire tap: records what the window framed, and breaks one block's checksum on request.
-     *
-     * <p>The body is left exactly as it was so the firmware's <em>sequence</em> check still passes
-     * and only the checksum fails - which is what makes the answer a {@code Resend:} for this block
-     * rather than a complaint about a gap that no replay can repair.
-     */
+    /** The wire tap: records what the window framed, and breaks one block's checksum on request. The
+     * body is left exactly as it was so the firmware's sequence check still passes and only the
+     * checksum fails - a {@code Resend:} for this block, not a gap no replay can repair. */
     private static String tap(String block) {
         written.add(block);
         if (!corruptNext.compareAndSet(true, false)) {
@@ -191,15 +185,10 @@ public final class TerminalRecoveryProbe {
                 Set.copyOf(ackNumbers).size(), ackNumbers.size());
     }
 
-    /**
-     * The acknowledgements on the bus - the signal plan decision 3 asked for.
-     *
-     * <p>The check that needs a real peer is the second one in {@link #report}: this probe breaks a
-     * block on the wire on purpose, so the firmware rejects it, the host replays it, and the replay
-     * is acknowledged. A progress counter that counted what the host <em>sent</em> would count that
-     * block twice. Counting what came back here must not, and that is only demonstrable against
-     * something that actually rejects a block.
-     */
+    /** The acknowledgements on the bus. This probe breaks a block on the wire on purpose so the
+     * firmware rejects it, the host replays it, and the replay is acknowledged - a progress counter
+     * driven by what the host <em>sent</em> would count that block twice, which is only demonstrable
+     * against something that actually rejects a block. */
     private static List<BlockAcknowledged> acknowledged(List<Object> seen) {
         return seen.stream()
                 .filter(BlockAcknowledged.class::isInstance)

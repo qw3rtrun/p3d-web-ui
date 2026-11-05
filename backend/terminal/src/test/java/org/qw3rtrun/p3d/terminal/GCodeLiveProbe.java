@@ -73,13 +73,9 @@ public final class GCodeLiveProbe {
         }
     }
 
-    /**
-     * Everything readable up to and including the `ok` that ends the answer.
-     *
-     * Marlin does not frame its replies, so the only end marker is the acknowledgement. Reading to
-     * a fixed timeout instead mis-attributes a slow command's answer to the next label: `G28` takes
-     * seconds, and its `ok` otherwise lands against whatever was sent after it.
-     */
+    /** Everything readable up to and including the `ok` that ends the answer - Marlin does not frame
+     * its replies, so the acknowledgement is the only end marker; a fixed timeout would instead
+     * mis-attribute a slow answer (`G28` takes seconds) to whatever was sent next. */
     private static List<String> drain(BufferedReader in) {
         var lines = new ArrayList<String>();
         try {

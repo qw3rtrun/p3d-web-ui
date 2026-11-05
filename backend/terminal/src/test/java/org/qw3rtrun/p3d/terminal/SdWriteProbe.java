@@ -13,16 +13,13 @@ import java.util.List;
 
 /**
  * Writes a file to the printer's SD card with {@code M28}/{@code M29}, lists it, prints it, and
- * reports what came back.
+ * reports what came back. A hand-run probe, not a test - it needs a listener, so never part of
+ * {@code check}. {@code GCodeCorpusProbe} quarantines {@code M28} for exactly the reason this
+ * exercises: it redirects every following line into a file instead of executing it.
  *
- * <p>A hand-run probe and not a test: it needs a listener on the far end, so it must never be part
- * of {@code check}. {@code GCodeCorpusProbe} <em>quarantines</em> {@code M28} for exactly the reason
- * this exercises - it redirects every following line into a file instead of executing it, so a
- * sweep that sent it would report the rest of the corpus as a hundred commands doing nothing.
- *
- * <p><strong>What it measures: whether a line written to a file has to be numbered, and from
- * where.</strong> That is not something to assume, so this sends the first content line
- * <em>unnumbered</em>, reads the answer, and only then sends the rest the way that answer says to.
+ * <p>What it measures: whether a line written to a file has to be numbered, and from where - so this
+ * sends the first content line <em>unnumbered</em>, reads the answer, and sends the rest the way
+ * that answer says to.
  *
  * <h2>What it found, against MarlinSim (bugfix-2.1.x)</h2>
  *
@@ -51,30 +48,25 @@ public final class SdWriteProbe {
     }
 
     /**
-     * The file written, and the three lines put in it.
-     *
-     * <p><strong>The extension is load-bearing.</strong> {@code M20} lists only files it considers
-     * printable - {@code .gcode}, {@code .gco}, {@code .g} - in DOS 8.3 form, so a file written as
-     * plain {@code test} is on the card and simply never appears in a listing. The first run of
-     * this probe used that name and reported the empty listing as a simulator gap, which it is
-     * not: {@code M32} opened the same name happily and gave its size. {@code M20} filters,
-     * {@code M28} and {@code M32} do not.
+     * The file written, and the three lines put in it. The extension is load-bearing:
+     * {@code M20} lists only printable extensions ({@code .gcode}, {@code .gco}, {@code .g}) in DOS
+     * 8.3 form, so a file written as plain {@code test} is on the card but never appears in a
+     * listing - the first run of this probe used that name and read the empty listing as a simulator
+     * gap, but {@code M32} opened the same name and gave its size; {@code M20} filters, {@code M28}
+     * and {@code M32} do not.
      */
     private static final String FILE = "test.gco";
 
     /**
-     * Both spellings of {@code M118} go in, adjacent, so one run tells them apart.
-     *
-     * <p><strong>{@code P0} is the one that is heard.</strong> Printing this file yields
-     * {@code Done-P0} and no {@code Done}: a plain {@code M118} writes to the port the command
-     * arrived on, and a command read from the SD reader did not arrive on one, while {@code P0}
-     * means "all serial ports". The same {@code M118 Done} sent down the wire directly <em>does</em>
-     * answer {@code Done}, which is what rules out "this build has no {@code M118}" - and
-     * {@code M117} from the same file reaching the host as {@code //action:notification Created}
-     * rules out "commands from a file do not run".
-     *
-     * <p>Worth knowing before writing a job file: a progress or completion marker put in one with a
-     * bare {@code M118} is written to nowhere.
+     * Both spellings of {@code M118} go in, adjacent, so one run tells them apart. {@code P0} is the
+     * one heard: printing this file yields {@code Done-P0} and no {@code Done}, since a plain
+     * {@code M118} writes to the port the command arrived on and a command read from the SD reader
+     * did not arrive on one, while {@code P0} means "all serial ports". The same {@code M118 Done}
+     * sent directly down the wire does answer {@code Done}, ruling out "this build has no
+     * {@code M118}"; {@code M117} from the file reaching the host as
+     * {@code //action:notification Created} rules out "commands from a file do not run". Worth
+     * knowing before writing a job file: a progress marker put in one with a bare {@code M118} is
+     * written to nowhere.
      */
     private static final List<String> CONTENT =
             List.of("G28", "M117 Created", "M118 Done", "M118 P0 Done-P0");
@@ -92,34 +84,29 @@ public final class SdWriteProbe {
                     new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
             var out = socket.getOutputStream();
 
-            // Flush whatever the handshake left in the buffer before the first step, or every step
-            // reports the previous one's replies. `connect` sends an `M115` to prove the machine is
-            // answering and reads until the first `ok` - but the capability dump behind it is 40
-            // lines, and if any of it is still arriving when the first real command goes out, the
-            // whole transcript is one command out of step. That happened: an `M110` appeared to be
-            // answered by the capability dump, `N3` by `ok N2`, and an unnumbered line looked
-            // accepted when two earlier runs had it rejected. Read to silence instead of to a
-            // marker, because what is being waited out is a tail with no end marker of its own.
+            // Flush whatever the handshake left in the buffer, or every step reports the previous
+            // one's replies: `connect`'s `M115` capability dump is 40 lines, and if any is still
+            // arriving when the first real command goes out the whole transcript is one command out
+            // of step - observed as an `M110` answered by the dump, `N3` by `ok N2`, and an
+            // unnumbered line looking accepted when two earlier runs had it rejected. Read to silence
+            // rather than a marker, since the tail has no end marker of its own.
             for (var leftover : listen(in, socket, 1500)) {
                 System.out.println("  (settling) << " + leftover);
             }
             socket.setSoTimeout(12000);
 
-            // A known base, so "N1 is next" is a fact rather than a hope.
-            //
-            // The reset moves the firmware's counter and therefore this one: `M110 N0` sets
-            // last_N to 0, so the next line the firmware will accept is N1 - not N2, even though
-            // the M110 block itself went out as N1. Getting that wrong is not a subtle failure:
-            // the first run of this probe numbered straight on and every line from M28 onwards
-            // came back `Error:Line Number is not Last Line Number+1, Last Line: 0` with a
-            // `Resend: 1`. It is also exactly what `GSendWindow.reset(to)` encodes - `next = to + 1`.
+            // A known base, so "N1 is next" is a fact rather than a hope: `M110 N0` sets last_N to 0,
+            // so the next accepted line is N1 even though the M110 block itself went out as N1.
+            // Numbering straight on instead got every line from M28 onwards
+            // `Error:Line Number is not Last Line Number+1, Last Line: 0` with a `Resend: 1` - which
+            // is exactly what `GSendWindow.reset(to)` encodes as `next = to + 1`.
             step(out, in, "=== reset the counter ===", framed("M110 N0"));
             next = 1;
 
             step(out, in, "=== open the file for write ===", framed("M28 " + FILE));
 
-            // The question this probe exists to answer. An unnumbered line while saving: does the
-            // firmware take it, or does it complain that a line number is missing?
+            // The question this probe exists to answer: an unnumbered line while saving - taken, or
+            // a complaint about the missing line number?
             List<String> bare = step(out, in, "=== first content line, UNNUMBERED ===", CONTENT.get(0));
             boolean numberingRequired = complains(bare);
 
@@ -129,14 +116,13 @@ public final class SdWriteProbe {
                     : "  >> the firmware accepted an unnumbered line while saving");
 
             if (numberingRequired) {
-                // The unnumbered attempt did not reach the file, so put that line in properly -
-                // the point of the exercise is a file with all of CONTENT in it.
+                // The unnumbered attempt did not reach the file; the point is a file with all of
+                // CONTENT in it.
                 step(out, in, "=== first content line again, numbered ===", framed(CONTENT.get(0)));
             }
 
-            // Either way the rest go numbered - a host that has started numbering does not stop
-            // mid-session, and sending them numbered also shows whether the stored file keeps the
-            // `N` field or strips it, which is what the listing size and the print will say.
+            // Either way the rest go numbered - a host does not stop mid-session - which also shows
+            // whether the stored file keeps the `N` field, in the listing size and the print.
             for (int i = 1; i < CONTENT.size(); i++) {
                 step(out, in, "=== content line " + (i + 1) + " ===", framed(CONTENT.get(i)));
             }
@@ -145,16 +131,15 @@ public final class SdWriteProbe {
 
             step(out, in, "=== list the card ===", framed("M20"));
 
-            // M32 starts the print. Marlin's own doc example wraps the name in `!...#`; the plain
-            // form is what most hosts send, so try that and fall back.
+            // M32 starts the print. The plain form is what most hosts send; Marlin's own doc example
+            // wraps the name in `!...#`, so fall back to that.
             List<String> started = step(out, in, "=== print it ===", framed("M32 " + FILE));
             if (complains(started)) {
                 step(out, in, "=== print it, the doc's !name# form ===", framed("M32 !" + FILE + "#"));
             }
 
-            // The file holds a G28, so the print takes seconds. Listen for what it says while it
-            // runs - the two M118 spellings are what this is watching for, and which of them
-            // arrives is the answer.
+            // The file holds a G28, so the print takes seconds; listen for the two M118 spellings -
+            // which one arrives is the answer.
             System.out.println();
             System.out.println("=== while it prints ===");
             for (var line : listen(in, socket, 15000)) {
@@ -163,18 +148,15 @@ public final class SdWriteProbe {
             }
 
             // Two controls, each ruling out an explanation that would otherwise still be open.
-            //
             // Listing again after an explicit mount separates "the card needed initialising" from
-            // "the listing does not show what is on it". Neither turned out to be the answer - the
-            // first run of this used a name with no extension, which M20 filters out - and the
-            // step is kept because it is what shows the listing is stable rather than incidental.
+            // "the listing does not show what is on it" - neither was the answer here (the first run
+            // used an extension-less name M20 filters out), but the step shows the listing is stable.
             socket.setSoTimeout(12000);
             step(out, in, "=== init the card, then list again ===", framed("M21"));
             step(out, in, "=== list the card again ===", framed("M20"));
 
-            // And the same M118 down the wire rather than out of the file. It answers `Done`,
-            // which is what makes the missing one above a fact about where the command came from
-            // rather than about whether this build implements it at all.
+            // The same M118 down the wire rather than out of the file answers `Done` - which makes
+            // the missing one above about where the command came from, not whether it is implemented.
             step(out, in, "=== M118 sent directly, not from the file ===", framed("M118 Done"));
         }
 
@@ -254,12 +236,9 @@ public final class SdWriteProbe {
         out.flush();
     }
 
-    /**
-     * Everything up to and including the {@code ok} that ends the answer, or until [budget] runs
-     * out - the same bounded read {@code ReplyCorpusProbe} uses, and for the same reason: a
-     * machine with an auto-report running talks continuously and the `ok` being waited for may
-     * already have gone past.
-     */
+    /** Everything up to and including the {@code ok} that ends the answer, or until [budget] runs
+     * out - the same bounded read {@code ReplyCorpusProbe} uses, since a machine with an auto-report
+     * running talks continuously and the `ok` waited for may already have gone past. */
     private static List<String> drain(BufferedReader in, long budget) {
         var lines = new ArrayList<String>();
         var deadline = System.currentTimeMillis() + budget;

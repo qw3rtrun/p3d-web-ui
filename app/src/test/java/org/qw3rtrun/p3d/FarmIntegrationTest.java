@@ -572,6 +572,23 @@ abstract class FarmIntegrationTest {
             return payloadOf(type);
         }
 
+        /**
+         * The payload of <strong>every</strong> message of this type, oldest first.
+         *
+         * <p>{@link #payloadOf(String)} keeps the last one, which is right for a state a machine
+         * restates - a temperature, a connection. It is wrong for a reply that arrives many times
+         * as one answer: an {@code M503} settings report is twenty-five messages of two types, and
+         * a test that read only the last {@code SettingsValue} would pass against a host that
+         * dropped the other twelve.
+         */
+        @SuppressWarnings("unchecked")
+        public List<Map<String, Object>> allOf(String type) {
+            return seen.stream()
+                    .filter(message -> type.equals(message.get("type")))
+                    .map(message -> (Map<String, Object>) message.get("event"))
+                    .toList();
+        }
+
         /** The payload of the most recent message of this type, or null. */
         @SuppressWarnings("unchecked")
         public Map<String, Object> payloadOf(String type) {

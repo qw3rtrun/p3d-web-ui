@@ -95,13 +95,23 @@ public final class MockPrinter implements AutoCloseable {
      * @param answers      false for a machine that accepts the socket and then says nothing. That
      *                     is a terminal server with nothing plugged into it, and it is the case
      *                     that distinguishes {@code ONLINE} from {@code IDLE}
+     * @param reportsSettings whether this firmware has {@code M503} at all - Marlin's
+     *                     {@code DISABLE_M503} compiles it out. <strong>UNMEASURED when
+     *                     false:</strong> the simulator cannot be built with that option, so what
+     *                     such a firmware answers is assumed to be
+     *                     {@code echo:Unknown command: "M503"}, on the strength of that being how
+     *                     it answers every code it does not have - measured for {@code M851},
+     *                     {@code M304} and {@code M998}. It is also <em>not</em> a capability:
+     *                     Marlin's {@code M115} reports nothing about {@code M503} under any
+     *                     spelling, which is why the farm has to learn this from the reply
      */
     public record Profile(String label,
                           String firmware,
                           Map<String, Boolean> capabilities,
                           boolean sdCard,
                           boolean advancedOk,
-                          boolean answers) {
+                          boolean answers,
+                          boolean reportsSettings) {
 
         public Profile {
             capabilities = Collections.unmodifiableMap(new LinkedHashMap<>(capabilities));
@@ -111,7 +121,7 @@ public final class MockPrinter implements AutoCloseable {
         public Profile withExtruders(String label, int count) {
             return new Profile(label,
                     firmware.replaceAll("EXTRUDER_COUNT:\\d+", "EXTRUDER_COUNT:" + count),
-                    capabilities, sdCard, advancedOk, answers);
+                    capabilities, sdCard, advancedOk, answers, reportsSettings);
         }
 
         @Override
@@ -148,13 +158,14 @@ public final class MockPrinter implements AutoCloseable {
 
     /** A MarlinSim with a card in it: the baseline every feature is proved against first. */
     public static Profile marlin() {
-        return new Profile("marlin-sd", MARLIN_SIM_M115, simCapabilities(true), true, true, true);
+        return new Profile("marlin-sd", MARLIN_SIM_M115, simCapabilities(true),
+                true, true, true, true);
     }
 
     /** The same firmware with an empty reader - the Storage tab's other state. */
     public static Profile withoutCard() {
         return new Profile("marlin-no-sd", MARLIN_SIM_M115, simCapabilities(false),
-                false, true, true);
+                false, true, true, true);
     }
 
     /** Two tools, so that a command for tool 1 is a command the aggregate may let through. */
@@ -194,7 +205,7 @@ public final class MockPrinter implements AutoCloseable {
      */
     public static Profile legacyOk() {
         return new Profile("legacy-bare-ok", MARLIN_SIM_M115, simCapabilities(true),
-                true, false, true);
+                true, false, true, true);
     }
 
     /**
@@ -204,7 +215,41 @@ public final class MockPrinter implements AutoCloseable {
      * there, because {@code IDLE} means a block this session sent came back acknowledged.
      */
     public static Profile mute() {
-        return new Profile("mute", MARLIN_SIM_M115, simCapabilities(true), true, true, false);
+        return new Profile("mute", MARLIN_SIM_M115, simCapabilities(true),
+                true, true, false, true);
+    }
+
+    /**
+     * A firmware built without {@code EEPROM_SETTINGS} - the Settings tab's "there is nothing to
+     * settle" state.
+     *
+     * <p><strong>The capability is spelled {@code EEPROM} and not {@code EEPROM_SETTINGS}.</strong>
+     * The latter is the build macro; what reaches the wire is {@code Cap:EEPROM:0|1}, measured on
+     * the simulator and cross-checked against Marlin's own {@code M115.cpp}. Issue #88's checklist
+     * names the macro, which is why this is worth saying twice.
+     *
+     * <p><strong>UNMEASURED.</strong> The simulator always has EEPROM, so what such a firmware
+     * answers to {@code M500} could not be captured. This profile therefore changes only the
+     * capability line and keeps answering the settings commands, because the farm's decision is
+     * taken from the capability and never from the reply - the tab is not offered at all. A test
+     * here must assert the gate and not a reply string.
+     */
+    public static Profile withoutEeprom() {
+        var caps = new LinkedHashMap<>(simCapabilities(true));
+        caps.put("EEPROM", false);
+        return new Profile("marlin-no-eeprom", MARLIN_SIM_M115, caps, true, true, true, true);
+    }
+
+    /**
+     * A firmware with EEPROM but no {@code M503} - Marlin's {@code DISABLE_M503}.
+     *
+     * <p>The configuration that proves the farm <em>learns</em> this rather than reading it. There
+     * is no {@code Cap:} line for it under any spelling, so a host cannot know until it has asked
+     * once and been told the code does not exist. See {@link Profile#reportsSettings}.
+     */
+    public static Profile withoutSettingsReport() {
+        return new Profile("marlin-no-m503", MARLIN_SIM_M115, simCapabilities(true),
+                true, true, true, false);
     }
 
     // ------------------------------------------------------------------ state
@@ -234,6 +279,83 @@ public final class MockPrinter implements AutoCloseable {
      */
     private final Map<String, List<String>> stored =
             Collections.synchronizedMap(new LinkedHashMap<>());
+
+    // ------------------------------------------------------- the settings, in two memories
+
+    /**
+     * The settings report, section by section, exactly as MarlinSim writes it.
+     *
+     * <p>Each entry is a section title and the command lines under it. Captured verbatim from a
+     * probe run against {@code FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56)
+     * MACHINE_TYPE:MarlinSim} on 2026-11-04:
+     *
+     * <pre>
+     * &gt;&gt; M503   &lt;&lt; echo:; Steps per unit:
+     *           &lt;&lt; echo:  M92 X80.00 Y80.00 Z400.00 E500.00
+     *           ... 24 lines ...
+     *           &lt;&lt; ok P15 B3
+     * </pre>
+     *
+     * <p><strong>The section titles are data and not decoration.</strong> They are what the
+     * Settings tab groups by, so a mock that invented them would be testing the test. The awkward
+     * ones - {@code Acceleration (units/s2) (P<print-accel> ...)} - are kept with their brackets
+     * and angle brackets because they are what the decoder has to survive.
+     */
+    private static final List<Map.Entry<String, List<String>>> SETTINGS_REPORT = List.of(
+            Map.entry("Linear Units", List.of("G21 ; (mm)")),
+            Map.entry("Auto Temp Control", List.of("M104 S0 B250 F0.00")),
+            Map.entry("Temperature Units", List.of("M149 C ; Units in Celsius")),
+            Map.entry("Filament settings (Disabled)", List.of("M200 S0 D1.75")),
+            Map.entry("Steps per unit", List.of("M92 X80.00 Y80.00 Z400.00 E500.00")),
+            Map.entry("Max feedrates (units/s)", List.of("M203 X300.00 Y300.00 Z5.00 E25.00")),
+            Map.entry("Max Acceleration (units/s2)",
+                    List.of("M201 X3000.00 Y3000.00 Z100.00 E10000.00")),
+            Map.entry("Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>)",
+                    List.of("M204 P3000.00 R3000.00 T3000.00")),
+            Map.entry("Advanced (B<min_segment_time_us> S<min_feedrate> T<min_travel_feedrate> "
+                            + "J<junc_dev>)",
+                    List.of("M205 B20000.00 S0.00 T0.00 J0.01")),
+            Map.entry("Home offset", List.of("M206 X0.00 Y0.00 Z0.00")),
+            Map.entry("Material heatup parameters",
+                    List.of("M145 S0 H180.00 B70.00 F0", "M145 S1 H240.00 B110.00 F0")),
+            Map.entry("Hotend PID", List.of("M301 P22.20 I1.08 D114.00")));
+
+    /**
+     * What a factory reset puts in live memory, where it differs from what is in the EEPROM.
+     *
+     * <p><strong>Measured, and the measurement is the point.</strong> On the simulator the stored
+     * settings and the firmware defaults genuinely differ in one line, which is what makes
+     * {@code M501} and {@code M502} distinguishable at all:
+     *
+     * <pre>
+     * &gt;&gt; M503   &lt;&lt; echo:  M104 S0 B250 F0.00      (from the EEPROM)
+     * &gt;&gt; M502   &lt;&lt; ok P15 B3
+     * &gt;&gt; M503   &lt;&lt; echo:  M104 S210 B250 F0.10    (the defaults, and nothing announced the change)
+     * &gt;&gt; M501   &lt;&lt; ok P15 B3
+     * &gt;&gt; M503   &lt;&lt; echo:  M104 S0 B250 F0.00      (back)
+     * </pre>
+     *
+     * <p>A mock whose defaults equalled its EEPROM would let a reversed {@code M501}/{@code M502}
+     * pass every test.
+     */
+    private static final Map<String, String> FIRMWARE_DEFAULTS =
+            Map.of("M104", "M104 S210 B250 F0.10");
+
+    /**
+     * The settings the machine is running on - Marlin's live memory, which {@code M503} reports.
+     *
+     * <p>Named {@code liveSettings} and not {@code live}, which is already this class's open
+     * {@link Socket}.
+     *
+     * <p>Keyed the way the report has to be keyed: the command code, except {@code M145}, which is
+     * the one code the firmware reports <em>twice</em> in a single dump and so needs its index in
+     * the key. See {@link #settingsKey(String)}.
+     */
+    private final Map<String, String> liveSettings =
+            Collections.synchronizedMap(new LinkedHashMap<>());
+
+    /** What {@code M500} wrote and {@code M501} reads back. A separate memory, deliberately. */
+    private final Map<String, String> eeprom = Collections.synchronizedMap(new LinkedHashMap<>());
 
     /** The file {@code M28} opened and {@code M29} has not yet closed, or null. */
     private volatile String openFile;
@@ -295,6 +417,9 @@ public final class MockPrinter implements AutoCloseable {
 
     private MockPrinter(Profile profile) throws IOException {
         this.profile = profile;
+        SETTINGS_REPORT.forEach(section -> section.getValue()
+                .forEach(line -> liveSettings.put(settingsKey(line), line)));
+        eeprom.putAll(liveSettings);
         this.server = new ServerSocket(0, 4, InetAddress.getLoopbackAddress());
         this.acceptor = new Thread(this::serve, "mock-printer-" + profile.label());
         this.acceptor.setDaemon(true);
@@ -830,8 +955,94 @@ public final class MockPrinter implements AutoCloseable {
             // The busy notices and the cold-extrusion echo are the simulator's own chatter around an
             // acknowledgement rather than instead of one, and are not reproduced here - see the
             // class note on this being a mock and not a simulator.
+            // ------------------------------------------------------------------ the settings
+
+            // M503 - the whole of live memory, as the commands that would restore it. Two shapes,
+            // both measured on 2026-11-04 and both reproduced, because a decoder that only handles
+            // one of them is a decoder that breaks the day a caller passes S0:
+            //
+            //   >> M503     << echo:; Steps per unit:
+            //               << echo:  M92 X80.00 Y80.00 Z400.00 E500.00
+            //   >> M503 S0  <<   M92 X80.00 Y80.00 Z400.00 E500.00     (no prefix, no sections)
+            //
+            // S, S1 and C are measured to be byte-identical to a bare M503, so only S0 branches.
+            case "M503" -> {
+                if (!profile.reportsSettings()) {
+                    lines.add("echo:Unknown command: \"" + command + "\"");
+                } else if ("S0".equals(argument(command))) {
+                    settingsLines().forEach(line -> lines.add("  " + line));
+                } else {
+                    for (var section : SETTINGS_REPORT) {
+                        lines.add("echo:; " + section.getKey() + ":");
+                        for (var line : section.getValue()) {
+                            lines.add("echo:  " + liveOrReported(line));
+                        }
+                    }
+                }
+                lines.add(ok());
+            }
+
+            // M500 - live memory into the EEPROM. The notification is part of the answer, not
+            // chatter around it: measured `//action:notification Settings Stored` then `ok P15 B3`.
+            // It decodes to ActionRs, which already reaches a browser, so reproducing it costs
+            // nothing and leaving it out would hide the one confirmation M500 gives.
+            case "M500" -> {
+                synchronized (liveSettings) {
+                    eeprom.clear();
+                    eeprom.putAll(liveSettings);
+                }
+                lines.add("//action:notification Settings Stored");
+                lines.add(ok());
+            }
+
+            // M501 - the EEPROM back into live memory, and M502 - the firmware defaults into it.
+            // Both answer a BARE ok and say nothing about what they changed. Measured, and it is
+            // the fact the whole feature had to be designed around: a host holding a settings
+            // report is silently wrong after either of these.
+            case "M501" -> {
+                synchronized (liveSettings) {
+                    liveSettings.clear();
+                    liveSettings.putAll(eeprom);
+                }
+                lines.add(ok());
+            }
+            case "M502" -> {
+                synchronized (liveSettings) {
+                    liveSettings.clear();
+                    SETTINGS_REPORT.forEach(section -> section.getValue().forEach(line -> {
+                        var key = settingsKey(line);
+                        liveSettings.put(key, FIRMWARE_DEFAULTS.getOrDefault(key, line));
+                    }));
+                }
+                lines.add(ok());
+            }
+
+            // M504 - measured `echo:EEPROM OK` then `ok`. The FAILURE text is UNMEASURED: the
+            // simulator's EEPROM is always valid, so there is no honest way to make this say no,
+            // and nothing here guesses at one.
+            case "M504" -> {
+                lines.add("echo:EEPROM OK");
+                lines.add(ok());
+            }
+
+            // The six settings a caller may change. With words they are a write to live memory;
+            // bare they are a read, and the read answers in M503 S0's shape - measured:
+            //
+            //   >> M92 X81  << ok P15 B3
+            //   >> M92      <<   M92 X81.00 Y80.00 Z400.00 E500.00
+            //
+            // That shared shape is why one reply type covers a dump and a single read-back.
+            case "M92", "M203", "M201", "M204", "M205", "M206" -> {
+                if (argument(command).isEmpty()) {
+                    lines.add("  " + liveSettings.getOrDefault(word, word));
+                } else {
+                    applySetting(word, argument(command));
+                }
+                lines.add(ok());
+            }
+
             case "M110", "M22", "M24", "M83", "M84", "M104", "M140", "M155", "M106", "M107",
-                 "M500", "G21", "G28", "G1", "G0", "G90", "G91" -> lines.add(ok());
+                 "G21", "G28", "G1", "G0", "G90", "G91" -> lines.add(ok());
             default -> {
                 lines.add("echo:Unknown command: \"" + command + "\"");
                 lines.add(ok());
@@ -1008,5 +1219,103 @@ public final class MockPrinter implements AutoCloseable {
     private static String argument(String command) {
         var space = command.indexOf(' ');
         return space < 0 ? "" : command.substring(space + 1).trim();
+    }
+
+    // ----------------------------------------------------------------- the settings, observable
+
+    /**
+     * Live memory as the lines {@code M503 S0} would print, in report order.
+     *
+     * <p>An observable in its own right, like {@link #written(String)}: a test can assert what the
+     * machine <em>holds</em> rather than only what it was told, which is the difference between
+     * proving {@code M501} reverted a value and proving an {@code M501} was sent.
+     */
+    public List<String> settingsLines() {
+        var ordered = new ArrayList<String>();
+        synchronized (liveSettings) {
+            SETTINGS_REPORT.forEach(section -> section.getValue()
+                    .forEach(line -> ordered.add(liveSettings.get(settingsKey(line)))));
+        }
+        return ordered;
+    }
+
+    /** One setting as live memory currently holds it, e.g. {@code setting("M92")}. */
+    public String setting(String code) {
+        return liveSettings.get(code);
+    }
+
+    /** The same from the stored copy - what a power cycle would come back to. */
+    public String stored(String code) {
+        return eeprom.get(code);
+    }
+
+    /** The reported line for a code, read from live memory, or the captured line if untouched. */
+    private String liveOrReported(String reported) {
+        var held = liveSettings.get(settingsKey(reported));
+        return held == null ? reported : held;
+    }
+
+    /**
+     * The key one reported line is held under.
+     *
+     * <p>The code, with one named exception: {@code M145} is the only code MarlinSim reports twice
+     * in a single dump - {@code M145 S0 H180.00 ...} and {@code M145 S1 H240.00 ...} - so keying it
+     * on {@code M145} alone would collapse the two presets into one. Its index joins the key.
+     *
+     * <p>A named exception rather than a clever general rule, because the general rules all guess:
+     * {@code M200 S0 D1.75} also has an {@code S} word and is reported once. When another indexed
+     * setting turns up it joins this list, and the list is readable.
+     */
+    private static String settingsKey(String reported) {
+        var code = word(reported);
+        if (!"M145".equals(code)) {
+            return code;
+        }
+        for (var token : argument(reported).split(" ")) {
+            if (token.startsWith("S")) {
+                return code + " " + token;
+            }
+        }
+        return code;
+    }
+
+    /**
+     * Writes words into live memory, letter by letter, keeping the rest of the line.
+     *
+     * <p>{@code M92 X81} against {@code M92 X80.00 Y80.00 Z400.00 E500.00} leaves
+     * {@code M92 X81.00 Y80.00 Z400.00 E500.00} - measured, including the two decimals the firmware
+     * reformats to. A mock that replaced the whole line would make a partial write look total, and
+     * a partial write is what every control on the tab sends.
+     */
+    private void applySetting(String code, String words) {
+        synchronized (liveSettings) {
+            var current = liveSettings.getOrDefault(code, code);
+            var merged = new LinkedHashMap<String, String>();
+            var tokens = current.split(" ");
+            for (var i = 1; i < tokens.length; i++) {
+                if (!tokens[i].isEmpty()) {
+                    merged.put(tokens[i].substring(0, 1), tokens[i].substring(1));
+                }
+            }
+            for (var token : words.split(" ")) {
+                if (token.length() < 2) {
+                    continue;
+                }
+                merged.put(token.substring(0, 1), twoDecimals(token.substring(1)));
+            }
+            var rebuilt = new StringBuilder(code);
+            merged.forEach((letter, value) -> rebuilt.append(' ').append(letter).append(value));
+            liveSettings.put(code, rebuilt.toString());
+        }
+    }
+
+    /** The scale MarlinSim prints a settings value at - {@code X81} comes back as {@code X81.00}. */
+    private static String twoDecimals(String value) {
+        try {
+            return new java.math.BigDecimal(value)
+                    .setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
+        } catch (NumberFormatException notANumber) {
+            return value;
+        }
     }
 }

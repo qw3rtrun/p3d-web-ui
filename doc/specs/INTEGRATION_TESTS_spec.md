@@ -594,14 +594,16 @@ builds. Exclusivity is belt over braces today, and this module tests the braces.
 > *"Every IntegrationTest should contain a configurations of mocked printer(s), probably with
 > different capabilities. And check feature over several configurtions"* — #43 item 6
 
-| Profile | `EXTRUDER_COUNT` | `Cap:SDCARD` | acknowledges with | answers at all | what it is for |
-|---|---|---|---|---|---|
-| `marlin()` | 1 | 1 | `ok N<n> P15 B3` | yes | the baseline — MarlinSim |
-| `withoutCard()` | 1 | **0** | `ok N<n> P15 B3` | yes | the Storage tab's empty state |
-| `dualExtruder()` | **2** | 1 | `ok N<n> P15 B3` | yes | a command for tool 1 is legal |
-| `legacyOk()` | 1 | 1 | **`ok`** | yes | a firmware built without `ADVANCED_OK`: no buffer counts and no line number |
-| `mute()` | 1 | 1 | — | **no** | a terminal server with nothing behind it |
-| `deadPort()` | — | — | — | — | an address with nothing listening |
+| Profile | `EXTRUDER_COUNT` | `Cap:SDCARD` | `Cap:EEPROM` | has `M503` | acknowledges with | answers at all | what it is for |
+|---|---|---|---|---|---|---|---|
+| `marlin()` | 1 | 1 | 1 | yes | `ok N<n> P15 B3` | yes | the baseline — MarlinSim |
+| `withoutCard()` | 1 | **0** | 1 | yes | `ok N<n> P15 B3` | yes | the Storage tab's empty state |
+| `dualExtruder()` | **2** | 1 | 1 | yes | `ok N<n> P15 B3` | yes | a command for tool 1 is legal |
+| `legacyOk()` | 1 | 1 | 1 | yes | **`ok`** | yes | a firmware built without `ADVANCED_OK`: no buffer counts and no line number |
+| `withoutEeprom()` | 1 | 1 | **0** | yes | `ok N<n> P15 B3` | yes | the Settings tab is not offered at all |
+| `withoutSettingsReport()` | 1 | 1 | 1 | **no** | `ok N<n> P15 B3` | yes | `DISABLE_M503` — a gate that has to be *learned* |
+| `mute()` | 1 | 1 | 1 | yes | — | **no** | a terminal server with nothing behind it |
+| `deadPort()` | — | — | — | — | — | — | an address with nothing listening |
 
 `<n>` is the number of the block being answered — §4.2.1. A profile with `advancedOk` answers an
 unnumbered block `ok P15 B3`, which no row above ever reaches, because nothing in this farm sends an
@@ -625,6 +627,32 @@ what the difference is. The three that have earned their place so far:
   a card — so no other profile is driven. **An SD upload has the same axis and only that axis**: it
   is the same stream of blocks through the same gate, so `marlin()` and `legacyOk()` are driven and
   the file that lands on the card has to be identical.
+* **whether the machine has settings to manage, and whether it will say what they are.** Two axes
+  rather than one, and issue #88 assumed they were the same kind of thing. They are not, and the
+  difference is the whole subject of `EepromSettingsIntegrationTest`:
+
+  * `Cap:EEPROM` is **reported**, so the farm reads it and the server decides. A machine without it
+    is never offered the tab — the same server-side gate the Storage tab has, for the same reason.
+    Note the name: `EEPROM_SETTINGS` is Marlin's *build macro*; `EEPROM` is what reaches the wire.
+  * `DISABLE_M503` is **not reported at all**. Marlin's `M115` carries no capability about `M503`
+    under any spelling — verified against the live simulator's 38 `Cap:` lines and against
+    `Marlin/src/gcode/host/M115.cpp` on `2.1.x`. So the farm cannot read it, and the only wire
+    signal is the firmware answering `echo:Unknown command: "M503"`. The gate is therefore *learned
+    from a refusal*, cannot be known before the question has been asked once, and what the browser
+    is handed is the firmware's own `UnknownCommand` rather than a farm-invented "unsupported"
+    event.
+
+  That asymmetry is why `withoutSettingsReport()` exists as a profile of its own instead of being a
+  second capability flag on `withoutEeprom()`: a flag would imply the farm could look it up.
+
+**`withoutEeprom()` is deliberately not driven against `M500`, `M501` or `M502`**, for the same
+reason `withoutCard()` is not driven against an upload. The simulator always has EEPROM, so what a
+firmware built without it answers to those commands has never been measured. The profile exists to
+prove the *gate* — that the tab is not offered — and a test asserting an invented reply would be a
+test of the invention. `withoutSettingsReport()` is marked UNMEASURED on the same grounds: the
+simulator cannot be built with `DISABLE_M503`, so `echo:Unknown command: "M503"` is an assumption,
+resting on that being how this build answers every code it does not have — measured for `M851`,
+`M304` and `M998`.
 
 **`withoutCard()` is deliberately not driven against an upload**, and that is §4.2 being obeyed
 rather than a gap in the matrix. It is the one configuration where the answer genuinely should
@@ -731,7 +759,7 @@ through its endpoints against a mocked printer.
 | 2 | Connectivity | `/api-printer/{id}/connect`, `/connection`, `/stream` | `ConnectivityIntegrationTest` | **covered** |
 | 3 | Temperature control | `/set-temp`, `/set-bed-temp`, `/report-temp`, `/auto-report-temp`, `GET /api-printer/{id}` | `TemperatureControlIntegrationTest` | **covered** |
 | 4 | SD-card storage | `/sd/mount`, `/release`, `/list`, `/delete`, `/print` | `SdCardIntegrationTest` | **covered** |
-| 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position`, `/store-settings` | `MotionControlIntegrationTest` | **covered** — and the one that asserts whole command lists, §3.3 |
+| 5 | Motion and machine control | `/home`, `/move`, `/fan`, `/position` | `MotionControlIntegrationTest` | **covered** — and the one that asserts whole command lists, §3.3 |
 | 6 | G-code file store | `/api-files` | `GcodeFileIntegrationTest` | **covered** — and the one with no machine in it, §5.1 |
 | 7 | Print jobs and queue | `/api-jobs` | `PrintJobIntegrationTest` | **covered** |
 | 8 | Farm dashboard | `/api-farm/stream` | `FarmDashboardIntegrationTest` | **covered** — and the one with two machines in it, §5.2 |
@@ -739,6 +767,7 @@ through its endpoints against a mocked printer.
 | 10 | Identity and access | `/login`, `/logout`, `/profile`, `/api-users` | `FarmSecurityTest` (`:frontend:web-ui`) | covered **elsewhere**, deliberately |
 | 11 | Pages | `/dashboard.html`, `/printers/{id}` | `MonitorPageTest` (`:frontend:web-ui`) | **out of scope** — #43 item 2 |
 | 12 | Restart recovery | *none* | `StartupAnnouncementFlowTest` | covered, **and it is the exception** — §7 |
+| 13 | EEPROM settings | `/store-settings`, `/settings/read`, `/revert`, `/defaults`, `/validate`, and the six setters | `EepromSettingsIntegrationTest` | **covered** — [#88](https://github.com/qw3rtrun/p3d-web-ui/issues/88); and the one whose two configuration axes are *not the same kind of thing*, §5 |
 
 **There is deliberately no endpoint that accepts G-code text**, so there is no console feature to
 test. A control that needs something not listed above needs a backend change rather than a raw-send

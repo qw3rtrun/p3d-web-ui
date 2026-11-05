@@ -12,8 +12,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Driving the machine by hand - issue #43's {@code MotionControl} feature, deferred as #49.
  *
- * <p>{@code /home}, {@code /move}, {@code /fan}, {@code /position} and {@code /store-settings}: the
- * five things a Marlin screen's buttons do, asked for over HTTP.
+ * <p>{@code /home}, {@code /move}, {@code /fan} and {@code /position}: the things a Marlin screen's
+ * buttons do, asked for over HTTP.
+ *
+ * <p><strong>{@code /store-settings} used to be the fifth and has moved.</strong> It was here
+ * because it is a button on the same screen, and #43 item 1 splits by <em>feature</em> rather than
+ * by screen. #88 gave the EEPROM a feature of its own - {@code M500} is one of five operations on
+ * one piece of state, and the other four have no motion in them - so the test went with it to
+ * {@code EepromSettingsIntegrationTest}, which also asserts the confirmation reaching the browser
+ * and not only the command reaching the machine.
  *
  * <p><strong>This is the feature that shipped dead first.</strong> §3.1 of the integration-test
  * spec names three, and motion is the oldest: every translation was tested, every request answered
@@ -310,24 +317,6 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         assertEquals(10.0, coordinate(axes(position), "E"));
         assertEquals(800.0, coordinate(counts(position), "X"),
                 "the stepper counts are the other half of the line and mean something different");
-    }
-
-    /**
-     * Storing the settings reaches the machine as {@code M500}.
-     *
-     * <p>The one command on this surface whose effect outlives the connection, which is why it is a
-     * {@code POST} with a body rather than something a stray link could fire.
-     */
-    @Test
-    void storingSettingsReachesTheMachine() {
-        var printer = machine(MockPrinter.marlin());
-        var id = register("eeprom", printer);
-        connectAndSettle(id, printer);
-
-        command(id, "/store-settings", "{}").expectStatus().isOk();
-
-        awaitCommands(printer, List.of("M500"));
-        assertEquals(List.of("M500"), printer.commands());
     }
 
     // ------------------------------------------------------------------ over another configuration

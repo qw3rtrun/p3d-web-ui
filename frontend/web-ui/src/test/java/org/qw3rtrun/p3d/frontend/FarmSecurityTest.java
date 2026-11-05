@@ -27,19 +27,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Who may do what to a farm of heaters - plan item D3.
  *
- * <p>The plan's reason for this item is a safety one rather than a data one: <em>"a printer is a
- * heater, and an unauthenticated {@code M104 S300} is a safety problem"</em>. So what is asserted
- * here is not that a login page exists, but that a request without the right person behind it
- * <strong>never reaches application code</strong>.
+ * <p>A safety item, not a data one: an unauthenticated {@code M104 S300} is a safety problem, so
+ * what is asserted is that a request without the right person behind it never reaches application
+ * code.
  *
- * <p><strong>That is what makes 500 the useful signal.</strong> The collaborators in
+ * <p>500 is the useful signal here: the collaborators in
  * {@link BootVuejsApplicationTests.Collaborators} throw on every call, so a 500 means the request
- * got through the filter chain and a 401 or 403 means it did not. A test that only checked for
- * "not 200" would pass against an application that was merely broken.
+ * got through the filter chain and a 401/403 means it did not - a test that only checked "not 200"
+ * would pass against an application that was merely broken.
  *
- * <p>It binds to a real port rather than a mock exchange, so the sign-in it performs is the one a
- * browser performs - including the CSRF token, which is issued by one filter and checked by
- * another and is therefore exactly the kind of thing a mock setup quietly skips.
+ * <p>Binds to a real port rather than a mock exchange, so the sign-in it performs - including the
+ * CSRF token issued by one filter and checked by another - is the one a mock setup would skip.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(BootVuejsApplicationTests.Collaborators.class)
@@ -81,14 +79,10 @@ class FarmSecurityTest {
         web.get().uri("/actuator/health").exchange().expectStatus().isUnauthorized();
     }
 
-    /**
-     * An anonymous write is stopped by CSRF before authentication is even consulted - 403, not 401.
-     *
-     * <p>Asserted as 403 deliberately rather than loosened to "some error". The two filters guard
-     * different things and run in that order, and a test that accepted either would go on passing
-     * if authentication were removed altogether. The next test is the other half: it supplies a
-     * valid token, and the request is then refused for the other reason.
-     */
+    // Stopped by CSRF before authentication is even consulted - 403, not 401, asserted deliberately
+    // rather than loosened to "some error", since a looser test would still pass with
+    // authentication removed altogether. The next test supplies a valid token and gets the other
+    // refusal.
     @Test
     void anAnonymousWriteIsRefusedForWantOfACsrfToken() {
         web.post().uri("/api-printer/{id}/connect", MACHINE)
@@ -140,20 +134,11 @@ class FarmSecurityTest {
                 "an operator should have been let through to the printer");
     }
 
-    /**
-     * A viewer may not change a setting either - and the path has <strong>two</strong> segments.
-     *
-     * <p>The matcher is {@code POST /api-printer/**}, and {@code **} spans separators, so
-     * {@code /api-printer/{id}/settings/steps-per-unit} is covered without the chain being touched.
-     * That is worth an assertion rather than a reading of the configuration: a single-{@code *}
-     * pattern would match {@code /store-settings} and <em>not</em> this, so every endpoint issue
-     * #88 adds would have been open to a viewer while the one it moved stayed shut - and nothing
-     * else in this build looks at a two-segment command path.
-     *
-     * <p>Read and validate are asserted beside the setter because they are the ones that look
-     * harmless. They are not: each puts a command on a wire the machine is using, and
-     * {@code /settings/defaults} on the same prefix discards a calibration.
-     */
+    // The matcher is POST /api-printer/**, and ** spans separators, so the two-segment
+    // /settings/steps-per-unit is covered without the chain being touched - a single-* pattern
+    // would have matched /store-settings and not this, leaving every endpoint issue #88 adds open
+    // to a viewer. Read and validate are asserted too because they look harmless but are not: each
+    // puts a command on the wire, and /settings/defaults discards a calibration.
     @Test
     void aViewerMayNotReachATwoSegmentCommandPath() {
         var session = new Session().signIn("viewer");
@@ -218,14 +203,9 @@ class FarmSecurityTest {
         new Session().signIn("operator").get("/api-users").expectStatus().isForbidden();
     }
 
-    /**
-     * An administrator may, and what comes back carries no password hashes.
-     *
-     * <p>Asserted on the response body rather than on the record's shape, because the failure this
-     * guards against is somebody returning {@code FarmUser} directly from the controller - which
-     * would compile, look right, and publish every hash in the farm to anyone who can reach the
-     * endpoint.
-     */
+    // Asserted on the response body rather than the record's shape, because the failure this
+    // guards against is a controller returning FarmUser directly - which would compile, look
+    // right, and publish every hash in the farm.
     @Test
     void anAdminMayListTheUsersAndSeesNoHashes() {
         var body = new Session().signIn("admin").get("/api-users")
@@ -256,12 +236,8 @@ class FarmSecurityTest {
 
     // ---------------------------------------------------------------- your own account
 
-    /**
-     * Anybody signed in may change their own password, including a viewer.
-     *
-     * <p>This is the one hole in "{@code /api-users} is ADMIN-only", and it has to exist: without
-     * it the only account that could ever change a password is the one everybody would then share.
-     */
+    // The one hole in "/api-users is ADMIN-only": without it the only account that could ever
+    // change a password is the one everybody would then share.
     @Test
     void aViewerMayChangeTheirOwnPassword() {
         var username = "temp-" + UUID.randomUUID();
@@ -273,9 +249,8 @@ class FarmSecurityTest {
                 "newPassword", "the new one",
                 "confirmation", "the new one").returnResult(String.class);
 
-        // 303 and not 302: a Thymeleaf `redirect:` after a POST is post-redirect-get, so a
-        // refresh of the result page does not re-submit the form. Spring Security's own login
-        // handler answers 302, which is why the two differ.
+        // 303, not 302: a Thymeleaf `redirect:` after a POST is post-redirect-get, unlike Spring
+        // Security's own login handler.
         assertEquals(HttpStatus.SEE_OTHER, result.getStatus());
         assertEquals("/profile?changed", result.getResponseHeaders().getLocation().toString());
 
@@ -284,12 +259,8 @@ class FarmSecurityTest {
                 "the new password should work");
     }
 
-    /**
-     * The current password is checked, and that is what stops a borrowed session being permanent.
-     *
-     * <p>Without it, anybody holding a session - one left open on a workshop machine, a stolen
-     * cookie - sets a new password and the owner is locked out of their own account.
-     */
+    // The current password check is what stops a borrowed session becoming permanent: without it,
+    // whoever holds a stolen or abandoned session sets a new password and locks out the owner.
     @Test
     void aWrongCurrentPasswordChangesNothing() {
         var username = "temp-" + UUID.randomUUID();
@@ -325,15 +296,10 @@ class FarmSecurityTest {
         assertEquals(before, users.byName(username).orElseThrow().passwordHash());
     }
 
-    /**
-     * The page renders - for a plain visit and for every result it can be redirected back with.
-     *
-     * <p><strong>This is a regression test for a 500 the other profile tests could not catch.</strong>
-     * They drove the POST and the redirect and never rendered the page, so a template error sat
-     * behind three passing tests: `${param.error}` is an <em>empty list</em> when the parameter is
-     * absent rather than null, Thymeleaf reads that as true, and `param.error[0]` then threw.
-     * Asserting a redirect is not asserting that the thing it redirects to works.
-     */
+    // Regression test for a 500 the other profile tests could not catch: they drove the POST and
+    // the redirect but never rendered the page, so a template error sat behind three passing tests
+    // - `${param.error}` is an empty list when absent, Thymeleaf reads that as true, and
+    // `param.error[0]` threw. Asserting a redirect is not asserting what it redirects to works.
     @Test
     void theProfilePageRendersWithAndWithoutAResult() {
         var session = new Session().signIn("operator");
@@ -366,14 +332,9 @@ class FarmSecurityTest {
 
     // ---------------------------------------------------------------- the browser's flow
 
-    /**
-     * One browser's cookies - the CSRF token and the session - carried the way a browser carries them.
-     *
-     * <p>Written out rather than mocked because the CSRF token is issued by one filter and verified
-     * by another, and the hand-off between them is the part most likely to be wrong: it is the
-     * reason {@code SecurityConfiguration} carries a {@code WebFilter} whose only job is to make
-     * the cookie actually get written.
-     */
+    // One browser's cookies - the CSRF token and the session - carried the way a browser carries
+    // them, written out rather than mocked since the hand-off between the filter that issues the
+    // CSRF token and the one that checks it is the part most likely to be wrong.
     private final class Session {
 
         private String csrf;

@@ -6,12 +6,8 @@
 </head>
 
 <body th:replace="container::common_body(~{::#edit_form}, ~{})">
-<!--
-  Plan item B4's "distinguishable", made visible: the form on the left writes what a person
-  declares, and the card on the right shows what the machine reported. Neither can overwrite the
-  other, and seeing both is how an operator notices that a printer claims one extruder while
-  somebody has declared two.
--->
+<!-- Plan item B4's "distinguishable", made visible: the left form writes what a person declares, the
+     right card shows what the machine reported, and neither can overwrite the other. -->
 <div class="content-wrapper" id="edit_form">
     <div class="row">
         <div class="col-md-7 grid-margin stretch-card">

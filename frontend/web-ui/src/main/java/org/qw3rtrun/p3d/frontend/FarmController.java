@@ -13,13 +13,13 @@ import reactor.core.publisher.Flux;
 /**
  * One stream for the whole farm - plan item D2.
  *
- * <p>The dashboard opened an {@code EventSource} per printer and each one instantiated a runtime as
- * a side effect; at forty machines that is forty streams, forty sinks and forty single-threaded
- * schedulers to render one page. This is one.
+ * <p>The dashboard used to open an {@code EventSource} per printer, each instantiating a runtime as
+ * a side effect - forty machines meant forty streams, forty sinks and forty schedulers to render one
+ * page. This is one.
  *
- * <p><strong>The per-printer stream stays.</strong> A monitor page watching one machine should not
- * have to receive the whole farm and filter it, and {@code /api-printer/&#123;id&#125;/stream} is
- * also what seeds that page with the machine's current state. The two are for different pages.
+ * <p>The per-printer {@code /api-printer/&#123;id&#125;/stream} stays, for the monitor page watching
+ * one machine: it should not have to receive the whole farm and filter it, and that stream is also
+ * what seeds the page with the machine's current state.
  */
 @Slf4j
 @RestController
@@ -29,13 +29,8 @@ public class FarmController {
 
     private final FarmView farm;
 
-    /**
-     * Every machine's events, starting with where each of them is now.
-     *
-     * <p>No scheduling boundary here, unlike the farm's REST endpoints: nothing on this path
-     * touches the database. The snapshot is built from what {@code core} already holds in memory
-     * and everything after it is a sink.
-     */
+    // No scheduling boundary here, unlike the farm's REST endpoints: nothing on this path touches
+    // the database - the snapshot comes from what core already holds in memory.
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<EventMessage> stream() {
         return Flux.from(farm.updates());

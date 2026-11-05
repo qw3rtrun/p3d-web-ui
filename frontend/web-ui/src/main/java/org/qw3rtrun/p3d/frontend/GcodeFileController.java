@@ -53,28 +53,18 @@ public class GcodeFileController {
 
     private final GcodeFileService files;
 
-    /**
-     * Stores an upload, streamed.
-     *
-     * <p>The name comes from a header rather than a multipart form on purpose: multipart would mean
-     * the framework deciding where to put the parts, which for a file this size is either a
-     * temporary file nobody asked for or the heap. A raw body with a header beside it keeps the
-     * bytes under this method's control the whole way.
-     */
+    // The name is a header, not a multipart form: multipart would mean the framework deciding where
+    // to put the parts, a temporary file or the heap for something this size. A raw body keeps the
+    // bytes under this method's control the whole way.
     @PostMapping(consumes = MediaType.ALL_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<GcodeFile> upload(@RequestHeader(value = "X-File-Name", defaultValue = "upload.gcode") String name,
                                   @RequestBody Flux<DataBuffer> body) {
         return Mono.from(files.store(name, body.map(GcodeFileController::toByteBuffer)));
     }
 
-    /**
-     * One {@code DataBuffer} as a plain {@code ByteBuffer}, with the pooled one released.
-     *
-     * <p>Copied and not wrapped. A view would be cheaper and would hand the store a window onto
-     * memory this method is about to give back to the pool - correct only for as long as the store
-     * consumes it synchronously, which is a contract that cannot be stated in the signature and so
-     * would eventually be broken by a change that looked harmless.
-     */
+    // Copied, not wrapped: a view would hand the store a window onto memory this method is about to
+    // release back to the pool, correct only while the store consumes it synchronously - a contract
+    // the signature cannot state.
     private static ByteBuffer toByteBuffer(DataBuffer buffer) {
         try {
             var copy = ByteBuffer.allocate(buffer.readableByteCount());
@@ -90,35 +80,19 @@ public class GcodeFileController {
         return offLoop(() -> files.fetchAll().toList()).flatMapIterable(f -> f);
     }
 
-    /** The blocking boundary, in one place - the same shape FDMPrinterManagementController uses. */
+    // The blocking boundary, in one place - the same shape FDMPrinterManagementController uses.
     private <T> Mono<T> offLoop(Supplier<T> blocking) {
         return Mono.fromSupplier(blocking).subscribeOn(Schedulers.boundedElastic());
     }
 
-    /**
-     * One file's record, or a 404.
-     *
-     * <p><strong>An empty {@code Mono} returned from here is not "no such file" - it is 200 with a
-     * zero-length body</strong>, and the browser cannot tell the two apart: {@code files.one()}
-     * goes through {@code getJson}, which calls {@code response.json()} on whatever arrives and
-     * throws a syntax error on nothing at all. So a missing id surfaced in the UI as a parse
-     * failure instead of as a status, and the status is the only part of the answer a client can
-     * act on without guessing. {@code download} below and {@code JobController.fetch} beside it
-     * both already say it this way, and {@link Outcomes#found} is now where all three say it.
-     */
+    // See Outcomes#found for why an empty Mono cannot be returned here directly.
     @GetMapping(value = "/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<GcodeFile>> fetch(@PathVariable UUID id) {
         return offLoop(() -> files.fetch(id)).map(Outcomes::found);
     }
 
-    /**
-     * The file's bytes, streamed straight through.
-     *
-     * <p>{@code APPLICATION_OCTET_STREAM} and a filename, so a browser saves it rather than trying
-     * to render a hundred megabytes of text. The content length is set from the row, which is the
-     * one thing that lets a client show a progress bar without the server buffering to find out
-     * how much there is.
-     */
+    // APPLICATION_OCTET_STREAM so a browser saves rather than renders it; content length comes from
+    // the row, which is what lets a client show a progress bar without the server buffering first.
     @GetMapping("/{id}/content")
     public Mono<ResponseEntity<Flux<DataBuffer>>> download(@PathVariable UUID id) {
         return offLoop(() -> files.fetch(id))

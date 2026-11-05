@@ -36,24 +36,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * What the monitor page actually renders for its capability-gated tabs - in the markup, not by eye.
  *
- * <p>Two of them, gated the same way on two different capabilities: Storage on {@code Cap:SDCARD}
- * and Settings on {@code Cap:EEPROM}.
+ * <p>Two tabs, gated the same way on two different capabilities: Storage on {@code Cap:SDCARD},
+ * Settings on {@code Cap:EEPROM}. The claim worth testing is the negative one: a machine reporting
+ * no card reader must get a dead tab <em>and no island</em>, since a mounted island behind a
+ * disabled tab would silently open an event stream to a machine nobody can drive from there - a
+ * {@code th:if} decision no type checker or unit test can see.
  *
- * <p><strong>The claim worth testing is the negative one.</strong> A machine whose firmware reports
- * no card reader must get a dead tab <em>and no island</em>, and an island that mounted behind a
- * disabled tab would be invisible until it misbehaved: it would open an event stream to a machine
- * nobody can drive from there, and nothing on the page would show that it had. That is not
- * something a type checker or a unit test can see, because the decision is a {@code th:if} in a
- * template.
+ * <p>Renders the real page through the real filter chain, as
+ * {@code FarmSecurityTest.theProfilePageRendersWithAndWithoutAResult} argues: a controller
+ * returning a view name is not the view working.
  *
- * <p>It renders the real page through the real filter chain, which is the lesson
- * {@code FarmSecurityTest.theProfilePageRendersWithAndWithoutAResult} records: asserting that a
- * controller returns a view name is not asserting that the view works. That test exists because a
- * template error sat behind three passing tests.
- *
- * <p>The machine's profile is the only thing that varies, so it is the only thing this stubs: a
+ * <p>The machine's profile is the only thing that varies, so it is the only thing stubbed: a
  * {@link Primary} roster over {@link BootVuejsApplicationTests.Collaborators}' throwing one, whose
- * descriptor each test sets before it asks for the page.
+ * descriptor each test sets before asking for the page.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import({BootVuejsApplicationTests.Collaborators.class, MonitorPageTest.OneMachine.class})
@@ -65,16 +60,9 @@ class MonitorPageTest {
     private static final AtomicReference<MachineProfile> PROFILE =
             new AtomicReference<>(MachineProfile.unknown());
 
-    /**
-     * One machine, with whatever profile the running test asked for.
-     *
-     * <p>{@code Primary} because {@code Collaborators} contributes a roster that throws on every
-     * call - which is right for a context-load test and useless for one that wants a page.
-     *
-     * <p>The method is deliberately <em>not</em> called {@code machines}: a bean of the same name
-     * is an override, which Spring refuses outright before it ever gets as far as asking which one
-     * is primary. Two names, and {@code Primary} then picks between them.
-     */
+    // One machine, with whatever profile the running test asked for. @Primary because
+    // Collaborators' roster throws on every call. Deliberately not named `machines`: a bean of the
+    // same name is an override, which Spring refuses outright before Primary gets a say.
     @TestConfiguration
     static class OneMachine {
 
@@ -133,13 +121,8 @@ class MonitorPageTest {
         return reporting(sdCard, false);
     }
 
-    /**
-     * A machine whose firmware answered, with both capabilities set as given.
-     *
-     * <p>The two are independent and the tests below prove they are read independently: a machine
-     * can perfectly well have a card reader and no EEPROM, or the reverse, and a gate that read the
-     * wrong key would still pass every test that only ever set both to the same value.
-     */
+    // The two capabilities are independent, and the tests below prove they are read independently:
+    // a gate reading the wrong key would still pass every test that set both the same.
     private static MachineProfile reporting(boolean sdCard, boolean eeprom) {
         return new MachineProfile(Map.of("FIRMWARE_NAME", "Marlin"),
                 Map.of("SDCARD", sdCard, "EEPROM", eeprom), LocalDateTime.now());
@@ -169,12 +152,8 @@ class MonitorPageTest {
                 "the island should be told which machine it is for");
     }
 
-    /**
-     * A machine whose firmware says it has no reader gets a dead tab - and <strong>no island</strong>.
-     *
-     * <p>The second half is the one that matters. A mounted island would open a per-printer event
-     * stream, which instantiates a runtime server-side, for a tab the operator cannot even open.
-     */
+    // The "no island" half matters: a mounted island would open a per-printer event stream,
+    // instantiating a runtime server-side, for a tab the operator cannot even open.
     @Test
     void aMachineWithNoCardReaderGetsADeadTabAndNoIsland() {
         PROFILE.set(reporting(false));
@@ -190,14 +169,9 @@ class MonitorPageTest {
                 "and nothing should link to a pane that is not there");
     }
 
-    /**
-     * A machine nothing has reached yet gets the same dead tab and the <em>other</em> sentence.
-     *
-     * <p>Two reasons, two messages: "this firmware has no reader" is a fact about the machine and
-     * "nothing has asked it yet" is a fact about this farm, and an operator can act on the second.
-     * Collapsing them would tell somebody whose printer is merely unplugged that their hardware
-     * does not support SD cards.
-     */
+    // Two reasons, two messages: "this firmware has no reader" is a fact about the machine, and
+    // "nothing has asked it yet" is a fact about this farm an operator can act on. Collapsing them
+    // would tell somebody whose printer is merely unplugged that their hardware lacks SD support.
     @Test
     void aMachineNothingHasReachedSaysSoInsteadOfBlamingTheFirmware() {
         PROFILE.set(MachineProfile.unknown());
@@ -212,7 +186,7 @@ class MonitorPageTest {
         assertFalse(page.contains("data-p3d=\"storage-tab\""));
     }
 
-    /** The tooltip is markup Bootstrap only acts on if something constructs it - see `theme.ts`. */
+    // The tooltip is markup Bootstrap only acts on if something constructs it - see theme.ts.
     @Test
     void theDisabledTabCarriesTheMarkupTheTooltipNeeds() {
         PROFILE.set(reporting(false));
@@ -225,14 +199,9 @@ class MonitorPageTest {
 
     // ---------------------------------------------------------------- the Settings tab
 
-    /**
-     * A machine whose firmware reports an EEPROM gets the Settings tab and the island behind it.
-     *
-     * <p>The capability's name on the wire is {@code EEPROM}. Issue #88 calls it
-     * {@code EEPROM_SETTINGS}, which is Marlin's build macro and never leaves the compiler - so
-     * this profile sets {@code EEPROM}, and the test below proves the macro spelling is not what
-     * the page reads.
-     */
+    // The capability's name on the wire is EEPROM. Issue #88 calls it EEPROM_SETTINGS, Marlin's
+    // build macro that never leaves the compiler - this profile sets EEPROM, and the test below
+    // proves the macro spelling is not what the page reads.
     @Test
     void aMachineWithAnEepromGetsTheSettingsTabAndTheIsland() {
         PROFILE.set(reporting(false, true));
@@ -244,14 +213,9 @@ class MonitorPageTest {
         assertTrue(page.contains("data-p3d=\"settings-tab\""), "the island should be mounted");
     }
 
-    /**
-     * A machine whose firmware reports no EEPROM gets a dead tab and <strong>no island</strong>.
-     *
-     * <p>Same claim as the Storage tab's negative case and the same reason it is the one worth
-     * testing: a mounted island would open a per-printer event stream, instantiating a runtime
-     * server-side, behind a tab nobody can open - and then offer {@code M500} to a machine that
-     * cannot store anything.
-     */
+    // Same claim as the Storage tab's negative case: a mounted island would open a per-printer
+    // event stream behind a tab nobody can open, and then offer M500 to a machine with nothing to
+    // store.
     @Test
     void aMachineWithNoEepromGetsADeadSettingsTabAndNoIsland() {
         PROFILE.set(reporting(false, false));
@@ -268,16 +232,9 @@ class MonitorPageTest {
                 "the tab is still named, so the absence is explained rather than hidden");
     }
 
-    /**
-     * {@code EEPROM_SETTINGS} is not the capability, and a page that read it would be wrong always.
-     *
-     * <p>Marlin's {@code M115} writes {@code Cap:EEPROM:0|1} under
-     * {@code ENABLED(EEPROM_SETTINGS)} - the macro is the {@code #define} in
-     * {@code Configuration.h}, the capability is the name on the wire. Issue #88's checklist says
-     * the macro, so this is the assertion that catches a gate written from the issue instead of
-     * from the measurement: a firmware reporting only the macro spelling has, as far as this farm
-     * can tell, no EEPROM.
-     */
+    // Marlin's M115 writes Cap:EEPROM:0|1 under ENABLED(EEPROM_SETTINGS) - the macro is the
+    // #define in Configuration.h, the capability is the name on the wire. Issue #88's checklist
+    // says the macro; this catches a gate written from the issue instead of the measurement.
     @Test
     void theBuildMacroSpellingIsNotTheCapabilityThePageReads() {
         PROFILE.set(new MachineProfile(Map.of("FIRMWARE_NAME", "Marlin"),
@@ -303,13 +260,9 @@ class MonitorPageTest {
         assertFalse(page.contains("data-p3d=\"settings-tab\""));
     }
 
-    /**
-     * The two capabilities are read independently, which a test setting both alike would not show.
-     *
-     * <p>A machine with a card reader and no EEPROM must get a live Storage tab and a dead Settings
-     * one. This is the shape of mistake the gates could make silently - both reading
-     * {@code hasSdCard()}, or one copied from the other - and it would pass every test above.
-     */
+    // A test setting both capabilities alike would not catch the gates reading the same key (both
+    // hasSdCard(), say) - this checks a card reader with no EEPROM gets a live Storage tab and a
+    // dead Settings one, and the reverse.
     @Test
     void aCardReaderDoesNotImplyAnEepromOrTheOtherWayRound() {
         PROFILE.set(reporting(true, false));
@@ -325,14 +278,9 @@ class MonitorPageTest {
         assertTrue(eepromOnly.contains("data-p3d=\"settings-tab\""));
     }
 
-    /**
-     * The store button left the Monitor tab rather than being duplicated onto the Settings one.
-     *
-     * <p>Item 1 of issue #88. The monitor island is a Vue component, so its markup is in the
-     * bundle and not in this page - which is exactly why the assertion is worth making here: the
-     * string the operator reads is gone from the page a browser is served, and a move that left the
-     * original behind would show up as two ways to do one irreversible thing.
-     */
+    // Issue #88 item 1: the store button moved to the Settings tab rather than being duplicated.
+    // The monitor island is Vue, so its markup lives in the bundle, not this page - an incomplete
+    // move would show up as two ways to do one irreversible thing.
     @Test
     void theMonitorTabNoLongerOffersToStoreTheSettings() {
         PROFILE.set(reporting(false, true));
@@ -345,7 +293,7 @@ class MonitorPageTest {
 
     // ---------------------------------------------------------------- the browser's flow
 
-    /** The same cookie-carrying sign-in {@code FarmSecurityTest} uses, reduced to what is needed. */
+    // The same cookie-carrying sign-in FarmSecurityTest uses, reduced to what is needed.
     private WebTestClient signedIn() {
         var login = web.get().uri("/login").exchange()
                 .expectStatus().isOk()

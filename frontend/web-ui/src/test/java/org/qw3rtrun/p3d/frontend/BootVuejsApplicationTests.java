@@ -42,23 +42,13 @@ class BootVuejsApplicationTests {
     /**
      * The collaborators this module does not contain.
      *
-     * <p>The frontend submodel holds controllers; the thing that answers them lives in
-     * {@code printer-management}, which it does not depend on and must not. So booting this module
-     * alone needs a {@link MachineManagementService} from somewhere, and <strong>test scope is
-     * where that belongs</strong>.
-     *
-     * <p>It used to come from main: a {@code @ConditionalOnMissingBean} stub that answered every
-     * query with {@code null}. That made this test pass and made a misconfigured farm look like an
-     * empty one instead of failing - the same bean, shipped. A4 deleted it, and this is what it was
-     * actually for.
-     *
-     * <p>They throw rather than returning empties on purpose. Nothing in this test should call
-     * either, and if something starts to, the failure should say so rather than look like a farm
-     * with no printers in it.
-     *
-     * <p>There are two now, which is the module boundary showing through: this module reaches the
-     * roster through {@link MachineManagementService} and a machine through {@link PrinterControl},
-     * and it implements neither.
+     * <p>The frontend submodel holds controllers; what answers them lives in
+     * {@code printer-management}, which it does not and must not depend on - so booting this module
+     * alone needs a {@link MachineManagementService} and a {@link PrinterControl} from test scope.
+     * They throw rather than returning empties on purpose: nothing here should call either, and a
+     * misconfigured assembly must fail loudly rather than look like a farm with no printers in it
+     * (a {@code @ConditionalOnMissingBean} stub used to do exactly that, silently, until A4 deleted
+     * it).
      */
     @TestConfiguration
     static class Collaborators {
@@ -103,44 +93,30 @@ class BootVuejsApplicationTests {
             };
         }
 
-        /**
-         * Where sessions are kept, which the real assembly gets from {@code identity} over JDBC.
-         *
-         * <p>An in-memory one here, because this submodel is being booted alone and has no
-         * database - but a <em>real</em> {@code ReactiveSessionRepository}, so the
-         * {@code WebSessionManager} wiring in {@link org.qw3rtrun.p3d.frontend.security
-         * .SessionStoreConfiguration} is exercised rather than skipped. That wiring is the piece
-         * Spring Boot does not do for a JDBC store, and silently.
-         */
+        // In-memory because this submodel boots alone with no database, but a real
+        // ReactiveSessionRepository so SessionStoreConfiguration's WebSessionManager wiring is
+        // exercised rather than skipped.
         @Bean
         ReactiveSessionRepository<?> sessions() {
             return new ReactiveMapSessionRepository(
                     new ConcurrentHashMap<>());
         }
 
-        /**
-         * The one password encoder, which the real assembly gets from {@code identity}.
-         *
-         * <p>It must be the same scheme the roster hashes with, or every sign-in fails - which is
-         * why the real application declares exactly one and this test double matches it.
-         */
+        // Must be the same scheme the roster hashes with, or every sign-in fails - matching what
+        // the real application declares exactly once.
         @Bean
         PasswordEncoder passwordEncoder() {
             return new BCryptPasswordEncoder();
         }
 
-        /**
-         * The people roster, which lives in {@code identity} - plan item D3.
-         *
-         * <p>A working in-memory store rather than a throwing stub; see {@link InMemoryFarmUsers}
-         * for why this one is the exception.
-         */
+        // The people roster (identity, plan item D3) - a working in-memory store rather than a
+        // throwing stub; see InMemoryFarmUsers for why this one is the exception.
         @Bean
         FarmUserDirectory farmUsers() {
             return new InMemoryFarmUsers();
         }
 
-        /** The farm-wide stream, which lives in core - plan item D2. */
+        // The farm-wide stream, which lives in core - plan item D2.
         @Bean
         FarmView farmView() {
             return () -> {
@@ -180,15 +156,9 @@ class BootVuejsApplicationTests {
             };
         }
 
-        /**
-         * The G-code store, which lives in a module this one must not depend on.
-         *
-         * <p>Same shape and same reason as the roster above: {@code GcodeFileController} needs the
-         * bean to exist, and what answers it is in {@code :backend:files}, which this submodel may
-         * not name. It throws rather than returning empties, because a stub that quietly answers
-         * "no files" would let a misconfigured assembly pass this test and then show an empty
-         * library to a user with a full one.
-         */
+        // The G-code store, answered elsewhere in a module this one may not name. Throws rather
+        // than returning empties, so a misconfigured assembly fails here instead of showing an
+        // empty library to a user with a full one.
         @Bean
         GcodeFileService gcodeFiles() {
             return new GcodeFileService() {
@@ -220,7 +190,7 @@ class BootVuejsApplicationTests {
             };
         }
 
-        /** The print queue, which lives in a module this one must not depend on. */
+        // The print queue, which lives in a module this one must not depend on.
         @Bean
         JobService jobs() {
             return new JobService() {

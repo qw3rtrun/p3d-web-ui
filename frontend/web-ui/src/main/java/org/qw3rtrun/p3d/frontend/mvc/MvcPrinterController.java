@@ -24,25 +24,27 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+/**
+ * Renders the printer pages: list, add, edit, monitor, dashboard.
+ *
+ * <p>Every blocking JPA call here runs off the event loop via {@code subscribeOn} - a handler
+ * returning {@code Mono<String>} is still running on the loop otherwise; what moves work is where
+ * it is scheduled, not the method signature. {@link #printers()} drains the JPA stream to a list
+ * inside the supplier, because a lazy stream handed to a template would be iterated during
+ * rendering, outside the transaction.
+ *
+ * <p>{@link #edit} is where an unknown machine becomes a 404 on this HTML surface - the roster
+ * itself only answers an empty {@code Optional}; the REST side maps that same empty value through
+ * {@code Outcomes} instead of throwing. The page also puts a declared and a discovered half side by
+ * side (plan item B4): the form writes the declared half, the discovered half is read-only, so a
+ * reader can see a machine reporting one extruder against two declared.
+ */
 @Controller()
 @RequiredArgsConstructor
 public class MvcPrinterController {
 
     private final MachineManagementService manager;
 
-    /**
-     * The printer list, read off the event loop.
-     *
-     * <p>Every page here needs it, and every page used to call {@code manager.fetchAll()} straight
-     * from its handler body - blocking JDBC on a Netty event-loop thread, with not even a
-     * {@code Mono} wrapper to disguise it. A handler returning {@code Mono<String>} is still a
-     * handler running on the loop; what makes work non-blocking is where it is scheduled, not what
-     * the method signature says.
-     *
-     * <p>The stream is drained to a list inside the supplier on purpose: a lazy JPA stream handed
-     * to a template would be iterated during rendering, which is back on the loop and outside the
-     * transaction.
-     */
     private Mono<List<Descriptor>> printers() {
         return Mono.fromSupplier(() -> manager.fetchAll().toList())
                 .subscribeOn(Schedulers.boundedElastic());
@@ -73,21 +75,6 @@ public class MvcPrinterController {
                 .map(added -> "redirect:/printers/" + added.uuid() + "/edit.html");
     }
 
-    /**
-     * The edit page: what a person declared, beside what the machine said about itself.
-     *
-     * <p><strong>Both halves on one page is the point of plan item B4's "distinguishable".</strong>
-     * The form writes the declared half only; the discovered half is rendered read-only beside it,
-     * with when it was learned. A reader can then see that a machine reports one extruder while
-     * somebody has declared two, which is a thing worth knowing and which a single merged set of
-     * fields could not show.
-     *
-     * <p><strong>An unknown machine is a 404 page, and this is the HTML surface stating a status at
-     * the point it knows the fact.</strong> It is <em>not</em> the REST mapping: nothing here
-     * catches an exception or classifies one - the roster answered an empty {@code Optional}, and a
-     * page that has nothing to render says so. The REST side never throws for this; it maps the
-     * same empty value in {@code Outcomes}.
-     */
     @GetMapping("/printers/{uuid}/edit.html")
     public Mono<String> edit(@PathVariable UUID uuid, Model model) {
         return Mono.fromSupplier(() -> manager.fetch(uuid)
@@ -129,20 +116,10 @@ public class MvcPrinterController {
                 .thenReturn("dashboard.html");
     }
 
-    /**
-     * The add/edit form, which is flat because an HTML form is.
-     *
-     * <p>It is not {@link MachineSpec}, and the gap between the two is the work this class does.
-     * A browser posts {@code nozzleDiameters=0.4,0.6} and an empty {@code bedX} as the empty
-     * string; the model records "0.4 and 0.6, in tool order" and "nobody declared a bed". Binding
-     * the record directly would mean either boxing every field of it for the form's benefit or
-     * letting the form's conventions - comma-joined lists, blank meaning absent - leak into the
-     * vocabulary every submodel is written in.
-     *
-     * <p>Boxed integers for the bed and the extruder count because blank must not bind to zero: a
-     * bed of zero is not a bed, and an extruder count of zero refuses every command rather than
-     * deferring to what the firmware said.
-     */
+    // The add/edit form, flat because HTML forms are - not MachineSpec itself, so the form's own
+    // conventions (comma-joined lists, blank meaning absent) do not leak into that vocabulary.
+    // Bed/extruder fields are boxed because blank must not bind to zero: a bed of zero is not a bed,
+    // and an extruder count of zero refuses every command instead of deferring to the firmware.
     @Data
     public static final class MachineInfo {
         String name;

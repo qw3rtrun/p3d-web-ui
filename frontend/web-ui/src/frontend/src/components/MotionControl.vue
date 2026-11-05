@@ -4,21 +4,18 @@ import {computed, ref} from 'vue'
 /**
  * Homing, jogging, and where the machine says it is.
  *
- * <strong>Jogging is relative, which is what the buttons mean.</strong> An operator pressing "X
- * +10" knows nothing about the current position, and a host that computed an absolute target would
- * be wrong whenever its idea of the position was stale - after a manual move, after a reset, and
- * always before the first home. The server sends the `G91`/`G90` mode switch around the move, so
- * nothing here has to know the machine has modes.
+ * Jogging is relative, what the buttons mean: an operator pressing "X +10" knows nothing about the
+ * current position, and a host computing an absolute target would be wrong whenever its idea of the
+ * position was stale. The server sends the `G91`/`G90` mode switch around the move, so nothing here
+ * has to know the machine has modes. Only the axis being jogged is sent - an omitted axis is not
+ * zero, since zero in relative mode means "do not move this axis".
  *
- * <strong>Only the axis being jogged is sent.</strong> An omitted axis is not zero: zero in
- * relative mode means "do not move this axis", and a request naming all three would move all three.
- *
- * The position is not polled. Marlin has no auto-report for it the way it has `M155` for
- * temperature, so asking on a timer would put an `M114` in the command queue every tick - competing
- * with a print for the planner. This asks once after a move and whenever a person presses refresh.
+ * The position is not polled: Marlin has no auto-report for it the way `M155` does for temperature,
+ * so asking on a timer would compete with a print for the planner. This asks once after a move and
+ * whenever a person presses refresh.
  */
 const props = withDefaults(defineProps<{
-    /** Keyed by axis letter, from `PositionRs`. Empty until the machine is asked. */
+    // Keyed by axis letter, from PositionRs. Empty until the machine is asked.
     position?: Record<string, number>
     canControl?: boolean
 }>(), {position: () => ({}), canControl: false})
@@ -29,17 +26,12 @@ const emit = defineEmits<{
     readPosition: []
 }>()
 
-/** Millimetres per press. 0.1 for levelling, 100 to cross the bed. */
+// Millimetres per press. 0.1 for levelling, 100 to cross the bed.
 const STEPS = [0.1, 1, 10, 100]
 const step = ref(10)
 
-/**
- * Z moves slower than X and Y, and the difference is not cosmetic.
- *
- * A Z axis is usually a leadscrew geared far lower than the belts; driving it at an XY feedrate
- * asks for steps the motor cannot take, and the machine answers by losing them silently - so the
- * position it reports afterwards is wrong and the next print starts at the wrong height.
- */
+// Z moves slower than X/Y: a Z leadscrew is geared far lower than the belts, and driving it at an
+// XY feedrate asks for steps the motor cannot take, which it loses silently.
 const XY_FEEDRATE = 3000
 const Z_FEEDRATE = 600
 

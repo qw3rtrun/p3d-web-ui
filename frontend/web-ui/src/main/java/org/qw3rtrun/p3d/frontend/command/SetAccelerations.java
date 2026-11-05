@@ -9,11 +9,9 @@ import java.util.List;
 /**
  * What a move is asked to accelerate at - {@code M204 P… R… T…}, in mm/s².
  *
- * <p>Three kinds of move, three numbers, and the names are the firmware's own: {@code print} is a
- * move that extrudes, {@code retract} is a filament-only move, {@code travel} is a move with the
- * nozzle off the work. Marlin's report labels them in exactly those words -
- * {@code (P<print-accel> R<retract-accel> T<travel-accel>)} - which is the section heading the page
- * shows above these fields.
+ * <p>Three kinds of move, the names Marlin's own: {@code print} extrudes, {@code retract} is
+ * filament-only, {@code travel} has the nozzle off the work - matching the report's own heading,
+ * {@code (P<print-accel> R<retract-accel> T<travel-accel>)}.
  *
  * <p>Clamped by {@link SetMaxAccelerations}, so a generous {@code print} on a machine with a
  * conservative {@code M201} changes nothing visible.
@@ -23,15 +21,9 @@ import java.util.List;
 public record SetAccelerations(BigDecimal print, BigDecimal retract, BigDecimal travel)
         implements PrinterCommand {
 
-    /**
-     * {@code M204}, positionally.
-     *
-     * <p>The generated class's first parameter is called {@code accel} and writes {@code P}; then
-     * {@code r} writes {@code R} and {@code t} writes {@code T}. Its fourth, {@code s}, writes
-     * {@code S} - a legacy spelling of the print acceleration that mainline Marlin still reads, so
-     * it is left null rather than sent alongside {@code P}: two words for one setting in one
-     * command is two answers to one question.
-     */
+    // M204's generated parameters: accel writes P, r writes R, t writes T. Its fourth, s, is a
+    // legacy spelling of P that mainline Marlin still reads, so it stays null - two words for one
+    // setting in one command is two answers to one question.
     @Override
     public List<GRq<?>> toMarlin() {
         return List.of(new SetStartingAcceleration(print, retract, travel, null));

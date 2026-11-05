@@ -20,8 +20,14 @@ import {isTemperature, isUsable} from '../api/types'
  * One machine: where its connection is, what it is reading, and the controls that change that.
  *
  * This page is the only place a per-printer stream is opened. Opening the same stream from a list
- * is what plan item D2 forbids - each subscription instantiates a reactor server-side - but here
- * the page *is* that one machine, so the cost is the point.
+ * is what plan item D2 forbids - each subscription instantiates a reactor server-side - but here the
+ * page is that one machine, so the cost is the point.
+ *
+ * Commands are offered only once the machine has proved it takes them (`IDLE`/`BUSY`, not merely
+ * `ONLINE` - a socket with nothing plugged in also satisfies that). `target`/`power` are nullable in
+ * a reading, so a control renders "-" rather than a zero the firmware never claimed. `M500` and the
+ * rest of the EEPROM operations live on the Settings tab now, gated on `Cap:EEPROM`; the button
+ * moved rather than being copied, and a test asserts the string is absent from here.
  */
 
 const props = withDefaults(defineProps<{
@@ -36,36 +42,19 @@ const state = ref<ConnectionState>('OFFLINE')
 const attempt = ref(0)
 const reason = ref<string | null>(null)
 
-/**
- * The last reading of each sensor, or nulls until the machine reports one.
- *
- * `target` and `power` are nullable in a reading, so the controls render "-" rather than a zero
- * the firmware never claimed - see `HeaterReading`.
- */
+// The last reading of each sensor, or nulls until the machine reports one.
 const unknown: HeaterReading = {current: 0, target: null, power: null}
 const hotend = ref<HeaterReading>(unknown)
 const bed = ref<HeaterReading>(unknown)
 const position = ref<Record<string, number>>({})
 
-/**
- * What this page last asked the fan for.
- *
- * Marlin does not report fan speed, so there is nothing to mirror - see FanControl. It is reset
- * when the link drops, because a value remembered across a reconnection would describe a machine
- * that has since been power-cycled.
- */
+// What this page last asked the fan for - Marlin does not report fan speed (see FanControl). Reset
+// when the link drops, since a remembered value would describe a machine since power-cycled.
 const fanSpeed = ref<number | null>(null)
 
 const failure = ref<string | null>(null)
 const api = printer(props.uuid)
 
-/**
- * Commands are offered only when the machine has proved it takes them.
- *
- * `IDLE` and `BUSY` mean the firmware acknowledged a block this host sent; `ONLINE` means only
- * that a socket is open, which a terminal server with nothing plugged into it also satisfies.
- * Offering a heat command in that state produces a command that goes nowhere.
- */
 const live = computed(() => isUsable(state.value))
 const controlsEnabled = computed(() => mayControl.value && live.value)
 
@@ -148,13 +137,6 @@ const setFan = (speed: number) => guarded(async () => {
     await api.setFanSpeed(speed)
     fanSpeed.value = speed
 })
-
-/*
- * The settings moved. `M500` and the rest of the EEPROM operations are the Settings tab's now -
- * `SettingsTab.vue`, gated on `Cap:EEPROM` by `monitor.html` - because storing, reverting,
- * resetting and reading belong together and only one of the five fitted on this page. The button
- * was moved rather than copied; an integration test asserts the string is absent from here.
- */
 
 let subscription: Subscription | null = null
 

@@ -15,31 +15,37 @@ import type {
 import {isUsable} from '../api/types'
 
 /**
- * The machine's settings: what the firmware holds, and the five things that can be done to it.
+ * The machine's settings: what the firmware holds, and the operations that can be done to it.
  *
- * **Whether this is offered at all was decided by the server.** `monitor.html` renders the tab
- * disabled, and this island not at all, when the firmware reports no `Cap:EEPROM`. The capability
- * is true at request time, so asking again from here would be re-learning what the page already
- * knew - the same arrangement the Storage tab has.
+ * Whether this is offered at all was decided by the server: `monitor.html` disables the tab and
+ * skips this island entirely when the firmware reports no `Cap:EEPROM` (true at request time, the
+ * same arrangement as the Storage tab). The wire name is `EEPROM`; issue #88's `EEPROM_SETTINGS` is
+ * Marlin's build macro and never leaves the compiler.
  *
- * Note that the capability's name on the wire is `EEPROM`. Issue #88 calls it `EEPROM_SETTINGS`,
- * which is Marlin's **build macro** and never leaves the compiler.
+ * Read (`M503`) asks what is live; a setter (`M92`, `M203`, …) changes live memory only and is lost
+ * on a power cycle; Revert (`M501`) loads the EEPROM back over live memory, undoing this session;
+ * Save (`M500`) writes live memory into the EEPROM; Reset to defaults (`M502`) loads the compiled
+ * defaults, discarding every calibration, made permanent by a `M500` behind it; Validate (`M504`)
+ * asks whether the stored copy is readable and changes nothing.
  *
- * **Five operations, and the differences between them are what this view exists to make visible:**
+ * `M501`/`M502` answer a bare `ok` with no detail, so the server sends its own `M503` behind each -
+ * nothing here prompts for a Read afterwards, the new values simply arrive on the stream.
  *
- * - *Read* (`M503`) asks what is live.
- * - A setter (`M92`, `M203`, …) changes **live memory only**. Power-cycle the machine and it is
- *   gone.
- * - *Revert* (`M501`) loads the EEPROM back over live memory - the undo for this session.
- * - *Save* (`M500`) writes live memory into the EEPROM, where it survives a power cycle.
- * - *Reset to defaults* (`M502`) loads what the firmware was compiled with, discarding every
- *   calibration the machine has - and a `M500` behind it makes that permanent.
+ * The report is G-code with no parsed model on the server, so it is tokenised here in the browser
+ * (see `wordsOf`); reading a value means finding its letter, while a setter's request body is the
+ * browser's own shape, naming fields rather than letters - the two never collapse into one lookup.
  *
- * Plus *Validate* (`M504`), which asks whether the stored copy is readable and changes nothing.
+ * Only six of the reported settings (`EDITABLE` below) are editable. The rest are shown read-only on
+ * purpose: `M301` hotend PID needs the autotune cycle (`M303`), not a text box, since a bad thermal
+ * loop is how a heater runs away; `M200` volumetric extrusion reports disabled on this firmware, so
+ * setting it has never been measured; `M145` material presets are indexed (two lines, `S0`/`S1`,
+ * under one heading, so `code` is not a key); `M149`/`G21` units reinterpret every command already in
+ * flight, including a running print's.
  *
- * **Nothing here prompts for a Read after a revert or a reset.** `M501` and `M502` answer a bare
- * `ok` and announce none of the dozen values they just changed, so the server sends its own `M503`
- * behind each of them: the new values simply arrive on the stream.
+ * An empty table can mean three different things - nothing read yet, read and genuinely empty, or
+ * this firmware has no `M503` at all (`UnknownCommand` naming it, Marlin's `DISABLE_M503`) - and
+ * they are tracked separately (`StorageTab.vue` draws the same distinction for a card listing),
+ * since collapsing them would tell an operator something about their machine nobody established.
  */
 
 const props = withDefaults(defineProps<{
@@ -49,18 +55,13 @@ const props = withDefaults(defineProps<{
 
 const mayControl = computed(() => props.role === 'OPERATOR' || props.role === 'ADMIN')
 
-/** How long to wait for a report before concluding there is not one coming. */
+// How long to wait for a report before concluding there is not one coming.
 const ANSWER_MS = 6000
 
 const api = printer(props.uuid)
 
-/**
- * The connection, derived the way `PrinterMonitor.vue` derives it.
- *
- * `IDLE` and `BUSY` mean the firmware acknowledged a block this host sent; `ONLINE` means only that
- * a socket is open, which a terminal server with nothing plugged into it also satisfies. Offering
- * `M500` in that state produces a command that goes nowhere.
- */
+// Derived the way PrinterMonitor.vue derives it: ONLINE is only a socket, not yet a firmware that
+// has acknowledged anything, and offering M500 in that state would send a command that goes nowhere.
 const state = ref<ConnectionState>('OFFLINE')
 const live = computed(() => isUsable(state.value))
 const controlsEnabled = computed(() => mayControl.value && live.value)
@@ -69,47 +70,27 @@ const failure = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const verdict = ref<string | null>(null)
 
-/** One line of the report, under the section it arrived beneath. */
+// One line of the report, under the section it arrived beneath.
 interface Value {
     code: string
     command: string
 }
 
 interface Group {
-    /** The section heading, or null for values that arrived before any heading. */
+    // null for values that arrived before any heading
     title: string | null
     values: Value[]
 }
 
 const groups = ref<Group[]>([])
 const reading = ref(false)
-
-/**
- * Whether a read has actually completed, which is what separates two of the three states below.
- *
- * Set when the report arrives and when a read gives up waiting, so an empty table means "the
- * machine answered with nothing" only once something asked.
- */
+// Set when the report arrives or a read gives up waiting - an empty table means "answered with
+// nothing" only once something asked.
 const answered = ref(false)
-
-/**
- * Whether this firmware has no `M503` at all.
- *
- * Driven by `UnknownCommand` naming `M503` and by nothing else. Marlin's `DISABLE_M503` strips the
- * report out of a build that stores settings perfectly well, and `M115` says nothing about it under
- * any spelling - so the refusal is the only notice there is, and the server stops asking once it
- * has one.
- */
+// Driven by UnknownCommand naming M503 and nothing else; the server stops asking once this is true.
 const noReport = ref(false)
 
-/**
- * The three things an empty table can mean, named rather than left to a chain of `v-else-if`.
- *
- * `StorageTab.vue` draws the same distinction for a card listing and for the same reason: showing
- * "nothing read yet" and "read, and the machine reported nothing" as the same empty table tells an
- * operator a fact about their machine that nobody has established. The third is a fact about the
- * *firmware* and is not an empty report at all.
- */
+// Named rather than left to a chain of v-else-if; see the class doc above.
 const nothingReadYet = computed(() =>
     !noReport.value && !answered.value && groups.value.length === 0)
 const readAndEmpty = computed(() =>
@@ -117,20 +98,13 @@ const readAndEmpty = computed(() =>
 
 // ---------------------------------------------------------------- the stream
 
-/**
- * A value belongs to the most recent section that arrived before it.
- *
- * Sections and values are separate events, interleaved, in the order the firmware wrote them -
- * there is no nesting on the wire and nothing numbers the lines, so the grouping has to be tracked
- * as the stream arrives. A value with no section ahead of it gets a group with no title, which is
- * what an `M503 S0`-shaped report would be in its entirety.
- */
+// Sections and values are separate events, interleaved in firmware order with nothing numbering the
+// lines, so a value belongs to the most recent section ahead of it, tracked as the stream arrives.
 function openSection(title: string) {
-    // A heading this report has already used means a *second* report has begun - somebody pressed
-    // Read, or the server re-read behind an M501. Start over rather than appending, which is what
-    // keeps a snapshot followed by a fresh report from rendering the settings twice. The section
-    // titles within one report are distinct; "Material heatup parameters" holds two M145 lines
-    // under one heading rather than appearing twice.
+    // A heading already used means a second report has begun (another Read, or a server re-read
+    // behind M501) - start over rather than appending, so a fresh report does not render twice.
+    // Titles are distinct within one report; "Material heatup parameters" holds two M145 lines under
+    // one heading rather than appearing twice.
     if (groups.value.some(group => group.title === title)) {
         groups.value = []
     }
@@ -155,10 +129,8 @@ function onMessage(message: EventMessage) {
             const event = message.event as ConnectionStateChanged
             state.value = event.to
             if (event.to === 'OFFLINE') {
-                // A machine that went away kept none of this, and what comes back up on the same
-                // address may be a different firmware - a reflash, or a cable moved. The server
-                // forgets the session's report for exactly this reason; holding it here would show
-                // values this machine does not have.
+                // What comes back on the same address may be a different firmware (a reflash, a
+                // cable moved); holding the old report would show values this machine does not have.
                 groups.value = []
                 answered.value = false
                 reading.value = false
@@ -191,8 +163,8 @@ function onMessage(message: EventMessage) {
             break
 
         case 'ActionRs': {
-            // M500's only confirmation: `//action:notification Settings Stored`. The firmware says
-            // nothing else about having stored anything, so this is what tells an operator it took.
+            // M500's only confirmation (//action:notification Settings Stored) - the firmware says
+            // nothing else about having stored anything.
             const action = message.event as ActionRs
             if (action.action === 'notification' && action.argument) {
                 notice.value = action.argument
@@ -207,15 +179,8 @@ function onMessage(message: EventMessage) {
 
 // ---------------------------------------------------------------- editing
 
-/**
- * One field of an editable setting: the letter it is reported under and the name it is sent under.
- *
- * **The two are different on purpose.** The report is G-code - `M204 P500.00 R1000.00 T1000.00` -
- * so reading a value out means finding the word by letter; the request body is the browser's own
- * shape, so sending it means naming the field the server declared. Deriving one from the other
- * would tie the HTTP contract to Marlin's letters, which is what the command records exist to
- * avoid.
- */
+// One field of an editable setting: the letter it is reported under, and the name it is sent under
+// (see the class doc above for why the two differ).
 interface Field {
     letter: string
     field: string
@@ -227,22 +192,8 @@ interface Editable {
     apply: (body: Record<string, number>) => Promise<void>
 }
 
-/**
- * The six settings this tab may change, and what each one posts.
- *
- * **The others are shown and not editable, deliberately, and this is the comment that says why** -
- * because somebody will otherwise "finish" the tab:
- *
- * - `M301` hotend PID. Changing a thermal control loop badly is how a heater runs away; it needs a
- *   control that understands the autotune cycle (`M303`) and its own issue, not a text box.
- * - `M200` volumetric extrusion. This build reports it **disabled**, so the set path has never been
- *   measured on a machine that would act on it - and guessing at a reply or a unit is how this
- *   repository got protocol details wrong before.
- * - `M145` material presets. Indexed - two lines under one heading, `S0` and `S1` - so a control
- *   has to carry which preset it is editing, and the report's `code` is not a key.
- * - `M149`/`G21` units. Changing the unit mid-session reinterprets every command already in
- *   flight, including a running print's; it is not a setting so much as a change of language.
- */
+// The six settings this tab may change, and what each one posts - see the class doc above for why
+// the rest are read-only.
 const EDITABLE: Record<string, Editable> = {
     M92: {
         fields: [
@@ -298,19 +249,10 @@ const EDITABLE: Record<string, Editable> = {
     },
 }
 
-/**
- * The words of one reported line, by letter.
- *
- * Tokenised **here, in the browser**, because the report is G-code and there is no parsed model of
- * it on the server - deliberately, since the report already carries Marlin's own command set and a
- * second number model would be a second place for the scale rules to drift.
- *
- * Split on whitespace; the first token is the code and the rest are letter-and-value words. A
- * trailing comment is part of the reported line verbatim - `G21 ; (mm)` and
- * `M149 C ; Units in Celsius` are real - so the walk stops at the `;` rather than reading `(mm)` as
- * a word. A flag with no value (`M149 C`) yields an empty string, which is not a number and is
- * never offered as a field.
- */
+// The words of one reported line, by letter. Split on whitespace; the first token is the code.
+// A trailing comment is part of the line verbatim (`G21 ; (mm)` is real), so the walk stops at `;`
+// rather than reading `(mm)` as a word. A flag with no value (`M149 C`) yields an empty string,
+// which is not a number and is never offered as a field.
 function wordsOf(command: string): Record<string, string> {
     const words: Record<string, string> = {}
     for (const token of command.trim().split(/\s+/).slice(1)) {
@@ -325,13 +267,8 @@ function wordsOf(command: string): Record<string, string> {
     return words
 }
 
-/**
- * What the operator has typed, keyed by the row and the field.
- *
- * Kept apart from the report rather than editing it in place, so an incoming value - a revert, or
- * another operator's read - does not silently rewrite a half-typed number, and so the field can
- * show the machine's current value beside it. A row with nothing typed in it sends nothing.
- */
+// What the operator has typed, keyed by row and field - kept apart from the report so an incoming
+// value (a revert, another operator's read) does not silently rewrite a half-typed number.
 const edits = reactive(new Map<string, string>())
 
 const editKey = (row: number, field: string) => `${row}:${field}`
@@ -346,12 +283,8 @@ function onType(row: number, field: string, text: string) {
     }
 }
 
-/**
- * Every row of the report, flattened with its section, its words and whether it can be edited.
- *
- * Flattened for the template's benefit and numbered, because `code` is **not** a key: both `M145`
- * preset lines carry `M145`, and an edit has to belong to a row rather than to a code.
- */
+// Every row of the report, flattened and numbered because `code` is not a key - both M145 preset
+// lines carry M145, and an edit has to belong to a row rather than a code.
 const rows = computed(() => {
     const flat: {
         row: number
@@ -392,14 +325,8 @@ async function guarded(work: () => Promise<unknown>) {
     }
 }
 
-/**
- * Ask for the report, and say so when nothing comes back.
- *
- * The groups are *not* cleared here: a repeated section heading is what starts a fresh report (see
- * `openSection`), which also covers a report somebody else asked for and a server-side re-read
- * behind an `M501`. Clearing on the click as well would blank the table for a machine that is about
- * to answer with the same thing.
- */
+// Groups are not cleared here: a repeated section heading is what starts a fresh report (see
+// openSection) - clearing here too would blank the table while a machine answers with the same thing.
 function read() {
     reading.value = true
     void guarded(async () => {
@@ -413,29 +340,17 @@ function read() {
     })
 }
 
-/**
- * Writing live memory to the EEPROM, behind a confirmation.
- *
- * Moved here from `PrinterMonitor.vue` with its warning: this is the one control whose effect
- * outlives the connection, and undoing it means `M502` and re-entering whatever was right.
- */
+// Moved here from PrinterMonitor.vue with its warning: the one control whose effect outlives the
+// connection.
 const STORE_WARNING = [
     'Write this machine\'s current settings to its EEPROM?',
     'They survive a power cycle, and undoing it means resetting the firmware to defaults.',
 ].join('\n\n')
 
-/**
- * And the other confirmation, which has to be a *different* sentence.
- *
- * `M502` is the more destructive of the two and in the less obvious way. Save writes what is there;
- * this **discards** it - including whatever the operator has just typed into the fields above - and
- * replaces it with what the firmware was compiled with. On a measured machine the defaults and the
- * stored settings genuinely differ, so it is not the no-op it can look like.
- *
- * The sentence names the escape, because there is one and it is not obvious: the EEPROM is
- * untouched until a Save, so Revert undoes this. Saying "are you sure" instead would leave an
- * operator who clicked it by mistake with no idea that they are one button from being fine.
- */
+// A different sentence from STORE_WARNING on purpose: M502 discards live memory (including anything
+// just typed) rather than writing it, and names its own escape (Revert) since the EEPROM is
+// untouched until a Save - "are you sure" alone would not tell an operator they are one button from
+// being fine.
 const DEFAULTS_WARNING = [
     'Load this firmware\'s compiled defaults over everything in live memory?',
     'Every value above is discarded, including anything you have just typed.',
@@ -465,18 +380,9 @@ const validate = () => {
     return guarded(() => api.validateSettings())
 }
 
-/**
- * Send one row's typed values, and only those.
- *
- * An untouched field sends nothing at all rather than echoing the machine's own number back at it:
- * an omitted word leaves the firmware's value alone, and zero does not - an axis with no steps per
- * millimetre cannot move, and an `M206` naming one axis must not zero the other two.
- *
- * A field that is not a number refuses the whole row rather than being sent as `NaN`.
- *
- * `editable` is nullable because a row's is - the template only offers the button on a row that has
- * one, and this checks rather than asserting, so the narrowing is in the code and not in a `!`.
- */
+// Sends only the fields actually touched: an omitted word leaves the firmware's value alone, and
+// zero does not (an axis with no steps per millimetre cannot move). A non-numeric field refuses the
+// whole row rather than sending NaN.
 function apply(row: number, editable: Editable | null) {
     if (!editable) {
         return
@@ -502,8 +408,8 @@ function apply(row: number, editable: Editable | null) {
         for (const field of editable.fields) {
             edits.delete(editKey(row, field.field))
         }
-        // Nothing announces a successful set, so ask - and the answer re-draws the whole report,
-        // which is the only way to see that the firmware took the value and in what scale.
+        // Nothing announces a successful set, so ask - the answer re-draws the report, the only
+        // way to see the firmware took the value and in what scale.
         await api.readSettings()
     })
 }
@@ -560,11 +466,7 @@ onUnmounted(() => {
     <div v-if="failure" class="alert alert-warning py-2" role="alert">{{ failure }}</div>
     <div v-if="notice" class="alert alert-success py-2" role="alert">{{ notice }}</div>
 
-    <!--
-      M504's answer, as text. There is deliberately no tick and no cross: `echo:EEPROM OK` is the
-      only verdict anybody has measured, the failure text is unknown, and a colour derived from
-      guessing at it would be a claim this farm cannot make.
-    -->
+    <!-- M504's answer, as text - no tick or cross, since only "echo:EEPROM OK" has ever been measured. -->
     <div v-if="verdict" class="alert alert-info py-2" role="alert">
       The firmware says of its EEPROM: <strong>{{ verdict }}</strong>
     </div>
@@ -594,11 +496,7 @@ onUnmounted(() => {
         nobody got, so ask again.
       </p>
 
-      <!--
-        The report, grouped by the section each value arrived under and in the order the firmware
-        wrote them. A section with two lines in it - "Material heatup parameters" has two M145
-        presets - shows both.
-      -->
+      <!-- Grouped by section, firmware order; a section with two lines (M145 presets) shows both. -->
       <table v-else class="table table-sm align-middle">
         <thead>
         <tr>
@@ -617,11 +515,7 @@ onUnmounted(() => {
             <td><code>{{ entry.code }}</code></td>
             <td class="text-muted"><code>{{ entry.command }}</code></td>
             <td>
-              <!--
-                Editable for the six in EDITABLE and read-only for the rest. The field shows what
-                was typed, and the machine's own value as the placeholder, so the current number is
-                visible without an edit having to start from it.
-              -->
+              <!-- The placeholder is the machine's own value, visible without an edit starting from it. -->
               <div v-if="entry.editable && mayControl" class="d-flex flex-wrap gap-2">
                 <div v-for="field in (entry.editable?.fields ?? [])" :key="field.field"
                      class="input-group input-group-sm" style="width: 9rem;">
@@ -653,10 +547,8 @@ onUnmounted(() => {
         </tbody>
       </table>
 
-      <!--
-        Why four of the reported settings have no fields. Written on the page and not only in the
-        source, because the obvious reading of a read-only row is that somebody ran out of time.
-      -->
+      <!-- Why four reported settings have no fields - written on the page, not only in the source,
+           since the obvious reading of a read-only row is that somebody ran out of time. -->
       <p v-if="rows.length" class="text-muted small">
         The hotend PID (<code>M301</code>), volumetric extrusion (<code>M200</code>), the material
         presets (<code>M145</code>) and the units (<code>M149</code>, <code>G21</code>) are reported

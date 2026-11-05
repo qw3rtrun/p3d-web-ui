@@ -4,18 +4,17 @@ import {computed, ref, watch} from 'vue'
 /**
  * The part-cooling fan.
  *
- * <strong>The unit conversion is the whole job of this component.</strong> Marlin's fan speed is a
- * 0..255 PWM value and a person thinks in percent, so the percentage lives here and only one unit
- * ever travels to the machine. Putting the conversion in `client.ts` instead would mean every
- * future caller choosing a unit again.
+ * The unit conversion is the whole job of this component: Marlin's fan speed is 0..255 PWM and a
+ * person thinks in percent, so the percentage lives here and only one unit ever travels to the
+ * machine.
  *
- * There is no reported fan speed to mirror: Marlin does not report one the way it reports a
- * temperature, so what is shown is what this page last asked for. That is honest for a control
- * nobody else is touching and wrong the moment a print's own `M106` changes it - which is why the
- * label says "requested" rather than pretending to be a reading.
+ * There is no reported fan speed to mirror - Marlin does not report one the way it reports a
+ * temperature - so what is shown is what this page last asked for: honest for a control nobody else
+ * is touching, wrong the moment a print's own `M106` changes it, which is why the label says
+ * "requested" rather than pretending to be a reading.
  */
 const props = withDefaults(defineProps<{
-    /** 0..255, Marlin's scale. Null when nothing has asked for a speed this session. */
+    // 0..255, Marlin's scale. Null when nothing has asked for a speed this session.
     speed?: number | null
     canControl?: boolean
 }>(), {speed: null, canControl: false})

@@ -17,24 +17,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The JSON the browser actually receives from {@code /api-files}.
  *
- * <p>The same contract {@link EventStreamContractTest} keeps for the event stream, kept here for
- * the one REST payload the UI reads field by field. It exists because the browser's description of
- * this record had <strong>six</strong> fields while the record had seven, and the one it was
- * missing was {@code slice} - so the estimated print time and the filament length were read out of
- * the file's comments, stored, serialised onto the wire and then dropped on the floor by a
- * TypeScript interface that had never heard of them. Nothing in either build said a word: the Java
- * side compiles against the record, {@code vue-tsc} compiles against the interface, and neither
- * can see the other.
+ * <p>The same kind of contract {@link EventStreamContractTest} keeps for the event stream, for the
+ * one REST payload the UI reads field by field. It exists because the browser's description of this
+ * record once had six fields while the record had seven - missing {@code slice} - so estimated print
+ * time and filament length were stored and serialised and then dropped on the floor by a TypeScript
+ * interface that had never heard of them, with neither build able to see the other.
  *
- * <p><strong>Five fields on {@code slice}, not four.</strong> {@code SliceInfo} is a record of four
- * components, but {@code isKnown()} is a public getter and Jackson serialises it as a property - so
- * the wire carries a discriminator the record's parameter list does not mention. A mirror written
- * from the record alone would miss it, which is the same class of mistake over again; this pins it.
+ * <p>Five fields on {@code slice}, not four: {@code SliceInfo} is a record of four components, but
+ * {@code isKnown()} is a public getter Jackson serialises as a property, so the wire carries a
+ * discriminator the parameter list does not mention.
  *
- * <p>Asserted against a plain mapper rather than through a running context on purpose. What is
- * under test is the shape Jackson gives these two records - the names, and whether a {@code Long}
- * and a {@code BigDecimal} arrive as JSON numbers or as strings - and booting a context would prove
- * the same thing more slowly and with more that could go wrong on the way.
+ * <p>Asserted against a plain mapper rather than a running context: what is under test is the shape
+ * Jackson gives these two records, and booting a context would prove the same thing more slowly.
  */
 class GcodeFileContractTest {
 
@@ -45,12 +39,8 @@ class GcodeFileContractTest {
                 2_847_561L, 73_204L, LocalDateTime.of(2026, 11, 2, 16, 45, 26), slice);
     }
 
-    /**
-     * The seven components, under the names the browser's {@code GcodeFile} declares.
-     *
-     * <p>{@code sizeBytes} is the denominator an SD transfer's progress bar divides by, and
-     * {@code slice} is the field that was missing.
-     */
+    // The seven components, under the names the browser's GcodeFile declares. sizeBytes is the
+    // denominator an SD transfer's progress bar divides by; slice is the field that was missing.
     @Test
     void aStoredFileCarriesAllSevenOfItsComponents() {
         var payload = mapper.readTree(mapper.writeValueAsString(file(SliceInfo.unknown())));
@@ -65,14 +55,9 @@ class GcodeFileContractTest {
         assertTrue(payload.has("slice"), "what the slicer said reaches the browser at all");
     }
 
-    /**
-     * What a Cura header becomes on the wire - numbers, and all five names.
-     *
-     * <p>{@code ;TIME:3661} and {@code ;Filament used: 1.2345m} in the file; {@code 3661} and
-     * {@code 1234.5000} here. <strong>The length is in millimetres whatever unit the file used</strong>,
-     * and the scale {@code BigDecimal} keeps survives into the response text - which is exactly why
-     * the UI must format it rather than print it: "1234.5 mm" is not what anybody asked.
-     */
+    // ;TIME:3661 and ;Filament used: 1.2345m in the file become 3661 and 1234.5000 here. The length
+    // is in millimetres whatever unit the file used, and the BigDecimal scale survives into the
+    // response text, which is why the UI must format it rather than print it.
     @Test
     void whatTheSlicerSaidArrivesAsNumbersUnderFiveNames() {
         var json = mapper.writeValueAsString(file(new SliceInfo("Cura_SteamEngine 5.2.1",
@@ -97,15 +82,9 @@ class GcodeFileContractTest {
                 "isKnown() is a property on the wire - the fifth field a mirror has to carry");
     }
 
-    /**
-     * A file nothing could be read from, which is a value and not an absence.
-     *
-     * <p>{@code slice} is still an object - {@code GcodeFile}'s compact constructor substitutes
-     * {@link SliceInfo#unknown()} for a null, so no caller on either side of the wire has to check
-     * for one - and every field in it is null. A page reads {@code known} to decide what to say,
-     * and what it must not say is zero: a print that takes no time and uses no filament is a
-     * different claim from nobody having written one down.
-     */
+    // slice is still an object - GcodeFile's compact constructor substitutes SliceInfo#unknown()
+    // for a null - with every field in it null. A page must not read that as zero: a print taking
+    // no time is a different claim from nobody having written one down.
     @Test
     void aFileWithNoSlicerCommentsSaysSoWithNullsAndKnownFalse() {
         var slice = mapper.readTree(mapper.writeValueAsString(file(null))).get("slice");
@@ -118,7 +97,7 @@ class GcodeFileContractTest {
         assertFalse(slice.get("known").booleanValue());
     }
 
-    /** One value read out of a file is enough to make the summary worth showing. */
+    // One value read out of a file is enough to make the summary worth showing.
     @Test
     void aPartialSummaryIsKnown() {
         var slice = mapper.readTree(mapper.writeValueAsString(

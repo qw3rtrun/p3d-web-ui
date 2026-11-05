@@ -36,18 +36,9 @@ import reactor.core.publisher.Mono;
 @EnableWebFluxSecurity
 public class SecurityConfiguration {
 
-    /**
-     * Everything a browser must fetch before anyone can log in.
-     *
-     * <p><strong>{@code /assets/**} is the built UI bundle and has to be here</strong>, because the
-     * login page itself is styled by {@code /assets/p3d-ui.css}. It carries no data - it is the
-     * same stylesheet and the same JavaScript every visitor would get anyway - and the endpoints
-     * it talks to are each guarded on their own.
-     *
-     * <p>{@code /css/**}, {@code /js/**}, {@code /vendors/**} and {@code /pages/**} used to be
-     * here and are gone with the directories they named: the theme is bundled now, and what
-     * {@code /pages/**} served was dead demo markup nothing linked to.
-     */
+    // Everything a browser must fetch before logging in. /assets/** is the built UI bundle and has
+    // to be here because the login page itself is styled by /assets/p3d-ui.css - it carries no
+    // data, and the endpoints it talks to are each guarded on their own.
     private static final String[] PUBLIC = {
             "/login", "/assets/**", "/images/**", "/webjars/**", "/favicon.ico"
     };
@@ -76,9 +67,7 @@ public class SecurityConfiguration {
                         // The actuator carries the beans, the build and the module structure.
                         .pathMatchers("/actuator/**").hasRole("ADMIN")
 
-                        // The people roster. Administrators only, in every direction - who may
-                        // heat a nozzle is exactly as sensitive as what may be heated, and reading
-                        // the list of accounts is reconnaissance.
+                        // The people roster: reading the account list is reconnaissance.
                         .pathMatchers("/api-users/**").hasRole("ADMIN")
 
                         // Changing what the farm is.
@@ -108,15 +97,10 @@ public class SecurityConfiguration {
                 .build();
     }
 
-    /**
-     * A browser is sent to the login page; a fetch is told 401.
-     *
-     * <p>Without this the whole application uses one entry point, and form login's is a 302 to
-     * {@code /login}. A {@code fetch} or an {@code EventSource} follows that redirect and receives
-     * <strong>200 and a page of HTML</strong>, which the caller then tries to parse as JSON - so an
-     * expired session shows up in the UI as a parse error rather than as "you are logged out", and
-     * a test asserting "this endpoint is protected" passes against a 200.
-     */
+    // A browser is sent to /login; a fetch or EventSource under /api-* or /actuator gets a bare 401
+    // instead. Without this split, form login's single entry point is a 302 that a fetch follows
+    // and receives 200 and a page of HTML - an expired session then looks like a parse error, not
+    // "logged out", and a test asserting "this endpoint is protected" passes against a 200.
     private static ServerAuthenticationEntryPoint entryPoint() {
         var unauthorized = new HttpStatusServerEntryPoint(HttpStatus.UNAUTHORIZED);
         var toLogin = new org.springframework.security.web.server.authentication
@@ -130,19 +114,10 @@ public class SecurityConfiguration {
         };
     }
 
-    /**
-     * The encoder is handed over explicitly, and leaving it out is a 500 on every sign-in.
-     *
-     * <p>{@code UserDetailsRepositoryReactiveAuthenticationManager} defaults to a
-     * <em>delegating</em> encoder, which reads the {@code {bcrypt}} prefix off a stored hash to
-     * decide how to check it. The hashes this farm stores have no prefix - they are what
-     * {@code BCryptPasswordEncoder} produced - so the delegating encoder finds no id and throws,
-     * and the login page answers 500 rather than "wrong password".
-     *
-     * <p>The bean comes from {@code identity}, which is the module that <em>writes</em> the
-     * hashes. That is the point: one encoder, declared once, so the farm cannot end up writing
-     * passwords with one scheme and checking them with another.
-     */
+    // The encoder is handed over explicitly because the manager's default - a delegating encoder
+    // reading a {bcrypt} prefix off the hash - finds no prefix on this farm's unprefixed
+    // BCryptPasswordEncoder hashes and throws, answering 500 instead of "wrong password". The bean
+    // comes from identity, the module that writes the hashes, so one scheme both writes and checks.
     private static ReactiveAuthenticationManager
             authentication(ReactiveUserDetailsService users, PasswordEncoder encoder) {
         var manager = new UserDetailsRepositoryReactiveAuthenticationManager(users);
@@ -155,14 +130,9 @@ public class SecurityConfiguration {
         return new FarmUserDetailsService(users);
     }
 
-    /**
-     * Makes the CSRF token reach the response.
-     *
-     * <p>{@code CookieServerCsrfTokenRepository} writes the cookie lazily - only when something
-     * subscribes to the token - so without this the browser never receives {@code XSRF-TOKEN} and
-     * every POST from {@code client.js} is rejected with 403. It is the standard WebFlux
-     * workaround and it is load-bearing, not boilerplate.
-     */
+    // CookieServerCsrfTokenRepository writes XSRF-TOKEN lazily, only when something subscribes to
+    // the token - without this filter forcing that subscription, the browser never receives the
+    // cookie and every POST from client.js is rejected with 403. The standard WebFlux workaround.
     @Bean
     public WebFilter csrfCookieWebFilter() {
         return (exchange, chain) -> {

@@ -50,17 +50,9 @@ public class ProfileController {
                 .thenReturn("profile.html");
     }
 
-    /**
-     * Changes the signed-in user's password.
-     *
-     * <p>Answers with a redirect carrying a result in the query string, the way the login page
-     * does, so a refresh does not re-post the form.
-     *
-     * <p><strong>Every failure says the same thing it would have said anyway</strong>, except the
-     * two the user can see for themselves - a mismatched confirmation and an empty password. A
-     * wrong current password is reported as exactly that, because the person is already
-     * authenticated: there is nothing left to disclose.
-     */
+    // Redirects with the result in the query string, like the login page, so a refresh does not
+    // re-post the form. A wrong current password is reported as such - the user is already
+    // authenticated, so there is nothing left to disclose.
     @PostMapping("/profile/password")
     public Mono<String> changePassword(Mono<Principal> principal,
                                        @ModelAttribute PasswordChange form) {
@@ -76,12 +68,7 @@ public class ProfileController {
                         .subscribeOn(Schedulers.boundedElastic()));
     }
 
-    /**
-     * The blocking half, on a thread that is allowed to block.
-     *
-     * <p>Two JPA calls - read the hash, then write a new one - which is the whole reason this is
-     * off the event loop.
-     */
+    // Off the event loop: two JPA calls, reading the hash then writing a new one.
     private String apply(String username, PasswordChange form) {
         var user = users.byName(username).orElse(null);
         if (user == null) {

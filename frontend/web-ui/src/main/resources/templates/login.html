@@ -1,11 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
-<!--
-  The login page - plan item D3.
-
-  Standalone, and deliberately not built on container.html: every other page assumes a signed-in
-  user to render its nav and sidebar, and this is the one page that by definition has none.
--->
+<!-- The login page (plan item D3): standalone, not built on container.html, since every other page
+     assumes a signed-in user to render its nav and sidebar - this is the one page that has none. -->
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
@@ -32,12 +28,9 @@
                         </div>
 
                         <form class="pt-3" method="post" th:action="@{/login}">
-                            <!--
-                              The CSRF field is written by hand because Thymeleaf's automatic
-                              insertion is a servlet-stack feature: on WebFlux the request data
-                              value processor that adds it is not in play, so a form without this
-                              is rejected with 403 and no hint as to why.
-                            -->
+                            <!-- Written by hand: Thymeleaf's automatic CSRF insertion is a servlet-stack
+                                 feature, absent on WebFlux - a form without this is rejected 403 with no
+                                 hint as to why. -->
                             <input type="hidden" th:name="${_csrf.parameterName}"
                                    th:value="${_csrf.token}" th:if="${_csrf != null}"/>
                             <div class="form-group">

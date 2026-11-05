@@ -27,22 +27,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The JSON the browser posts, and the G-code it becomes.
  *
- * <p>A contract with code the Java build does not compile: {@code src/frontend/src/api/client.ts}
- * sends {@code {index, temp}}, {@code {temp}}, {@code {period}} and {@code {connect}}, and nothing
- * else in this repository would notice if a field stopped binding - {@code vue-tsc} checks that
- * file against itself, not against these records. Something already had:
- * {@code /auto-report-temp} bound `:gcode`'s generated class, whose property is {@code seconds}, so
- * the {@code period} the user chose matched no field and every request silently asked for the
- * firmware's default instead.
+ * <p>A contract the Java build cannot see: {@code client.ts} sends {@code {index, temp}},
+ * {@code {temp}}, {@code {period}}, {@code {connect}}, and {@code vue-tsc} only checks that file
+ * against itself, not against these records. Not hypothetical: {@code /auto-report-temp} once bound
+ * `:gcode`'s generated class, whose property is {@code seconds}, so the {@code period} chosen
+ * matched no field and every request silently asked for the firmware's default instead - the
+ * argument for request bodies being this module's own records rather than Marlin's.
  *
- * <p>That is the argument for the request bodies being this module's own records rather than
- * Marlin's generated classes, and it is the whole of what survives here now that the application
- * speaks {@code :gcode} everywhere else.
- *
- * <p><strong>Asserted as the command that comes out, not the record that bound.</strong> The
- * controller translates before it calls {@link PrinterControl}, so the G-code is what this test can
- * see - and it is the stronger assertion anyway: a field that binds into a record but is dropped on
- * the way to Marlin is the bug above, and it reads as a missing {@code S2} here.
+ * <p>Asserted as the command that comes out, not the record that bound: the controller translates
+ * before calling {@link PrinterControl}, so a field that binds but is dropped on the way to Marlin
+ * reads here as a missing {@code S2} - the stronger assertion.
  */
 class PrinterCommandBindingTest {
 
@@ -55,13 +49,9 @@ class PrinterCommandBindingTest {
 
     private final AtomicBoolean cancelled = new AtomicBoolean();
 
-    /**
-     * What the stubbed runtime answers an upload with - accepted unless a test says otherwise.
-     *
-     * <p>A field rather than a second stub class, because the three tests that drive a refusal want
-     * the <em>real</em> controller and the real Jackson encoding of the record underneath it. What
-     * they assert is the status and the bytes of the body, which is all a browser can see.
-     */
+    // What the stubbed runtime answers an upload with (accepted unless a test says otherwise) - a
+    // field rather than a second stub class, since the refusal tests want the real controller and
+    // Jackson encoding, asserting only the status and body bytes a browser can see.
     private final AtomicReference<ControlOutcome> uploadAnswers = new AtomicReference<>();
 
     private WebTestClient client() {
@@ -150,10 +140,8 @@ class PrinterCommandBindingTest {
         assertEquals("M140 S60", sent());
     }
 
-    /**
-     * {@code client.autoReportTemperature(period)} - the one that was silently dropping its
-     * argument. {@code S2} is the whole point of this test.
-     */
+    // client.autoReportTemperature(period) - the one that was silently dropping its argument; S2
+    // is the whole point of this test.
     @Test
     void theAutoReportPeriodArrives() {
         post("/auto-report-temp", "{\"period\":2}");
@@ -183,15 +171,9 @@ class PrinterCommandBindingTest {
         assertEquals("G28 X Z", sent());
     }
 
-    /**
-     * A jog carries {@code relative}, and an omitted axis stays null.
-     *
-     * <p>Null and zero are different here and the difference reaches the wire: a null axis is one
-     * the move does not mention, while zero in relative mode means "do not move this axis" and in
-     * absolute mode means "go to the origin". A binding that defaulted null to zero would turn a
-     * single-axis jog into a move of everything - which is why the expectation below names X and
-     * nothing else.
-     */
+    // Null and zero differ on the wire: null is an axis the move does not mention, zero in
+    // relative mode means "do not move this axis" - a binding that defaulted null to zero would
+    // turn a single-axis jog into a move of everything.
     @Test
     void aJogBindsItsAxesAndItsMode() {
         post("/move", "{\"x\":10,\"feedRate\":3000,\"relative\":true}");
@@ -242,14 +224,8 @@ class PrinterCommandBindingTest {
 
     // ------------------------------------------------- the Settings tab
 
-    /**
-     * The four settings operations that ask for nothing, so carry no body.
-     *
-     * <p>No body rather than {@code {}}, which is how the integration tests drive them - a
-     * {@code @RequestBody} on any of these would answer 400 to a request the browser is entitled to
-     * make, and {@code client.ts} happens to send {@code {}} so the mistake would hide until
-     * something else called them.
-     */
+    // No body, not {}: a @RequestBody on any of these would answer 400 to a request the browser is
+    // entitled to make, and client.ts happens to send {} so the mistake would otherwise hide.
     @Test
     void theFourSettingsOperationsNeedNoBody() {
         client().post().uri("/api-printer/" + id + "/settings/read").exchange().expectStatus().isOk();
@@ -265,15 +241,9 @@ class PrinterCommandBindingTest {
         assertEquals("M504", sent());
     }
 
-    /**
-     * {@code client.setStepsPerUnit({x})} and the five setters beside it, each as the browser sends
-     * it.
-     *
-     * <p>Asserted as the wire text, which is what makes this a binding test and not a wish: a field
-     * that binds into the record and is then written under the wrong letter reads here as the wrong
-     * string. The home offset is the one that would have shown it - its generated class's first
-     * parameter writes {@code P}, the tool index.
-     */
+    // Asserted as the wire text, not the record, so a field written under the wrong letter shows
+    // up here - home offset is the one that would catch it, since its generated class's first
+    // parameter writes P, the tool index.
     @Test
     void everySettingPayloadBindsAndKeepsItsLetter() {
         post("/settings/steps-per-unit", "{\"x\":81}");
@@ -295,14 +265,9 @@ class PrinterCommandBindingTest {
         assertEquals("M206 Z-0.1", sent());
     }
 
-    /**
-     * An axis the browser left out of the JSON reaches the machine as no word at all.
-     *
-     * <p>Not as a zero. {@code client.ts} sends only the fields the operator typed, and the whole
-     * point of that is lost if an absent field binds to something: {@code M92 X81 Y0 Z0 E0} would
-     * stop three axes moving, and {@code M206 X0 Y0 Z-0.1} would silently re-home two axes nobody
-     * mentioned.
-     */
+    // Not as a zero: client.ts sends only the fields the operator typed, and an absent field
+    // binding to something would mean M92 X81 Y0 Z0 E0 stopping three axes, or M206 X0 Y0 Z-0.1
+    // silently re-homing two nobody mentioned.
     @Test
     void anAbsentFieldSendsNoWord() {
         post("/settings/steps-per-unit", "{\"e\":500}");
@@ -312,13 +277,8 @@ class PrinterCommandBindingTest {
         assertTrue(!sent().contains("X"), "an unmentioned axis must not be zeroed");
     }
 
-    /**
-     * The scale the browser sent is the scale that travels.
-     *
-     * <p>{@code BigDecimal}, so {@code 0.013} is not rounded on the way through and
-     * {@code 80.00} is not shortened to {@code 80}. A junction deviation is three decimal places on
-     * a real machine and a layer that normalised it would be making up the digits.
-     */
+    // BigDecimal, so 0.013 is not rounded and 80.00 is not shortened to 80 - a real machine's
+    // junction deviation is three decimal places, and normalising it would be making up digits.
     @Test
     void aSettingKeepsThePrecisionItWasSentWith() {
         post("/settings/advanced", "{\"junctionDeviation\":0.013}");
@@ -358,19 +318,11 @@ class PrinterCommandBindingTest {
         assertEquals(List.of("M23 BENCHY.GCO", "M24"), received.get());
     }
 
-    /**
-     * A filename that would change what the G-code block means is a bad request, not a 500.
-     *
-     * <p><strong>The status is the point of this test, and it was not obvious.</strong> The check
-     * lives in a record's compact constructor and throws {@code IllegalArgumentException}, so what
-     * the browser sees depends on where WebFlux catches it - a body that fails to construct is a
-     * decoding failure and comes back 400, where the same exception thrown later in a handler would
-     * be a 500 and would read to a user as "the server is broken" rather than "that name is not
-     * allowed".
-     *
-     * <p>The payload itself is the injection: a filename is a bare rest-of-line string, so
-     * {@code "a.gco\nM112"} is a delete and an emergency stop.
-     */
+    // The status is the point: the check lives in a record's compact constructor and throws
+    // IllegalArgumentException, so a body that fails to construct is a 400 decoding failure, where
+    // the same exception thrown later in a handler would be a 500. The payload is the injection
+    // itself: a filename is a bare rest-of-line string, so "a.gco\nM112" is a delete and an
+    // emergency stop.
     @Test
     void aFilenameCarryingANewlineIsRejectedAsABadRequest() {
         client().post().uri("/api-printer/" + id + "/sd/delete")
@@ -382,12 +334,8 @@ class PrinterCommandBindingTest {
         assertEquals(List.of(), received.get(), "nothing may reach the printer");
     }
 
-    /**
-     * The upload endpoint names a stored file; it carries no bytes.
-     *
-     * <p>The browser posts those to {@code /api-files} first. Two requests rather than one, which
-     * is what lets the same file go to a second machine without being sent again.
-     */
+    // Names a stored file; carries no bytes - those go to /api-files first, two requests rather
+    // than one, so the same file can go to a second machine without being sent again.
     @Test
     void theUploadPayloadNamesAStoredFileAndItsNameOnTheCard() {
         var fileId = UUID.randomUUID();
@@ -398,13 +346,8 @@ class PrinterCommandBindingTest {
         assertEquals(List.of(), received.get(), "an upload is not a command on the send path");
     }
 
-    /**
-     * An extension is not required of the browser - the server adds one.
-     *
-     * <p>{@code M20} lists only printable extensions, so a name without one makes a file that is on
-     * the card and invisible. The request is accepted as typed and the defaulting happens where the
-     * extension list lives; the name that was actually used comes back on the event stream.
-     */
+    // Not required of the browser - the server adds one, since M20 lists only printable
+    // extensions and a name without one would be on the card and invisible.
     @Test
     void anUploadNameNeedsNoExtensionHere() {
         var fileId = UUID.randomUUID();
@@ -468,15 +411,9 @@ class PrinterCommandBindingTest {
                 .exchange();
     }
 
-    /**
-     * A refusal that names something absent is a 404, and the body says which kind and why.
-     *
-     * <p><strong>If this failed, the browser would be told the server was broken.</strong> That is
-     * what it used to be told: the uploader threw {@code IllegalArgumentException} for a file the
-     * store does not hold, nothing classified it, and a stale file picker read as a 500. The field
-     * names are the part that can rot silently - {@code refusal} and {@code reason} are what
-     * {@code client.ts} reads, and nothing in this build compiles that file.
-     */
+    // Used to be a 500: the uploader threw IllegalArgumentException for a file the store does not
+    // hold, nothing classified it. refusal and reason are what client.ts reads, uncompiled against
+    // this build, so the field names are what can rot silently.
     @Test
     void anAbsentUploadTargetIsNotFoundWithItsReasonInTheBody() {
         uploadAnswering(ControlOutcome.absent(id, "there is no file to upload"))
@@ -487,13 +424,8 @@ class PrinterCommandBindingTest {
                 .jsonPath("$.reason").isEqualTo("there is no file to upload");
     }
 
-    /**
-     * A refusal that names a machine in the wrong state is a 409, with the same body shape.
-     *
-     * <p>409 and not 404: the printer is <em>there</em>, and connecting it is the whole of what the
-     * operator has to do. A failure here would mean a page telling somebody their machine does not
-     * exist because it happened to be unplugged.
-     */
+    // 409, not 404: the printer is there, and connecting it is all the operator has to do - a 404
+    // here would tell somebody their machine does not exist because it happened to be unplugged.
     @Test
     void anUploadToAMachineInTheWrongStateIsAConflict() {
         uploadAnswering(ControlOutcome.wrongState(id, "printer " + id + " is not connected"))

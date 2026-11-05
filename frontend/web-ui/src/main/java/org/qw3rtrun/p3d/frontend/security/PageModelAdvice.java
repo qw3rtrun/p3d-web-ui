@@ -33,14 +33,7 @@ public class PageModelAdvice {
         return token == null ? Mono.empty() : token;
     }
 
-    /**
-     * Who is signed in, for the nav bar.
-     *
-     * <p>The theme this UI is built on ships a hardcoded "Allen Moreno" and a Sign Out link that
-     * went nowhere. Both were harmless decoration while the farm had no users; with this item they
-     * became actively misleading - a page that names somebody who is not you, beside a control
-     * that claims to end a session it cannot.
-     */
+    // For the nav bar, which otherwise ships a hardcoded "Allen Moreno" and a dead Sign Out link.
     @ModelAttribute("currentUser")
     public Mono<String> currentUser() {
         return ReactiveSecurityContextHolder.getContext()

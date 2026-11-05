@@ -4,16 +4,15 @@ import {computed, ref, watch} from 'vue'
 /**
  * One heater: what it reads, what it is aiming at, and the controls to change that.
  *
- * Ported from the POC's `temperature-control.js`, since deleted. Two things changed beyond the
- * syntax, and both were bugs the original had:
+ * Ported from the POC's `temperature-control.js`, since deleted, fixing two of its bugs: the target
+ * input no longer fights the machine, since it is adopted from an incoming reading only while the
+ * operator is not touching it (see `editing`) rather than always, which used to yank the slider out
+ * from under a drag; and `presets` is typed and non-optional, where the POC read
+ * `presets[presetIndex]` before anything set the index - an undefined dereference on first render
+ * for an empty list.
  *
- * - **The target input no longer fights the machine.** The POC bound the slider straight to a ref
- *   that a `watch` on the incoming target also wrote, so a reading arriving mid-drag yanked the
- *   slider out from under the operator. The input is now only adopted from the machine while the
- *   operator is not touching it - see `editing`.
- * - **`presets` is typed and non-optional.** The POC read `presets[presetIndex]` in a computed that
- *   ran before anything set the index, which is an undefined dereference on the first render for
- *   any caller that passed an empty list.
+ * `target` is nullable and null is not zero: a build reporting no target at all is not a heater told
+ * to cool, a distinction `:gcode`'s reading keeps that the record it replaced used to flatten away.
  */
 
 export interface Preset {
@@ -23,22 +22,14 @@ export interface Preset {
 
 const props = withDefaults(defineProps<{
     name: string
-    /** What the sensor reads now. */
     current: number
-    /**
-     * What the machine is aiming at. 0 means off, and **null means it did not say**.
-     *
-     * The two are different and the firmware distinguishes them: a build that reports no target at
-     * all is not a heater that has been told to cool. The reading this binds to is `:gcode`'s, which
-     * keeps the distinction; the record it replaced flattened null to zero before the browser ever
-     * saw it.
-     */
+    // 0 means off, null means it did not say - see the class doc above.
     target: number | null
-    /** Marlin's PWM scale, 0..127. Null when the firmware does not report it. */
+    // Marlin's PWM scale, 0..127. Null when the firmware does not report it.
     power?: number | null
     presets?: Preset[]
     max?: number
-    /** An operator may heat; a viewer may only watch. The server enforces this regardless. */
+    // An operator may heat; a viewer may only watch. The server enforces this regardless.
     canControl?: boolean
 }>(), {
     power: null,
@@ -52,12 +43,7 @@ const emit = defineEmits<{ change: [target: number] }>()
 const input = ref(props.target ?? 0)
 const editing = ref(false)
 
-/**
- * Adopt the machine's target, but not while somebody is setting one.
- *
- * Without the guard, a temperature report once a second rewrites the number under the operator's
- * cursor - which in the POC made the slider impossible to drag on a connected printer.
- */
+// Adopt the machine's target, but not while somebody is setting one - see the class doc above.
 watch(() => props.target, (next) => {
     if (!editing.value) {
         input.value = next ?? 0
@@ -66,7 +52,7 @@ watch(() => props.target, (next) => {
 
 const heating = computed(() => (props.target ?? 0) > 0)
 
-/** Marlin reports 0..127; a percentage is what a person reads. */
+// Marlin reports 0..127; a percentage is what a person reads.
 const powerPercent = computed(() => Math.round(((props.power ?? 0) / 127) * 100))
 
 function apply(value: number) {

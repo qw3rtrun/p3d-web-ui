@@ -1,37 +1,21 @@
 /**
- * The {@code frontend} submodel: the three ways a human reaches this system.
+ * The {@code frontend} submodel: REST/SSE under {@code /api-printer} and {@code /api-manager}, the
+ * Thymeleaf controllers in {@code mvc}, and the Vue build - one submodel because one application
+ * serves all three, and splitting them would mean a boundary with no rule on it.
  *
- * <p>REST and SSE under {@code /api-printer} and {@code /api-manager}, the Thymeleaf controllers in
- * {@code mvc} that render the dashboard and the monitor page, and the Vue build that this Gradle
- * module also carries. One submodel, because they are one surface: the pages are served by the same
- * application that answers the fetches, and splitting them would mean a boundary with no rule on it.
+ * <p>Depends on no other submodel (rule 1 of {@code doc/sub_boundaries.txt}, enforced by the Gradle
+ * compile path, not just reported): the printer runtime and the roster are reached only through
+ * {@code PrinterControl} and {@code MachineManagementService} in {@code api}.
  *
- * <p><strong>It depends on no other submodel</strong>, which is rule 1 of
- * {@code doc/sub_boundaries.txt} and is now enforced rather than reported. The controllers reach
- * the printer runtime through {@code PrinterControl} and the farm's roster through
- * {@code MachineManagementService}, both interfaces in {@code api}; neither {@code core} nor
- * {@code printer-management} is named anywhere here, and the Gradle build does not even put them on
- * this module's compile path.
+ * <p>The {@code command} package below holds the browser's request-body shapes and each one
+ * translates itself to {@code :gcode} - keeping the HTTP contract independent of the Marlin
+ * parameter list, in place of the protocol mirror {@code api} used to carry.
  *
- * <p><strong>The request bodies live here, and they are the only thing that does.</strong>
- * {@code PrinterControl} speaks {@code :gcode} - a Marlin farm is coupled to G-code by
- * construction, so the runtime has no use for a second set of names for one set of facts - but an
- * HTTP contract is not a command set. What the browser posts to {@code /move} should go on being
- * {@code {"x":10,"relative":true}} whatever {@code G1}'s parameter list looks like this year, so
- * the {@code command} package below holds those shapes and each one translates itself. That is one
- * translation at the edge that receives the request, in place of the mirror of the whole protocol
- * that {@code api} used to carry.
- *
- * <p>{@code api::identity} joined with plan item D3, and it is the narrowest of the lot: this
- * submodel is the only place in the application where a request is authenticated, because it is the
- * only place a request exists. Who the people <em>are</em> belongs to {@code identity}, which owns
- * the table and the password hashing; what this module does is decide, per path, which of them may
- * call it.
- *
- * <p>{@code api::files} joined the list with plan item C1. The upload and download endpoints are
- * here because {@code doc/sub_boundaries.txt} puts every server API in this submodel, and because
- * the pooled {@code DataBuffer}s WebFlux hands out are this layer's to release - the store takes
- * plain {@code ByteBuffer}s, which is what keeps Spring out of {@code api}.
+ * <p>{@code api::identity} (plan item D3) is the narrowest dependency: this is the only submodel
+ * where a request exists to authenticate, so it decides per path who may call in, while
+ * {@code identity} itself owns the table and the password hashing. {@code api::files} (plan item
+ * C1) covers upload and download, whose pooled {@code DataBuffer}s are this layer's to release -
+ * the store takes plain {@code ByteBuffer}s, keeping Spring out of {@code api}.
  */
 @org.springframework.modulith.ApplicationModule(
         displayName = "Frontend",

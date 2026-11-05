@@ -35,18 +35,9 @@ public record MoveAxes(BigDecimal x, BigDecimal y, BigDecimal z, BigDecimal e,
         return x == null && y == null && z == null && e == null;
     }
 
-    /**
-     * The move, and the mode switch a relative one needs around it.
-     *
-     * <p>Marlin has no per-command relative flag: {@code G91} puts the machine in relative mode and
-     * it <strong>stays there</strong> until {@code G90} puts it back. So a relative jog is three
-     * commands, and leaving the machine in relative mode by forgetting the third would make every
-     * later absolute move - including a print's - land somewhere else entirely.
-     *
-     * <p>That is also why they are returned together rather than sent as three requests: the
-     * runtime applies the whole list as one task on the aggregate's thread, so no other command can
-     * be interpreted while the machine is in the wrong mode.
-     */
+    // Marlin has no per-command relative flag: G91 puts the machine in relative mode and it stays
+    // there until G90 puts it back, so a relative jog is three commands returned as one list - the
+    // runtime applies the whole list as one task, so no other command lands while the mode is wrong.
     @Override
     public List<GRq<?>> toMarlin() {
         var g1 = new LinearMoveG1(

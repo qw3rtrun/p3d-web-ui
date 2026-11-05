@@ -16,13 +16,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * A people roster for tests that boot this submodel alone.
  *
  * <p>Unlike the other collaborators in {@link BootVuejsApplicationTests.Collaborators}, this one
- * <strong>works</strong> rather than throwing. Those stub a service whose absence should be loud;
- * this stubs a store, and a store that throws would make every security test fail as an error
- * instead of as a 401 or a 403 - which is precisely the distinction those tests exist to draw.
+ * works rather than throwing: a store that threw would make every security test fail as an error
+ * instead of as a 401 or 403, which is precisely the distinction those tests exist to draw.
  *
- * <p>It hashes with the same BCrypt the real directory uses, so a test signing in exercises the
- * actual password comparison rather than a string equality that would pass against a plaintext
- * column.
+ * <p>Hashes with the same BCrypt the real directory uses, so a test signing in exercises the actual
+ * password comparison rather than a string equality that would pass against a plaintext column.
  */
 public class InMemoryFarmUsers implements FarmUserDirectory {
 

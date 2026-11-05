@@ -16,6 +16,23 @@ import reactor.core.scheduler.Schedulers;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+/**
+ * CRUD for the farm's roster of machines.
+ *
+ * <p>Every call into {@link MachineManagementService} is blocking JDBC, so it runs through
+ * {@link #offLoop}, which moves it off the Netty event loop with {@code subscribeOn} -
+ * {@code Mono.fromSupplier} alone would not: a {@code Mono} is lazy and its supplier runs on
+ * whichever thread subscribes, which for a controller is the event loop.
+ *
+ * <p>{@link #fetch} used to end in {@code orElseThrow} and answer 500 for an id the farm no longer
+ * holds; it returns an {@code Optional} now, and {@link Outcomes#found} turns the empty case into a
+ * 404, downstream of the subscription so deciding it touches no JDBC.
+ *
+ * <p>{@link #update} is {@code PUT}, not {@code PATCH}: the body is the whole declaration, and a
+ * field left out of it means "clear this", not "leave this alone". It cannot reach the profile,
+ * which is written from firmware reports alone, so no request here can make the farm claim the
+ * firmware said something it did not (plan item B4).
+ */
 @Slf4j
 @RestController
 @RequestMapping(value = "/api-manager",
@@ -25,18 +42,6 @@ public class FDMPrinterManagementController {
 
     private final MachineManagementService management;
 
-    /**
-     * The blocking boundary, in one place.
-     *
-     * <p>Everything behind {@link MachineManagementService} is Spring Data JPA, which is blocking
-     * JDBC, and WebFlux serves every request on a handful of Netty event-loop threads. Blocking one
-     * of those stalls every other request sharing it, and at one printer and one browser it is
-     * invisible - which is how it survived this long.
-     *
-     * <p>{@code Mono.fromSupplier} alone does <strong>not</strong> move the work: a {@code Mono} is
-     * lazy, so its supplier runs on whichever thread subscribes, and for a controller that is the
-     * event loop. The {@code subscribeOn} is what moves it, and it is the whole of the fix.
-     */
     private <T> Mono<T> offLoop(Supplier<T> blocking) {
         return Mono.fromSupplier(blocking).subscribeOn(Schedulers.boundedElastic());
     }
@@ -45,21 +50,6 @@ public class FDMPrinterManagementController {
         return Mono.<Void>fromRunnable(blocking).subscribeOn(Schedulers.boundedElastic());
     }
 
-    /**
-     * One machine's record, or a 404.
-     *
-     * <p><strong>This endpoint used to answer 500 for an id the farm does not hold.</strong>
-     * {@link MachineManagementService#fetch} returned a {@code Descriptor} and ended in
-     * {@code orElseThrow}, so a page left open on a deleted printer reached the framework's default
-     * handler and was told the server was broken. It answers an {@code Optional} now, and
-     * {@link Outcomes#found} turns the empty case into the status a client can act on - the same
-     * one the file store and the job queue already give.
-     *
-     * <p><strong>The blocking lookup stays inside {@code offLoop}.</strong> The status decision is
-     * a {@code map} downstream of the subscription, so choosing it moves no JDBC call back onto an
-     * event loop - which is the trap in the obvious alternative of deciding the status where the
-     * {@code Optional} is produced.
-     */
     @GetMapping(value = "/{uuid}")
     public Mono<ResponseEntity<Descriptor>> fetch(@PathVariable UUID uuid) {
         return offLoop(() -> management.fetch(uuid)).map(Outcomes::found);
@@ -76,19 +66,6 @@ public class FDMPrinterManagementController {
                 management.add(p.name(), new ConnectionDetails(p.host(), p.port()), p.spec())));
     }
 
-    /**
-     * Changes what a human declared about a machine (plan item B4).
-     *
-     * <p>{@code PUT} and not {@code PATCH}: the body is the whole declaration, and a material left
-     * out of it is a material the submitter meant to remove. A partial update would need a way to
-     * say "leave this alone" that is distinct from "clear this", and every field here already uses
-     * absent to mean cleared.
-     *
-     * <p>It cannot reach the profile. What a machine reported about itself is written from firmware
-     * reports alone, so there is no request that can make the farm claim the firmware said
-     * something it did not - which is what keeps plan item B4's "discovered is distinguishable from
-     * typed" true at the edge and not just in the schema.
-     */
     @PutMapping(value = "/{uuid}", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<Descriptor> update(@PathVariable UUID uuid, @RequestBody Mono<PrinterPayload> payload) {
         return payload.flatMap(p -> offLoop(() -> management.update(uuid, p.name(),
@@ -100,13 +77,8 @@ public class FDMPrinterManagementController {
         return offLoop(() -> management.delete(uuid)).then();
     }
 
-    /**
-     * One machine as a browser sends it: where to reach it, and what a person declares about it.
-     *
-     * <p>The spec is optional on a create, because registering a machine you have just plugged in
-     * should not require knowing its bed size. An absent {@code spec} is
-     * {@link MachineSpec#undeclared()} and not null, so no handler here has to check.
-     */
+    // Spec is optional on a create - registering a plugged-in machine should not require its bed
+    // size - and an absent one is MachineSpec#undeclared(), never null.
     public record PrinterPayload(
             String name,
             String host,

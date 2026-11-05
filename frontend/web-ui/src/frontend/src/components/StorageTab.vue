@@ -7,16 +7,20 @@ import {estimate, fileSize, filamentUsed, sliceDetail} from '../format'
 /**
  * The machine's SD card: what is on it, and what can be done to it.
  *
- * **Whether this is offered at all was decided by the server.** `monitor.html` renders the tab
- * disabled, and this island not at all, when the firmware reports no card reader - a capability is
- * true at request time, so asking again from here would be re-learning what the page already knew.
+ * Whether this is offered at all was decided by the server: `monitor.html` disables the tab and
+ * skips this island when the firmware reports no card reader (a capability true at request time).
+ * Whether a card is actually in the reader is a different question nothing asks directly, so this
+ * mounts one (`M21`) and reads the answer: `SdCardOk` means yes, silence means no (the failure text
+ * is unmatched, since the simulator always has a card and has never produced one) - a timeout is the
+ * honest version of a question the protocol cannot answer directly.
  *
- * **Whether a card is actually *in* the reader is a different question, and nothing asks it.**
- * There is no command for "is a card present", so this mounts one (`M21`) and reads the answer:
- * `SdCardOk` means yes, and silence means no. The failure text is deliberately not matched -
- * the simulator always has a card, so it has never been captured, and guessing a reply format from
- * the wiki is how this repository got reply formats wrong before. A timeout is the honest version
- * of a question the protocol cannot answer directly.
+ * Two stores, two kinds of "empty": a null listing is a listing that never arrived (an interrupted
+ * one produces nothing, not a short list), distinct from an empty array, which is a card with
+ * nothing printable - rendering both as the same empty table would claim knowledge nobody has. The
+ * same distinction applies to the server's own file store (`storedKnown`) below it.
+ *
+ * Uploading is two requests: `/api-files` takes the bytes first, so the same stored file can reach a
+ * second machine without a second upload, and the second request only names the result to the card.
  */
 
 const props = withDefaults(defineProps<{
@@ -26,46 +30,23 @@ const props = withDefaults(defineProps<{
 
 const mayControl = computed(() => props.role === 'OPERATOR' || props.role === 'ADMIN')
 
-/** How long to wait for an answer before concluding there is not one. */
+// How long to wait for an answer before concluding there is not one.
 const ANSWER_MS = 4000
 
 type Card = 'unknown' | 'mounted' | 'absent'
 
 const card = ref<Card>('unknown')
 
-/**
- * The card's contents, or null for "no answer".
- *
- * **Null and empty are different and the page must not blur them.** An empty array is a card with
- * nothing printable on it; null is a listing that never arrived, which an interrupted one produces
- * on purpose rather than reporting a short list. Rendering both as an empty table would tell an
- * operator their card is empty when the truth is that nobody knows.
- */
+// The card's contents, or null for "no answer" - see the class doc above.
 const listed = ref<SdFile[] | null>(null)
 const waitingForList = ref(false)
 
-/**
- * The three things a listing can mean, named rather than reached through a nullable in the
- * template - which also keeps the distinction between "empty" and "no answer" impossible to lose
- * in a chain of `v-else-if`.
- */
+// Named rather than reached through a nullable in the template.
 const unknownContents = computed(() => listed.value === null && !waitingForList.value)
 const emptyCard = computed(() => listed.value !== null && listed.value.length === 0)
 const onTheCard = computed<SdFile[]>(() => listed.value ?? [])
 
-/**
- * What the **server** holds, which is a different store from the card above it.
- *
- * Every upload lands here first - `/api-files` takes the bytes, the machine takes them afterwards -
- * and a stored file can be written to any number of machines without being uploaded again. Until
- * this list existed the store was invisible: the only way to put a file on a card was to send its
- * bytes over the network a second time, and the only `GcodeFile` the UI ever held was the one
- * `upload()` handed back, which it read an id out of and threw away.
- *
- * `storedKnown` is false until the server has actually answered, so an empty table reads as
- * "nothing stored" only when that is what it said - the same distinction the card listing draws
- * between an empty card and a machine that never replied.
- */
+// What the server holds, a different store from the card above it - see the class doc above.
 const stored = ref<GcodeFile[]>([])
 const storedKnown = ref(false)
 
@@ -78,7 +59,7 @@ const api = printer(props.uuid)
 
 const transferring = computed(() => upload.value?.state === 'UPLOADING' || sending.value)
 
-/** Everything that drives the machine is unavailable while the wire belongs to a transfer. */
+// Everything that drives the machine is unavailable while the wire belongs to a transfer.
 const canAct = computed(() => mayControl.value && !transferring.value)
 
 const percent = computed(() => {
@@ -135,12 +116,7 @@ async function guarded(work: () => Promise<unknown>) {
     }
 }
 
-/**
- * Ask whether there is a card, and give up on an answer rather than waiting forever.
- *
- * The timeout is the mechanism, not a safety net: no reply means no card, because there is no
- * reply that means "no card" that this host has ever seen written down.
- */
+// The timeout is the mechanism, not a safety net: no reply means no card (see the class doc above).
 function mount() {
     card.value = 'unknown'
     void guarded(async () => {
@@ -153,12 +129,8 @@ function mount() {
     })
 }
 
-/**
- * Ask for the contents, and say so when nothing comes back.
- *
- * A listing that is interrupted produces no event at all - see `SdFileList` - so the only way to
- * tell "the card is empty" from "the machine did not answer" is to notice the silence.
- */
+// An interrupted listing produces no event at all, so the only way to tell "empty" from "no
+// answer" is to notice the silence.
 function refresh() {
     waitingForList.value = true
     void guarded(async () => {
@@ -173,7 +145,7 @@ function refresh() {
     })
 }
 
-/** The server's own store. A plain GET; nothing is asked of the machine. */
+// The server's own store. A plain GET; nothing is asked of the machine.
 const loadStored = () => guarded(async () => {
     stored.value = await fileStore.all()
     storedKnown.value = true
@@ -202,17 +174,9 @@ function choose(event: Event) {
     chosen.value = input.files?.[0] ?? null
 }
 
-/**
- * Store the file on the server, then ask the machine to write it to its card.
- *
- * **Two requests, and the first is the one that carries the bytes.** `/api-files` streams them into
- * the server's store and records the size, which is what the progress bar divides by - and it means
- * sending the same file to a second machine costs no second upload. The second request only names
- * the result.
- *
- * `sending` covers the gap between them: until the first progress event arrives there is nothing on
- * the stream to say a transfer is under way, and the controls have to be unavailable from the click.
- */
+// Two requests (see the class doc above). `sending` covers the gap between them: until the first
+// progress event arrives there is nothing on the stream to say a transfer is under way, so the
+// controls must be unavailable from the click.
 function send() {
     const file = chosen.value
     if (!file) {
@@ -223,9 +187,8 @@ function send() {
     void guarded(async () => {
         try {
             const held = await fileStore.upload(file)
-            // The store has one more file in it, and its summary is worth showing even if the
-            // transfer below fails. Awaited rather than fired off, so this cannot clear the
-            // failure the next line may be about to report.
+            // Awaited rather than fired off, so this cannot clear the failure the next line may
+            // be about to report.
             await loadStored()
             await api.uploadToCard(held.id, file.name)
         } catch (error) {
@@ -235,12 +198,7 @@ function send() {
     })
 }
 
-/**
- * Write a file the server already holds to this machine's card.
- *
- * The same second request `send()` makes, without the first: the bytes are on the server already,
- * so sending a file to a second printer costs nothing but the wire to that printer.
- */
+// The same second request send() makes, without the first - the bytes are already on the server.
 function sendStored(file: GcodeFile) {
     sending.value = true
     upload.value = null
@@ -299,11 +257,7 @@ onUnmounted(() => {
 
     <div v-if="failure" class="alert alert-warning py-2" role="alert">{{ failure }}</div>
 
-    <!--
-      The transfer panel. The sentence about the machine taking nothing else is not decoration -
-      it is what M28 does to the wire, and it is why every other control on this page is disabled
-      while it runs.
-    -->
+    <!-- "Takes no other commands" is not decoration - it is what M28 does to the wire. -->
     <div v-if="upload || sending" class="card card-rounded mb-3">
       <div class="card-body py-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
@@ -384,18 +338,10 @@ onUnmounted(() => {
       </table>
     </template>
 
-    <!--
-      The server's own store, which is where every upload lands before a machine sees it.
-
-      This is the one place a GcodeFile is shown, so it is where what the slicer said belongs. Two
-      columns earn the space - how long it takes and how much filament it eats - because those are
-      the figures somebody picking a file to print is actually choosing between. The program that
-      sliced it and the layer height are true but are detail, and ride in the row's title.
-
-      A file nothing could be read from says "not stated" in both columns. Not "0 min", which would
-      claim the print is instant, and not an error: a file with no slicer comments in it is a
-      perfectly printable file, and `slice.known` is how it says so.
-    -->
+    <!-- The one place a GcodeFile is shown, so where what the slicer said belongs: estimated time
+         and filament earn columns, since those are what somebody picking a file actually compares;
+         slicer name and layer height are detail and ride in the row's title. A file with nothing
+         read says "not stated", not "0 min" (which would claim the print is instant). -->
     <div class="pt-3 border-top">
       <h5 class="mb-1">On the server</h5>
       <p class="text-muted small">
@@ -440,11 +386,8 @@ onUnmounted(() => {
       </table>
     </div>
 
-    <!--
-      Upload. No extension is required of the operator: the server adds a printable one when it is
-      missing, because M20 lists nothing else and a file without one would be on the card and
-      invisible. The name that was actually used comes back with the first progress event.
-    -->
+    <!-- No extension required: the server adds a printable one if missing, since M20 lists nothing
+         else; the name actually used comes back with the first progress event. -->
     <div v-if="mayControl" class="row align-items-end pt-3 border-top">
       <div class="col-md-6">
         <label for="storage-upload" class="form-label mb-1">Upload a file to the card</label>

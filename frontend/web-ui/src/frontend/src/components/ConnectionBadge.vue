@@ -6,14 +6,13 @@ import {isLinked, isUsable} from '../api/types'
 /**
  * Where one machine's connection is, as a badge.
  *
- * **One state from one event.** The POC kept `connected` and `online` as separate booleans set from
- * four different event names, with `online` turned on by *any* event arriving - so a printer that
- * was connected but quiet read as offline, and nothing could reconcile the two flags because the
- * backend did not know which was true either. The server owns a single state now and announces
- * every transition as one `ConnectionStateChanged`.
+ * One state from one event: the POC kept `connected` and `online` as separate booleans set from four
+ * event names, with `online` turned on by any event arriving, so a connected-but-quiet printer read
+ * as offline. The server owns a single state now and announces every transition as one
+ * `ConnectionStateChanged`.
  *
- * It does not subscribe to anything itself: whoever owns the page owns the stream, and passes the
- * state down. That is what keeps a dashboard of forty rows on one subscription.
+ * Subscribes to nothing itself - whoever owns the page owns the stream and passes the state down,
+ * which is what keeps a dashboard of forty rows on one subscription.
  */
 const props = withDefaults(defineProps<{
     state: ConnectionState
@@ -21,11 +20,8 @@ const props = withDefaults(defineProps<{
     reason?: string | null
 }>(), {attempt: 0, reason: null})
 
-/**
- * `ONLINE` is a socket; `IDLE` is a firmware that acknowledged something this host sent.
- * They are different facts, so they get different colours - a terminal server with nothing plugged
- * into it stops at `ONLINE`, and an operator should be able to see that.
- */
+// ONLINE is a socket, IDLE is a firmware that acknowledged something this host sent - different
+// colours for different facts, since a terminal server with nothing plugged in stops at ONLINE.
 const tone = computed(() => {
     if (props.state === 'ERROR') return 'bg-danger'
     if (isUsable(props.state)) return 'bg-success'

@@ -35,13 +35,9 @@ public class SessionStoreConfiguration {
         return managerOver(sessions);
     }
 
-    /**
-     * Captures the wildcard so the store can be constructed.
-     *
-     * <p>Spring Session's JDBC session type is package-private, so the repository can only be
-     * injected as {@code ReactiveSessionRepository<?>}; a generic method is how the compiler infers
-     * what cannot be written down here.
-     */
+    // Captures the wildcard: Spring Session's JDBC session type is package-private, so the
+    // repository can only be injected as ReactiveSessionRepository<?>, and a generic method is how
+    // the compiler infers what cannot be written down here.
     private static <S extends Session> WebSessionManager managerOver(
             ReactiveSessionRepository<S> sessions) {
         var manager = new DefaultWebSessionManager();

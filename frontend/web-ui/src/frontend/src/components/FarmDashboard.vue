@@ -128,14 +128,8 @@ async function refresh() {
     }
 }
 
-/**
- * Removes a machine from the farm, behind a confirmation.
- *
- * <strong>The card does not need removing here.</strong> Deleting publishes `MachineLeftFarm`, and
- * the farm stream this page is already holding carries it - so the row disappears for *every* open
- * dashboard, not just the one that pressed the button. Removing it locally as well would mean two
- * mechanisms for one fact, and the local one would be the one that went wrong when a delete failed.
- */
+// The card does not need removing here: deleting publishes MachineLeftFarm, and the farm stream
+// this page already holds carries it, so the row disappears for every open dashboard.
 async function remove(row: Row) {
     const warning = [
         `Remove ${row.name} from the farm?`,
@@ -170,9 +164,8 @@ async function act(uuid: string, action: 'connect' | 'disconnect') {
 let subscription: Subscription | null = null
 
 onMounted(async () => {
-    // Subscribe *before* listing. The other order leaves a gap between the two calls in which an
-    // event is simply lost, and the row it belonged to stays stale until that printer next speaks -
-    // which for an idle machine could be never.
+    // Subscribe before listing: the other order leaves a gap where an event is lost, and the row
+    // stays stale until that printer next speaks - which for an idle machine could be never.
     subscription = watchFarm(onMessage)
     await refresh()
     loading.value = false

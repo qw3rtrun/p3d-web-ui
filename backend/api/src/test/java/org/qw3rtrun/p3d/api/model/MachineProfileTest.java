@@ -79,6 +79,58 @@ class MachineProfileTest {
         assertFalse(neverAsked.isKnown(), "this one never answered at all");
     }
 
+    // ------------------------------------------------------------------------------ the EEPROM
+
+    /**
+     * The capability is spelled {@code EEPROM} on the wire, and that is the whole point of this
+     * test.
+     *
+     * <p>Issue #88's checklist calls it {@code EEPROM_SETTINGS}, which is Marlin's <em>build
+     * macro</em> and never leaves the compiler. What a machine writes is {@code Cap:EEPROM:1},
+     * measured off MarlinSim among its 38 {@code Cap:} lines and cross-checked against
+     * {@code Marlin/src/gcode/host/M115.cpp} on {@code 2.1.x}, where the line is emitted under
+     * {@code ENABLED(EEPROM_SETTINGS)}. A lookup on the macro name would be false on every machine
+     * that exists.
+     */
+    @Test
+    void aFirmwareReportingAnEepromHasOne() {
+        assertTrue(reported(Map.of("EEPROM", true)).hasEeprom());
+    }
+
+    @Test
+    void aFirmwareReportingNoEepromHasNone() {
+        assertFalse(reported(Map.of("EEPROM", false)).hasEeprom());
+    }
+
+    /** The build macro is not the capability, so a profile carrying only it answers no. */
+    @Test
+    void theBuildMacroNameIsNotTheCapability() {
+        assertFalse(reported(Map.of("EEPROM_SETTINGS", true)).hasEeprom(),
+                "EEPROM_SETTINGS is the compile-time flag; Cap:EEPROM is what reaches the wire");
+    }
+
+    /** An EEPROM and a card reader are separate questions, so neither answers for the other. */
+    @Test
+    void theEepromAndTheCardAreSeparateCapabilities() {
+        var cardOnly = reported(Map.of("SDCARD", true));
+        var eepromOnly = reported(Map.of("EEPROM", true));
+
+        assertFalse(cardOnly.hasEeprom());
+        assertFalse(eepromOnly.hasSdCard());
+    }
+
+    /**
+     * A machine nothing has ever reached has no EEPROM <em>and</em> is not known - the same
+     * three-state rule the Storage tab keeps, now for the Settings tab.
+     */
+    @Test
+    void aMachineNothingHasAskedIsNotKnownAndHasNoEeprom() {
+        var unknown = MachineProfile.unknown();
+
+        assertFalse(unknown.hasEeprom());
+        assertFalse(unknown.isKnown(), "the page must be able to say 'not reported yet' instead");
+    }
+
     /** The capability map is the firmware's own, so an unusual key is carried rather than dropped. */
     @Test
     void theCapabilityMapIsKeptAsReported() {

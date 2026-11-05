@@ -12,31 +12,44 @@ import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
 import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
 import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
+import org.qw3rtrun.p3d.g.marlin.command.FactoryReset;
 import org.qw3rtrun.p3d.g.marlin.command.FanOff;
 import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
 import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition;
 import org.qw3rtrun.p3d.g.marlin.command.InitSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
 import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
+import org.qw3rtrun.p3d.g.marlin.command.PrintTravelMoveLimits;
 import org.qw3rtrun.p3d.g.marlin.command.RelativePositioning;
 import org.qw3rtrun.p3d.g.marlin.command.ReleaseSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.ReportSettings;
+import org.qw3rtrun.p3d.g.marlin.command.RestoreSettings;
 import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
 import org.qw3rtrun.p3d.g.marlin.command.SelectSDFile;
+import org.qw3rtrun.p3d.g.marlin.command.SetAdvancedSettings;
+import org.qw3rtrun.p3d.g.marlin.command.SetAxisStepsPerUnit;
 import org.qw3rtrun.p3d.g.marlin.command.SetBedTemperature;
 import org.qw3rtrun.p3d.g.marlin.command.SetFanSpeed;
 import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber;
+import org.qw3rtrun.p3d.g.marlin.command.SetHomeOffsets;
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.SetMaxFeedrate;
+import org.qw3rtrun.p3d.g.marlin.command.SetStartingAcceleration;
 import org.qw3rtrun.p3d.g.marlin.command.StartOrResumeSDPrint;
 import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
+import org.qw3rtrun.p3d.g.marlin.command.ValidateEEPROMContents;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
+import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
 import org.qw3rtrun.p3d.g.marlin.event.SdCardRs;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsRs;
 import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.event.UnknownCommand;
 import org.qw3rtrun.p3d.g.protocol.BusyRs;
 import org.qw3rtrun.p3d.g.protocol.ErrorRs;
 import org.qw3rtrun.p3d.g.protocol.GRq;
@@ -63,6 +76,9 @@ public class PrinterState implements PrinterAggregate {
 
     /** What the card is, as far as its replies have said - see {@link SdCardControl}. */
     private final SdCardControl card = new SdCardControl();
+
+    /** What the machine says its settings are - see {@link EEPROMSettingsControl}. */
+    private final EEPROMSettingsControl settings = new EEPROMSettingsControl();
 
     /**
      * Where this machine is in its connection lifecycle - one enum, and the only answer.
@@ -245,6 +261,14 @@ public class PrinterState implements PrinterAggregate {
                 heard();
                 on(e);
             }
+            case SettingsRs<?> e -> {
+                heard();
+                on(e);
+            }
+            case UnknownCommand e -> {
+                heard();
+                on(e);
+            }
             default -> {
                 heard();
                 republish(event);
@@ -341,8 +365,27 @@ public class PrinterState implements PrinterAggregate {
             case AbsolutePositioning c -> handle(c);
             case SetFanSpeed c -> handle(c);
             case FanOff c -> handle(c);
-            case SaveSettings c -> handle(c);
             case GetCurrentPosition c -> handle(c);
+
+            // The EEPROM, issue #88. M503 is the only one of these the aggregate can refuse and the
+            // only one that needs a decision at all; the rest are named because the set of things
+            // the farm can tell a machine to do should be readable here. The six setters are the
+            // settings this feature may change - and only those six: M301 (hotend PID) is a
+            // thermal-safety change with its own issue, M200 is reported disabled on this build,
+            // M145 is indexed, and M149/G21 reinterpret every command in flight. Those four still
+            // reach the machine through the pass-through default, which is correct, and
+            // deliberately have no handler.
+            case SaveSettings c -> handle(c);
+            case RestoreSettings c -> handle(c);
+            case FactoryReset c -> handle(c);
+            case ReportSettings c -> handle(c);
+            case ValidateEEPROMContents c -> handle(c);
+            case SetAxisStepsPerUnit c -> handle(c);
+            case SetMaxFeedrate c -> handle(c);
+            case PrintTravelMoveLimits c -> handle(c);
+            case SetStartingAcceleration c -> handle(c);
+            case SetAdvancedSettings c -> handle(c);
+            case SetHomeOffsets c -> handle(c);
 
             // The card. Writing to one is absent and must stay absent: an upload is a stream
             // between M28 and M29 that holds the connection for its whole length, so it goes to
@@ -394,9 +437,13 @@ public class PrinterState implements PrinterAggregate {
      *
      * <p>What a subscriber arriving late is handed before anything live - see
      * {@code PrinterReactor.updates()}. In a fixed order: where the connection is, what the machine
-     * is (firmware, then each capability), what its card is, and its last temperature. A part that is not known yet
-     * is absent rather than null or zero, the same rule {@link TemperatureControl} keeps for a
-     * sensor: no report is not a report of nothing.
+     * is (firmware, then each capability), what its card is, what it says its settings are, and its
+     * last temperature. A part that is not known yet is absent rather than null or zero, the same
+     * rule {@link TemperatureControl} keeps for a sensor: no report is not a report of nothing.
+     *
+     * <p>The settings are the one slot that is a <em>sequence</em> rather than a single fact: a
+     * 25-line report in the order the firmware wrote it, because the section headings inside it are
+     * what a tab groups by - see {@link EEPROMSettingsControl}.
      *
      * <p><strong>Facts, not history.</strong> Only what the aggregate keeps is here. A position, a
      * card listing, an acknowledged block or a batch of abandoned blocks is something that
@@ -411,6 +458,7 @@ public class PrinterState implements PrinterAggregate {
         facts.add(connection.current());
         facts.addAll(profile.snapshot());
         facts.addAll(card.snapshot());
+        facts.addAll(settings.snapshot());
         temperature.current().ifPresent(facts::add);
         return facts;
     }
@@ -516,9 +564,161 @@ public class PrinterState implements PrinterAggregate {
         passThrough(fan);
     }
 
-    /** {@code M500} - write the settings to EEPROM. */
+    // ----------------------------------------------------------------------------- the EEPROM
+
+    /**
+     * {@code M500} - write the live settings into the EEPROM.
+     *
+     * <p>Answered by {@code //action:notification Settings Stored} and nothing else. It is the only
+     * one of the five that writes the stored contents, so it is also the only one that can make
+     * {@code M504}'s last verdict stale - and it does not invalidate the held report, because what
+     * is now stored is exactly what the report already says.
+     */
     public void handle(SaveSettings save) {
         passThrough(save);
+    }
+
+    /**
+     * {@code M501} - load the stored settings back into live memory.
+     *
+     * <p><strong>It answers a bare {@code ok} and announces nothing at all.</strong> That is the
+     * central design fact of this feature, and it was measured with {@code M503} as the control:
+     *
+     * <pre>
+     * &gt;&gt; M503   &lt;&lt; echo:  M104 S0 B250 F0.00      (from the EEPROM)
+     * &gt;&gt; M502   &lt;&lt; ok P15 B3
+     * &gt;&gt; M503   &lt;&lt; echo:  M104 S210 B250 F0.10    (the defaults - changed, and unannounced)
+     * &gt;&gt; M501   &lt;&lt; ok P15 B3
+     * &gt;&gt; M503   &lt;&lt; echo:  M104 S0 B250 F0.00      (back)
+     * </pre>
+     *
+     * <p>So every live setting can change and the firmware will never say which, or that anything
+     * did. Anything still holding the previous report is silently wrong from this moment on, and no
+     * later reply corrects it.
+     *
+     * <p><strong>Two ways out were considered, and this is the second.</strong> (a) Forget the held
+     * report and let the UI notice - which needs an "it is stale now" event the farm would have to
+     * invent, and UI logic to act on it. (b) Forget it and immediately re-ask. The cost of (b) is
+     * one extra command and about 25 reply lines, once, when somebody presses a button; what it
+     * buys is a tab that is never silently wrong, and no new event type. So this handler sends the
+     * command, calls {@link EEPROMSettingsControl#invalidated()}, and sends an {@code M503} of its
+     * own - see {@link #reread()}.
+     */
+    public void handle(RestoreSettings restore) {
+        passThrough(restore);
+        reread();
+    }
+
+    /**
+     * {@code M502} - load the firmware's compiled-in defaults into live memory.
+     *
+     * <p><strong>Not the same operation as {@code M501}, and the transcript in
+     * {@link #handle(RestoreSettings)} is why.</strong> On MarlinSim the stored settings and the
+     * firmware defaults genuinely differ - {@code M104 S0 B250 F0.00} against
+     * {@code M104 S210 B250 F0.10} - so a reset and a restore leave the machine in two different
+     * states, and a farm that offered one button for both would be wrong about one of them. The
+     * distinction is: {@code M501} is "what I saved", {@code M502} is "what the firmware was built
+     * with".
+     *
+     * <p><strong>Neither writes the EEPROM.</strong> The stored contents survive both, which is how
+     * {@code M501} can undo an {@code M502} at all - and why {@link EEPROMSettingsControl} keeps
+     * {@code M504}'s verdict across an invalidation. Making a reset permanent takes an {@code M500}
+     * afterwards, which is an operator's decision and not this handler's.
+     *
+     * <p>Otherwise identical to a restore: a bare {@code ok}, so forget and re-ask.
+     */
+    public void handle(FactoryReset reset) {
+        passThrough(reset);
+        reread();
+    }
+
+    /**
+     * Forgets the held report and asks for it again - what a bare {@code ok} leaves to be done.
+     *
+     * <p>In that order: the report is wrong the instant the command is written, and the re-ask is
+     * what makes it right again. Skipped entirely when the firmware has no {@code M503}, in which
+     * case forgetting is all a host can do and the tab says so from
+     * {@link EEPROMSettingsControl#reportSupported()}.
+     */
+    private void reread() {
+        settings.invalidated();
+        if (settings.reportSupported()) {
+            passThrough(new ReportSettings());
+        }
+    }
+
+    /**
+     * {@code M503} - what are your settings.
+     *
+     * <p><strong>Refused when this firmware has already said it has no {@code M503}.</strong>
+     * {@code DISABLE_M503} is a build option that removes the report from a firmware which stores
+     * settings perfectly well, so {@code Cap:EEPROM:1} is true and the report is still absent -
+     * {@code MachineProfile.hasEeprom()} cannot answer this, and nothing else can either. The one
+     * thing that can is the machine refusing the command, which reaches
+     * {@link EEPROMSettingsControl#on(UnknownCommand)}; after that, sending it again would put a
+     * command on the wire that is known to be refused, once per button press and once per reset for
+     * the rest of the session.
+     *
+     * <p>Sent bare. {@code M503}, {@code M503 S1}, {@code M503 S} and {@code M503 C} were measured
+     * to produce byte-identical output, and {@code M503 S0} produces a second shape with no section
+     * headings at all - which is the shape a tab can group least well, so the plain form is the one
+     * to send.
+     */
+    public void handle(ReportSettings report) {
+        if (!settings.reportSupported()) {
+            refuse(report, "this firmware answered Unknown command to an M503, which is what a "
+                    + "build with DISABLE_M503 does - it stores settings and cannot report them, so "
+                    + "there is nothing to ask for until the next session");
+            return;
+        }
+        passThrough(report);
+    }
+
+    /**
+     * {@code M504} - is what is in the EEPROM intact.
+     *
+     * <p>Answered by {@code echo:EEPROM OK} on a healthy machine. The failure text is
+     * <strong>unmeasured</strong> - the simulator has no way to be asked for a corrupt EEPROM -
+     * which is why {@code :gcode}'s {@code EepromReport} carries the message verbatim rather than a
+     * boolean somebody would have had to invent the wording for.
+     */
+    public void handle(ValidateEEPROMContents validate) {
+        passThrough(validate);
+    }
+
+    // ------------------------------------------------ the six settings this feature may change
+
+    /** {@code M92} - steps per unit. Its {@code steps} field writes {@code X}. */
+    public void handle(SetAxisStepsPerUnit steps) {
+        passThrough(steps);
+    }
+
+    /** {@code M203} - maximum feedrate per axis. */
+    public void handle(SetMaxFeedrate feedrate) {
+        passThrough(feedrate);
+    }
+
+    /** {@code M201} - maximum acceleration per axis. Its {@code accel} field writes {@code X}. */
+    public void handle(PrintTravelMoveLimits limits) {
+        passThrough(limits);
+    }
+
+    /** {@code M204} - print, retract and travel acceleration. Its {@code accel} writes {@code P}. */
+    public void handle(SetStartingAcceleration acceleration) {
+        passThrough(acceleration);
+    }
+
+    /**
+     * {@code M205} - jerk and junction deviation. {@code jerk} writes {@code X} and
+     * {@code deviation} writes {@code J}.
+     */
+    public void handle(SetAdvancedSettings advanced) {
+        passThrough(advanced);
+    }
+
+    /** {@code M206} - home offsets. Its {@code offset} field writes {@code P}. */
+    public void handle(SetHomeOffsets offsets) {
+        passThrough(offsets);
     }
 
     /** {@code M114} - where is the toolhead. Answered by a {@code PositionRs} into {@link #on}. */
@@ -614,6 +814,7 @@ public class PrinterState implements PrinterAggregate {
     public void onOnline(GSender g) {
         this.g = g;
         card.sessionStarted();
+        settings.sessionStarted();
         var change = connection.linkEstablished();
         if (change == null) {
             return;
@@ -759,6 +960,46 @@ public class PrinterState implements PrinterAggregate {
     public void on(SdCardRs<?> reply) {
         card.on(reply);
         emitter.accept(reply);
+    }
+
+    /**
+     * One line of a settings report, or {@code M504}'s verdict - kept, and republished every time.
+     *
+     * <p><strong>One arm for the whole family</strong>, like {@link #on(SdCardRs)}:
+     * {@code SettingsSection}, {@code SettingsValue} and {@code EepromReport} all implement
+     * {@link SettingsRs}, so a reply added to it in {@code :gcode} arrives here already routed.
+     *
+     * <p><strong>Always republished, unlike a temperature.</strong> These are answers to a question
+     * somebody just asked - an {@code M503} a page pressed a button for - so the page that asked is
+     * waiting for one whether or not it says anything new. A re-read of a setting that did not move
+     * is still news to whoever asked for it.
+     *
+     * <p>Kept as well, so a tab opened later is handed the settings in {@link #snapshot()} instead
+     * of an empty table.
+     */
+    public void on(SettingsRs<?> reply) {
+        settings.on(reply);
+        emitter.accept(reply);
+    }
+
+    /**
+     * {@code echo:Unknown command: "…"} - offered to the settings control, and republished whatever
+     * it names.
+     *
+     * <p><strong>The republication is unconditional, and that is half the point of the
+     * handler.</strong> Before this feature an {@code UnknownCommand} reached {@link #republish}
+     * through the {@code default} arm and a browser saw every one. Giving it a named arm is exactly
+     * the shape of change that quietly ends that - the handler consumes the reply and the page
+     * loses the refusal of every command it ever sends - so the fact goes to the control and then
+     * on to the stream regardless of whether the control wanted it.
+     *
+     * <p>What the control does with it is narrow: an {@code M503} refusal is the only thing that
+     * can prove this firmware has no settings report (see {@link #handle(ReportSettings)}), and a
+     * refusal of anything else changes nothing here.
+     */
+    public void on(UnknownCommand refusal) {
+        settings.on(refusal);
+        emitter.accept(refusal);
     }
 
     public void on(FirmwareInfoRs report) {

@@ -73,6 +73,34 @@ public record MachineProfile(Map<String, String> firmware,
         return Boolean.TRUE.equals(capabilities.get("SDCARD"));
     }
 
+    /**
+     * Whether the firmware said it has an EEPROM it can store settings in - Marlin's
+     * {@code Cap:EEPROM}.
+     *
+     * <p><strong>The capability is {@code EEPROM}; the build macro is {@code EEPROM_SETTINGS}, and
+     * they are not the same name.</strong> Issue #88's checklist says the second, which is the
+     * {@code #define} in {@code Configuration.h} and never leaves the compiler. What reaches the
+     * wire is {@code Cap:EEPROM:0|1} - measured off MarlinSim, which answers {@code Cap:EEPROM:1}
+     * among 38 {@code Cap:} lines, and cross-checked against
+     * {@code Marlin/src/gcode/host/M115.cpp} on {@code 2.1.x}, where the line is emitted as
+     * {@code EEPROM} under {@code ENABLED(EEPROM_SETTINGS)}. So the key here is the capability name
+     * and not the macro, and a "correction" to the macro would be false on every machine there is.
+     *
+     * <p>Like {@link #hasSdCard()} this is a question about the <em>firmware</em>: a build compiled
+     * without EEPROM support will not answer {@code M500}, {@code M501} or {@code M504} however
+     * much flash the board has. So it decides whether the Settings tab is offered at all. Whether
+     * {@code M503} exists is a <em>third</em> question this cannot answer - {@code DISABLE_M503}
+     * removes the report from a build that still stores settings - and the only thing that answers
+     * it is the machine refusing the command.
+     *
+     * <p>Absent is false, which covers both a machine that has never reported and one whose
+     * firmware does not know the capability; {@link #isKnown()} is what tells those two apart for a
+     * page that wants to explain itself.
+     */
+    public boolean hasEeprom() {
+        return Boolean.TRUE.equals(capabilities.get("EEPROM"));
+    }
+
     public String firmwareName() {
         return firmware.get("FIRMWARE_NAME");
     }

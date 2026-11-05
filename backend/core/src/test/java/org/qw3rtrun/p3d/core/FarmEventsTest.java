@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -274,5 +275,55 @@ class FarmEventsTest {
 
     private static HeaterReading reading(double current) {
         return new HeaterReading(BigDecimal.valueOf(current), BigDecimal.valueOf(current), 100);
+    }
+
+    // ---------------------------------------------------------------- close() - issue #87
+
+    /**
+     * {@code close()} is what lets {@code GET /api-farm/stream} stop being an in-flight request
+     * when the farm is told to stop. An already-attached subscriber has to be told the stream is
+     * over, not merely find it producing nothing - a {@code SmartLifecycle} that calls this and
+     * then leaves the dashboard holding an open connection has not fixed anything.
+     */
+    @Test
+    void closeCompletesASubscribersStream() {
+        StepVerifier.create(Flux.from(farm.updates()))
+                .then(farm::close)
+                .verifyComplete();
+    }
+
+    /**
+     * A subscriber that attaches <em>after</em> {@code close()} has already run is not left
+     * hanging either: it gets the snapshot - which, with no runtime for the machine, reads
+     * {@code OFFLINE} - and then completes at once, because the live half it subscribes to first
+     * ({@code CatchUp.snapshotThenLive}) has already finished.
+     */
+    @Test
+    void aSubscriberAfterCloseGetsTheSnapshotThenCompletes() {
+        var alpha = theFarmHas("alpha");
+
+        farm.close();
+
+        StepVerifier.create(Flux.from(farm.updates()))
+                .assertNext(message -> {
+                    assertEquals(alpha, message.id());
+                    assertState(message);
+                })
+                .verifyComplete();
+    }
+
+    /**
+     * An event offered after {@code close()} goes nowhere - it must not reach a terminated sink
+     * and trigger {@code FAIL_TERMINATED}, and it must not throw out at the caller, which here is a
+     * {@code @EventListener} invoked by Spring's multicaster on a printer's own listener thread.
+     */
+    @Test
+    void anEventOfferedAfterCloseGoesNowhereAndDoesNotThrow() {
+        var alpha = theFarmHas("alpha");
+
+        farm.close();
+
+        assertDoesNotThrow(() -> farm.onMachineEvent(new EventMessage(alpha, temperature(210))),
+                "an event after close() must be silently swallowed, not throw past the sink");
     }
 }

@@ -28,9 +28,14 @@ import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 import reactor.util.retry.Retry;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -199,6 +204,39 @@ public class PrinterReactor {
      * {@code streamEnded} guard in front of it.
      */
     private final AtomicBoolean stopped = new AtomicBoolean();
+
+    /**
+     * How many subscribers of {@link #updates()} are attached right now.
+     *
+     * <p><strong>Genuinely concurrent, unlike {@link #streamEnded}.</strong> {@link #streamEnded}
+     * is safe as a plain field because {@link Outbox} hands it to one thread at a time; there is no
+     * such serialisation here. Several browsers can subscribe and unsubscribe on their own netty
+     * threads at once, so this is an {@link AtomicInteger}. {@code doOnSubscribe} in
+     * {@link #updates()} increments it on whichever thread completes that subscriber's subscription
+     * handshake; {@code doFinally} decrements it on whichever thread delivers that subscriber's
+     * terminal signal - completion, error, <strong>or cancellation</strong>. Counting cancellation
+     * is what makes a browser that simply goes away count as gone rather than as a subscriber this
+     * reactor would otherwise wait on until its budget runs out.
+     */
+    private final AtomicInteger liveSubscribers = new AtomicInteger();
+
+    /**
+     * Completed once every subscriber of {@link #updates()} has actually seen this reactor's
+     * terminal signal - not merely once {@link #stop()} has parked one - and {@link #stop()} has
+     * been called at least once. See {@link #awaitSubscribersGone(Duration)}.
+     *
+     * <p><strong>A {@code CompletableFuture} because two edges legitimately race to complete it.</strong>
+     * {@link #stop()} completes it directly when nobody was subscribed at the moment it ran -
+     * otherwise a machine nobody was watching would make a caller wait out its whole budget for a
+     * subscriber that was never going to arrive. The last subscriber's {@code doFinally} completes
+     * it the other way, when it leaves after a {@link #stop()} that found subscribers still
+     * attached. Both check the same two facts - the subscriber count and whether {@link #stopped}
+     * is set - so both can be true in the same instant on different threads.
+     * {@code CompletableFuture.complete(null)} is idempotent and tells its loser so with a
+     * {@code false} return that neither caller here needs to look at, which is the whole reason this
+     * is the right type for a race whose two winners agree.
+     */
+    private final CompletableFuture<Void> subscribersGone = new CompletableFuture<>();
 
     /**
      * This machine's events, on their way to the farm-wide stream - <strong>droppable</strong>.
@@ -422,6 +460,13 @@ public class PrinterReactor {
      * The item is not published either way, and putting the closes first would only start that
      * window earlier.
      *
+     * <p><strong>Also completes {@link #subscribersGone} here when nobody was subscribed.</strong>
+     * Checked last, after everything above: a machine with no watcher at all has nothing for
+     * {@link #awaitSubscribersGone(Duration)}'s caller to wait for, and without this check it would
+     * wait out its whole budget anyway. A subscriber that attaches in the narrow window between the
+     * check above and this one is still covered - it is counted by then, so this check sees it and
+     * leaves completion to its own {@code doFinally} instead.
+     *
      * @see #disposeWhenIdle(Scheduler)
      */
     public void stop() {
@@ -433,6 +478,67 @@ public class PrinterReactor {
         emit(new Parked.StreamEnd());
         toFarm.close();
         toRoster.close();
+        if (liveSubscribers.get() == 0) {
+            subscribersGone.complete(null);
+        }
+    }
+
+    /**
+     * One subscriber of {@link #updates()} has terminated - by completion, by error, or by
+     * cancellation - and {@link #liveSubscribers} is told so.
+     *
+     * <p>Completes {@link #subscribersGone} when this was the last one <em>and</em> {@link #stop()}
+     * has already run. Checking {@link #stopped} here, rather than completing on the first zero
+     * unconditionally, is what stops an ordinary subscriber coming and going before any shutdown
+     * from completing a future nobody has asked about yet.
+     */
+    private void subscriberGone() {
+        if (liveSubscribers.decrementAndGet() == 0 && stopped.get()) {
+            subscribersGone.complete(null);
+        }
+    }
+
+    /**
+     * Waits, bounded, for every subscriber of {@link #updates()} to have actually received this
+     * reactor's terminal signal - not merely for {@link #stop()} to have parked one.
+     *
+     * <p><strong>Why "parked" is not enough, read off a real failing run.</strong> {@link #stop()}
+     * only parks a {@code StreamEnd} in the {@link #outbox}; on a machine whose {@link #listeners}
+     * thread is mid-drain of a connect handshake - a firmware report and every capability line - the
+     * marker queues behind that real traffic, and {@code tryEmitComplete()} has not run by the time
+     * {@code stop()} returns. A caller that proceeds on {@code stop()} returning alone has not
+     * waited for anything: it is exactly what let a farm-wide shutdown tear the web server down
+     * while a browser's SSE response was still mid-write, which Spring Boot's own
+     * {@code GracefulShutdown.doShutdown} then sampled as idle and severed rather than letting it
+     * finish. This method is the fix - it does not return {@code true} until the subscriber itself
+     * has seen the end.
+     *
+     * <p><strong>Must be called after {@link #stop()}, never before.</strong> Before it, nothing
+     * will ever complete {@link #subscribersGone}, and this would simply spend the whole of
+     * {@code limit} waiting for something that was never going to happen.
+     *
+     * <p><strong>Never throws on timeout, and that is deliberate.</strong> A subscriber that will
+     * never go - a half-dead TCP connection that neither completes nor is cancelled - must not be
+     * allowed to hold up the rest of the farm's shutdown. Timing out here is reported to the caller
+     * as a plain {@code false} so it can log the machine and move on, not escalated into an
+     * exception that would make one stuck browser fail the whole release.
+     *
+     * @param limit how long to wait
+     * @return {@code true} if every subscriber had gone within {@code limit}, {@code false} on timeout
+     */
+    public boolean awaitSubscribersGone(Duration limit) {
+        try {
+            subscribersGone.get(limit.toNanos(), TimeUnit.NANOSECONDS);
+            return true;
+        } catch (TimeoutException timedOut) {
+            return false;
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (ExecutionException impossible) {
+            // subscribersGone is only ever completed with a value, never exceptionally.
+            throw new AssertionError(impossible);
+        }
     }
 
     /**
@@ -693,12 +799,19 @@ public class PrinterReactor {
      *
      * <p>The live half is listened to before the snapshot is read - see {@link CatchUp} for why
      * that order, and what it costs, which is at most one repeated value.
+     *
+     * <p><strong>Counted, for {@link #awaitSubscribersGone(Duration)}.</strong> {@code doOnSubscribe}
+     * and {@code doFinally} are the outermost operators on purpose, so they see exactly what an
+     * external subscriber - a browser's SSE connection - sees: one subscription, and one terminal
+     * signal of whichever kind actually reaches it, cancellation included.
      */
     public Flux<EventMessage> updates() {
         return CatchUp.snapshotThenLive("the update stream of " + printer.getId(),
                         this::snapshot, updates.asFlux(), SUBSCRIBER_BACKLOG)
                 .publishOn(executor)
-                .doOnNext(rep -> log.info("<- {}", rep));
+                .doOnNext(rep -> log.info("<- {}", rep))
+                .doOnSubscribe(subscription -> liveSubscribers.incrementAndGet())
+                .doFinally(signal -> subscriberGone());
     }
 
     /**

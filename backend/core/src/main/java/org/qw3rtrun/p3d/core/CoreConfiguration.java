@@ -120,11 +120,27 @@ public class CoreConfiguration {
      *
      * <p>It opens nothing: it listens where every machine's events already go, so watching forty
      * printers costs forty listeners rather than forty sockets.
+     *
+     * <p><strong>Returns the concrete type, not {@link FarmView}.</strong> {@code frontend} injects
+     * this by {@code FarmView} and still gets it, because the advertised type is a subtype of the
+     * one it asks for; {@link #farmShutdown(PrinterReactorManager, FarmEvents)} is what needs the
+     * concrete type, for {@link FarmEvents#close()}, which is not and must not become part of
+     * {@code api::control} - it is this submodel's own shutdown path, not something a caller across
+     * the boundary has any business calling.
      */
     @Bean
-    public FarmView farmView(PrinterDirectory directory,
-                                                          PrinterReactorManager reactors) {
+    public FarmEvents farmEvents(PrinterDirectory directory, PrinterReactorManager reactors) {
         return new FarmEvents(directory, reactors);
+    }
+
+    /**
+     * Lets the farm go when the application is told to stop - issue #87. See {@link FarmShutdown}
+     * for the whole of why this is a {@code SmartLifecycle} bean and not, say, a {@code @PreDestroy}
+     * method on one of the beans above.
+     */
+    @Bean
+    public FarmShutdown farmShutdown(PrinterReactorManager reactors, FarmEvents farmEvents) {
+        return new FarmShutdown(reactors, farmEvents);
     }
 
     @Bean

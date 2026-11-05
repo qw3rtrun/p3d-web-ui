@@ -12,7 +12,9 @@ import org.springframework.core.annotation.Order;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -56,6 +58,52 @@ public class PrinterReactorManager {
 
     private final Map<UUID, PrinterReactor> running = new HashMap<>();
 
+    /**
+     * Set once by {@link #releaseAll()}, so that this module never opens another reactor once the
+     * farm has started letting go of all of them - issue #87.
+     *
+     * <p><strong>Concurrency.</strong> A plain {@code boolean}, not a {@code volatile} one: every
+     * statement that reads or writes it - this field is only ever touched inside the one
+     * {@code synchronized} block at the top of {@link #releaseAll()} and inside
+     * {@link #openReactorIfKnown(UUID)} - runs holding this manager's own monitor, same as every
+     * other statement that touches {@link #running}, so the lock already in place is the
+     * happens-before edge this needs and a second mechanism would buy nothing.
+     * <strong>{@link #releaseAll()} itself is not a {@code synchronized} method any more</strong> -
+     * only the part of it that reads and writes this field and {@link #running} is, which is the
+     * point: the unbounded wait that follows must not run with the monitor held. It is set on
+     * whichever thread {@code DefaultLifecycleProcessor} runs the shutdown phase on, which is not
+     * necessarily the main thread and not any printer's own listener thread. A call to
+     * {@link #openReactorIfKnown(UUID)} racing {@link #releaseAll()} either takes the monitor first
+     * and sees the full map as it stood before the release, or takes it after and sees {@code true}
+     * and an empty map - never a reactor half-way through being stopped, because the lock serialises
+     * the two entirely.
+     */
+    private boolean shuttingDown;
+
+    /**
+     * How long {@link #releaseAll()} may spend, in total, waiting for every printer's update stream
+     * to actually finish once every {@link PrinterReactor#stop()} has been called - issue #87.
+     *
+     * <p><strong>One shared budget for the whole farm, not one per machine.</strong> Awaiting each
+     * reactor in turn for up to this long each would let a farm of forty spend up to forty times
+     * this figure end to end if several machines genuinely needed it - exactly the
+     * quadratic-at-forty shape this skill asks every structure here to be checked against. A single
+     * deadline computed once at the start of {@link #releaseAll()} and consulted by every
+     * {@link PrinterReactor#awaitSubscribersGone(Duration)} call bounds the whole farm's wait by
+     * this figure regardless of how many machines are in it.
+     *
+     * <p><strong>Five seconds, well under {@code spring.lifecycle.timeout-per-shutdown-phase}'s
+     * default of thirty - deliberately, not coincidentally.</strong> {@code FarmShutdown.stop()}
+     * calls this and then {@code FarmEvents.close()}, and both run inside one phase of
+     * {@code DefaultLifecycleProcessor} that may have other beans in it too. Spending the whole
+     * thirty seconds here would not remove the hang issue #87 exists to fix, it would only move it
+     * from "the web server is waiting for an SSE response to finish" to "the lifecycle processor is
+     * waiting for this bean's {@code stop()} to return" - the same wait, moved rather than closed.
+     */
+    private static final Duration RELEASE_BUDGET = Duration.ofSeconds(5);
+
+    private final Duration releaseBudget;
+
     public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
                                  ApplicationEventPublisher roster) {
         this(directory, aggregateManager, roster, ConnectionPolicy.standard());
@@ -87,12 +135,26 @@ public class PrinterReactorManager {
     public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
                                  ApplicationEventPublisher roster, ConnectionPolicy policy,
                                  PrinterThreads threads, Scheduler retries) {
+        this(directory, aggregateManager, roster, policy, threads, retries, RELEASE_BUDGET);
+    }
+
+    /**
+     * The form that takes {@link #releaseBudget} itself, for a test that needs
+     * {@link #releaseAll()}'s wait to be short rather than waiting out a real five seconds to prove
+     * it is bounded at all - the same reason {@link ConnectionPolicy} and {@link PrinterThreads}
+     * are seams rather than constants. Package-private: nothing in production has a reason to pick
+     * its own budget.
+     */
+    PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
+                          ApplicationEventPublisher roster, ConnectionPolicy policy,
+                          PrinterThreads threads, Scheduler retries, Duration releaseBudget) {
         this.directory = directory;
         this.aggregateManager = aggregateManager;
         this.roster = roster;
         this.policy = policy;
         this.threads = threads;
         this.retries = retries;
+        this.releaseBudget = releaseBudget;
     }
 
     /**
@@ -135,8 +197,19 @@ public class PrinterReactorManager {
      * and the loser of that race opens a reactor nothing will ever release.
      *
      * <p>It still does not dial. Whatever this opens, {@link #release(UUID)} closes.
+     *
+     * <p><strong>Empty, unconditionally, once {@link #releaseAll()} has run.</strong> That is the
+     * gate issue #87 needed: a request arriving in the window between the farm releasing every
+     * printer and the web server actually refusing new connections must not be able to build a
+     * fresh reactor and dial a machine the farm is in the middle of saying goodbye to.
+     * {@link #openReactor(UUID)} then throws for it, exactly as it already does for a machine this
+     * module has never heard of - a shut-down farm and an unknown machine are the same answer to
+     * "can I have a reactor for this id", which is no.
      */
     public synchronized Optional<PrinterReactor> openReactorIfKnown(UUID uuid) {
+        if (shuttingDown) {
+            return Optional.empty();
+        }
         var already = running.get(uuid);
         if (already != null) {
             return Optional.of(already);
@@ -182,6 +255,85 @@ public class PrinterReactorManager {
         }
         log.info("releasing the runtime of {}", uuid);
         reactor.stop();
+    }
+
+    /**
+     * Lets go of every printer's runtime, and closes the gate on opening another - issue #87.
+     *
+     * <p><strong>What was missing.</strong> {@link #release(UUID)} used to be reached from exactly
+     * one place, {@link #onDeleted(MDeletedEvent)} - a machine being removed from the farm - so a
+     * process told to stop with machines connected left every TCP socket open, every send window
+     * mid-flight and every per-printer scheduler alive; it stopped talking to them only because it
+     * died. This is the other caller: a {@code FarmShutdown} bean reaches it from a
+     * {@link org.springframework.context.SmartLifecycle#stop()} at a phase that runs before the web
+     * server starts draining in-flight requests, so an SSE subscription on a released printer is
+     * already completed - see {@code PrinterReactor.stop()} - by the time anything is waiting for
+     * it to finish.
+     *
+     * <p>Releases every entry the same way a single {@link #release(UUID)} does - stopping the
+     * reactor disconnects it, completes its update sink and disposes that machine's two schedulers
+     * - and then the map is empty, exactly as if every printer had been deleted at once.
+     *
+     * <p><strong>Sets {@link #shuttingDown} first</strong>, which is what makes a request arriving
+     * in the gap between this returning and the web server actually refusing new connections unable
+     * to build a fresh reactor into a farm that is on its way out: see
+     * {@link #openReactorIfKnown(UUID)}. {@link #knows(UUID)} is deliberately left answering from
+     * the directory regardless - it opens nothing, and a cancel still deserves a truthful answer
+     * about whether the farm has ever heard of the machine, which {@link #shuttingDown} does not
+     * change.
+     *
+     * <p><strong>Idempotent.</strong> A second call finds {@link #shuttingDown} already set and
+     * returns without touching the map, which by then is empty anyway - so it releases nothing and
+     * does not ask an already-stopped {@link PrinterReactor#stop()} to park a second terminal
+     * signal.
+     *
+     * <p><strong>Stops every reactor first, then waits for all of them - two passes, not one.</strong>
+     * Stopping one machine and waiting for its stream to finish before moving to the next would
+     * serialise a farm of forty machines' drains end to end, and could spend up to forty times
+     * {@link #releaseBudget} rather than once. Calling {@link PrinterReactor#stop()} on every
+     * reactor first means every one of them has a {@code StreamEnd} parked and draining concurrently
+     * before this method spends a single nanosecond waiting for any of them.
+     *
+     * <p><strong>Blocking here is correct, and not the rule this module otherwise enforces.</strong>
+     * {@code SmartLifecycle.stop()} - which is this method's only caller, through
+     * {@code FarmShutdown} - is called by {@code DefaultLifecycleProcessor} on the shutdown thread,
+     * never on a WebFlux event loop, and the processor itself bounds the whole phase with
+     * {@code spring.lifecycle.timeout-per-shutdown-phase}. "Nothing blocking runs on an event loop"
+     * is about the threads WebFlux hands a request to; the shutdown thread is not one of them, and
+     * this is the one place in the application where waiting, bounded, is the fix rather than the
+     * bug.
+     *
+     * <p><strong>The manager's monitor is not held while this waits, and that distinction matters
+     * only here.</strong> {@link #shuttingDown} is flipped and the map is taken for this method's
+     * own use inside one {@code synchronized} block - the same lock every other method on
+     * {@link #running} already takes - and then released before anything blocks. Holding it across
+     * the wait below would block every concurrent {@link #openReactorIfKnown(UUID)} and
+     * {@link #runtimeOf(UUID)} caller for up to {@link #releaseBudget}, which is a worse bug than
+     * the one issue #87 fixes: a request arriving during a slow shutdown would hang rather than
+     * being told, correctly and immediately, that the farm has none to give it.
+     */
+    public void releaseAll() {
+        List<Map.Entry<UUID, PrinterReactor>> released;
+        synchronized (this) {
+            if (shuttingDown) {
+                return;
+            }
+            shuttingDown = true;
+            released = List.copyOf(running.entrySet());
+            running.clear();
+        }
+        for (var entry : released) {
+            log.info("releasing the runtime of {}", entry.getKey());
+            entry.getValue().stop();
+        }
+        var deadline = System.nanoTime() + releaseBudget.toNanos();
+        for (var entry : released) {
+            var remaining = Duration.ofNanos(Math.max(0, deadline - System.nanoTime()));
+            if (!entry.getValue().awaitSubscribersGone(remaining)) {
+                log.info("{} did not say goodbye to its own subscribers within {}; leaving it rather "
+                        + "than holding up the rest of the farm's shutdown", entry.getKey(), releaseBudget);
+            }
+        }
     }
 
     /**

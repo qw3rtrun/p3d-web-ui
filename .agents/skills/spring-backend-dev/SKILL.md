@@ -846,6 +846,109 @@ show.
   subscriber to arrive. On a farm that runs for days with no dashboard open that is every
   temperature reading since boot. Lossy is also correct downstream - a browser that stops reading
   must never stall the reactor feeding it.
+
+## Shutdown - the farm lets go before the web layer waits for it
+
+Issue #87. An SSE subscription is a request with no natural end, and Spring Boot 4 turns on
+graceful shutdown by default: `WebServerGracefulShutdownLifecycle` waits for every in-flight
+request before it gives up, and an open `EventSource` never finishes on its own. Before this, the
+farm's two long-lived streams made that wait unconditional - thirty seconds, every time, whether or
+not a browser was actually watching - because nothing released a printer's runtime when the
+context closed (`PrinterReactorManager.release` was reached only from `MDeletedEvent`) and
+`FarmEvents`'s stream had no end-of-stream marker at all.
+
+- **`FarmShutdown`, a `SmartLifecycle` bean, is what lets the farm go.** Its `stop()` does two
+  things: `PrinterReactorManager.releaseAll()` stops every running printer (which disconnects it,
+  parks completion on that machine's `PrinterReactor.updates()` sink and disposes its two
+  schedulers) and closes the manager's gate against opening another - and then **waits, with one
+  shared bounded budget for the whole farm, for confirmation that every one of those streams has
+  actually finished at its subscribers**, through `PrinterReactor.awaitSubscribersGone(Duration)`,
+  before returning; `FarmEvents.close()` ends the farm-wide stream, which needs no such wait because
+  it owns no scheduler and completes synchronously. Both are idempotent and neither builds anything.
+  Blocking inside `releaseAll()` is correct here and not the rule this module otherwise enforces -
+  see *Letting go is not the same as having ended* below for why.
+- **`getPhase()` must answer `SmartLifecycle.DEFAULT_PHASE` (`Integer.MAX_VALUE`), and staying above
+  it is the entire point of the bean.** `DefaultLifecycleProcessor.stopBeans()` stops the
+  highest-numbered phase first, and Boot's own `WebServerGracefulShutdownLifecycle` runs at
+  `Integer.MAX_VALUE - 1024` - the exact number in its own log line
+  (`Shutdown phase 2147482623 ends with 1 bean still running...`). A bean at the default phase
+  therefore runs *before* the web layer starts draining in-flight requests, so by the time that
+  drain begins there is nothing left to wait for. Lower this phase and the thirty-second hang
+  returns silently - nothing except a real graceful-shutdown integration test will ever notice,
+  because every unit test and every `@SpringBootTest` that does not boot a real web server and
+  send it a real stop is blind to phase ordering altogether.
+- **`@PreDestroy` and `DisposableBean` are the wrong hook for anything that must happen before the
+  web layer drains, and the reason is ordering, not taste.** Bean destruction runs after every
+  `Lifecycle.stop()` phase has already finished - in particular, after
+  `WebServerGracefulShutdownLifecycle` has already spent its whole timeout waiting. A
+  `@PreDestroy` version of this fix would still close every socket correctly and would still leave
+  the entire hang in place, because by the time it ran the wait would already be over.
+- **The standing rule this establishes: any publisher this module exposes to an HTTP response must
+  have an end-of-stream.** An SSE subscription with no terminal signal is an in-flight request that
+  never finishes, and graceful shutdown will wait the whole of its timeout for exactly that. A new
+  long-lived stream built the way `FarmEvents.updates()` and `PrinterReactor.updates()` are built
+  needs its own `close()`/`stop()` wired into `FarmShutdown` (or a bean like it) the day it is
+  added, not discovered the next time someone measures a shutdown.
+- **A terminal signal for a stream fed from several threads goes through its outbox, not straight
+  at the sink** - `FarmEvents.close()` mirrors `PrinterReactor.stop()` exactly: a sealed `Parked`
+  with an `Update` and an `End` arm, `tryEmitComplete()` moved into the `publish` switch, and a
+  plain `closed`/`streamEnded` field guarded by the same single-draining-thread guarantee
+  `Outbox` gives every other consumer in this module. Calling `tryEmitComplete()` from the
+  caller's thread while another thread is mid-drain would terminate the sink underneath an event
+  still being published, which is refused with `FAIL_TERMINATED`.
+
+**Letting go of a stream is not the same as the stream having ended.** A `SmartLifecycle.stop()`
+that releases a resource feeding an HTTP response must wait, bounded, for that response to have
+finished, because the phase that follows it tears the web server down. Parking a terminal signal on
+an outbox is not an ending - the thread that drains it may be behind a backlog.
+
+That is why `PrinterReactor` carries an explicit, testable witness for "every subscriber of
+`updates()` has actually gone" - `liveSubscribers`, an `AtomicInteger` touched from
+`doOnSubscribe`/`doFinally` on whichever thread delivers that subscriber's terminal signal
+(completion, error, **or cancellation**, so a browser that simply disappears counts as gone rather
+than as a subscriber waited on forever), and `awaitSubscribersGone(Duration)`, a bounded,
+non-throwing wait on a `CompletableFuture<Void>` completed from two legitimate racing edges: `stop()`
+itself, for a machine nobody was watching, and the last subscriber's own `doFinally`, for one that
+was. `PrinterReactorManager.releaseAll()` stops every reactor first and only then awaits them, all
+against **one shared budget for the whole farm** (five seconds, well under
+`spring.lifecycle.timeout-per-shutdown-phase`'s thirty) - two passes rather than one, because
+stopping and awaiting one machine at a time could spend up to forty times that budget on a farm of
+forty. The manager's monitor is held only long enough to flip `shuttingDown` and take the map, never
+across the wait itself, which is the one place in this class where "do not hold the lock while
+blocking" is load-bearing rather than tidiness: holding it would block every concurrent
+`openReactorIfKnown`/`runtimeOf` caller for the length of the budget, which is a worse bug than the
+one being fixed. `PrinterReactorAwaitSubscribersGoneTest` and
+`PrinterReactorManagerTest`'s `releaseAll*` tests pin all of this with real schedulers - a slow
+consumer draining a genuine backlog one item at a time makes the hold deterministic, which is what a
+test for this class of bug needs: a test that merely releases and hopes passes against a design that
+does not wait, on nearly every run, which is exactly how the original fire-and-forget version of
+`releaseAll()` passed every test that existed for it.
+
+**And that witness is still not enough, measured against the real integration test
+(`GracefulShutdownIntegrationTest`, in `:app`) rather than assumed from reading the code - this is
+the live finding to read carefully before trusting the paragraph above.** With
+`awaitSubscribersGone` wired in exactly as described, a subscriber consuming its SSE stream slowly
+(one element at a time, paced) was cut off with `PrematureCloseException: Connection prematurely
+closed DURING response` on **5 of 5** runs, and the original, unpaced case - thought fixed - still
+failed on about 1 of those 5, the same order of magnitude as before this witness existed. Read
+against the log, `FarmShutdown.stop()` returns within single-digit milliseconds of being called:
+`awaitSubscribersGone` genuinely does see `PrinterReactor`'s own Flux complete that fast, because the
+whole backlog (a handful of snapshot events) fits in the TCP send buffer and the server writes it
+regardless of how slowly the client is actually reading - so the *pacing* the test uses to build a
+backlog does not, in fact, hold the server-side Flux open for any measurable time. **The gap this
+witness cannot see is one hop further down than `PrinterReactor.updates()`'s own `doFinally`**: that
+`onComplete` is delivered on this machine's own listener/aggregate thread, not on the HTTP
+connection's Netty event-loop thread, and completing a reactor-netty response from a foreign thread
+schedules the actual channel write/flush onto that event loop asynchronously
+(`channel.eventLoop().execute(...)`) rather than performing it inline. `awaitSubscribersGone`
+returning `true` says this module's own publisher has finished; it says nothing about whether that
+scheduled write has actually reached the socket before Boot's `disposeNow()` runs. Closing that gap
+needs a witness at the HTTP response itself - something that observes `ServerHttpResponse`'s own
+completion on the connection's event loop, which only `:frontend:web-ui` or `:app` can provide, not
+`:backend:core`. The one thing this does **not** reach is the final flush of an HTTP response to a
+client that is not reading it; see the *Known debt* entry below for where that boundary is, how it
+was measured, and why it is deliberately left there.
+
 ## Security - who may do what to a farm of heaters
 
 Plan item D3. The rules are written around **consequence**, which is why there are three roles and
@@ -1188,6 +1291,29 @@ have been invisible before.
 
 Live examples of what this skill rules out, so nobody copies them as precedent. Each is verified in
 the source, not suspected.
+
+- **A client that is not reading its socket while the server is torn down may see the connection
+  reset rather than finished, and that is where #87 deliberately stopped.** `releaseAll()` now waits,
+  bounded, for each `PrinterReactor`'s `updates()` Flux to have delivered its terminal signal before
+  it returns - that witness is real and is what makes "the farm has let go" a statement rather than a
+  hope. It is still one hop short of the socket: a reactor-netty response completed from a thread
+  other than the connection's own event loop - which this machine's aggregate thread always is -
+  schedules its final write and flush onto that event loop rather than performing it inline, so the
+  last flush can lose a race with `WebServerGracefulShutdownLifecycle`'s teardown. Measured against
+  `GracefulShutdownIntegrationTest`: a subscriber that *paces its own reading* fails with
+  `PrematureCloseException: Connection prematurely closed DURING response` on 5 of 5 shutdowns, while
+  the same paced subscriber against a *deleted printer on a farm that is still running* completes
+  cleanly on 5 of 5 - which is the pair that locates the boundary, and the second of those is frozen
+  as a test. **A normally-consuming subscriber completes cleanly: measured 15 of 15 shutdowns**, and
+  that is the case the integration test asserts strictly.
+
+  **This is not being chased further, and the reason is the client, not the difficulty.** `EventSource`
+  has no completion callback - see `subscribe` in `frontend/web-ui/src/frontend/src/api/client.ts` -
+  so a browser answers a cleanly finished stream and a reset one identically: `onerror`, then a
+  reconnect attempt at a server that is going away either way. There is no user-visible difference at
+  shutdown to buy, so buying it with a witness plumbed from `:backend:core` out to the HTTP response's
+  own event loop would be cost with no observable benefit. What a browser is actually owed is that the
+  farm stops promptly and holds nothing in flight; that is asserted, and it is what #87 was.
 
 - **The blocking boundary is per-call-site, not behind a service.** Every JPA touch is now
   scheduled onto `boundedElastic` and `BlockingBoundaryTest` records the thread the service was

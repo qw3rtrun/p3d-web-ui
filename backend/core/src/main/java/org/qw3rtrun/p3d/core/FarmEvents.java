@@ -71,11 +71,55 @@ public class FarmEvents implements FarmView {
     /**
      * Everything on its way to {@link #farm}, so that two machines never emit at once.
      *
-     * <p>There is no end-of-stream marker in here, unlike {@code PrinterReactor}'s outbox: this
-     * stream belongs to the farm rather than to a machine, so nothing ever terminates it. A
-     * subscriber leaves by cancelling.
+     * <p><strong>In steady state there is no end-of-stream marker here, and that part of the old
+     * note stands</strong>: this stream belongs to the farm rather than to any one machine, so
+     * there is no "this machine is gone" moment for it the way {@code PrinterReactor} has one, and
+     * an ordinary subscriber leaves by cancelling rather than by being told the stream is over.
+     *
+     * <p><strong>What was wrong is "nothing ever terminates it", full stop - issue #87.</strong> The
+     * farm itself has an end: the application context closing. {@link #close()} parks a
+     * {@link Parked.End} through this same outbox, exactly the way {@code PrinterReactor.stop()}
+     * parks a {@code StreamEnd} through its own - so the terminal signal cannot land ahead of an
+     * event another thread is still publishing and have that event refused with
+     * {@code FAIL_TERMINATED}.
      */
-    private final Outbox<EventMessage> outbox = new Outbox<>(this::publish);
+    private final Outbox<Parked> outbox = new Outbox<>(this::publish);
+
+    /**
+     * One thing waiting for the farm sink: a message, or the end of the stream.
+     *
+     * <p>A sealed interface so {@link #publish} is an exhaustive switch with no {@code default} -
+     * a third kind of parked item fails the build instead of falling through a hole, the same
+     * discipline {@code PrinterReactor.Parked} uses for its own sink.
+     */
+    private sealed interface Parked {
+
+        record Update(EventMessage message) implements Parked {
+        }
+
+        /**
+         * The farm saying goodbye to every subscriber at once - issue #87.
+         *
+         * <p>Parked rather than completing {@link #farm} straight from the caller's thread, for the
+         * reason {@code PrinterReactor.Parked.StreamEnd} gives for itself: calling
+         * {@code tryEmitComplete} while another thread is mid-drain terminates the sink underneath
+         * an event that is still being published, and that event is then refused with
+         * {@code FAIL_TERMINATED} rather than reaching anybody.
+         */
+        record End() implements Parked {
+        }
+    }
+
+    /**
+     * Set once {@link #close()}'s {@code End} has been published, and read only inside
+     * {@link #publish}.
+     *
+     * <p>A plain field and not a volatile one, for the reason {@code PrinterReactor.streamEnded} is
+     * one: {@code Outbox} calls its consumer from one thread at a time through an
+     * {@code AtomicInteger}, so the hand-off from one draining thread to the next carries the
+     * happens-before this needs.
+     */
+    private boolean closed;
 
     /** Which machines have been announced, so a re-announcement is not a second arrival. */
     private final Set<UUID> known = ConcurrentHashMap.newKeySet();
@@ -181,22 +225,72 @@ public class FarmEvents implements FarmView {
      * @see Outbox
      */
     private void emit(EventMessage message) {
-        outbox.emit(message);
+        outbox.emit(new Parked.Update(message));
     }
 
     /**
-     * One message onto the sink. {@link #outbox} only, so no second thread is ever in here.
+     * Ends the farm-wide stream - issue #87.
+     *
+     * <p>Called once, when the farm is shutting down, by {@code FarmShutdown}. A dashboard holding
+     * {@code GET /api-farm/stream} open is an in-flight HTTP request for as long as this stream has
+     * not told it otherwise, and Spring Boot's graceful shutdown waits for every in-flight request
+     * before it gives up on them - thirty seconds by default, and then it gives up anyway. See
+     * {@code FarmShutdown} for why this has to run before the web server starts that wait rather
+     * than during it.
+     *
+     * <p><strong>A subscriber that attaches after this has already run still gets the snapshot,
+     * then completes immediately.</strong> Every machine in it reads {@code OFFLINE}, because
+     * {@link PrinterReactorManager#runtimeOf(UUID)} returns {@code null} for all of them once the
+     * farm has released every runtime - which is the truth, not a stale answer, so there is nothing
+     * dishonest about showing it on the way out. {@code CatchUp.snapshotThenLive} subscribes to the
+     * live stream before it builds the snapshot; by the time a late subscriber's snapshot is built,
+     * the live stream it subscribed to first has already finished, so the concatenation ends the
+     * moment the snapshot does.
+     *
+     * <p>Idempotent for the reason {@code PrinterReactor.stop()} is: {@link #publish} only acts on
+     * the first {@code End} it ever drains, through {@link #closed}.
+     */
+    public void close() {
+        outbox.emit(new Parked.End());
+    }
+
+    /**
+     * One parked item onto the sink. {@link #outbox} only, so no second thread is ever in here.
      *
      * <p>{@code FAIL_ZERO_SUBSCRIBER} is the normal case on a farm nobody is watching and not worth
      * a line. Everything else now says something real: {@code FAIL_NON_SERIALIZED} is unreachable
      * because this is the only path to the sink, and {@code directBestEffort} drops a subscriber
      * that cannot keep up <em>without</em> failing the emission - so a warning here is a cancelled
      * or terminated stream rather than a slow browser.
+     *
+     * <p>An exhaustive switch over {@link Parked} with no {@code default}: a third arm added there
+     * without one added here fails the build instead of silently doing nothing.
      */
-    private void publish(EventMessage message) {
-        var result = farm.tryEmitNext(message);
-        if (result.isFailure() && result != Sinks.EmitResult.FAIL_ZERO_SUBSCRIBER) {
-            log.warn("the farm stream refused {} ({}) - not the backpressure drop", message.type(), result);
+    private void publish(Parked parked) {
+        switch (parked) {
+            case Parked.End _ -> {
+                if (closed) {
+                    return;
+                }
+                closed = true;
+                Sinks.EmitResult result = farm.tryEmitComplete();
+                if (result.isFailure()) {
+                    log.warn("the farm stream did not complete ({})", result);
+                }
+            }
+            case Parked.Update(EventMessage message) -> {
+                if (closed) {
+                    // Nothing follows a terminal signal, ever. An event still travelling when the
+                    // farm was told to close is the normal way to get here.
+                    log.debug("the farm stream has ended, so {} goes nowhere", message);
+                    return;
+                }
+                var result = farm.tryEmitNext(message);
+                if (result.isFailure() && result != Sinks.EmitResult.FAIL_ZERO_SUBSCRIBER) {
+                    log.warn("the farm stream refused {} ({}) - not the backpressure drop",
+                            message.type(), result);
+                }
+            }
         }
     }
 }

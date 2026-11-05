@@ -6,8 +6,14 @@ import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
+import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
+import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
+import org.reactivestreams.Subscription;
+import reactor.core.publisher.BaseSubscriber;
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 import reactor.test.StepVerifier;
 
 import java.time.Duration;
@@ -18,11 +24,14 @@ import java.util.Map;
 
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -328,5 +337,191 @@ class PrinterReactorManagerTest {
                 .expectNextCount(1)
                 .then(() -> manager.release(id))
                 .verifyComplete();
+    }
+
+    // ---------------------------------------------------------------- releaseAll() - issue #87
+
+    /**
+     * {@code releaseAll()} is {@code release(UUID)} for the whole farm, not for one machine - and
+     * every running printer's own stream has to notice, not just the first one it happens to touch.
+     */
+    @Test
+    void releaseAllCompletesTheUpdateStreamOfEveryRunningPrinter() {
+        var first = UUID.randomUUID();
+        var second = UUID.randomUUID();
+        theFarmHas(first);
+        theFarmHas(second);
+        var firstUpdates = manager.openReactor(first).updates();
+        var secondUpdates = manager.openReactor(second).updates();
+
+        // Both subscribed before releaseAll() runs, not after: updates() ends with
+        // publishOn(executor), the aggregate's own scheduler, which releaseAll() disposes once its
+        // StreamEnd has drained - so a subscription built afterwards has nothing left to be
+        // scheduled on. Flux.merge subscribes to both sources at once, which is what proves
+        // neither reactor's stream was merely the first one touched.
+        StepVerifier.create(Flux.merge(firstUpdates, secondUpdates))
+                .expectNextCount(2)
+                .then(manager::releaseAll)
+                .verifyComplete();
+    }
+
+    /**
+     * The gate {@link PrinterReactorManager#releaseAll()} closes behind it - issue #87.
+     *
+     * <p>A request racing the web server's own shutdown must not be able to build a fresh reactor
+     * into a farm that has already said goodbye to every other one; {@code knows(id)} is
+     * deliberately exempt, because it opens nothing and a cancel still deserves a truthful answer
+     * about whether this module has ever heard of the machine.
+     */
+    @Test
+    void afterReleaseAllOpenReactorIfKnownIsEmptyAndRuntimeOfIsNullWhileKnowsIsStillTrue() {
+        theFarmHas(id);
+        manager.openReactor(id);
+
+        manager.releaseAll();
+
+        assertTrue(manager.openReactorIfKnown(id).isEmpty(),
+                "a shut-down farm must not open a reactor for a request racing the shutdown");
+        assertNull(manager.runtimeOf(id), "nothing is running any more");
+        assertTrue(manager.knows(id),
+                "the directory still knows the machine; releaseAll() closes runtimes, not the roster");
+        assertThrows(IllegalArgumentException.class, () -> manager.openReactor(id),
+                "a shut-down farm answers like an unknown machine, not like a working one");
+    }
+
+    /**
+     * A second {@code releaseAll()} releases nothing and does not try to park a second terminal
+     * signal on a reactor that has already been told to stop.
+     */
+    @Test
+    void releaseAllTwiceDoesNotThrowOrEmitASecondTerminalSignal() {
+        theFarmHas(id);
+        var updates = manager.openReactor(id).updates();
+
+        StepVerifier.create(updates)
+                .expectNextCount(1)
+                .then(() -> {
+                    manager.releaseAll();
+                    manager.releaseAll();
+                })
+                .verifyComplete();
+    }
+
+    /**
+     * {@code releaseAll()} does not merely park a terminal signal for the printers it releases, it
+     * waits for them - the second-pass fix for the flake recorded against this issue.
+     *
+     * <p><strong>The assertion is on timing relative to the call, not on eventual truth.</strong>
+     * {@code completed.getCount()} is read the instant {@code releaseAll()} returns, with no
+     * {@code await} in between: a subscriber's {@code doFinally} runs strictly <em>after</em> its
+     * downstream has already received the terminal signal (Reactor's own ordering for
+     * {@code doFinally}), so if {@code releaseAll()} has already seen
+     * {@code awaitSubscribersGone} answer {@code true} for this printer, this subscriber's
+     * {@code onComplete} has unquestionably already run.
+     */
+    @Test
+    void releaseAllWaitsForThePrintersItReleased() {
+        theFarmHas(id);
+        var completed = new CountDownLatch(1);
+        var subscription = manager.openReactor(id).updates()
+                .subscribe(message -> {
+                }, failure -> completed.countDown(), completed::countDown);
+
+        manager.releaseAll();
+
+        assertEquals(0, completed.getCount(),
+                "releaseAll() returned before this printer's own update stream had actually "
+                        + "finished at its subscriber - it is supposed to wait for exactly that");
+        subscription.dispose();
+    }
+
+    /**
+     * {@code releaseAll()} must not hold the manager's monitor across its own bounded wait - the
+     * mistake the brief for this pass warns is worse than the bug being fixed: a shutdown that
+     * blocks every concurrent {@link PrinterReactorManager#knows(UUID)} or
+     * {@link PrinterReactorManager#runtimeOf(UUID)} caller for the whole release budget.
+     *
+     * <p><strong>The hold is real, not hoped for.</strong> A genuine backlog - five firmware reports
+     * - is queued on the live sink before {@code stop()} runs, and the one subscriber drains it one
+     * item at a time with a pause, exactly {@code PrinterReactorAwaitSubscribersGoneTest}'s
+     * mechanism. With a release budget far shorter than the backlog takes to drain,
+     * {@code releaseAll()} is certain to still be inside its bounded wait when the second thread
+     * below makes its call - so an answer that arrives promptly is this test's proof that the
+     * monitor was free, not a coincidence of scheduling.
+     */
+    @Test
+    void releaseAllDoesNotHoldTheMonitorWhileItWaits() throws InterruptedException {
+        var aggregates = new HashMap<UUID, PrinterState>();
+        var releaseBudget = Duration.ofSeconds(2);
+        var testManager = new PrinterReactorManager(directory,
+                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
+        }, ConnectionPolicy.standard(), PrinterThreads.virtualPerPrinter(), Schedulers.parallel(),
+                releaseBudget);
+        theFarmHas(id);
+        var reactor = testManager.openReactor(id);
+
+        var firstMessage = new CountDownLatch(1);
+        var slow = new BaseSubscriber<EventMessage>() {
+            @Override
+            protected void hookOnSubscribe(Subscription s) {
+                request(1);
+            }
+
+            @Override
+            protected void hookOnNext(EventMessage message) {
+                firstMessage.countDown();
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                request(1);
+            }
+        };
+        reactor.updates().subscribe(slow);
+        assertTrue(firstMessage.await(10, TimeUnit.SECONDS),
+                "the snapshot never arrived, so nothing is actually watching this machine");
+
+        for (var i = 0; i < 5; i++) {
+            aggregates.get(id).onEvent(new FirmwareInfoRs(Map.of("FIRMWARE_NAME", "Marlin 2.1." + i)));
+        }
+
+        var releaseStarted = new CountDownLatch(1);
+        var releaseReturned = new CountDownLatch(1);
+        var releasing = new Thread(() -> {
+            releaseStarted.countDown();
+            testManager.releaseAll();
+            releaseReturned.countDown();
+        }, "releasing");
+        releasing.start();
+        assertTrue(releaseStarted.await(5, TimeUnit.SECONDS), "releaseAll() was never even started");
+        // Give releaseAll() time to flip shuttingDown, drop the monitor and enter its bounded wait -
+        // the backlog above takes at least 1.5s to drain, so this is comfortably inside that window.
+        Thread.sleep(200);
+        assertFalse(releaseReturned.await(0, TimeUnit.MILLISECONDS),
+                "releaseAll() returned before this test could even ask whether it held the monitor");
+
+        var answered = new CountDownLatch(1);
+        var started = System.nanoTime();
+        var answering = new Thread(() -> {
+            testManager.knows(UUID.randomUUID());
+            testManager.runtimeOf(id);
+            answered.countDown();
+        }, "answering");
+        answering.start();
+        var wasAnswered = answered.await(500, TimeUnit.MILLISECONDS);
+        var answeredWithin = Duration.ofNanos(System.nanoTime() - started);
+
+        releasing.join(TimeUnit.SECONDS.toMillis(10));
+        answering.join(TimeUnit.SECONDS.toMillis(10));
+        slow.dispose();
+
+        assertTrue(wasAnswered, "a concurrent caller was blocked behind releaseAll()'s own bounded "
+                + "wait for " + answeredWithin.toMillis() + "ms - the monitor must not be held "
+                + "across it");
+        assertTrue(answeredWithin.compareTo(releaseBudget) < 0,
+                "the concurrent call took " + answeredWithin.toMillis() + "ms, as long as "
+                        + "releaseAll()'s own budget - it was almost certainly blocked behind the "
+                        + "monitor rather than answered directly");
     }
 }

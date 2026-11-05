@@ -84,14 +84,10 @@ class GCorpusTest {
 
     @Test
     fun `only the documented lexer gaps produce unknown tokens`() {
-        // Characters the lexer does not understand yet. Each entry is a documented gap:
-        // '.' from file extensions, '/' '\' '~' '!' ':' '|' from paths, '#' from RS274 parameters,
-        // ''' and ',' from prose in bare rest-of-line strings (GCODE_spec.md section 3.4a).
-        // The set is expected to shrink as those are implemented.
-        //
-        // All ASCII: narrowing the character classes to 7-bit ASCII (spec section 1.1) added nothing
-        // here, which is what proves the change is scoped - the corpus does have non-ASCII, but only
-        // inside comments and quoted strings, where it stays content. See the two tests below.
+        // Documented gaps, expected to shrink as implemented: '.' from file extensions, '/' '\' '~'
+        // '!' ':' '|' from paths, '#' from RS274 parameters, ''' and ',' from prose in bare
+        // rest-of-line strings (spec 3.4a). All ASCII: the corpus does have non-ASCII, but only inside
+        // comments and quoted strings, where it stays content (see the two tests below).
         val expected = listOf("!", "#", "'", ",", ".", "/", ":", "\\", "|", "~")
 
         val actual = GTokenizer.parse(corpus)

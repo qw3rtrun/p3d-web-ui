@@ -195,6 +195,22 @@ Follow the `tdd` skill for the loop; these are the protocol-specific rules on to
 - Cite the spec section in code comments where a rule is non-obvious (`// spec 3.1: at least one
   digit somewhere in the number`). That comment is what a reviewer — or a port author — checks against.
 
+**Comment density.** The code should document itself; a comment block is not a substitute for a
+reader following the control flow.
+
+- One doc comment per class/interface/object, placed above it, and nowhere else by default: what it
+  is, the spec sections it implements, the portability contract (why it is written this way rather
+  than idiomatically), and any deviation from the spec — not restated per member.
+- A public method gets its own doc comment only when it is called from another module (`GSendWindow`,
+  `GEncoder`, `GTokenizer`, the `GRs`/`GRq` hierarchy) or when it is genuinely tricky on its own terms.
+  Even there it stays short: a compressed description, one example, `@param`/`@return` that carry
+  something the name does not. A private or internal helper gets no doc comment at all.
+- `// spec N.N: ...` is the sanctioned inline form — one line, at the one place the rule is applied,
+  never a paragraph. It is the only kind of comment that belongs inside a function body.
+- A measured fact (a TODO number, a captured byte string, a firmware quirk, a "why not the obvious
+  alternative") belongs in the class doc, compressed to a clause, not spread across every method that
+  touches it twice.
+
 ## Translation notes
 
 | Kotlin here | TS/JS | C | Rust |

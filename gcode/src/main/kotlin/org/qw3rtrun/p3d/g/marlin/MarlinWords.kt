@@ -52,10 +52,6 @@ import java.math.BigDecimal
  * GTokenizer.parse(" X10 T").toList().valueOf('T')   // null - present, but no value
  * GTokenizer.parse("X X10").toList().valueOf('X')    // null - the first spelling wins
  * ```
- *
- * @receiver the tokens that followed the command's head
- * @param letter the parameter letter, in either case
- * @return the value token paired with the letter's first occurrence, or null
  */
 internal fun List<GToken>.valueOf(letter: Char): GValue? {
     var i = 0
@@ -71,20 +67,15 @@ internal fun List<GToken>.valueOf(letter: Char): GValue? {
 }
 
 /**
- * Whether the command carries this letter at all - the reading for a flag (spec 3.2).
- *
- * True for a bare `X` and also for an `X5`: a flag parameter in the model cannot hold the 5, so a
- * value the model does not expect is reported as presence rather than silently dropped.
+ * Whether the command carries this letter at all - the reading for a flag (spec 3.2). True for a
+ * bare `X` and also for an `X5`: a flag parameter in the model cannot hold the 5, so a value the
+ * model does not expect is reported as presence rather than silently dropped.
  *
  * ```
  * GTokenizer.parse(" X10 T").toList().hasWord('T')   // true
  * GTokenizer.parse(" X10 T").toList().hasWord('x')   // true - case-insensitive
  * GTokenizer.parse(" X10 T").toList().hasWord('Y')   // false
  * ```
- *
- * @receiver the tokens that followed the command's head
- * @param letter the parameter letter, in either case
- * @return true when any identifier spells the letter
  */
 internal fun List<GToken>.hasWord(letter: Char): Boolean =
     any { it is GIdentifier && it.isChar(letter) }
@@ -96,10 +87,6 @@ internal fun List<GToken>.hasWord(letter: Char): Boolean =
  * ```
  * GTokenizer.parse("X1.0").toList().intOf('X')   // 1
  * ```
- *
- * @receiver the tokens that followed the command's head
- * @param letter the parameter letter, in either case
- * @return the integer value, or null when the letter carries no number
  */
 internal fun List<GToken>.intOf(letter: Char): Int? = when (val v = valueOf(letter)) {
     is GInt -> v.int
@@ -114,10 +101,6 @@ internal fun List<GToken>.intOf(letter: Char): Int? = when (val v = valueOf(lett
  * ```
  * GTokenizer.parse("S4000000000.0").toList().longOf('S')   // 4000000000L
  * ```
- *
- * @receiver the tokens that followed the command's head
- * @param letter the parameter letter, in either case
- * @return the value as a `Long`, or null when the letter carries no number
  */
 internal fun List<GToken>.longOf(letter: Char): Long? = when (val v = valueOf(letter)) {
     is GInt -> v.int.toLong()
@@ -126,19 +109,14 @@ internal fun List<GToken>.longOf(letter: Char): Long? = when (val v = valueOf(le
 }
 
 /**
- * A decimal, keeping the digits that were written.
- *
- * `GInt` is accepted as well as `GFloat` because `M140 S60` and `M140 S60.0` are the same
- * temperature, and the encoder writes whichever the caller's scale asked for.
+ * A decimal, keeping the digits that were written. `GInt` is accepted as well as `GFloat` because
+ * `M140 S60` and `M140 S60.0` are the same temperature, and the encoder writes whichever scale the
+ * caller asked for.
  *
  * ```
  * GTokenizer.parse("S60").toList().decimalOf('S')     // BigDecimal("60")
  * GTokenizer.parse("S60.0").toList().decimalOf('S')   // BigDecimal("60.0")
  * ```
- *
- * @receiver the tokens that followed the command's head
- * @param letter the parameter letter, in either case
- * @return the decimal, with the scale it was written with, or null when the letter carries no number
  */
 internal fun List<GToken>.decimalOf(letter: Char): BigDecimal? = when (val v = valueOf(letter)) {
     is GFloat -> v.value
@@ -154,10 +132,6 @@ internal fun List<GToken>.decimalOf(letter: Char): BigDecimal? = when (val v = v
  * GTokenizer.parse("S1").toList().boolOf('S')   // true
  * GTokenizer.parse("S0").toList().boolOf('S')   // false
  * ```
- *
- * @receiver the tokens that followed the command's head
- * @param letter the parameter letter, in either case
- * @return whether the number is non-zero, or null when the letter carries no number
  */
 internal fun List<GToken>.boolOf(letter: Char): Boolean? = when (val v = valueOf(letter)) {
     is GNumber -> v.number.toDouble() != 0.0
@@ -170,10 +144,6 @@ internal fun List<GToken>.boolOf(letter: Char): Boolean? = when (val v = valueOf
  * ```
  * GTokenizer.parse("S\"hi\"").toList().stringOf('S')   // "hi"
  * ```
- *
- * @receiver the tokens that followed the command's head
- * @param letter the parameter letter, in either case
- * @return the string's text, or null when the letter carries no quoted string
  */
 internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueOf(letter)) {
     is GQuotedString -> v.string
@@ -182,7 +152,7 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
 
 /**
  * The command's bare rest-of-line string (spec 3.4a), or null when it carries none. [letters] are
- * **this command's own parameter letters**, and passing them is not optional - see below.
+ * **this command's own parameter letters**, and passing them is not optional.
  *
  * The 22 commands Marlin reads a `string_arg` for - `M117`'s message, `M23`/`M28`/`M30`/`M928`'s
  * filename, `M33`'s path, `M810`-`M819`'s macro - take an argument with **no letter in front of
@@ -190,9 +160,9 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
  * `M117 Hello World` comes back as one `GLetter` per character. Reassembling those characters is
  * this function's job, and it can do it because a decoder knows its own command.
  *
- * **Where the string starts is a per-command question, and there is no universal answer.** It
- * begins at the first token that is not one of *this command's* lettered parameters, so the same
- * bytes read differently under two commands, and correctly so:
+ * **Where the string starts is a per-command question, with no universal answer.** It begins at the
+ * first token that is not one of *this command's* lettered parameters, so the same bytes read
+ * differently under two commands, and correctly so:
  *
  * ```
  * M117 H1 ello World   ->  "H1 ello World"   M117 documents no parameters at all
@@ -201,40 +171,28 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
  * M118 Hello World P1  ->  "Hello World P1"  once it has started, everything belongs to it
  * ```
  *
- * That is also Marlin's own reading (`GCodeParser::parse` records a letter as a parameter only
- * when the command claims it, and takes the rest as `string_arg`), and it is why the letters are a
- * parameter here rather than a rule baked in: a scan that paired *any* letter with a value would
- * eat `H1` out of `M117`'s message, and one that paired none would read `M118 P1 x` as the message
- * `P1 x`. Use [beforeStringArg] to read the lettered parameters themselves, so that a `P1` **in**
- * the message is not read as a parameter either.
+ * That is also Marlin's own reading (`GCodeParser::parse` records a letter as a parameter only when
+ * the command claims it, and takes the rest as `string_arg`) - a scan that paired *any* letter with
+ * a value would eat `H1` out of `M117`'s message, and one that paired none would read `M118 P1 x` as
+ * the message `P1 x`. Use [beforeStringArg] to read the lettered parameters themselves, so a `P1`
+ * **in** the message is not read as a parameter either.
  *
- * Where it **ends** is spec 3.4a: the rest of the line, except that a `;` still starts a comment,
- * so the string cannot contain one. The tokens run out at the end of the body, which for a framed
- * block is the `*` marker - spec 8.3 already puts the checksum field outside it.
+ * It **ends** per spec 3.4a at the rest of the line, except that a `;` still starts a comment, so
+ * the string cannot contain one; the tokens run out at the body's end, which for a framed block is
+ * the `*` marker (spec 8.3). A `( )` comment is **not** an end, even though the lexer made a token
+ * of it - spec 3.4a names only `;`, and Marlin reads parentheses as comments only in a CNC build
+ * (`PAREN_COMMENTS`) - so `M117 Hi (there)` is the whole of `Hi (there)`.
  *
- * A `( )` comment is **not** an end, even though the lexer made a token of it: spec 3.4a names only
- * `;`, and Marlin reads parentheses as comments only in a CNC build (`PAREN_COMMENTS`). So
- * `M117 Hi (there)` is the whole of `Hi (there)`, which is also what keeps a message with brackets
- * in it round-tripping.
- *
- * The whitespace separating the string from what precedes it, and any trailing whitespace before a
- * comment or the terminator, is separation rather than content and is dropped; whitespace *inside*
- * is the whole point and is kept exactly. Nothing left is reported as null, like every other absent
- * parameter here.
- *
- * The string is rebuilt from there to the end of the block in the bytes it was written in:
- * `rawText()` per token is what makes `M117 done: 10.50 (ok)` come back with its digits and its
- * parentheses intact. [letters] match case-insensitively, through `GIdentifier.isChar`'s own ASCII
- * folding (spec 2.2), so `M118 p1 x` reads `p1` as the parameter.
+ * Whitespace separating the string from what precedes it, and trailing whitespace before a comment
+ * or the terminator, is dropped as separation rather than content; whitespace *inside* is kept
+ * exactly. The string is rebuilt byte for byte via `rawText()` per token, so `M117 done: 10.50 (ok)`
+ * keeps its digits and parentheses. [letters] match case-insensitively (spec 2.2's ASCII folding),
+ * so `M118 p1 x` reads `p1` as the parameter.
  *
  * ```
  * GTokenizer.parse(" P1 ello World").toList().stringArg('P')    // "ello World"
  * GTokenizer.parse(" Hi (there) ;c").toList().stringArg()       // "Hi (there)"
  * ```
- *
- * @receiver the tokens that followed the command's head
- * @param letters this command's own lettered parameters
- * @return the bare string, or null when the command carries none
  */
 internal fun List<GToken>.stringArg(vararg letters: Char): String? {
     var i = stringArgStart(letters)
@@ -270,10 +228,6 @@ internal fun List<GToken>.stringArg(vararg letters: Char): String? {
  * ```
  * GTokenizer.parse(" P1 Hello World P1").toList().beforeStringArg('P')   // [GSpace, P, 1, GSpace]
  * ```
- *
- * @receiver the tokens that followed the command's head
- * @param letters this command's own lettered parameters
- * @return a view of the tokens in front of the bare string
  */
 internal fun List<GToken>.beforeStringArg(vararg letters: Char): List<GToken> =
     subList(0, stringArgStart(letters))

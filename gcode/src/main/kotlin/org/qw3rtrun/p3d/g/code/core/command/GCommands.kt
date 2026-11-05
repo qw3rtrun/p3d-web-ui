@@ -8,23 +8,22 @@ import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.core.token.GValue
 
 /**
- * A field of a command (GCODE_spec.md section 3): usually an identifier and the value behind it,
- * and in one case a value with no identifier at all.
+ * A field of a command (GCODE_spec.md section 3): usually an identifier and the value behind it, and
+ * in one case a value with no identifier at all.
  *
- * Words are **this** layer's vocabulary, not the block layer's. A block is classified from its tokens -
+ * Words are this layer's vocabulary, not the block layer's: a block is classified from its tokens -
  * where `N` is and where the last `*` is - and nothing above that needs a word until someone asks
- * what the block *commands*. The **writing** direction is where they are produced now: the DSL and
- * `GRq.encode()` build them, and `GEncoder` consumes them. Reading a block back into words - the
- * command-agnostic decomposition the old `GCommandParser` did - is measurement apparatus and lives
- * with the corpus tests; a host that wants to know what a block commands asks a decoder, which knows
- * the command number and can therefore read what words cannot (spec 3.4a).
+ * what the block commands. The writing direction is where they are produced now - the DSL and
+ * `GRq.encode()` build them, `GEncoder` consumes them. Reading a block back into words - the
+ * command-agnostic decomposition the old `GCommandParser` did - is measurement apparatus living with
+ * the corpus tests; a host that wants to know what a block commands asks a decoder, which knows the
+ * command number and so can read what words cannot (spec 3.4a).
  *
- * **A word is named or it is not**, and the split is this interface's whole job. Almost every field
- * has an identifier - [GNamedWord] - and spec 3.4a's bare rest-of-line string has none, so it is a
- * [GUnnamedStr] and carries no `id` to read. The alternative, kept here for a while, was an empty
- * identifier token that every unnamed word pointed at so the encoder could write a name
- * unconditionally; that put a token no lexer ever produces into `core.token`, where it existed only
- * to satisfy this layer's interface, and let `isChar` be asked of a word that has no character.
+ * A word is named or it is not, and the split is this interface's whole job. Almost every field has
+ * an identifier - [GNamedWord] - and spec 3.4a's bare rest-of-line string has none, so it is a
+ * [GUnnamedStr] with no `id` to read. The alternative, kept here for a while, was an empty identifier
+ * token every unnamed word pointed at so the encoder could write a name unconditionally; that put a
+ * token no lexer ever produces into `core.token`, existing only to satisfy this layer's interface.
  *
  * ```
  * GParameterWord(GLetter('X'), GInt(10)).isChar('x')   // true
@@ -61,10 +60,6 @@ sealed interface GNamedWord : GWord {
      * Whether this word's identifier is the single character [l], case-insensitively -
      * `GIdentifier.isChar`.
      *
-     * ```
-     * GParameterWord(GLetter('X'), GInt(10)).isChar('x')   // true
-     * ```
-     *
      * @param l the character to compare against, in either case
      * @return true when [id] is that character
      */
@@ -100,21 +95,18 @@ data class GFlagWord(
 
 /**
  * A field with no identifier in front of it: spec 3.4a's bare rest-of-line string, as in
- * `M117 Hello World`, where the text *is* the argument.
+ * `M117 Hello World`, where the text is the argument.
  *
  * Only a decoder builds one, because only a decoder knows the command number that says a block has
  * such an argument at all (see `GRqDecoder`); the token layer lexes `Hello World` letter by letter
  * and the command parser never assembles one.
  *
- * It carries **no identifier**, and that is the point: there is nothing to put there. It used to
- * answer `GEmptyId`, a token the lexer never produces, so that `GWord` could promise an `id` and
- * the encoder could write one unconditionally - which bought a single line in `appendWord` and cost
- * a type in `core.token` whose only reason to exist was this interface, plus an `isChar` that could
- * be asked of a word with no character and always answered false. The encoder already matches on
- * the word kind, so it writes the identifier in the two branches that have one.
- *
- * This replaced a `GUnnamedWord<V : GValue>` interface whose type parameter appeared nowhere in
- * its body and which had this as its only implementation.
+ * It carries no identifier, and that is the point: there is nothing to put there. It used to answer
+ * `GEmptyId`, a token the lexer never produces, so `GWord` could promise an `id` and the encoder
+ * could write one unconditionally - which cost a type in `core.token` whose only reason to exist was
+ * this interface. The encoder already matches on the word kind, so it writes the identifier in the
+ * two branches that have one. This also replaced a `GUnnamedWord<V : GValue>` interface whose type
+ * parameter appeared nowhere in its body and which had this as its only implementation.
  *
  * ```
  * val message = GUnnamedStr(GUnquotedString("Hello World"))
@@ -130,15 +122,14 @@ data class GUnnamedStr(
 
 /**
  * Something that can stand in a [GBlockDraft]: a [GCommand] or a [GCommentPart]. Sealed, and both
- * variants live in this package - a comment *token* is wrapped rather than implementing this, so
- * the token layer does not depend on this one.
+ * variants live in this package - a comment token is wrapped rather than implementing this, so the
+ * token layer does not depend on this one.
  *
- * This is the *build* direction, and the reason the two types are spelled apart: a `GBlock` - one
- * layer down, in `core.block` - was read and carries the exact tokens it was read from, whitespace
- * included; a [GBlockDraft] is being built and carries only what the author chose, leaving the
- * bytes to the encoder. Keeping
- * them apart is what lets `GEncoder` emit one canonical spelling instead of having to guess which
- * of a parsed block's spaces were meaningful.
+ * This is the build direction, and the reason the two types are spelled apart from `GBlock`: a
+ * `GBlock` - one layer down, in `core.block` - was read and carries the exact tokens it was read
+ * from, whitespace included; a [GBlockDraft] is being built and carries only what the author chose,
+ * leaving the bytes to the encoder. Keeping them apart lets `GEncoder` emit one canonical spelling
+ * instead of guessing which of a parsed block's spaces were meaningful.
  *
  * ```
  * GEncoder.encode(GBlockDraft(GCommand(GLetter('G'), GInt(28)), GCommentPart(GTailComment(" note"))))   // "G28 ; note"
@@ -200,14 +191,14 @@ data class GBlockDraft(val parts: List<GBlockPart>) {
 
 /**
  * One command and its parameters, per spec section 4. [head] carries a `GNumber`, not a `GInt`,
- * because spec 4.1 lets a command number carry a **subcode** - `G29.1` is one command word whose
- * value is `GFloat("29.1")`, and keeping the lexeme is what re-emits `29.1` rather than `29` + `.1`.
+ * because spec 4.1 lets a command number carry a subcode - `G29.1` is one command word whose value
+ * is `GFloat("29.1")`, and keeping the lexeme is what re-emits `29.1` rather than `29` + `.1`.
  *
- * There is deliberately no `print()` here any more. It returned `head.raw + params.flatMap { raw }`
- * - a token list with no separators in it - and left the caller to join them, which is how it could
- * emit bytes that depended on the values happening to be self-delimiting (finding 1.10). Encoding is
- * `GEncoder`, it produces a `String`, and it is a `String` because the checksum covers the bytes as
- * transmitted (spec 8.3) and so whitespace is part of the output, not an afterthought.
+ * There is deliberately no `print()` here any more: it returned `head.raw + params.flatMap { raw }`,
+ * a token list with no separators, and left the caller to join them, which is how it could emit bytes
+ * that depended on the values happening to be self-delimiting (finding 1.10). Encoding is `GEncoder`,
+ * producing a `String` because the checksum covers the bytes as transmitted (spec 8.3), so whitespace
+ * is part of the output, not an afterthought.
  *
  * ```
  * GEncoder.encode(GCommand(GLetter('G'), GFloat("29.1")))   // "G29.1"

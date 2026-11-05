@@ -5,17 +5,16 @@ import org.qw3rtrun.p3d.g.code.core.token.asciiFold
 /**
  * Reading a reply line by hand: the primitives the decoders scan with, instead of a regex.
  *
- * **Why not `java.util.regex`.** A reply decoder is the one place a host *reads* what a printer
- * says, and the pattern is the whole specification of what it accepts - so it has to be reviewable
- * against the wire format, which a condensed pattern is not. Six of the patterns these replaced
- * also used `(?>...)` atomic groups, which exist in Java and PCRE and in neither Rust's `regex`
- * crate nor C: a port could not have translated them, only re-derived them, with less in front of
- * it than this file has.
+ * Why not `java.util.regex`: a reply decoder is the one place a host reads what a printer says, and
+ * the pattern is the whole specification of what it accepts, so it has to be reviewable against the
+ * wire format, which a condensed pattern is not. Six of the patterns these replaced also used
+ * `(?>...)` atomic groups, which exist in Java and PCRE and in neither Rust's `regex` crate nor C - a
+ * port could not have translated them, only re-derived them.
  *
- * Case folding is **explicit ASCII**, through the same `asciiFold` the token layer compares
- * identifiers with: Marlin's replies are 7-bit (spec 1.1), and `ignoreCase = true` folds the whole
- * Unicode table in a locale-dependent way - a Turkish locale changes `i`/`I`, and U+212A KELVIN
- * SIGN lowercases to `k`. One copy of that rule, in `core.token`.
+ * Case folding is explicit ASCII, through the same `asciiFold` the token layer compares identifiers
+ * with: Marlin's replies are 7-bit (spec 1.1), and `ignoreCase = true` folds the whole Unicode table
+ * in a locale-dependent way - a Turkish locale changes `i`/`I`, and U+212A KELVIN SIGN lowercases to
+ * `k`. One copy of that rule, in `core.token`.
  *
  * Every function takes an index and returns one, so a scan is a walk with no allocation until the
  * one `substring` that yields a field's text.
@@ -72,14 +71,10 @@ internal fun String.blanksEnd(from: Int): Int {
 /**
  * Where the number at [from] ends, or -1 when there is not one there.
  *
- * spec 3.1's shape, as the patterns these decoders replaced all spelled it
- * (`[-+]?(?>[0-9]*\.)?[0-9]+`): an optional sign, optional digits, an optional point, and **at
- * least one digit somewhere**. So `5`, `-5`, `+1.5` and `.5` are numbers; `12.` is not, because a
- * point with nothing behind it is a number the firmware did not finish writing.
- *
- * Returns an index rather than a value, like everything else here: the one `substring` happens
- * where the field is actually taken, and a caller that only wants to know where the number ended
- * pays nothing.
+ * Spec 3.1's shape, as the patterns these decoders replaced all spelled it
+ * (`[-+]?(?>[0-9]*\.)?[0-9]+`): an optional sign, optional digits, an optional point, and at least
+ * one digit somewhere. So `5`, `-5`, `+1.5` and `.5` are numbers; `12.` is not, because a point with
+ * nothing behind it is a number the firmware did not finish writing.
  *
  * ```
  * "X:-1.5".numberEnd(2)   // 6
@@ -106,8 +101,8 @@ internal fun String.numberEnd(from: Int): Int {
  * Whether [this] and [other] are the same text, comparing ASCII letters case-insensitively.
  *
  * The two-sided form of [startsWithAscii], for comparing fields a scan has already cut out -
- * `TRIGGERED` against what the line said, `true` against a capability's value. It does **not**
- * trim; [equalsAscii] is the whole-line form that does.
+ * `TRIGGERED` against what the line said, `true` against a capability's value. It does not trim;
+ * [equalsAscii] is the whole-line form that does.
  *
  * ```
  * "TRIGGERED".sameAscii("triggered")   // true
@@ -167,10 +162,9 @@ private fun isEdge(c: Char) = c == ' ' || c == '\t' || c == '\r' || c == '\n'
  * [this] without the blanks and terminators at either end - spec 2.1 and 1.2, and no other
  * character.
  *
- * **It still allocates**, like the `trim()` it replaces, and that is the half of this not yet
- * fixed: a decoder that trimmed and then scanned indices could do both in one walk, and eight
- * decoders in a chain each trim the same line. The correctness half - *which* characters count -
- * is what this settles. Recorded rather than left to be rediscovered.
+ * It still allocates, like the `trim()` it replaces - the half of this not yet fixed, since a decoder
+ * that trimmed and then scanned indices could do both in one walk, and eight decoders in a chain each
+ * trim the same line. The correctness half - which characters count - is what this settles.
  *
  * ```
  * " ok\r\n".asciiTrim()   // "ok"

@@ -36,14 +36,13 @@ enum class GNumbering {
  * The session layer: line-number continuity (GCODE_spec.md section 7.2), `M110`, and the verdict a
  * host answers a bad block with (section 8.5).
  *
- * **This is the first stateful piece of the module, and the only one.** Everything below it is a
- * pure function from bytes to tokens to blocks; a session has a counter. That boundary is deliberate
- * and worth keeping: the counter lives here, not in the tokenizer or the reader.
+ * The first stateful piece of the module, and the only one: everything below it is a pure function
+ * from bytes to tokens to blocks, while a session has a counter.
  *
- * It is also deliberately **free of I/O**. A reader is driven by a plain iterator of [org.qw3rtrun.p3d.g.code.core.block.GBlock] and
- * returns a value per block; it never reads, writes, blocks or schedules. Sending the resend request
- * a [GRejected] describes is the transport layer's job, and so is the send window on the other side
- * of the link. That is what makes the session portable along with the rest of `code/core`.
+ * Deliberately free of I/O: a reader is driven by a plain iterator of [org.qw3rtrun.p3d.g.code.core.block.GBlock] and returns a
+ * value per block; it never reads, writes, blocks or schedules. Sending the resend request a
+ * [GRejected] describes is the transport layer's job, and so is the send window on the other side of
+ * the link - which is what makes the session portable along with the rest of `code/core`.
  *
  * One instance is one session. [lastLine] is the last number accepted, which every message and every
  * resend point is computed from.
@@ -57,10 +56,9 @@ enum class GNumbering {
  *
  * @property numbering whether an unnumbered command block is accepted or refused
  * @property lastLine the last accepted line number. Starts at 0, so a session's first transmitted
- *   block is `N1` - Marlin initialises `last_N` the same way, and it is why a session conventionally
- *   opens with `M110 N0` rather than relying on the default. Only an accepted block moves it. A
- *   rejected one never does, which is what makes [GRejected.resend] answerable, and a discarded
- *   duplicate does not either.
+ *   block is `N1` - Marlin initialises `last_N` the same way, and a session conventionally opens with
+ *   `M110 N0` rather than relying on the default. Only an accepted block moves it; a rejected one or
+ *   a discarded duplicate never does, which is what makes [GRejected.resend] answerable.
  */
 class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 0) {
 
@@ -72,41 +70,37 @@ class GCodeReader(val numbering: GNumbering = GNumbering.OPTIONAL, first: Int = 
      *
      * 1. Spec 5: "a line number is only consumed by a line that is actually transmitted". A blank or
      *    comment-only block is not one, so it is accepted, consumes nothing, and is exempt from the
-     *    numbering mode - there is nothing on it to number.
-     * 2. Spec 8.5 step 2: the checksum is judged first. It costs nothing to order it this way here
-     *    because the reader has already decided it - a `GFramedBlock` is verified by construction
-     *    (todo 04) - and it matches RepRapFirmware, which validates at buffer-fill time before the
-     *    line number is looked at anywhere. Marlin checks the number first; both reject the block and
-     *    both ask for the same resend, so the only thing riding on the order is the message.
-     * 3. Spec 9 then spec 7.3: a block that did not parse into a judgeable shape, and then the two
-     *    pairing faults. Order matters between these two only in that a malformed field is a
-     *    narrower statement than an unpaired one.
-     * 4. Everything that is not ordered carries no line number: spec 7.2 makes that legal in a file
-     *    and Marlin accepts it over a link too, so it is the [numbering] mode's decision, not an
-     *    error by itself. It consumes no number either way.
-     * 5. Spec 7.2: an `M110` block sets the counter and is exempt from continuity, because
-     *    resynchronising is the one thing a host does *because* the sequence is already broken.
+     *    numbering mode.
+     * 2. Spec 8.5 step 2: the checksum is judged first. That costs nothing here, since the reader has
+     *    already decided it - a `GFramedBlock` is verified by construction (todo 04) - and it matches
+     *    RepRapFirmware, which validates at buffer-fill time before the line number is looked at.
+     *    Marlin checks the number first; both reject and ask for the same resend, so only the message
+     *    rides on the order.
+     * 3. Spec 9 then spec 7.3: a block that did not parse into a judgeable shape, then the two pairing
+     *    faults - a malformed field is a narrower statement than an unpaired one.
+     * 4. Everything not ordered carries no line number: spec 7.2 makes that legal in a file and
+     *    Marlin accepts it over a link too, so it is the [numbering] mode's decision, not an error by
+     *    itself. It consumes no number either way.
+     * 5. Spec 7.2: an `M110` block sets the counter and is exempt from continuity, since
+     *    resynchronising is the one thing a host does because the sequence is already broken.
      * 6. The next number in sequence is accepted and becomes [lastLine].
      * 7. Spec 7.2: a repeat of the last block, or the one before it, is discarded in silence rather
-     *    than refused. The host had already retransmitted when the resend request reached it;
-     *    answering the second copy with another request would not converge. Anything else is out of
-     *    sequence.
+     *    than refused - the host had already retransmitted when the resend request reached it, and
+     *    answering the second copy with another would not converge. Anything else is out of sequence.
      *
-     * **The `M110` value** is `M110`'s own **`N` parameter**, not the block's line number (spec 7.2), so
+     * The `M110` value is `M110`'s own `N` parameter, not the block's line number (spec 7.2), so
      * `N1 M110 N7` leaves the counter at 7; with no parameter it falls back to the line number, as
-     * Marlin does. Spec 7.1 makes only the *first* field of a block a line number, which is why the
-     * search for that `N` starts past the command head rather than at the start of the block. The
-     * command is **read off the block's head, not the raw text.** Marlin decides a block is an `M110`
-     * with `strstr(command, "M110")`, which means `M117 M110` resets its counter - a consequence of
-     * scanning text rather than an intended rule. Copying it would let a status message silently
-     * resynchronise the session, so this diverges knowingly.
+     * Marlin does. Spec 7.1 makes only the first field of a block a line number, which is why the
+     * search for that `N` starts past the command head. The command is read off the block's head, not
+     * the raw text: Marlin decides a block is an `M110` with `strstr(command, "M110")`, which means
+     * `M117 M110` resets its counter - a consequence of scanning text, not an intended rule, and not
+     * copied here since it would let a status message silently resynchronise the session.
      *
-     * The `M110` check reads tokens directly rather than going through a decoder, and that is a
-     * layering decision: `SetGetLineNumber` is the typed `M110` and `MarlinCommands.decode` would
-     * return it, but the session belongs to `code/core` and must not depend on the Marlin command
-     * registry - the dependency runs the other way, and this layer ports with the rest of the core.
-     * The head rule is `headWord`'s, so this cannot disagree with a decoder about what a command
-     * word is, and the `N` scan is the same `valueIndex` pairing every other reader uses.
+     * The `M110` check reads tokens directly rather than going through a decoder: `SetGetLineNumber`
+     * is the typed `M110` and `MarlinCommands.decode` would return it, but the session belongs to
+     * `code/core` and must not depend on the Marlin command registry. The head rule is `headWord`'s,
+     * so this cannot disagree with a decoder about what a command word is, and the `N` scan is the
+     * same `valueIndex` pairing every other reader uses.
      *
      * ```
      * val reader = GCodeReader()

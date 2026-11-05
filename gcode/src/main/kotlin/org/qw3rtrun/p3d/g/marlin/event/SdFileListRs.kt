@@ -72,9 +72,6 @@ object SdFileListEnd : SdCardRs<SdFileListEnd>, GRsDecoder<SdFileListEnd> {
  * ```
  * SdFile("TEST.GCO", 47)
  * ```
- *
- * @property name the file's name, exactly as the listing spelled it
- * @property size the file's size in bytes
  */
 data class SdFile(val name: String, val size: Long)
 
@@ -97,8 +94,6 @@ data class SdFile(val name: String, val size: Long)
  * // TEST.GCO 47
  * // End file list
  * ```
- *
- * @property files the listing's entries, in wire order; empty for a card with nothing printable
  */
 data class SdFileList(val files: List<SdFile>) : SdCardRs<SdFileList> {
 
@@ -150,17 +145,14 @@ class SdFileListReader {
     private val files = ArrayList<SdFile>()
 
     /**
-     * Offers one received line to the reader.
-     *
-     * @param line one line as the printer sent it
-     * @return the completed listing when [line] terminated one, and null every other time -
-     *   including for a terminator that closes a listing something interrupted
+     * Offers one received line to the reader, answering the completed listing when [line]
+     * terminated one, and null every other time - including a terminator that closes a listing
+     * something interrupted.
      */
     fun read(line: String): SdFileList? {
         if (SdFileListBegin.decode(line) != null) {
-            // A second `Begin` without an `End` means the first listing will never be completed.
-            // Start again rather than merge them: the entries before it belong to an answer that
-            // was cut off, and a host cannot tell which half of the result it would be reporting.
+            // A second Begin without an End starts over rather than merging: the entries before it
+            // belong to a cut-off answer, and a host cannot tell which half it would be reporting.
             open = true
             abandoned = false
             files.clear()

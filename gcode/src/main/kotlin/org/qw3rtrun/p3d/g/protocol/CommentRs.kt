@@ -24,10 +24,10 @@ interface CommentRs<D : CommentRs<D>> : GProtoRs<D>
  * // This is some debugging or other information on a line on its own.
  * ```
  *
- * Deliberately does **not** match `//action:` lines, so that [DebugRs] and [ActionRs] partition
- * the `//` prefix between them and no line is claimed by both. A host that only wants the text
- * should decode with [CommentRsDecoder] and read [ActionRs.action] too, rather than expect this
- * class to cover the whole prefix.
+ * Deliberately does not match `//action:` lines, so [DebugRs] and [ActionRs] partition the `//`
+ * prefix between them and no line is claimed by both. A host that only wants the text should decode
+ * with [CommentRsDecoder] and read [ActionRs.action] too, rather than expect this class to cover the
+ * whole prefix.
  *
  * ```
  * DebugRs.decode("// hi")            // DebugRs("hi")
@@ -44,11 +44,9 @@ data class DebugRs(val text: String) : CommentRs<DebugRs> {
     companion object : GRsDecoder<DebugRs> {
 
         /**
-         * The `//` test is cheap and comes first, so the [ActionRs] read below happens only for a
-         * line that really is a `//` one - and those are rare on a link. It is kept because this
-         * decoder is also called directly, and an action line is not a debug line whichever way it
-         * is reached; [CommentRsDecoder] answers the same question by trying the specific one
-         * first.
+         * The `//` test is cheap and comes first, so the [ActionRs] check below runs only for a line
+         * that really is one. It is kept because this decoder is also called directly, and an action
+         * line is not a debug line whichever way it is reached.
          */
         override fun decode(line: String): DebugRs? {
             val trimmed = line.asciiTrim()
@@ -97,15 +95,14 @@ data class ActionRs(val action: String, val argument: String? = null) : CommentR
          * `//action:<command>` and its optional rest-of-line argument, or null when the line is not
          * one.
          *
-         * **The action word ends at a blank and may hold anything else.** That is what `\S+` said,
-         * and it is the right rule for a word the firmware chooses: an action this host has never
-         * heard of is a firmware newer than this host, and punctuation in it is not this layer's
-         * business. The argument needs at least one blank in front of it and then runs to the end,
-         * blanks inside it included - `prompt_begin Continue with the next layer?` is one argument.
+         * The action word ends at a blank and may hold anything else - the right rule for a word the
+         * firmware chooses, since an action this host has never heard of is a firmware newer than
+         * this host. The argument needs at least one blank in front of it and then runs to the end,
+         * blanks included - `prompt_begin Continue with the next layer?` is one argument.
          *
-         * Only space and tab end the word, rather than `\S`'s six whitespace characters: a received
-         * line has no terminator left in it by the time a decoder sees one (spec 1.2, and
-         * [asciiTrim] besides), and spec 2.1 names these two as the separators.
+         * Only space and tab end the word: a received line has no terminator left in it by the time a
+         * decoder sees one (spec 1.2, and [asciiTrim] besides), and spec 2.1 names these two as the
+         * separators.
          */
         override fun decode(line: String): ActionRs? {
             val text = line.asciiTrim()

@@ -117,13 +117,9 @@ class OkDecoderTest {
     @ValueSource(strings = ["ok N2 P15 B3", "ok N3 P15 B3", "ok N4 P15 B3"])
     fun `the acknowledgement a real Marlin sends for a numbered line decodes`(line: String) {
         // Captured from MarlinSim (bugfix-2.1.x) answering N2 M114*37, N3 M114*36 and N4 M31*21.
-        // Marlin's ok_to_send() echoes the `N` off the command it is acknowledging *before* ` P`
-        // and ` B`; this decoder read it last, and encode() wrote it last to match, so the type
-        // round-tripped with itself and matched nothing a printer sends. Every ack of a numbered
-        // line fell through every decoder - the whole point of line numbering, unreadable.
-        //
-        // Pinned to the captured bytes and not to encode(), because agreeing with ourselves is
-        // exactly what hid it.
+        // Marlin's ok_to_send() echoes the `N` before ` P` and ` B`; this decoder once read it last,
+        // matching nothing a printer sends. Pinned to the captured bytes and not to encode(), because
+        // agreeing with ourselves is exactly what hid it.
         val report = decoder.decode(line)
         Assertions.assertNotNull(report) { "did not decode: $line" }
         Assertions.assertEquals(15, (report as AdvancedOkRs).planner)

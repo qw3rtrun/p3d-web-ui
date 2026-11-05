@@ -10,20 +10,17 @@ import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.command.GWordReader
 
 /**
- * A snapshot of what the corpora *mean*, block by block: the kind of block the reader decided on, the
+ * A snapshot of what the corpora mean, block by block: the kind of block the reader decided on, the
  * framing fields it read off it, and the commands the command parser found, rendered canonically by
  * [GEncoder].
  *
- * It exists as a net under structural change. The reader's own tests assert the shape of the values
- * it builds, so a refactor that changes those values has to edit them - and an edited test cannot
- * tell you whether the behaviour survived. This one is written in terms nothing structural can
- * touch: block *kinds*, block *numbers*, checksum *lexemes* and encoded *commands*, over 440 blocks of
- * real G-code. Any refactor of the block or word model that leaves this green preserved the parse,
- * and any diff here is a behaviour change to be explained rather than accepted.
+ * It exists as a net under structural change: written in terms nothing structural can touch - block
+ * kinds, block numbers, checksum lexemes and encoded commands, over 440 blocks of real G-code - so
+ * any refactor that leaves it green preserved the parse, and any diff is a behaviour change to be
+ * explained rather than accepted.
  *
- * **Regenerating**: delete the snapshot under `src/test/resources` and run this test once. It writes
- * the file and fails, so a regeneration is always a deliberate act with a diff to review - never
- * something that quietly happens on a green build.
+ * Regenerating: delete the snapshot under `src/test/resources` and run this test once. It writes the
+ * file and fails, so a regeneration is always a deliberate act with a diff to review.
  */
 class GCorpusDecompositionTest {
 

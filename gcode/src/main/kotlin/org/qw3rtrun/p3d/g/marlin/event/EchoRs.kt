@@ -41,8 +41,6 @@ interface EchoRs<D : EchoRs<D>> : GEventRs<D>
  * EchoMessage.decode("echo:busy")   // EchoMessage("busy")
  * EchoMessage("busy").encode()      // "echo:busy"
  * ```
- *
- * @property text the line after `echo:`, trimmed
  */
 data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
 
@@ -91,8 +89,6 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
  * ```
  * UnknownCommand.decode("echo:Unknown command: \"M9999\"")   // UnknownCommand("M9999")
  * ```
- *
- * @property command the rejected command, as the firmware quoted it
  */
 data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
 
@@ -151,9 +147,6 @@ data class UnknownCommand(val command: String) : EchoRs<UnknownCommand> {
  * InvalidExtruder.decode("echo:M104 Invalid extruder 5")   // InvalidExtruder("M104", 5)
  * InvalidExtruder("M104", 5).encode()                      // "echo:M104 Invalid extruder 5"
  * ```
- *
- * @property command the command the firmware quoted, as it wrote it
- * @property index the extruder the command asked for
  */
 data class InvalidExtruder(val command: String, val index: Int) : EchoRs<InvalidExtruder> {
 
@@ -198,15 +191,14 @@ data class InvalidExtruder(val command: String, val index: Int) : EchoRs<Invalid
  * `EchoRs<*>` and gets this too. Neither view has to know the other exists.
  *
  * `SimpleBusyRs` is the bare `busy: processing` the RepRap protocol describes and is left exactly
- * as it is - it is what other firmwares send - so the two spellings stay separate values that each
+ * as it is - what other firmwares send - so the two spellings stay separate values that each
  * round-trip to their own form rather than one re-encoding to a line its printer never writes.
- * [reason] is the same string on both, and the constants to compare it against are
- * [BusyRs.PROCESSING], [BusyRs.PAUSED_FOR_USER] and [BusyRs.PAUSED_FOR_INPUT], which live on the
- * interface for that reason.
+ * [reason] is the same string on both, compared against [BusyRs.PROCESSING], [BusyRs.PAUSED_FOR_USER]
+ * and [BusyRs.PAUSED_FOR_INPUT], which live on the interface for that reason.
  *
- * A live probe found the gap: on a real printer `echo:busy: processing` was arriving as
- * undifferentiated [EchoMessage] text, so a host watching for a typed busy reply saw nothing at all
- * while the machine homed.
+ * A live probe found the gap: `echo:busy: processing` was arriving on a real printer as
+ * undifferentiated [EchoMessage] text, so a host watching for a typed busy reply saw nothing while
+ * the machine homed.
  *
  * The reason has to start with a non-blank, exactly as in [SimpleBusyRs]: a bare `echo:busy:`
  * carries nothing to act on, and `echo:busy` with no colon at all is ordinary prose - both stay
@@ -217,8 +209,6 @@ data class InvalidExtruder(val command: String, val index: Int) : EchoRs<Invalid
  * BusyNotice("processing").encode()                 // "echo:busy: processing"
  * BusyNotice.decode("echo:busy")                    // null
  * ```
- *
- * @property reason the reason, as the machine wrote it
  */
 data class BusyNotice(override val reason: String) : BusyRs<BusyNotice>, EchoRs<BusyNotice> {
 
@@ -261,13 +251,7 @@ data class BusyNotice(override val reason: String) : BusyRs<BusyNotice>, EchoRs<
  */
 object EchoRsDecoder : GRsDecoder<EchoRs<*>> {
 
-    /**
-     * One pass down the list, most specific first and the general `echo:` last.
-     *
-     * It was a `when` over seven `match` calls followed by a `decodeParams` that read the claimed
-     * line again - and each of those `match`es was itself a full read, so an `echo:` line the last
-     * arm claimed had been read eight times by the time it became a value.
-     */
+    /** One pass down the list, most specific first and the general `echo:` last. */
     private val decoders: List<GRsDecoder<EchoRs<*>>> = listOf(
         UnknownCommand,
         InvalidExtruder,

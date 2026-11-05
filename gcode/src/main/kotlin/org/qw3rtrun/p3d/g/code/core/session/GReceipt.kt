@@ -5,10 +5,10 @@ import org.qw3rtrun.p3d.g.code.core.block.GBlock
 /**
  * What a [GCodeReader] concluded about one block, per GCODE_spec.md sections 7.2 and 8.5.
  *
- * Three outcomes, not two. A block is executed, or it is **silently discarded**, or it is rejected
- * with a resend request - and the middle one is not a rounding of either neighbour: spec 7.2 has the
- * firmware drop a repeated block without complaining, because complaining about it would ask for a
- * resend of a block already in flight.
+ * Three outcomes, not two: a block is executed, silently discarded, or rejected with a resend
+ * request - the middle one is not a rounding of either neighbour, since spec 7.2 has the firmware
+ * drop a repeated block without complaining, because complaining would ask for a resend of a block
+ * already in flight.
  *
  * ```
  * when (val receipt = reader.read(block)) {
@@ -27,32 +27,21 @@ sealed interface GReceipt {
 /**
  * The block is intact, in sequence, and is the caller's to execute.
  *
- * [number] is the line number it consumed, or `null` for a block that consumes none - spec 5: "a line
+ * [number] is the line number it consumed, or null for a block that consumes none - spec 5: "a line
  * number is only consumed by a line that is actually transmitted", so a blank or comment-only block
  * is accepted without moving the counter.
- *
- * ```
- * GCodeReader().read(GBlockReader.blocks("N1 G28*18\n").first())   // GAccepted(number = 1)
- * GCodeReader().read(GBlockReader.blocks("; c\n").first())         // GAccepted(number = null)
- * ```
  */
 data class GAccepted(override val block: GBlock, val number: Int?) : GReceipt
 
 /**
- * Spec 7.2: the block repeats the last accepted number, or the one before it. **Discard it and say
- * nothing** - this is not an error and must not produce a resend request.
+ * Spec 7.2: the block repeats the last accepted number, or the one before it. Discard it and say
+ * nothing - not an error, and must not produce a resend request.
  *
- * The case is created by the resend protocol itself. A host that has already retransmitted when the
- * firmware's `Resend:` arrives sends the same block twice; answering the second copy with another
- * resend request would not converge. Marlin's `queue.cpp` spells it
- * `if (WITHIN(gcode_N, serial.last_N - 1, serial.last_N)) continue;` and the comment above it reads
- * "A request-for-resend line was already in transit so we got two - oops!".
- *
- * ```
- * val reader = GCodeReader()
- * reader.read(GBlockReader.blocks("N1 G28*18\n").first())
- * reader.read(GBlockReader.blocks("N1 G28*18\n").first())   // GDuplicate(number = 1, lastLine = 1)
- * ```
+ * Created by the resend protocol itself: a host that has already retransmitted when the firmware's
+ * `Resend:` arrives sends the same block twice, and answering the second copy with another resend
+ * request would not converge. Marlin's `queue.cpp` spells it
+ * `if (WITHIN(gcode_N, serial.last_N - 1, serial.last_N)) continue;`, commented "A request-for-resend
+ * line was already in transit so we got two - oops!".
  */
 data class GDuplicate(override val block: GBlock, val number: Int, val lastLine: Int) : GReceipt
 
@@ -61,12 +50,6 @@ data class GDuplicate(override val block: GBlock, val number: Int, val lastLine:
  *
  * [lastLine] is the last number accepted, which is what both the message and the resend point are
  * computed from - a rejected block never moves the counter.
- *
- * ```
- * val receipt = GCodeReader().read(GBlockReader.blocks("N3 G28*16\n").first()) as GRejected
- * receipt.msg      // "Error:Line Number is not Last Line Number+1, Last Line: 0"
- * receipt.resend   // 1
- * ```
  *
  * @property lastLine the last line number the session accepted
  * @property msg the error line to answer with, in Marlin's wording
@@ -143,16 +126,10 @@ data class GUnnumbered(override val block: GBlock, override val lastLine: Int) :
 /**
  * Spec 9: the block did not parse into a shape this layer can judge - `N1 G28*ABC`, `N G28*18`.
  *
- * Kept separate from [GCorrupted] rather than folded into it, because the two are different faults
- * even though a host answers both with a resend: a mismatch means the bytes arrived wrong, while
- * this means they did not form a block. Marlin cannot tell them apart - `strtol("ABC")` is 0, which
- * it then reports as a checksum mismatch - and losing that distinction is a cost of parsing with
- * `strtol`, not a decision worth copying.
- *
- * ```
- * GCodeReader().read(GBlockReader.blocks("N1 G28*ABC\n").first()).msg
- * // "Error:checksum is not a number, Last Line: 0"
- * ```
+ * Kept separate from [GCorrupted] rather than folded into it: a mismatch means the bytes arrived
+ * wrong, while this means they did not form a block. Marlin cannot tell them apart - `strtol("ABC")`
+ * is 0, reported as a checksum mismatch - which is a cost of parsing with `strtol`, not a decision
+ * worth copying.
  */
 data class GMalformed(
     override val block: GBlock,

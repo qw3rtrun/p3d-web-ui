@@ -56,9 +56,6 @@ object EndstopReportHeader : GEventRs<EndstopReportHeader>, GRsDecoder<EndstopRe
  * EndstopStateRs.match("busy: processing")      // false
  * EndstopStateRs("z_probe", false).encode()     // "z_probe: open"
  * ```
- *
- * @property name the endstop's name, as Marlin wrote it
- * @property triggered true for `TRIGGERED`, false for `open`
  */
 data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<EndstopStateRs> {
 
@@ -75,13 +72,7 @@ data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<Endsto
         private const val MIN = "_min"
         private const val MAX = "_max"
 
-        /**
-         * `<name>: <state>`, or null when the line is not one.
-         *
-         * The name is checked against the shapes Marlin writes, not against "a word", because
-         * `<word>: <word>` is far too common on this wire to claim - `busy: processing` fits it and
-         * is somebody else's reply.
-         */
+        /** `<name>: <state>`, or null when the line is not one. */
         override fun decode(line: String): EndstopStateRs? {
             val text = line.asciiTrim()
 
@@ -99,12 +90,11 @@ data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<Endsto
         }
 
         /**
-         * Where the endstop's name ends, or -1 when [text] does not open with one.
-         *
-         * Two shapes, the fixed names first because `z_probe` would otherwise be read as axis `z`
-         * and fail on the suffix. The axis form is a letter, **one** optional character, and
-         * `_min` or `_max`: that covers `x_min`, the duplicates `x2`, `z3`, `z4`, and whatever
-         * `a`..`w` a delta or an IDEX reports. Two extra characters is not a name Marlin writes.
+         * Where the endstop's name ends, or -1 when [text] does not open with one. Two shapes, the
+         * fixed names first because `z_probe` would otherwise be read as axis `z` and fail on the
+         * suffix. The axis form is a letter, **one** optional character, and `_min`/`_max`: that
+         * covers `x_min`, the duplicates `x2`, `z3`, `z4`, and whatever `a`..`w` a delta or an IDEX
+         * reports.
          */
         private fun nameEnd(text: String): Int {
             for (fixed in FIXED) {

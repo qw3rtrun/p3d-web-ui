@@ -5,21 +5,20 @@ import org.qw3rtrun.p3d.g.code.core.token.GInt
 /**
  * The CRC16 of GCODE_spec.md section 8.4, the second algorithm the `*` field can carry.
  *
- * **The variant is CRC-16/XMODEM**: polynomial `0x1021` - CCITT `x^16 + x^12 + x^5 + 1` in its
- * MSB-first encoding - initial value `0x0000`, MSB-first (no reflection of input or output), no
- * final XOR. That is read off RepRapFirmware's `src/Storage/CRC16`
- * - the only firmware that accepts this field - and not chosen by plausibility; section 8.4 carries
- * the citation and the vector. Three other algorithms answer to "CCITT CRC-16 with poly 0x1021" and
- * none of them agrees with this one on any input, so guessing would have rejected every genuine
+ * The variant is CRC-16/XMODEM: polynomial `0x1021` (CCITT `x^16 + x^12 + x^5 + 1`, MSB-first),
+ * initial value `0x0000`, no reflection, no final XOR - read off RepRapFirmware's
+ * `src/Storage/CRC16`, the only firmware that accepts this field, and not chosen by plausibility:
+ * section 8.4 carries the citation and vector. Three other algorithms answer to "CCITT CRC-16 with
+ * poly 0x1021" and none agrees with this one on any input, so guessing would reject every genuine
  * block.
  *
- * Computed a bit at a time rather than through a 256-entry table. RRF uses a table because it is
- * flashing a PanelDue; here the input is one serial line, the two forms are identical in output, and
- * the bitwise form carries no static data for a port to transcribe.
+ * Computed a bit at a time rather than through a 256-entry table: the input is one serial line, the
+ * two forms are identical in output, and the bitwise form carries no static data for a port to
+ * transcribe.
  *
- * Streaming, like [XorCheckSum]: one character in, integer state, mask on the way out, so it can run
- * over a growing serial buffer. Also like [XorCheckSum], [add] takes a `Char` and not a byte - see
- * [CheckSumCalculator] for what that costs outside ASCII.
+ * Streaming, like [XorCheckSum]: one character in, integer state, mask on the way out. Also like
+ * [XorCheckSum], [add] takes a `Char` and not a byte - see [CheckSumCalculator] for what that costs
+ * outside ASCII.
  *
  * ```
  * val crc = Crc16CheckSum()
@@ -39,18 +38,11 @@ class Crc16CheckSum : CheckSumCalculator {
     }
 
     /**
-     * The value, and the **five zero-padded decimal digits** section 8.4 requires as its lexeme.
+     * The value, and the five zero-padded decimal digits section 8.4 requires as its lexeme.
      *
-     * The padding is load-bearing rather than cosmetic: the digit count is what selects the algorithm
-     * (section 8.1), so a CRC of 6939 emitted as four digits would be read back as an XOR checksum
-     * and rejected, and one of 57 as three digits would be read as a *valid* XOR checksum of a
-     * different block.
-     *
-     * ```
-     * val crc = Crc16CheckSum()
-     * crc.add("123456789")
-     * crc.get().lexeme   // "12739"
-     * ```
+     * The padding is load-bearing, not cosmetic: the digit count selects the algorithm (section 8.1),
+     * so a CRC of 6939 emitted as four digits would be read back as an XOR checksum and rejected, and
+     * one of 57 as three digits would be read as a valid XOR checksum of a different block.
      *
      * @return the CRC of every character added so far, with a five-digit lexeme
      */

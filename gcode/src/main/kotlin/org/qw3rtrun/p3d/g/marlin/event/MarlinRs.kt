@@ -57,8 +57,6 @@ import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
  * MarlinRsDecoder.decode("ok T:210.00 /210.00")        // OkTemperatureRs
  * MarlinRsDecoder.decode("Reporting nothing at all")   // null
  * ```
- *
- * @property decoders tier 1 first, then the base protocol
  */
 object MarlinRsDecoder : GRsDecoder<GRs<*>> {
 
@@ -75,12 +73,8 @@ object MarlinRsDecoder : GRsDecoder<GRs<*>> {
     )
 
     /**
-     * One pass down the list - the whole chain, for one line, exactly once.
-     *
-     * This is the live path: `HostTerminal.ReplyFlux` runs it for every line a printer sends. It
-     * used to carry a `match` that walked all eight decoders asking each to decide - and the two
-     * dispatchers below it did the same to their own - so asking "is this anything?" before asking
-     * "what is it?" read a line on the order of fifteen times.
+     * One pass down the list - the whole chain, for one line, exactly once. This is the live path:
+     * `HostTerminal.ReplyFlux` runs it for every line a printer sends.
      */
     override fun decode(line: String): GRs<*>? = decoders.firstNotNullOfOrNull { it.decode(line) }
 }

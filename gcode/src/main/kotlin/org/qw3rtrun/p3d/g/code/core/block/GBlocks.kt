@@ -6,23 +6,19 @@ import org.qw3rtrun.p3d.g.code.core.token.GToken
 /**
  * A block, as the reader read it off the token stream (GCODE_spec.md section 5).
  *
- * **A block knows tokens and nothing else.** Its shape is decided from two positions - the first
- * identifier and the last `*` - and both are found by walking tokens, so the block layer never builds
- * a word and never has to say what a word *is*. Words are the command layer's vocabulary
- * (the DSL builds them, `GEncoder` writes them), and a consumer that only routes, resends or
- * re-prints blocks never pays for them.
+ * A block knows tokens and nothing else: its shape is decided from two positions - the first
+ * identifier and the last `*` - found by walking tokens, so this layer never builds or names a word.
+ * Words are the command layer's vocabulary (the DSL builds them, `GEncoder` writes them).
  *
- * **One word for one thing.** Spec 5 calls it a "line (block)"; this layer calls it a block, and
- * leaves "line" to the three things that really are lines of text: the `GLineBreak` that ends one,
- * the line *number* of section 7, and the characters the lexer reads through. A block that was
- * *read* is this type and carries its tokens; a block being *built* is a `GBlockDraft`, one layer
- * up in `core.command`, and carries parts. The link is deliberately not a KDoc one: this layer may
- * not name the layer above it, and `GLayeringTest` reads KDoc as source.
+ * Spec 5 calls it a "line (block)"; this layer calls it a block and leaves "line" to the things that
+ * really are lines of text - the `GLineBreak` that ends one, the line number of section 7, and the
+ * characters the lexer reads through. A block that was read is this type, carrying tokens; a block
+ * being built is a `GBlockDraft` one layer up, carrying parts - the link is not a KDoc one, since this
+ * layer may not name the layer above it and `GLayeringTest` reads KDoc as source.
  *
- * [raw] is every token, in wire order. It is the stored, primary value of every block type, which is
- * what makes "a block reproduces its input" true by construction rather than by an override that a
- * decomposing type has to remember to write - the mistake that once re-printed `N1 G28*12` as
- * ` G28`.
+ * [raw] is every token, in wire order, and the stored primary value of every block type - which is
+ * what makes "a block reproduces its input" true by construction, not by an override a decomposing
+ * type has to remember to write (the mistake that once re-printed `N1 G28*12` as ` G28`).
  *
  * ```
  * val block = GBlockReader.blocks("N1 G28*18\n").first()
@@ -47,13 +43,8 @@ sealed interface GBlock {
  * A block that carries a line number (spec 7) - the question "can this block be asked for again?".
  *
  * Four types answer to it: a block whose checksum verified, and the three faults that still name
- * their line. Spec 8.5 gives all three of those the same answer, a `Resend:` for that number, which
- * is why the interface is the partition rather than a property of the successful case. See
- * [GError] for the other half of it.
- *
- * ```
- * (GBlockReader.blocks("N1 G28*18\n").first() as GOrdered).number   // GInt(1)
- * ```
+ * their line. Spec 8.5 gives all three the same answer, a `Resend:` for that number - which is why
+ * this is the partition rather than a property of the successful case. See [GError] for the rest.
  *
  * @property number the line number, with its lexeme
  */
@@ -62,12 +53,8 @@ sealed interface GOrdered : GBlock {
 }
 
 /**
- * A block whose checksum is present and **verified** (spec 8) - a consumer matching on this interface
- * is asking for blocks it can trust.
- *
- * ```
- * (GBlockReader.blocks("N1 G28*18\n").first() as GCheckSumControlled).checksum   // GInt(18)
- * ```
+ * A block whose checksum is present and verified (spec 8) - matching on this interface is asking for
+ * blocks that can be trusted.
  *
  * @property checksum the checksum field's value, with its lexeme
  */
@@ -76,20 +63,16 @@ sealed interface GCheckSumControlled : GBlock {
 }
 
 /**
- * A block with **no field at all**: its tokens contain no identifier (spec section 5).
+ * A block with no field at all: its tokens contain no identifier (spec 5).
  *
- * That is every no-op block - empty, whitespace, a comment - which is what section 5 names. It is
- * also a block of nothing but values or unlexable bytes: `?`, `42 99`, `"abc"` have no field either,
- * and `GBlockReader` classifies on the first identifier, so they arrive here too. The KDoc used to say
- * "whitespace and/or comments", which is narrower than the rule the reader applies and left a
- * consumer matching on this type - `GCodeReader` does - believing a block of corrupt bytes was a
- * no-op.
+ * Every no-op block - empty, whitespace, a comment - lands here, and so does unlexable content with
+ * no identifier (`?`, `42 99`, `"abc"`), since `GBlockReader` classifies on the first identifier. The
+ * KDoc used to say "whitespace and/or comments", narrower than the rule actually applied, and
+ * `GCodeReader` matched on this type believing a block of corrupt bytes was a no-op.
  *
- * Spec section 9 would call the second group an error, and an error type for it was declared here
- * for a while and never produced. Producing one is a real option; it is not taken because nothing
- * would act on the distinction, and a type nobody consumes is how the last one got stranded. Give
- * a transport a reason to answer a garbled unnumbered block differently from a blank one and it
- * becomes worth having.
+ * A separate error type for the corrupt-but-unnumbered case was declared here once and never
+ * produced; not reinstated, because nothing acts on the distinction yet - a type nobody consumes is
+ * how the last one got stranded.
  *
  * It keeps its tokens so the block still reproduces its input.
  *
@@ -111,18 +94,18 @@ data class GMeaninglessBlock(override val raw: List<GToken>) : GBlock
 data class GPlainBlock(override val raw: List<GToken>) : GBlock
 
 /**
- * A framed block: `N<n> <body>*<cs>`, spec sections 7 and 8.
+ * A framed block: `N<n> <body>*<cs>`, spec 7-8.
  *
- * The only block type that **decomposes** its input, and it does so by pointing into it: [body] is a
- * slice of [raw] running from just past the line number to the marker, so the two cannot disagree
- * and nothing is copied.
+ * The only block type that decomposes its input, and does so by pointing into it: [body] is a slice
+ * of [raw] from just past the line number to the marker, so the two cannot disagree and nothing is
+ * copied.
  *
- * Where the slice ends is a rule, not a detail. Spec section 5 puts the `*` field last, and Marlin
- * terminates the command at the marker (`get_serial_commands` writes a `\0` over it), so
- * `N1 G28*18 G1 X5` is **one** command - the `G1` is outside the frame and outside the checksum.
+ * Where the slice ends is a rule, not a detail: spec 5 puts the `*` field last, and Marlin terminates
+ * the command at the marker (`get_serial_commands` writes a `\0` over it), so `N1 G28*18 G1 X5` is
+ * one command - the `G1` is outside the frame and the checksum.
  *
- * **A [GFramedBlock] is only ever built for a block whose checksum has been verified** (spec section
- * 8), so holding one means the block is intact; there is no `verify()` for a caller to forget.
+ * Only ever built for a block whose checksum has been verified (spec 8), so holding one means the
+ * block is intact - there is no `verify()` to forget.
  *
  * ```
  * val block = GBlockReader.blocks("N1 G28*18 G1 X5\n").first() as GFramedBlock
@@ -140,24 +123,17 @@ data class GFramedBlock(
  * A block the reader could classify but not accept: a structural fault of framing (spec 7.1, 7.3) or of
  * the checksum (spec 8). Errors are values - the block still carries every token it was read from.
  *
- * **The faults partition by what a host can do about them**, and the line between them is
- * [GOrdered], not the fault's name:
+ * The faults partition by what a host can do about them, and the line is [GOrdered], not the fault's
+ * name:
  *
- * - **addressable** - the block names its line, so spec 8.5's answer is `Resend: n`:
+ * - addressable - the block names its line, so spec 8.5's answer is `Resend: n`:
  *   [GCheckSumFailedBlock] (the value disagrees), [GMalformedChecksum] (the field is garbled) and
  *   [GMissingChecksum] (spec 7.3, no field at all).
- * - **not addressable** - nothing on the block names a line, so there is no number to ask for and
- *   the way back into sequence is `M110` (spec 7.2): [GMissingLineNumber] and
- *   [GMalformedLineNumber].
+ * - not addressable - nothing on the block names a line, so the way back into sequence is `M110`
+ *   (spec 7.2): [GMissingLineNumber] and [GMalformedLineNumber].
  *
- * The three addressable ones were not one set for a while: only the mismatch implemented
- * [GOrdered], so a consumer that switched on it to answer "resend line n" saw one case of three and
- * silently dropped the other two, though every one of them carries the number it would have asked
- * for.
- *
- * ```
- * (GBlockReader.blocks("N1 G28\n").first() as GError).msg   // "line number 1 has no checksum"
- * ```
+ * All three addressable ones must implement [GOrdered] - a consumer once switched on it for "resend
+ * line n" and silently dropped two of the three because only the mismatch case did.
  *
  * @property msg a human-readable statement of the fault
  */
@@ -166,64 +142,42 @@ sealed interface GError : GBlock {
 }
 
 /**
- * Spec section 7.3: a line number without a checksum.
+ * Spec 7.3: a line number without a checksum.
  *
  * Over a serial link this is a structural error and the firmware rejects the block
- * (`Error:No Checksum with line number`). In a file it is harmless and fairly common, which is why
- * the reader reports the structure and leaves the severity to the caller rather than refusing to
- * parse. The corpus fixture contains two such blocks.
+ * (`Error:No Checksum with line number`). In a file it is harmless and fairly common - the corpus
+ * fixture has two - so the reader reports the structure and leaves the severity to the caller.
  *
- * [GOrdered], because the block names its line: a host that wants the block again has a number to
- * ask for, whether or not the sender attached a checksum to it.
- *
- * ```
- * GBlockReader.blocks("N1 G28\n").first()   // GMissingChecksum, number 1
- * ```
+ * [GOrdered], because the block names its line regardless of whether a checksum was attached.
  */
 data class GMissingChecksum(override val number: GInt, override val raw: List<GToken>) : GError, GOrdered {
     override val msg: String
         get() = "line number ${number.rawText()} has no checksum"
 }
 
-/**
- * Spec section 7.3: a checksum without a line number.
- *
- * ```
- * GBlockReader.blocks("G28*18\n").first()   // GMissingLineNumber
- * ```
- */
+/** Spec 7.3: a checksum without a line number. */
 data class GMissingLineNumber(override val raw: List<GToken>) : GError {
     override val msg: String
         get() = "checksum without a line number"
 }
 
-/**
- * Spec section 7.1: `N` is present and paired with a `*`, but is not followed by an integer.
- *
- * ```
- * GBlockReader.blocks("N G28*18\n").first()   // GMalformedLineNumber
- * ```
- */
+/** Spec 7.1: `N` is present and paired with a `*`, but is not followed by an integer. */
 data class GMalformedLineNumber(override val raw: List<GToken>) : GError {
     override val msg: String
         get() = "'N' is not followed by a line number"
 }
 
 /**
- * Spec section 8.1: `*` is paired with an `N`, but what follows it is not a well-formed checksum
- * field. Two shapes, both decided on syntax alone and before any algorithm runs:
+ * Spec 8.1: `*` is paired with an `N`, but what follows it is not a well-formed checksum field. Two
+ * shapes, decided on syntax alone before any algorithm runs: nothing usable after the marker (`N1*`,
+ * `*ABC`, `*10.5`), or an integer of a width no algorithm claims - section 8.1 gives the digit count
+ * the job of choosing, so 1-3 or 5 digits are checksum fields and 4, 6 or more are not. `*1234` is
+ * not a mismatch: there is nothing to compare it against.
  *
- * - nothing usable after the marker - `N1*`, `*ABC`, `*10.5`;
- * - an integer of a width no algorithm claims. Section 8.1 gives the digit count the job of choosing
- *   between them, so 1-3 digits and 5 digits are checksum fields and **4, 6 or more are not**.
- *   `*1234` is not a mismatch: there is nothing to compare it against.
+ * [GOrdered]: the line is named, so spec 8.5's answer is a resend of this block, same as a mismatch.
  *
  * ```
  * GBlockReader.blocks("N1 G28*ABC\n").first()    // GMalformedChecksum
- * [GOrdered]: the marker is on the wire and the line is named, so spec 8.5's answer is a resend of
- * this block rather than a framing complaint - the same answer a mismatch gets.
- *
- * ```
  * GBlockReader.blocks("N1 G28*1234\n").first()   // GMalformedChecksum
  * ```
  */
@@ -233,17 +187,15 @@ data class GMalformedChecksum(override val number: GInt, override val raw: List<
 }
 
 /**
- * Spec section 8.5: the block is framed correctly and its checksum field is well formed, but the
- * value on the wire is not the value the bytes produce. The block is corrupt in transit and a host
- * answers it with `Resend: <number>`.
+ * Spec 8.5: the block is framed correctly and its checksum field is well formed, but the value on
+ * the wire is not the value the bytes produce - corrupt in transit, answered with `Resend: <number>`.
  *
- * [expected] is recomputed from the covered bytes, [received] is what the wire carried. Both are
- * kept because a host's diagnostic quotes them together, and because the pair is what tells a
- * genuine corruption from a generator that is checksumming the wrong byte range.
+ * [expected] is recomputed from the covered bytes, [received] is what the wire carried; both are kept
+ * because a diagnostic quotes them together, and the pair tells genuine corruption from a generator
+ * checksumming the wrong byte range.
  *
- * It keeps the whole token list, like every other block type, so it round-trips for free. [GOrdered]
- * because the resend request is addressed by line number. Deliberately **not**
- * [GCheckSumControlled]: a consumer matching on that interface is asking for blocks it can trust.
+ * [GOrdered] because the resend is addressed by line number. Deliberately not
+ * [GCheckSumControlled]: matching on that interface is asking for blocks that can be trusted.
  *
  * ```
  * (GBlockReader.blocks("N1 G28*19\n").first() as GCheckSumFailedBlock).msg

@@ -32,23 +32,18 @@ interface GRs<T : GRs<T>> {
  * Reads one kind of reply off a received line. Every reply type's companion - or the reply object
  * itself, for one that carries nothing - implements it.
  *
- * [decode] is **the primitive**: one pass over the line, answering with the reply or with `null`,
- * because a reply stream mixes many kinds and a line that is some other kind is not an error.
- * [match] and [decodeParams] are derived from it.
+ * [decode] is the primitive: one pass over the line, answering with the reply or with `null`, since a
+ * reply stream mixes many kinds and a line that is some other kind is not an error. [match] and
+ * [decodeParams] are derived from it.
  *
- * **It was the other way round, and the full work happened twice.** `match` and `decodeParams` were
- * the abstract members and `decode` was `if (match(line)) decodeParams(line) else null`, so every
- * line a decoder claimed was read, decided, and then read again - worst exactly where the work is
- * largest, and on the one path that runs for every line a printer sends. Two things fall out of the
- * inversion besides the pass:
- *
- * - **A decoder can no longer disagree with itself.** `decodeParams` re-validated with `require`
- *   after `match` had already said yes; the day the two disagreed, the result was an exception out
- *   of the middle of the transport's pipeline rather than the `null` it is written to handle.
- * - **The cheap boolean is gone**, and that is the trade. A caller that only wants [match] now pays
- *   for the whole read. The only callers that do are the partition tests in `MarlinRsTest` and
- *   `BaseRsTest`; if a hot one ever appears, the answer is a prefix check on that decoder, not a
- *   second full parse.
+ * It was the other way round once, with `match` and `decodeParams` abstract and `decode` written as
+ * `if (match(line)) decodeParams(line) else null` - so every line a decoder claimed was read, decided
+ * and read again, worst exactly where the work is largest and on the path every received line runs.
+ * The inversion also means a decoder can no longer disagree with itself: `decodeParams` used to
+ * re-validate with `require` after `match` had already said yes, so the day the two disagreed the
+ * result was an exception out of the transport pipeline rather than the `null` it is written to
+ * handle. The trade is that a caller wanting only [match] now pays for the whole read; the only ones
+ * that do are the partition tests in `MarlinRsTest` and `BaseRsTest`.
  *
  * ```
  * ResendRs.decode("rs N12")   // ResendRs(12)

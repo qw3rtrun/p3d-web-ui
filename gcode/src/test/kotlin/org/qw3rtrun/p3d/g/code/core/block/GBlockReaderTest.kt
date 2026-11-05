@@ -660,13 +660,10 @@ class GBlockReaderTest {
             ignoreLeadingAndTrailingWhitespace = false
         )
         fun `leading whitespace before N does not stop the block being framed`(gcode: String, checksum: Int) {
-            // spec 2.1: space and tab are separators only, so the `N` is still the first *field*.
-            //
-            // The checksums say something sharper, and it is the reason these three uppercase cases
-            // all carry 18 - the same value as the unindented `N1 G28*18`. Spec 8.3 starts the
-            // covered range at the `N`, so **indentation is not checksummed**: one space, a tab or
-            // a tab and a space all leave the answer at 18. Only the lowercase case moves, and it
-            // moves because of the `n`, not because of the three spaces in front of it.
+            // spec 2.1: space and tab are separators only, so the `N` is still the first field. The
+            // three uppercase cases all carry 18, same as unindented `N1 G28*18`, since spec 8.3
+            // starts the covered range at the `N` - indentation is not checksummed. Only the
+            // lowercase case moves, because of the `n`, not the spaces in front of it.
             val framed = block(gcode) as GFramedBlock
 
             assertEquals(GInt(1), framed.number)
@@ -707,12 +704,9 @@ class GBlockReaderTest {
 
         @Test
         fun `whitespace between N and its number is allowed`() {
-            // spec 2.1: whitespace is a separator, words assemble across it.
-            //
-            // 50, where `N1 G28` is 18: a space *inside* the line-number field is covered by spec
-            // 8.3, while a space *before* the `N` is not. That is the whole of the difference
-            // between this case and the indented ones above, and it is why the covered range has
-            // to start at the `N` rather than at the first byte or the first field.
+            // spec 2.1: whitespace is a separator, words assemble across it. 50, where `N1 G28` is
+            // 18: a space inside the line-number field is covered by spec 8.3, while a space before
+            // the `N` is not - the whole difference from the indented cases above.
             val framed = block("N 1 G28*50\n") as GFramedBlock
 
             assertEquals(GInt(1), framed.number)

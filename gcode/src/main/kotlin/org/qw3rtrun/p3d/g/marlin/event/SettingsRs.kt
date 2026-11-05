@@ -10,11 +10,9 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
  * `M503`'s settings report and `M504`'s EEPROM notice: what the machine says its own
- * configuration is.
- *
- * **One interface over the family, because a Settings view wants one subscription** - the same
- * reason [SdCardRs] has one. A caller matching `SettingsRs<*>` gets the whole report: the section
- * headers, the setting lines under them, and the EEPROM health notice.
+ * configuration is. One interface over the family, as with [SdCardRs], so a caller matching
+ * `SettingsRs<*>` gets the whole report in one subscription: section headers, the setting lines
+ * under them, and the EEPROM health notice.
  *
  * Captured off MarlinSim `FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56)
  * MACHINE_TYPE:MarlinSim`. `M503`, `M503 S1`, `M503 S` and `M503 C` all produce byte-identical
@@ -26,10 +24,9 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * echo:EEPROM OK                               EepromReport("OK")      - M504
  * ```
  *
- * **`M503 S0` answers in a second shape nobody documents**: no `echo:` prefix and no section
- * headers at all, with the same two-space indent on the value lines. A bare single-setting query
- * (`M92` on its own) answers in exactly that shape too, which is why one decoder covers both and
- * why the two must produce the same value:
+ * **`M503 S0` answers in a second, undocumented shape**: no `echo:` prefix and no section headers,
+ * but the same two-space indent on the value lines - and a bare single-setting query (`M92` alone)
+ * answers in exactly that shape too, which is why one decoder covers both and why they must agree:
  *
  * ```
  * >> M503 S0                                   >> M92
@@ -37,17 +34,15 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * << ok P15 B3                                 << ok P15 B3
  * ```
  *
- * **The two-space indent is the whole guard.** It is what separates a settings line from every
- * other thing a printer says, so the indentation is read off the raw line and never trimmed away
- * first: `echo:M104 Invalid extruder 5` and `echo:Unknown command: "M9999"` carry the prefix but
- * no indent, so they stay [InvalidExtruder] and [UnknownCommand]; an unindented `M92 X80` is not a
- * settings reply at all.
+ * **The two-space indent is the whole guard** separating a settings line from everything else a
+ * printer says, so it is read off the raw line and never trimmed away first: `echo:M104 Invalid
+ * extruder 5` and `echo:Unknown command: "M9999"` carry the prefix but no indent, so they stay
+ * [InvalidExtruder] and [UnknownCommand].
  *
- * Three of `M503`'s neighbours are deliberately not here. `M500` answers
- * `//action:notification Settings Stored`, which is already an `ActionRs`. `M501` and `M502`
- * answer a bare `ok` and say nothing else. And `M504`'s *failure* text is unmeasured - the
- * simulator always reports OK - which is why [EepromReport] carries the message verbatim instead
- * of a boolean it would have to have guessed.
+ * Three of `M503`'s neighbours are deliberately not here: `M500` answers
+ * `//action:notification Settings Stored`, already an `ActionRs`; `M501`/`M502` answer a bare `ok`
+ * and nothing else; `M504`'s *failure* text is unmeasured (the simulator always reports OK), which
+ * is why [EepromReport] carries the message verbatim instead of a guessed boolean.
  *
  * @see <a href="https://marlinfw.org/docs/gcode/M503.html">Marlin M503</a>
  */
@@ -95,9 +90,6 @@ data class SettingsSection(val title: String) : SettingsRs<SettingsSection> {
          * SettingsSection.decode("echo:; Hotend PID")    // null - no closing colon
          * SettingsSection.decode("echo:  M92 X80.00")    // null - a value, not a heading
          * ```
-         *
-         * @param line one received line, as it was framed
-         * @return the heading, or null when [line] is some other kind of reply
          */
         override fun decode(line: String): SettingsSection? {
             if (!line.startsWithAscii(EchoMessage.PREFIX)) return null
@@ -120,20 +112,18 @@ data class SettingsSection(val title: String) : SettingsRs<SettingsSection> {
  *
  * **The words are deliberately not parsed.** The report *is* a list of commands, and that is all
  * this type claims: [command] is the text the firmware wrote, and a caller that wants `X80.00` out
- * of `M92 X80.00 Y80.00` runs it through `GTokenizer`, which already reads exactly this syntax. A
+ * of `M92 X80.00 Y80.00` runs it through `GTokenizer`, which already reads exactly this syntax - a
  * second parse model here would be a second place for the number rules to drift.
  *
  * [code] is the head - `G` or `M`, its digits, and an optional `.`-subcode - kept in the firmware's
- * own casing, because it is what a consumer switches on to decide which setting a line is about.
- *
- * A trailing comment stays in [command] verbatim: `G21 ; (mm)` and `M149 C ; Units in Celsius` are
- * what the firmware said, and the note is part of the report rather than noise to strip.
+ * own casing, because it is what a consumer switches on to decide which setting a line is about. A
+ * trailing comment stays in [command] verbatim: `G21 ; (mm)` and `M149 C ; Units in Celsius` are
+ * what the firmware said, part of the report rather than noise to strip.
  *
  * **The `echo:`-prefixed indented form is the canonical spelling**, in the sense `GRs.encode`
- * means it. A value read from an `M503 S0` line - which arrives with no prefix - re-encodes to the
- * `echo:` form, so the round-trip is a round-trip of the *value* and not of the bytes. That is not
- * a defect: both spellings decode to the same value, and one of them has to be the one `encode`
- * writes.
+ * means it: a value read from an `M503 S0` line (no prefix) re-encodes to the `echo:` form, so the
+ * round-trip is of the *value* and not of the bytes - not a defect, since both spellings decode to
+ * the same value and one of them has to be the one `encode` writes.
  *
  * ```
  * SettingsValue.decode("echo:  M92 X80.00 Y80.00")   // SettingsValue("M92", "M92 X80.00 Y80.00")
@@ -172,9 +162,6 @@ data class SettingsValue(val code: String, val command: String) : SettingsRs<Set
          * SettingsValue.decode("  TEST.GCO 47")       // null
          * SettingsValue.decode("  G1.GCO 47")         // null
          * ```
-         *
-         * @param line one received line, as it was framed
-         * @return the setting line, or null when [line] is some other kind of reply
          */
         override fun decode(line: String): SettingsValue? {
             val body = if (line.startsWithAscii(EchoMessage.PREFIX)) EchoMessage.PREFIX.length else 0
@@ -235,9 +222,6 @@ data class EepromReport(val message: String) : SettingsRs<EepromReport> {
          * EepromReport.decode("echo:EEPROM OK")   // EepromReport("OK")
          * EepromReport.decode("echo:EEPROM")      // null - nothing said about it
          * ```
-         *
-         * @param line one received line, as it was framed
-         * @return the verdict, or null when [line] is some other kind of reply
          */
         override fun decode(line: String): EepromReport? {
             if (!line.startsWithAscii(EchoMessage.PREFIX)) return null

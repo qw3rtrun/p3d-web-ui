@@ -200,22 +200,12 @@ class BareStringTest {
         }
 
         /**
-         * `M810`-`M819` store G-code, and G-code legitimately carries `;` comments - so refusing one
-         * here looks like over-reach. It is not, and this is the reasoning written down.
-         *
-         * The macro's text is a bare rest-of-line string like any other, and it has to survive the
-         * *block* before it can reach the macro store. `M810 G1 X1 ; move` sent over a numbered link
-         * is a block whose comment starts at the `;` and swallows the `*nn` the transport appended,
-         * so the firmware never stores the macro at all - it asks for a resend of a block that will
-         * never be right. The exception says exactly that, at the call site, instead of at the
-         * printer. A newline is worse still, and was never the way to write a multi-statement macro
-         * in the first place: Marlin's own example separates statements with `|`, as in
-         * `M815 G0 X0 Y0|G0 Z10|M300 S440 P50`, and `|` is printable ASCII and goes through
-         * untouched.
-         *
-         * So the macro classes need no path of their own. A caller that genuinely wants a comment
-         * stored in a macro has no way to send one, and that is a property of the wire, not of
-         * this DSL.
+         * `M810`-`M819` store G-code, which legitimately carries `;` comments - but the macro text
+         * is a bare rest-of-line string like any other, and has to survive the *block* first:
+         * `M810 G1 X1 ; move` over a numbered link is a block whose comment swallows the checksum
+         * behind it, so the firmware never stores the macro and asks for a resend that will never be
+         * right. Marlin's own multi-statement example uses `|`, not a comment or a newline -
+         * `M815 G0 X0 Y0|G0 Z10|M300 S440 P50` - so a caller never legitimately needs one here.
          */
         @Test
         fun `a stored macro is G-code, and a comment in one is still refused`() {

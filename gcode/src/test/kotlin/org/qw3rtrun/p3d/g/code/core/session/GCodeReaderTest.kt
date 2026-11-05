@@ -165,11 +165,8 @@ class GCodeReaderTest {
         @Test
         fun `M110 inside a comment is not an M110`() {
             // Marlin decides a block is an M110 with `strstr(command, "M110")` over the raw buffer,
-            // which does not know where the comment starts. On this block it would find the text,
-            // skip the continuity check, take the `N0` in the comment as the second N, and reset the
-            // counter to 0 - all from a comment. Reading the parsed commands instead is a deliberate
-            // divergence: that behaviour follows from scanning text rather than from any rule in
-            // spec 7.2, and a comment must not be able to resynchronise a session.
+            // so it would find this text and reset from a comment. Reading the parsed command's head
+            // instead is a deliberate divergence - a comment must not resynchronise a session.
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\n")
 
@@ -181,15 +178,10 @@ class GCodeReaderTest {
 
         @Test
         fun `an M110 inside an M117 message does not reset`() {
-            // This used to assert the opposite, as characterisation: `M117`'s argument is a
-            // bare rest-of-line string (spec 3.4a), and while the module could not read one,
-            // `M117 M110 N0` decomposed into two commands of which the second really was an
-            // `M110 N0` - so a status message resynchronised the session. Marlin does the same
-            // for its own worse reason (`strstr(command, "M110")` over the raw buffer).
-            //
-            // The reset value is now read off the block's *head*, and that head is `M117`: the
-            // rest of the line is its message, whatever the message spells. The old test asked
-            // to be flipped once this became readable, and this is that flip.
+            // Was characterisation of the opposite: before the module could read `M117`'s
+            // rest-of-line argument (spec 3.4a), `M117 M110 N0` decomposed into two commands and the
+            // second really was an `M110 N0`, resynchronising the session. The reset value is now
+            // read off the block's head, which is `M117` - the rest of the line is just its message.
             val reader = GCodeReader()
             readAll(reader, "N1 G28*18\n")
 

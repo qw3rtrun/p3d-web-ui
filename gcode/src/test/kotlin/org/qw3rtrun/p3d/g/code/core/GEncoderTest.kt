@@ -51,11 +51,8 @@ class GEncoderTest {
 
         @Test
         fun `adjacent words never fuse`() {
-            // Finding 1.10: `GCommand.print()` concatenated rawText() with no separator, so the
-            // bytes it produced depended on the values being self-delimiting. The exact reproducer
-            // from that finding - a command built from a bare list of values - stopped compiling
-            // when 03 gave GCommand its head/params shape, so this is the live equivalent: two
-            // number-bearing words in a row, asserted to stay two words.
+            // Finding 1.10: the old encoder concatenated rawText() with no separator, so the bytes
+            // it produced depended on the values being self-delimiting.
             val encoded = GEncoder.encode(
                 cmd('G', 1, GParameterWord(GLetter('X'), GInt(2))))
 

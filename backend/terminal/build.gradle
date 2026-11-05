@@ -97,3 +97,19 @@ tasks.register('probeResendDrift', JavaExec) {
             (findProperty('probePort') ?: '8099').toString(),
     ]
 }
+
+/**
+ * Measure what M500-M504 and the bare single-setting queries behind them actually answer -
+ * issue #88. Hand-run only, like the probes above: it writes to the machine's live memory and,
+ * once, to its EEPROM.
+ */
+tasks.register('probeSettings', JavaExec) {
+    group = 'verification'
+    description = 'Measure what Marlin\'s EEPROM settings commands (M500-M504) answer over a plain socket.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.SettingsProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

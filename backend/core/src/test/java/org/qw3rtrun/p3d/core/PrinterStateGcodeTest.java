@@ -17,28 +17,21 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * The bytes {@link PrinterState} puts on the wire, pinned across the move from the old {@code G}
- * facade to {@link GSender}.
- *
- * <p>Every expectation here was captured from the old facade before it was deleted, so this is a
- * characterisation test in the strict sense: it passes against both implementations, which is what
- * makes it evidence that the swap changed nothing observable. The one deliberate exception is
- * {@link #aTemperatureIsNotFormattedThroughTheDefaultLocale()} — the old code failed it.
+ * facade to {@link GSender}. Every expectation was captured from the old facade before deletion, so
+ * this is a characterisation test: it passes against both implementations, except the one deliberate
+ * exception, {@link #aTemperatureIsNotFormattedThroughTheDefaultLocale()}, which the old code failed.
  */
 class PrinterStateGcodeTest {
 
     private final List<String> sent = new ArrayList<>();
     private final List<Object> events = new ArrayList<>();
 
-    /**
-     * An exact {@code void} method reference, not {@code sent::add}: {@code List.add} is overloaded,
-     * which makes the reference inexact and therefore ambiguous across {@code GSender}'s two
-     * constructors. The same reason {@code PrinterReactor} uses one.
-     */
+    // an exact void method reference, not sent::add: List.add is overloaded, making the reference
+    // ambiguous across GSender's two constructors - same reason PrinterReactor uses one.
     private void capture(String gcode) {
         sent.add(gcode);
     }
 
-    /** A printer that has completed the online handshake, leaving it in {@link #sent}. */
     private PrinterState online() {
         PrinterState printer = new PrinterState(UUID.randomUUID());
         printer.setEmitter(events::add);
@@ -90,13 +83,9 @@ class PrinterStateGcodeTest {
         assertEquals(List.of(), sent);
     }
 
-    /**
-     * <p><b>Changed with the move off the old records.</b> A bare request used to encode as
-     * {@code M105 T0}, because the record defaulted its index to 0 and had no way to say "absent".
-     * The generated command distinguishes the two, and {@code M105} and {@code M105 T0} are
-     * different commands: the first asks about the active tool, the second about tool 0. A bare
-     * request now says so.
-     */
+    // changed with the move off the old records: a bare request used to encode as M105 T0 (the
+    // record defaulted its index to 0, with no "absent"); M105 and M105 T0 are different commands
+    // (active tool vs tool 0), and a bare request now says so.
     @Test
     void aTemperatureReportIsSentAsM105WithTheToolIndex() {
         PrinterState printer = online();
@@ -108,13 +97,9 @@ class PrinterStateGcodeTest {
         assertEquals(List.of("M105", "M105 T2"), sent);
     }
 
-    /**
-     * <p><b>Changed with the move off the old records.</b> An absent period used to encode as
-     * {@code M155 S0}, which turns auto-reporting *off*; it now encodes as a bare {@code M155},
-     * which Marlin reads as "change nothing". The old default was an accident of the record having
-     * no absent state, and {@link #disconnectingTurnsAutoReportingOff()} covers the path that
-     * actually means to turn it off - it asks for {@code S0} explicitly.
-     */
+    // changed with the move off the old records: an absent period used to encode as M155 S0 (turns
+    // auto-reporting off), an accident of the record having no absent state; it now encodes as a
+    // bare M155 ("change nothing").
     @Test
     void autoReportingIsSentAsM155WithThePeriod() {
         PrinterState printer = online();
@@ -138,11 +123,8 @@ class PrinterStateGcodeTest {
         assertEquals(List.of("M155 S0"), sent);
     }
 
-    /**
-     * The one behaviour that changed, and the reason it had to. {@code String.format("%.2f", …)}
-     * used the default locale, so this emitted {@code M140 S60,00} under a comma-decimal locale —
-     * not a number by spec §3.1, and a command the firmware rejects.
-     */
+    // String.format("%.2f", ...) used the default locale, so this emitted M140 S60,00 under a
+    // comma-decimal locale - not a number by spec sect. 3.1, and a command the firmware rejects.
     @Test
     void aTemperatureIsNotFormattedThroughTheDefaultLocale() {
         Locale original = Locale.getDefault();
@@ -159,15 +141,8 @@ class PrinterStateGcodeTest {
         }
     }
 
-    /**
-     * What an {@code M115} saying "this many extruders" looks like by the time it reaches the
-     * aggregate.
-     *
-     * <p>The real one is {@code FirmwareInfoRs} as `:gcode` decoded it, a value over the key-values
-     * the firmware sent; this is the same thing built by hand, so the aggregate reads the count the
-     * way it does in production - out of the map, rather than from a named accessor that only a test
-     * implements.
-     */
+    // built by hand the same shape :gcode decodes, so the aggregate reads the count the way it does
+    // in production - out of the map, not a named accessor only a test would implement.
     private static FirmwareInfoRs firmwareReporting(int extruderCount) {
         return new FirmwareInfoRs(
                 Map.of("FIRMWARE_NAME", "Test", "EXTRUDER_COUNT", String.valueOf(extruderCount)));

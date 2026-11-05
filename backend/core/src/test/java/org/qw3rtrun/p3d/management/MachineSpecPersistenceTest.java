@@ -21,16 +21,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * What a human declared, written down and read back - plan item B4's changeset, exercised.
- *
- * <p>Against the <strong>real Liquibase schema</strong> for the reason the profile's version of
- * this test exists: the entity and the changeset disagreeing is the failure worth catching, and
- * that has already happened once here over a reserved word.
- *
- * <p>The tests that matter most are the last two. B4's "what was discovered is distinguishable
- * from what was typed" is only true if neither half can write the other, and that is a property of
- * this class - {@code learnedFirmware} and {@code declare} touch disjoint columns - rather than
- * something a reader can see by looking at a {@code Descriptor}.
+ * What a human declared, written down and read back - plan item B4's changeset, exercised against
+ * the real Liquibase schema. The tests that matter most are the last two: B4's "what was discovered
+ * is distinguishable from what was typed" is only true if neither half can write the other, a
+ * property of {@code learnedFirmware} and {@code declare} touching disjoint columns.
  */
 @SpringBootTest
 @Transactional
@@ -74,14 +68,8 @@ class MachineSpecPersistenceTest {
         assertEquals(Set.of("prusa-shelf"), read.tags());
     }
 
-    /**
-     * Declaring again replaces, where a capability report upserts.
-     *
-     * <p>Different because the sources are different. A firmware sends capabilities one line at a
-     * time with nothing marking the last, so there is no moment at which the set is known to be
-     * complete; a person submits a whole form, and a material they took out of it is a material
-     * they meant to remove.
-     */
+    // declaring again replaces, where a capability report upserts: a firmware sends capabilities one
+    // at a time with no moment the set is complete, but a person submits a whole form.
     @Test
     void declaringAgainReplacesRatherThanMerging() {
         var entity = registered();
@@ -114,14 +102,8 @@ class MachineSpecPersistenceTest {
         assertNull(repo.findById(entity.getId()).orElseThrow().spec().bedVolume());
     }
 
-    /**
-     * A firmware report cannot overwrite what a person declared.
-     *
-     * <p>This is the half of "distinguishable" that a machine could break. A profile is replaced
-     * wholesale every time a printer reports - so if the two shared storage, every reconnection
-     * would silently undo an operator's override, and the only symptom would be a command for tool
-     * 1 starting to be refused again some time after it had been fixed.
-     */
+    // the half of "distinguishable" a machine could break: a profile is replaced wholesale every
+    // report, so shared storage would let every reconnection silently undo an override.
     @Test
     void aFirmwareReportLeavesTheDeclaredSpecAlone() {
         var entity = registered();

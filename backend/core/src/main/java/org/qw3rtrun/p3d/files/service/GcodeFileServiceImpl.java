@@ -36,16 +36,12 @@ public class GcodeFileServiceImpl implements GcodeFileService {
     private final GcodeBlobStore blobs;
 
     /**
-     * Streams the upload to disk, then records it - or finds that it was already held.
-     *
-     * <p>The content is read to its end either way. A re-upload of bytes the farm already has is
-     * still a request that sent them, and leaving them unread would stall the connection rather
-     * than finishing it; the dedupe saves the storage, not the transfer.
-     *
-     * <p>The slicer metadata is read <em>after</em> the bytes have landed, from two bounded windows
-     * of the stored file, rather than being accumulated while they streamed - see
-     * {@link GcodeBlobStore#headAndTail}. Keeping it while streaming would mean holding whichever
-     * part of the file a slicer chose to write its summary in, and PrusaSlicer chooses the end.
+     * Streams the upload to disk, then records it - or finds it was already held. The content is
+     * read to its end either way; the dedupe saves the storage, not the transfer, since leaving a
+     * re-upload unread would stall the connection. Slicer metadata is read after the bytes have
+     * landed, from two bounded windows of the stored file ({@link GcodeBlobStore#headAndTail}) -
+     * not accumulated while streaming, which would mean holding whichever part of the file a slicer
+     * wrote its summary in, and PrusaSlicer chooses the end.
      */
     @Override
     public Publisher<GcodeFile> store(String name, Publisher<ByteBuffer> content) {
@@ -109,12 +105,10 @@ public class GcodeFileServiceImpl implements GcodeFileService {
     }
 
     /**
-     * Removes the row, and the bytes if nothing else refers to them.
-     *
-     * <p>The check is asked after the row is gone, which is the order that cannot delete content
-     * out from under a surviving reference. Nothing creates a second row on the same hash today -
-     * {@link #store} returns the existing one - so this is a guard against a future in which
-     * something does, and the cost of getting it wrong is deleting a file a print is reading.
+     * Removes the row, and the bytes if nothing else refers to them - checked after the row is gone,
+     * the order that cannot delete content out from under a surviving reference. Nothing creates a
+     * second row on the same hash today ({@link #store} returns the existing one), so this guards a
+     * future in which something does.
      */
     @Override
     public void delete(UUID id) {

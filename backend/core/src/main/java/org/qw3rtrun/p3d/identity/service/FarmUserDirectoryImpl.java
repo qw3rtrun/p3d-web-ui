@@ -13,17 +13,11 @@ import java.util.Locale;
 import java.util.Optional;
 
 /**
- * The people roster, over JPA.
- *
- * <p><strong>This is the only place in the application that sees a cleartext password</strong>, and
- * it sees one only as an argument: {@link #add} and {@link #changePassword} hash on the way in and
- * nothing here returns, stores or logs the raw value. That is the whole reason hashing lives in
- * this module rather than beside the security configuration - a contract that took a hash would
- * let any caller supply a bad one.
- *
- * <p>Blocking, like every other JPA-backed contract in {@code api}. Whatever calls it from a web
- * thread owes it a {@code subscribeOn(Schedulers.boundedElastic())}; see
- * {@code FarmUserDirectory}'s own note.
+ * The people roster, over JPA. The only place in the application that sees a cleartext password,
+ * and only as an argument: {@link #add}/{@link #changePassword} hash on the way in and nothing here
+ * returns, stores or logs the raw value - the whole reason hashing lives in this module rather than
+ * beside the security configuration. Blocking, like every other JPA-backed contract in {@code api};
+ * a web-thread caller owes it {@code subscribeOn(Schedulers.boundedElastic())}.
  */
 @RequiredArgsConstructor
 public class FarmUserDirectoryImpl implements FarmUserDirectory {
@@ -31,13 +25,7 @@ public class FarmUserDirectoryImpl implements FarmUserDirectory {
     private final UserRepository repository;
     private final PasswordEncoder encoder;
 
-    /**
-     * Usernames are compared folded to lower case, on write and on lookup alike.
-     *
-     * <p>{@code Locale.ROOT} and not the default locale: in a Turkish locale {@code "I"} folds to a
-     * dotless {@code "\u0131"}, so the same name typed on two machines would reach two different
-     * rows. A username is an identifier rather than prose, and identifiers do not get localised.
-     */
+    /** Folded to lower case on write and lookup, with {@code Locale.ROOT} and not the default - in a Turkish locale {@code "I"} folds to a dotless {@code "\u0131"}, and an identifier does not get localised. */
     private static String fold(String username) {
         return username == null ? null : username.trim().toLowerCase(Locale.ROOT);
     }

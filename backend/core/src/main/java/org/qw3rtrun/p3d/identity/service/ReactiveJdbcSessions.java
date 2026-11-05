@@ -9,31 +9,23 @@ import reactor.core.scheduler.Schedulers;
 import java.util.concurrent.Callable;
 
 /**
- * Sessions kept in the database, behind the reactive contract WebFlux asks for.
+ * Sessions kept in the database, behind the reactive contract WebFlux asks for. Spring Session ships
+ * a reactive repository for Redis and MongoDB only and a blocking one for JDBC, so this wraps the
+ * blocking one rather than reimplementing it: session storage is security-sensitive (identifiers,
+ * expiry, cascade deletion) and the JDBC implementation has had far more eyes on it.
  *
- * <p><strong>Why this class exists at all.</strong> Spring Session ships a reactive repository for
- * Redis and for MongoDB, and a blocking one for JDBC - there is no reactive JDBC implementation.
- * This farm has a database and no Redis, and adding a second piece of infrastructure to keep one
- * table would be a worse trade than the problem it solves. So the blocking repository is wrapped
- * rather than reimplemented: session storage is security-sensitive - identifiers, expiry, cascade
- * deletion - and Spring Session's JDBC implementation has had far more eyes on it than a hand-
- * rolled one would.
+ * <p>The {@code subscribeOn} is the point of the wrapper and this repository's cardinal rule at its
+ * most load-bearing: a session is read on every single request, so a JDBC call left on the event
+ * loop here would serialise the whole farm behind one thread pool, not just stall occasionally.
+ * {@code Mono.fromCallable}, not {@code Mono.just}, since {@code just} evaluates eagerly on the
+ * calling thread before any scheduler can move the work - and the same {@code fromCallable} turns a
+ * {@code null} return into completion without a value, exactly what
+ * {@link ReactiveSessionRepository} specifies for an unknown identifier, so an expired cookie reads
+ * as "no session" rather than an error.
  *
- * <p><strong>The {@code subscribeOn} is the point of the wrapper</strong>, and it is this
- * repository's cardinal rule at its most load-bearing: a session is read on <em>every single
- * request</em>, so a JDBC call left on the event loop here would not be an occasional stall, it
- * would be the whole farm serialised behind one thread pool. {@code Mono.fromCallable} rather than
- * {@code Mono.just}, because {@code just} evaluates eagerly on the calling thread before any
- * scheduler can move the work.
- *
- * <p><strong>A missing session is an empty {@code Mono}, not a null.</strong>
- * {@code Mono.fromCallable} turns a {@code null} return into completion without a value, which is
- * exactly what {@link ReactiveSessionRepository} specifies for an unknown identifier - so an
- * expired cookie reads as "no session" rather than as an error.
- *
- * <p>The type parameter is inferred rather than written: Spring Session's {@code JdbcSession} is
- * package-private, so it cannot be named from here. {@link #over(SessionRepository)} exists so
- * that the compiler can infer what the caller cannot spell.
+ * <p>The type parameter is inferred rather than written, since Spring Session's {@code JdbcSession}
+ * is package-private and cannot be named here; {@link #over(SessionRepository)} exists so the
+ * compiler can infer what the caller cannot spell.
  */
 public final class ReactiveJdbcSessions<S extends Session> implements ReactiveSessionRepository<S> {
 

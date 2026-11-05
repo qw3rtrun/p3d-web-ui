@@ -12,13 +12,13 @@ import reactor.core.scheduler.Schedulers;
 /**
  * The core submodel's beans: the per-printer runtime and what it is built from.
  *
- * <p>Was half of {@code ApiApplication}, which was a {@code @SpringBootApplication} in what is now
- * the shared API module and wired three submodels' beans from one place. The shared vocabulary has
- * no business owning an entry point or a bean definition, so the class split along the boundary it
- * was straddling - the web half went to the frontend submodel, and this is the rest.
+ * <p>Was half of {@code ApiApplication}, a {@code @SpringBootApplication} that used to live in the
+ * shared API module and wire three submodels' beans from one place; the shared vocabulary has no
+ * business owning an entry point, so the class split along the boundary it was straddling - the web
+ * half went to the frontend submodel, this is the rest.
  *
- * <p>{@link #stubStateManager()} is still here and is still why no printer state survives a
- * restart; that is plan item B2.
+ * <p>{@link #aggregates(PrinterDirectory)} is still here and is still why no printer state survives
+ * a restart; that is plan item B2.
  */
 @Configuration
 @EnableScheduling
@@ -29,28 +29,18 @@ public class CoreConfiguration {
         return new PrinterDirectory();
     }
 
-    /**
-     * How hard a dropped machine is chased, in one place rather than per reactor.
-     *
-     * <p>A bean so that an assembly can replace it - a farm on a flaky link wants longer backoff
-     * than one in the same rack - without any of this module's classes gaining a property to read.
-     */
+    /** A bean so an assembly can replace the backoff (a flaky-link farm wants more than one in the same rack) without any class here gaining a property to read. */
     @Bean
     public ConnectionPolicy connectionPolicy() {
         return ConnectionPolicy.standard();
     }
 
     /**
-     * Which threads a machine's runtime runs on, in one place rather than per reactor.
-     *
-     * <p>A bean for the same reason {@link #connectionPolicy()} is one: an assembly can replace
-     * the threading model - put the whole farm back on one scheduler to reproduce something, or
-     * hand out platform threads on a JVM where virtual ones are awkward - without any class in
-     * this module gaining a property to read.
-     *
-     * <p>The default is one virtual thread per printer for the aggregate and one more for its
-     * listeners. Until #54 it was {@code Schedulers.single()} for the entire farm, which is the
-     * JVM-wide shared thread and not a fresh one.
+     * A bean for the same reason {@link #connectionPolicy()} is one - an assembly can replace the
+     * threading model (one scheduler for the whole farm to reproduce something, or platform threads
+     * where virtual ones are awkward). Default is one virtual thread per printer for the aggregate
+     * and one more for its listeners; until #54 it was {@code Schedulers.single()} for the entire
+     * farm, the JVM-wide shared thread rather than a fresh one.
      */
     @Bean
     public PrinterThreads printerThreads() {
@@ -73,12 +63,9 @@ public class CoreConfiguration {
     }
 
     /**
-     * Writes a stored file onto a machine's SD card - the other half of {@code JobFeeder}'s job.
-     *
-     * <p>Same two collaborators for the same reason: it reads the file through {@code api::files}
-     * and hands the blocks to the machine's runtime. What is different is that the transfer holds
-     * the connection exclusively, because between {@code M28} and {@code M29} every line goes into
-     * the file rather than being executed.
+     * Writes a stored file onto a machine's SD card - the other half of {@code JobFeeder}'s job,
+     * same two collaborators, except the transfer holds the connection exclusively (between
+     * {@code M28} and {@code M29} every line goes into the file rather than being executed).
      */
     @Bean
     public SdUploader sdUploader(PrinterReactorManager reactors, GcodeFileService files) {
@@ -86,26 +73,9 @@ public class CoreConfiguration {
     }
 
     /**
-     * A {@link PrinterState} seeded with what the roster remembers about the machine.
-     *
-     * <p>It used to be {@code PrinterState::new} - a blank aggregate every time, which is why a
-     * restart knew nothing about any printer until each was dialled again, and why a command to an
-     * unconnected one dereferenced a null extruder count.
-     *
-     * <p>What is seeded is the *static* half, and it is now both halves of that: the profile the
-     * machine reported, and the spec a human declared (plan item B4). Both are
-     * {@code printer-management}'s to keep and both arrive on the same announcement, which is why
-     * seeding reads one replica entry rather than two. Temperatures are not seeded and should not
-     * be - a reading from before the process restarted is not state, it is a stale number that
-     * would read as current. The aggregate starts with no temperature and says so until the machine
-     * reports one.
-     */
-    /**
-     * The thing that actually prints a file - plan item C3.
-     *
-     * <p>It names no other module: it hears that a job started from {@code api::jobs}'s event,
-     * reads the file through {@code api::files}, and announces what became of the feed. What that
-     * does to the job's state is the queue's business and not this module's.
+     * The thing that actually prints a file - plan item C3. Names no other module: it hears that a
+     * job started from {@code api::jobs}'s event, reads the file through {@code api::files}, and
+     * announces what became of the feed; what that does to the job's state is the queue's business.
      */
     @Bean
     public JobFeeder jobFeeder(PrinterReactorManager reactors,
@@ -116,33 +86,34 @@ public class CoreConfiguration {
     }
 
     /**
-     * The farm-wide stream - plan item D2.
-     *
-     * <p>It opens nothing: it listens where every machine's events already go, so watching forty
-     * printers costs forty listeners rather than forty sockets.
-     *
-     * <p><strong>Returns the concrete type, not {@link FarmView}.</strong> {@code frontend} injects
-     * this by {@code FarmView} and still gets it, because the advertised type is a subtype of the
-     * one it asks for; {@link #farmShutdown(PrinterReactorManager, FarmEvents)} is what needs the
-     * concrete type, for {@link FarmEvents#close()}, which is not and must not become part of
-     * {@code api::control} - it is this submodel's own shutdown path, not something a caller across
-     * the boundary has any business calling.
+     * The farm-wide stream - plan item D2. Opens nothing: listens where every machine's events
+     * already go, so watching forty printers costs forty listeners rather than forty sockets.
+     * Returns the concrete type, not {@link FarmView} - {@code frontend} still gets it injected by
+     * {@code FarmView}, since the advertised type is a subtype, but
+     * {@link #farmShutdown(PrinterReactorManager, FarmEvents)} needs the concrete type for
+     * {@link FarmEvents#close()}, which must not become part of {@code api::control} since it is
+     * this submodel's own shutdown path.
      */
     @Bean
     public FarmEvents farmEvents(PrinterDirectory directory, PrinterReactorManager reactors) {
         return new FarmEvents(directory, reactors);
     }
 
-    /**
-     * Lets the farm go when the application is told to stop - issue #87. See {@link FarmShutdown}
-     * for the whole of why this is a {@code SmartLifecycle} bean and not, say, a {@code @PreDestroy}
-     * method on one of the beans above.
-     */
+    /** Lets the farm go when the application is told to stop - issue #87; see {@link FarmShutdown} for why this is a {@code SmartLifecycle} bean and not, say, a {@code @PreDestroy} method. */
     @Bean
     public FarmShutdown farmShutdown(PrinterReactorManager reactors, FarmEvents farmEvents) {
         return new FarmShutdown(reactors, farmEvents);
     }
 
+    /**
+     * A {@link PrinterState} seeded with what the roster remembers - it used to be
+     * {@code PrinterState::new}, a blank aggregate every time, which is why a restart knew nothing
+     * about any printer until dialled again and why a command to an unconnected one dereferenced a
+     * null extruder count. Seeds both static halves (the reported profile and the declared spec,
+     * plan item B4) from the one replica entry that carries both. Temperatures are deliberately not
+     * seeded: a reading from before the restart is a stale number that would read as current, so the
+     * aggregate starts with none and says so until the machine reports one.
+     */
     @Bean
     public PrinterAggregateManager aggregates(PrinterDirectory directory) {
         return id -> directory.find(id)

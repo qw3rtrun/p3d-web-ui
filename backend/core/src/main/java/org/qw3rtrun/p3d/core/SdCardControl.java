@@ -18,26 +18,20 @@ import java.util.List;
 
 /**
  * What this machine's card is, as far as its replies have said: mounted, what is on it, which file
- * is selected, what is being written, whether it is printing.
+ * is selected, what is being written, whether it is printing. Same shape as
+ * {@link TemperatureControl} and {@link ProfileControl}: {@link #on} folds a reply in,
+ * {@link #snapshot()} hands the state back as the replies that announced it, so a late Storage tab
+ * shows the card as it is rather than an empty table until somebody presses "list".
  *
- * <p>The same shape as {@link TemperatureControl} and {@link ProfileControl}: {@link #on} takes a
- * reply and {@link #snapshot()} hands the current state back as the replies that would have
- * announced it, so a Storage tab opened late shows the card as it is instead of an empty table
- * until somebody presses "list".
+ * <p>Every part is "the last thing the machine said" and nothing is inferred from a command having
+ * been sent (a listing is the last {@code M20} answer, not that answer edited by a later
+ * {@code M30}) - except {@link #released()}, whose reason is written there. What the machine has
+ * not said is absent, not empty. A happening - {@code Done saving file.}, {@code Done printing
+ * file}, {@code Now fresh file:}, the listing's begin/end markers - changes the state and is never
+ * itself handed to a late subscriber.
  *
- * <p><strong>Every part is "the last thing the machine said", and only that.</strong> Nothing
- * here is inferred from a command having been sent - a listing is the last {@code M20} answer, not
- * that answer edited by the {@code M30} sent since - with one exception, {@link #released()}, whose
- * reason is written there. What the machine has not said is absent, the rule every control here
- * keeps: an unknown card is not an empty one.
- *
- * <p><strong>Facts, not happenings.</strong> {@code Done saving file.}, {@code Done printing file},
- * {@code Now fresh file:} and the listing's begin and end markers each <em>change</em> the state
- * and are not part of it, so they are never handed to a late subscriber.
- *
- * <p><strong>One immutable value behind one volatile reference</strong>, unlike the separate
- * fields elsewhere, because the parts belong together: a snapshot must not pair a listing with a
- * mount flag from before it.
+ * <p>One immutable value behind one volatile reference, not separate fields, because the parts
+ * belong together: a snapshot must not pair a listing with a mount flag from before it.
  */
 public class SdCardControl {
 

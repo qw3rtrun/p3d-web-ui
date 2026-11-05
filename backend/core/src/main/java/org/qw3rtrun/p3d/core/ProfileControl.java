@@ -14,20 +14,16 @@ import java.util.TreeMap;
 /**
  * What this machine is, as far as anyone knows: its firmware report and its capabilities.
  *
- * <p><strong>Seeded from the roster, not discovered from nothing.</strong> It used to be two
- * objects - a {@code FirmwareInfo} wrapping a nullable report and a {@code CapabilitiesInfo}
- * wrapping a map - both starting empty every time the process did. So the extruder-count check in
- * {@link PrinterState} had nothing to read until a machine had been dialled, and a command sent to
- * one that had not blew up on a null rather than being refused.
+ * <p>Seeded from the roster rather than discovered from nothing - it used to be two objects
+ * (nullable firmware, an empty capability map) starting empty every process, so the extruder-count
+ * check in {@link PrinterState} had nothing to read until a machine was dialled and a command to one
+ * that had not NPE'd instead of being refused. {@code printer-management} persists and announces
+ * this value, so a restart knows what each machine is before anything connects to it; replaced
+ * wholesale on each change (volatile, since a snapshot reads it from whichever thread builds one).
  *
- * <p>The profile is a single value that {@code printer-management} persists and announces, so a
- * restart knows what each machine is before anything connects to it. It is replaced wholesale on
- * each change, which is what makes it safe to hand out - and volatile, because a snapshot reads it
- * from whichever thread is building one.
- *
- * <p>The same shape as {@link TemperatureControl}: each {@code on} takes a report and says whether
- * it changed anything, so the aggregate announces only what is news, and {@link #snapshot()} hands
- * the current value back as the reports that would have announced it.
+ * <p>Same shape as {@link TemperatureControl}: each {@code on} takes a report and says whether it
+ * changed anything, so the aggregate announces only what is news, and {@link #snapshot()} hands the
+ * current value back as the reports that would have announced it.
  */
 public class ProfileControl {
 

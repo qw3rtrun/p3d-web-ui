@@ -22,48 +22,35 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
- * Two machines put an event on the farm stream at the same moment, and neither one is lost.
- *
- * <p><strong>The third instance of the bug {@code HostTerminal} and {@code PrinterReactor} were
- * fixed for, and the only one that was seen on a laptop.</strong> {@code FarmEvents.emit} called
- * {@code tryEmitNext} on a <em>safe</em> {@code Sinks.Many} from whatever thread published the
- * Spring event - a reactor's {@code single}, a netty loop, or {@code boundedElastic}. A safe sink
- * does not serialise for its caller, it <em>refuses</em>: the second emitter gets
- * {@code FAIL_NON_SERIALIZED}, and checking the result is not the same as handling it. Two minutes
- * of simulator traffic against one printer dropped a real {@code IDLE -> CONNECTING} transition.
- *
- * <p><strong>What makes this instance nastier than the other two is the log line.</strong> The sink
- * is {@code multicast().directBestEffort()} and is <em>meant</em> to drop - for backpressure, when
- * one slow browser cannot keep up, so that a stalled dashboard never stalls the reactor feeding it.
- * That drop costs one subscriber one event. A collision costs <em>every</em> dashboard the same
- * event and has nothing to do with how fast anyone is reading, and it wore the same words in the
- * log.
- *
- * <p><strong>The collision is forced rather than hoped for.</strong> Reactor's serialisation guard
- * is re-entrant for the thread that holds it, so a refusal needs a <em>different</em> thread inside
- * the sink at that moment. The subscriber here parks the first thread inside {@code tryEmitNext}
- * and the second emits while it is held. A test that merely emits from two threads and hopes passes
- * against the bug on most runs - which is exactly why this survived two rounds of fixing it
- * elsewhere.
+ * Two machines put an event on the farm stream at the same moment, and neither one is lost - the
+ * third instance of the bug {@code HostTerminal} and {@code PrinterReactor} were fixed for, and the
+ * only one seen on a laptop: {@code FarmEvents.emit} called {@code tryEmitNext} on a safe
+ * {@code Sinks.Many} from whatever thread published the Spring event, which refuses a concurrent
+ * emission with {@code FAIL_NON_SERIALIZED} rather than serialising it - two minutes of simulator
+ * traffic against one printer dropped a real {@code IDLE -> CONNECTING} transition. Nastier than the
+ * other two because of the log line: the sink is meant to drop for backpressure (costing one
+ * subscriber one event), but a collision costs every dashboard the same event and wore identical
+ * words in the log. The collision is forced, not hoped for: a refusal needs a different thread
+ * inside the sink while Reactor's re-entrant guard is held, made certain here by parking the first
+ * thread inside {@code tryEmitNext} while the second emits.
  */
 class FarmEventsEmissionTest {
 
-    /** Alpha's reading, delivered to a subscriber that will not let go of the thread carrying it. */
+    // alpha's reading, delivered to a subscriber that will not let go of the thread carrying it.
     private static final BareTemperatureRs FIRST = temperature(210);
 
-    /** Beta's, emitted from a second thread while the first is still inside the sink. */
+    // beta's, emitted from a second thread while the first is still inside the sink.
     private static final BareTemperatureRs SECOND = temperature(60);
 
     private final UUID alpha = UUID.randomUUID();
     private final UUID beta = UUID.randomUUID();
 
-    /** Everything a dashboard saw, in order. */
     private final List<EventMessage> seen = new CopyOnWriteArrayList<>();
 
-    /** Counted down from inside the subscriber, once alpha's reading is being delivered. */
+    // counted down from inside the subscriber, once alpha's reading is being delivered.
     private final CountDownLatch delivering = new CountDownLatch(1);
 
-    /** Counted down by the second thread once it has emitted; it is what frees the first. */
+    // counted down by the second thread once it has emitted; frees the first.
     private final CountDownLatch collided = new CountDownLatch(1);
 
     private final AtomicReference<Throwable> secondEmitterFailed = new AtomicReference<>();
@@ -74,14 +61,8 @@ class FarmEventsEmissionTest {
 
     private FarmEvents farm;
 
-    /**
-     * A farm view over an empty directory, so that {@code updates()} is the live sink and nothing
-     * else.
-     *
-     * <p>An empty snapshot completes during {@code subscribe()}, so the sink has a subscriber by the
-     * time that call returns - which is what lets the test emit into it from another thread
-     * immediately afterwards.
-     */
+    // an empty directory, so updates() is the live sink and nothing else - an empty snapshot
+    // completes during subscribe(), so the sink has a subscriber by the time that call returns.
     @BeforeEach
     void build() {
         var directory = new PrinterDirectory();
@@ -99,14 +80,8 @@ class FarmEventsEmissionTest {
         }
     }
 
-    /**
-     * Both machines' events reach the dashboard, even though the two emissions overlap.
-     *
-     * <p>That is the whole of the observable: a page holding {@code /api-farm/stream} either sees
-     * both readings or it does not. The two ids are asserted as well, because demultiplexing by
-     * {@code EventMessage.id} is the thing one stream exists to do - the <em>end to end</em> version
-     * of that, two machines through the HTTP endpoint, belongs to the {@code :app} suite.
-     */
+    // a page holding /api-farm/stream either sees both readings or it does not; the ids are
+    // asserted too, since demultiplexing by EventMessage.id is the thing one stream exists to do.
     @Test
     void bothMachinesReachADashboardWhenTheyEmitAtOnce() throws InterruptedException {
         watching = Flux.from(farm.updates()).subscribe(message -> {
@@ -128,12 +103,8 @@ class FarmEventsEmissionTest {
                         + "reached from a Spring listener on the reactor's own thread");
     }
 
-    /**
-     * Starts the two emitters: one that will be held inside the sink, one that collides with it.
-     *
-     * <p>Both arrive the way the application delivers them - {@code onMachineEvent}, the
-     * {@code @EventListener} every reactor's events reach.
-     */
+    // starts the two emitters: both arrive via onMachineEvent, the @EventListener every reactor's
+    // events reach.
     private void twoMachinesEmitAtOnce() {
         colliding = new Thread(() -> {
             try {
@@ -164,12 +135,8 @@ class FarmEventsEmissionTest {
         }
     }
 
-    /**
-     * Parks the delivering thread inside {@code tryEmitNext} until the other one has emitted.
-     *
-     * <p>Blocking in a subscriber is exactly what this test needs and nothing else does: it is the
-     * only way to make "two threads are in the sink at once" a fact rather than a probability.
-     */
+    // parks the delivering thread inside tryEmitNext until the other has emitted - the only way to
+    // make "two threads in the sink at once" a fact rather than a probability.
     private void holdThisThreadInsideTheSink() {
         delivering.countDown();
         try {

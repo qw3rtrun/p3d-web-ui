@@ -11,25 +11,12 @@ import java.util.Base64;
 
 /**
  * The first account, so that turning security on does not lock everybody out of their own farm.
- *
- * <p><strong>There is no default password, and that is the entire point of this class.</strong> A
- * farm that shipped {@code admin}/{@code admin} would be worse than the unauthenticated farm this
- * item replaces: it would look protected. So the password is either one an operator set
- * deliberately, or one nobody chose -
- *
- * <ul>
- *   <li>{@code p3d.security.initial-admin.password} set - that is used, and never logged;</li>
- *   <li>unset - 192 bits from {@link SecureRandom} are generated and written to the log
- *       <strong>once</strong>, at WARN, the way Spring Boot's own generated password is. It is not
- *       stored anywhere in recoverable form, so losing it means deleting the row and restarting.</li>
- * </ul>
- *
- * <p><strong>It runs only when the roster is empty.</strong> Not "when the admin is missing" - a
- * farm whose administrator deliberately deleted the default account must not have it recreated on
- * the next restart, and a farm with any user at all has somebody who can create more.
- *
- * <p>An {@link ApplicationRunner} rather than anything earlier, because it needs the schema to
- * exist: Liquibase runs during context refresh, and this runs after it has finished.
+ * There is no default password: {@code p3d.security.initial-admin.password}, if set, is used and
+ * never logged; otherwise 192 bits from {@link SecureRandom} are generated and written to the log
+ * once at WARN (the way Spring Boot's own generated password is) and are not recoverable afterwards.
+ * Runs only when the roster is empty, not "when the admin is missing", so a deliberately deleted
+ * default account does not come back on restart. An {@link ApplicationRunner} rather than anything
+ * earlier, since it needs the schema Liquibase creates during context refresh to already exist.
  */
 @Slf4j
 public class InitialAdmin implements ApplicationRunner {
@@ -73,9 +60,7 @@ public class InitialAdmin implements ApplicationRunner {
         }
     }
 
-    /**
-     * 192 bits, URL-safe and unpadded so that it survives being copied out of a log.
-     */
+    /** 192 bits, URL-safe and unpadded so it survives being copied out of a log. */
     private static String generate() {
         var bytes = new byte[24];
         new SecureRandom().nextBytes(bytes);

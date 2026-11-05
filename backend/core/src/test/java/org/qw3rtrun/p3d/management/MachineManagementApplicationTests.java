@@ -23,17 +23,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * What the roster remembers about a machine's connection, and where it got it.
- *
- * <p>It used to be a context-load test that added a printer, called {@code service.connect} and
- * asserted nothing - which was a fair description of the feature, since {@code connect} and
- * {@code disconnect} were reachable only from here. The connect endpoint has always gone to the
- * runtime instead, so the persisted flag said {@code false} from registration onwards no matter
- * what the machine was doing.
- *
- * <p>Plan item B3 turned that around: {@code core} reports each transition because only {@code core}
- * can know it, the roster keeps the state, and the startup announcement carries it back so a
- * restart can redial what was connected. These are the roster's two halves of that.
+ * What the roster remembers about a machine's connection, and where it got it. Used to be a
+ * context-load test that added a printer, called {@code service.connect} and asserted nothing -
+ * a fair description, since the connect endpoint has always gone to the runtime instead and the
+ * persisted flag said {@code false} from registration onwards regardless. Plan item B3 turned that
+ * around: {@code core} reports each transition, the roster keeps it, and the startup announcement
+ * carries it back so a restart can redial what was connected.
  */
 @SpringBootTest
 class MachineManagementApplicationTests {
@@ -74,12 +69,8 @@ class MachineManagementApplicationTests {
         assertEquals(MachineConnectionState.OFFLINE, service.fetch(added.uuid()).orElseThrow().state());
     }
 
-    /**
-     * The state the runtime reports is the state the roster keeps.
-     *
-     * <p>Each of the six, so that a state added to the enum without a column wide enough to hold
-     * its name fails here rather than on somebody's farm.
-     */
+    // each of the six, so a state added to the enum without a wide enough column fails here rather
+    // than on somebody's farm.
     @Test
     void whateverTheRuntimeReportsIsWrittenDown() {
         var added = service.add("reports", new ConnectionDetails("host", 123));
@@ -92,13 +83,8 @@ class MachineManagementApplicationTests {
         }
     }
 
-    /**
-     * A connection change is kept but deliberately not announced back.
-     *
-     * <p>{@code core} is where the fact came from. Re-announcing it would hand it straight back to
-     * the module that reported it, and {@code PrinterReactorManager} redials on that announcement -
-     * so the round trip has exactly one possible effect, which is a loop.
-     */
+    // re-announcing would hand it straight back to core, and PrinterReactorManager redials on that
+    // announcement - the round trip has exactly one possible effect, a loop.
     @Test
     void aConnectionChangeIsNotAnnouncedBack() {
         var added = service.add("quiet", new ConnectionDetails("host", 123));
@@ -111,12 +97,8 @@ class MachineManagementApplicationTests {
                 "the roster announced a fact core had just told it: " + announcements.heard);
     }
 
-    /**
-     * The startup announcement carries the state, which is what a restart reads.
-     *
-     * <p>Without it the persisted column would have no reader at all and B3 would have moved a
-     * write-only flag rather than removed one.
-     */
+    // without this the persisted column would have no reader, and B3 would have moved a write-only
+    // flag rather than removed one.
     @Test
     void theStartupAnnouncementCarriesTheConnectionState() {
         var added = service.add("was printing", new ConnectionDetails("host", 123));

@@ -61,12 +61,8 @@ class FarmEventsTest {
         return id;
     }
 
-    /**
-     * A subscriber is told where every machine is before anything live arrives.
-     *
-     * <p>That is what makes one subscription enough to draw a page: the alternative is a row of
-     * blanks until each printer next says something, which for an idle one could be never.
-     */
+    // makes one subscription enough to draw a page: the alternative is a row of blanks until each
+    // printer next says something, which for an idle one could be never.
     @Test
     void aSubscriberLearnsWhereEveryMachineIsBeforeAnythingHappens() {
         var first = theFarmHas("alpha");
@@ -120,9 +116,6 @@ class FarmEventsTest {
                 .verifyComplete();
     }
 
-    /**
-     * A printer added while the page is open appears - the done-when, as a stream event.
-     */
     @Test
     void aPrinterAddedWhileWatchingAppears() {
         StepVerifier.create(Flux.from(farm.updates()).take(1))
@@ -149,13 +142,8 @@ class FarmEventsTest {
                 .verifyComplete();
     }
 
-    /**
-     * A machine re-announcing itself is not a second arrival.
-     *
-     * <p>{@code MRegisteredEvent} is a statement of current fact, re-published for every machine at
-     * startup and again whenever the roster learns something - so a dashboard would otherwise be
-     * told a printer had just appeared every time it reported its firmware.
-     */
+    // MRegisteredEvent re-publishes at startup and whenever the roster learns something - a
+    // dashboard would otherwise see a printer "appear" on every firmware report.
     @Test
     void aReAnnouncedMachineDoesNotJoinTwice() {
         var id = UUID.randomUUID();
@@ -206,20 +194,13 @@ class FarmEventsTest {
     }
 
     /**
-     * The snapshot is built without blocking, asserted on a thread that will not permit it.
-     *
-     * <p><strong>This test exists because every other one here missed a live 500.</strong> The
-     * first snapshot called {@code reactor.connection().block()}, and a snapshot is built on
-     * whichever thread subscribed - which for an SSE endpoint is a netty event loop. Every test
-     * above subscribes on an ordinary thread, where blocking is merely rude rather than fatal, so
-     * the whole suite passed while {@code GET /api-farm/stream} answered
-     * <em>"block()/blockFirst()/blockLast() are blocking, which is not supported in thread
-     * reactor-http-nio-10"</em> to every browser that opened it.
-     *
-     * <p>{@code Schedulers.parallel()} is the cheap way to pin that: its workers implement
-     * Reactor's {@code NonBlocking} marker, which is the same marker a netty event loop carries and
-     * the same check that produced the 500. A machine with a runtime is required - a machine
-     * without one never reaches the connection read at all.
+     * The snapshot is built without blocking, asserted on a thread that will not permit it - exists
+     * because every other test here missed a live 500: the first snapshot called
+     * {@code reactor.connection().block()}, and a snapshot is built on whichever thread subscribed
+     * (a netty event loop for an SSE endpoint), but every test above subscribes on an ordinary
+     * thread where blocking is merely rude. {@code Schedulers.parallel()} pins that cheaply, since
+     * its workers carry Reactor's {@code NonBlocking} marker, the same one a netty event loop
+     * carries and the same check that produced the 500.
      */
     @Test
     void theSnapshotDoesNotBlockTheThreadItIsBuiltOn() {
@@ -232,19 +213,13 @@ class FarmEventsTest {
                 .assertNext(FarmEventsTest::assertState)
                 .verifyComplete();
 
-        // The only reactor this file opens, and a reactor owns two threads now - see #54.
+        // the only reactor this file opens, and a reactor owns two threads now - see #54.
         reactors.release(id);
     }
 
-    /**
-     * A machine that has reported a temperature is drawn with it, and with nothing else it said.
-     *
-     * <p>The row's two figures - where the connection is and how hot the machine is - arrive
-     * before anything live, so a dashboard opened on an idle farm is not a column of blanks until
-     * the next auto-report. The firmware the machine also reported is in its own snapshot and
-     * deliberately not in the farm's: forty machines' capabilities on every page load is a few
-     * thousand messages that no row draws.
-     */
+    // the row's two figures - connection and temperature - arrive before anything live; the
+    // firmware the machine also reported is deliberately not in the farm's snapshot, since forty
+    // machines' capabilities on every page load is a few thousand messages no row draws.
     @Test
     void aMachineThatHasReportedATemperatureIsDrawnWithIt() {
         var id = theFarmHas("alpha");
@@ -279,12 +254,8 @@ class FarmEventsTest {
 
     // ---------------------------------------------------------------- close() - issue #87
 
-    /**
-     * {@code close()} is what lets {@code GET /api-farm/stream} stop being an in-flight request
-     * when the farm is told to stop. An already-attached subscriber has to be told the stream is
-     * over, not merely find it producing nothing - a {@code SmartLifecycle} that calls this and
-     * then leaves the dashboard holding an open connection has not fixed anything.
-     */
+    // lets GET /api-farm/stream stop being an in-flight request when the farm is told to stop - an
+    // already-attached subscriber must be told the stream is over, not merely find it quiet.
     @Test
     void closeCompletesASubscribersStream() {
         StepVerifier.create(Flux.from(farm.updates()))
@@ -292,12 +263,8 @@ class FarmEventsTest {
                 .verifyComplete();
     }
 
-    /**
-     * A subscriber that attaches <em>after</em> {@code close()} has already run is not left
-     * hanging either: it gets the snapshot - which, with no runtime for the machine, reads
-     * {@code OFFLINE} - and then completes at once, because the live half it subscribes to first
-     * ({@code CatchUp.snapshotThenLive}) has already finished.
-     */
+    // gets the snapshot (OFFLINE, since no runtime exists) and completes at once, since the live
+    // half it subscribes to first (CatchUp.snapshotThenLive) has already finished.
     @Test
     void aSubscriberAfterCloseGetsTheSnapshotThenCompletes() {
         var alpha = theFarmHas("alpha");
@@ -312,11 +279,8 @@ class FarmEventsTest {
                 .verifyComplete();
     }
 
-    /**
-     * An event offered after {@code close()} goes nowhere - it must not reach a terminated sink
-     * and trigger {@code FAIL_TERMINATED}, and it must not throw out at the caller, which here is a
-     * {@code @EventListener} invoked by Spring's multicaster on a printer's own listener thread.
-     */
+    // must not reach a terminated sink and trigger FAIL_TERMINATED, and must not throw out at the
+    // caller, which here is an @EventListener on a printer's own listener thread.
     @Test
     void anEventOfferedAfterCloseGoesNowhereAndDoesNotThrow() {
         var alpha = theFarmHas("alpha");

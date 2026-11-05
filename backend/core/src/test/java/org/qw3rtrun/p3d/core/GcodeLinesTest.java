@@ -29,13 +29,8 @@ class GcodeLinesTest {
         assertEquals("G1 X10 Y10 E1.5", GcodeLines.blockOf("G1 X10 Y10 E1.5"));
     }
 
-    /**
-     * A trailing comment is stripped, because the transport frames what it is given verbatim.
-     *
-     * <p>{@code GEncoder.frame} appends the checksum field behind whatever it was handed, and a
-     * comment runs to end of line - so a block delivered with one on it arrives at the firmware
-     * with its checksum inside the comment and is rejected.
-     */
+    // GEncoder.frame appends the checksum behind whatever it is handed, and a comment runs to end of
+    // line, so a block delivered with one would frame its checksum inside the comment.
     @Test
     void aTrailingCommentIsStripped() {
         assertEquals("G1 X10", GcodeLines.blockOf("G1 X10 ; wipe the nozzle"));
@@ -52,23 +47,14 @@ class GcodeLinesTest {
         assertEquals("", GcodeLines.blockOf("   "));
     }
 
-    /**
-     * A {@code ;} inside a parenthesised comment does not start a new one.
-     *
-     * <p>Which is why {@code :gcode}'s reader does this and a split on {@code ;} does not.
-     */
+    // why :gcode's reader is used here instead of a split on ';'.
     @Test
     void aSemicolonInsideAnInlineCommentIsNotAComment() {
         assertEquals("G1 X10", GcodeLines.blockOf("G1 X10 (wipe ; then purge)"));
     }
 
-    /**
-     * A file that already carries numbering is fed without it.
-     *
-     * <p>The line counter belongs to the transport - a pre-numbered block would be framed in front
-     * of its own {@code N} and desynchronise the session - so what is taken is the block's body,
-     * which is defined as the slice between the number and the checksum.
-     */
+    // the line counter belongs to the transport - a pre-numbered block would frame in front of its
+    // own N and desynchronise the session - so what is taken is the body, between number and checksum.
     @Test
     void aPreNumberedBlockIsFedAsItsBodyAlone() {
         assertEquals("G28", GcodeLines.blockOf("N1 G28*18"));
@@ -116,14 +102,8 @@ class GcodeLinesTest {
                 .verifyComplete();
     }
 
-    /**
-     * Reading a file does not mean holding one.
-     *
-     * <p>The same assertion plan item C1 makes of the store, and for the same reason: the obvious
-     * shapes here - {@code collectList}, a {@code bufferUntil} over characters - would read a
-     * two-hundred-megabyte file into the heap to hand out its first line. What is measured is the
-     * largest single {@code request(n)} this makes of the file store.
-     */
+    // same assertion plan item C1 makes of the store: the obvious shapes (collectList, a
+    // bufferUntil over characters) would read a two-hundred-megabyte file into the heap for one line.
     @Test
     void itNeverAsksTheStoreForMoreThanOneChunk() {
         var largestRequest = new AtomicLong();

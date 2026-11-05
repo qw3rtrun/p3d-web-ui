@@ -23,21 +23,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * {@link PrinterReactor#awaitSubscribersGone(Duration)} - the exact witness issue #87's second pass
- * needed, and the thing {@code PrinterReactorManager.releaseAll()} is built on now.
- *
- * <p><strong>Why none of this module's existing tests could ever have caught the bug this is for.</strong>
- * Every other test that builds a {@code PrinterReactor} directly - {@link PrinterReactorSnapshotTest},
- * {@link PrinterReactorEmissionTest}, {@link PrinterReactorRetryTest} - wires
- * {@code Schedulers.immediate()} as the executor, which is also what {@link PrinterThreads#shared}
- * hands out when a test passes it {@code Schedulers.immediate()}. With that scheduler
- * {@code tryEmitComplete()} delivers its {@code onComplete} to a subscriber's {@code publishOn}
- * worker <em>on the calling thread, inline</em>, so {@code doFinally} runs before {@code stop()}
- * itself returns and {@link #awaitSubscribersGoneReturnsTruePromptlyWhenNobodyWasSubscribed()}'s
- * sibling tests would pass trivially whether or not the method actually waited for anything. This
- * file wires real schedulers - {@code Schedulers.boundedElastic()}, the JVM-wide shared one, whose
- * {@code dispose()} is a documented no-op so {@code stop()} disposing it is harmless - so that a
- * terminal signal genuinely crosses a scheduler boundary before a subscriber sees it, which is the
- * boundary the real bug lived in.
+ * needed, and what {@code PrinterReactorManager.releaseAll()} is built on now. Every other test that
+ * builds a {@code PrinterReactor} directly wires {@code Schedulers.immediate()} as the executor,
+ * under which {@code tryEmitComplete()} delivers {@code onComplete} inline, so {@code doFinally}
+ * would run before {@code stop()} returns and these tests would pass trivially whether or not the
+ * method actually waited. This file wires real schedulers -
+ * {@code Schedulers.boundedElastic()}, whose {@code dispose()} is a documented no-op, so
+ * {@code stop()} disposing it is harmless - so a terminal signal genuinely crosses a scheduler
+ * boundary before a subscriber sees it, which is where the real bug lived.
  */
 class PrinterReactorAwaitSubscribersGoneTest {
 
@@ -64,10 +57,7 @@ class PrinterReactorAwaitSubscribersGoneTest {
         reactor.stop();
     }
 
-    /**
-     * A machine nobody is watching must not make a caller wait out any part of its budget - the
-     * case {@link PrinterReactor#stop()}'s own completion of {@code subscribersGone} exists for.
-     */
+    // the case stop()'s own completion of subscribersGone exists for.
     @Test
     void awaitSubscribersGoneReturnsTruePromptlyWhenNobodyWasSubscribed() {
         reactor.stop();
@@ -82,10 +72,7 @@ class PrinterReactorAwaitSubscribersGoneTest {
                         + "any part of the caller's budget");
     }
 
-    /**
-     * Once a subscriber's stream has actually terminated after a {@link PrinterReactor#stop()},
-     * {@code awaitSubscribersGone} says so - and not a moment before the subscriber itself saw it.
-     */
+    // says so once the subscriber's stream has actually terminated, not a moment before.
     @Test
     void awaitSubscribersGoneReturnsTrueOnceASubscribersStreamTerminatesAfterStop() throws InterruptedException {
         var completed = new CountDownLatch(1);
@@ -107,16 +94,12 @@ class PrinterReactorAwaitSubscribersGoneTest {
     }
 
     /**
-     * A subscriber that has not caught up with its own backlog within the limit is reported as
-     * still there, not thrown at the caller - the same shape as the real failure this method fixes.
-     *
-     * <p><strong>The backlog is real, not a sleep standing in for one.</strong> Five firmware
-     * reports are queued on the live sink before {@code stop()} runs, and the subscriber consumes
-     * them one at a time with a pause - {@code request(1)}, sleep, {@code request(1)} - which is
-     * exactly {@code GracefulShutdownIntegrationTest}'s {@code subscribeSlowly} at a smaller scale.
-     * A {@code publishOn} worker does not deliver a queued {@code onComplete} ahead of items still
-     * sitting in its queue, so the terminal signal genuinely has not reached this subscriber by the
-     * time the short limit below expires.
+     * A subscriber that has not caught up within the limit is reported as still there, not thrown at
+     * the caller. The backlog is real, not a sleep standing in for one: five firmware reports are
+     * queued before {@code stop()} runs, and the subscriber consumes them one at a time with a pause
+     * ({@code GracefulShutdownIntegrationTest}'s {@code subscribeSlowly} at a smaller scale), so a
+     * {@code publishOn} worker genuinely has not delivered the queued {@code onComplete} by the time
+     * the short limit below expires.
      */
     @Test
     void awaitSubscribersGoneReturnsFalseRatherThanThrowingWhenASubscriberHasNotCaughtUp()

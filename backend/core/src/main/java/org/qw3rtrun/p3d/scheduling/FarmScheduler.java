@@ -24,29 +24,17 @@ import java.util.UUID;
 
 /**
  * First fit over capability and availability - plan item D1, and the "group" in group of printers.
+ * Deliberately the dullest thing that works: the plan rules out a cost model or bin-packing at this
+ * size, so the oldest queued job that fits the first eligible machine gets it, nothing weighted or
+ * predicted.
  *
- * <p><strong>Deliberately the dullest thing that works.</strong> The plan is explicit that a cost
- * model, bin-packing or a scheduling framework is not warranted at this size and should be argued
- * for separately if ever. So: the oldest queued job that fits the first eligible machine gets it.
- * Nothing is weighted, nothing is predicted, and a farm of identical printers - which is most of
- * them - never needs any of that.
- *
- * <p><strong>A machine is eligible when three things are true</strong>, and they come from three
- * different modules, which is the whole reason this one exists:
- *
- * <ul>
- *   <li>it is {@code IDLE} - not merely connected. {@code ONLINE} means a socket is open;
- *       {@code IDLE} means the firmware took something this host sent. Starting a print on a
- *       machine that has not acknowledged anything is how plan item B3's dead outbound half used
- *       to look.</li>
- *   <li>no job is holding it. {@code JobState.holdsAMachine} is that question, and it covers
- *       {@code PAUSED} as well as {@code RUNNING}: a paused job still owns its printer.</li>
- *   <li>its declared spec satisfies what the job asked for - {@code JobRequirements.satisfiedBy}.</li>
- * </ul>
- *
- * <p><strong>A pinned job waits for its machine and nothing widens that.</strong> An operator who
- * named a printer knows something the farm does not, and a capability match must never quietly
- * override them.
+ * <p>A machine is eligible when three facts, from three different modules, all hold - the whole
+ * reason this class exists: it is {@code IDLE}, not merely connected ({@code ONLINE} is a socket
+ * open, {@code IDLE} is the firmware having taken something this host sent - printing on the
+ * difference is what B3's dead outbound half used to look like); no job holds it
+ * ({@code JobState.holdsAMachine} covers {@code PAUSED} as well as {@code RUNNING}); and its
+ * declared spec satisfies the job's requirements. A pinned job waits for its named machine and
+ * nothing widens that - an operator who named a printer knows something the farm does not.
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -56,40 +44,25 @@ public class FarmScheduler {
     private final MachineManagementService machines;
     private final PrinterControl printers;
 
-    /**
-     * Anything that moves a job may have freed a machine or added work.
-     *
-     * <p>Cheaper and far more responsive than waiting for the timer: a print that finishes hands
-     * its printer to the next job in the same breath rather than up to a sweep later.
-     */
+    /** Anything that moves a job may have freed a machine or added work - more responsive than the timer, since a finishing print hands its printer on in the same breath rather than at the next sweep. */
     @EventListener
     public void onJobStateChanged(JobStateChanged event) {
         schedule();
     }
 
-    /**
-     * The backstop, for everything a job transition cannot see.
-     *
-     * <p>A machine coming online, a spec being edited, a printer being registered: none of those
-     * moves a job, and all of them can make a blocked job runnable. A sweep is the honest way to
-     * notice - the alternative is listening to three more modules' events for a result that is
-     * recomputed from scratch anyway.
-     */
+    /** The backstop for everything a job transition cannot see - a machine coming online, a spec edited, a printer registered - any of which can make a blocked job runnable without moving a job itself. */
     @Scheduled(fixedDelayString = "${p3d.scheduling.interval:5000}")
     public void sweep() {
         schedule();
     }
 
     /**
-     * One pass: every queued job, oldest first, against whatever is free.
-     *
-     * <p>{@code synchronized} because two passes at once would each see the same idle printer and
-     * each give it a job - the event listener and the timer genuinely race. The work is a handful
-     * of lookups over a farm of tens of machines, so one at a time costs nothing worth measuring.
-     *
-     * <p>{@code taken} is what stops one pass doing the same thing to itself: a machine assigned to
-     * the first job must not look free to the second, and the queue's own view of it does not
-     * change until the transaction behind {@code assign} commits.
+     * One pass: every queued job, oldest first, against whatever is free. {@code synchronized}
+     * because the event listener and the timer genuinely race, and two passes at once would each see
+     * the same idle printer and both give it a job; the work is a handful of lookups over tens of
+     * machines, so serialising it costs nothing worth measuring. {@code taken} stops one pass doing
+     * that to itself, since a machine assigned to the first job in a pass does not look taken to the
+     * queue until {@code assign}'s transaction commits.
      */
     public synchronized void schedule() {
         List<Job> waiting = jobs.queued();
@@ -110,10 +83,7 @@ public class FarmScheduler {
         }
     }
 
-    /**
-     * Assign, then start. Both, because the plan's done-when is that a job <em>starts</em> without
-     * a human - an assignment that waited for somebody to press Go would be half the feature.
-     */
+    /** Assign, then start - both, since the plan's done-when is that a job starts without a human, and an assignment waiting for somebody to press Go would be half the feature. */
     private void start(Job job, Candidate machine) {
         log.info("giving job {} ({}) to {}", job.id(), job.fileName(), machine.name());
         if (jobs.assign(job.id(), machine.id()) instanceof JobOutcome.Refused refused) {
@@ -144,11 +114,9 @@ public class FarmScheduler {
     }
 
     /**
-     * Why a job is still waiting, in words an operator can act on - D1's "a stated reason".
-     *
-     * <p>It answers the question the operator is actually asking, which is not "is there a free
-     * machine" but "why not mine": a pinned job says what its machine is doing, and a capability
-     * mismatch names the first machine that was free and the reason it did not fit.
+     * Why a job is still waiting, in words an operator can act on - D1's "a stated reason". Answers
+     * "why not mine", not "is there a free machine": a pinned job says what its machine is doing, a
+     * capability mismatch names the first free machine and why it did not fit.
      */
     private String whyNothingFits(Job job, List<Candidate> farm) {
         var requires = job.requires();
@@ -190,14 +158,10 @@ public class FarmScheduler {
     }
 
     /**
-     * The machine's state now, not the roster's record of it.
-     *
-     * <p>The roster's column is written when {@code core} reports a change and is accurate at a
-     * restart; it is stale the moment anything connects. A scheduler asking it would hand jobs to
-     * printers that went offline minutes ago.
-     *
-     * <p>A machine the runtime knows nothing about reads as {@code OFFLINE}, which is the right
-     * answer: nothing has dialled it, so nothing can print on it.
+     * The machine's state now, not the roster's record of it - the roster's column is accurate at a
+     * restart and stale the moment anything connects, so asking it would hand jobs to printers that
+     * went offline minutes ago. A machine the runtime knows nothing about reads as {@code OFFLINE},
+     * correctly: nothing has dialled it, so nothing can print on it.
      */
     private MachineConnectionState liveStateOf(Descriptor machine) {
         try {

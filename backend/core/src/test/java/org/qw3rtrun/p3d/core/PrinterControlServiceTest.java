@@ -26,27 +26,18 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * This module's side of {@link org.qw3rtrun.p3d.api.control.PrinterControl}, and the thread it
- * answers on.
- *
- * <p><strong>There is no translation left here to assert.</strong> The {@code toMarlin} switch this
- * class used to hold - the outbound half of a hand-written mirror of `:gcode`, with
- * {@code ReplyEvents} on the inbound side - is gone with the mirror. A command arrives as the
- * {@code GRq} it is, and the one place a browser's words become Marlin's is the controller that
- * received them; those assertions are {@code PrinterCommandTranslationTest} in
+ * answers on. No translation is left here to assert: the {@code toMarlin} switch this class used to
+ * hold is gone with the hand-written mirror of {@code :gcode} - a command arrives as the
+ * {@code GRq} it is, and that assertion is {@code PrinterCommandTranslationTest} in
  * {@code :frontend:web-ui}.
  */
 class PrinterControlServiceTest {
 
     /**
-     * Opening a runtime happens off the caller's thread.
-     *
-     * <p>This assertion used to live in the frontend module, because the controllers did the
-     * scheduling. It moved here with the lookup: which thread a resource is opened on is this
-     * module's business, and the web layer no longer knows what a reactor is.
-     *
-     * <p>{@code openReactor} no longer reads a database - {@link PrinterDirectory} answers that -
-     * but it is {@code synchronized} and builds a resource, and an event-loop thread should not be
-     * queueing on a monitor when several requests arrive for one printer.
+     * Opening a runtime happens off the caller's thread - moved here with the lookup, since which
+     * thread a resource is opened on is this module's business and the web layer no longer knows
+     * what a reactor is. {@code openReactor} no longer reads a database, but it is
+     * {@code synchronized} and builds a resource, which an event-loop thread should not queue on.
      */
     @Test
     void openingARuntimeRunsOffTheCallersThread() {
@@ -64,7 +55,7 @@ class PrinterControlServiceTest {
                 MachineConnectionState.OFFLINE, LocalDateTime.now()));
         var manager = new PrinterReactorManager(directory, PrinterState::new, event -> {
         });
-        // The uploader is reached only by the two card methods, and this test calls neither.
+        // the uploader is reached only by the two card methods, and this test calls neither.
         var control = new PrinterControlService(manager, new SdUploader(manager, null));
 
         control.state(id).block();
@@ -74,7 +65,7 @@ class PrinterControlServiceTest {
         assertTrue(thread.startsWith("boundedElastic"),
                 "the runtime was opened on '" + thread + "', which is the caller's thread");
 
-        // The runtime that was opened owns two threads of its own since #54, so it is let go of.
+        // the runtime opened owns two threads of its own since #54, so it is let go of.
         manager.release(id);
     }
 
@@ -94,14 +85,8 @@ class PrinterControlServiceTest {
         });
     }
 
-    /**
-     * A file store that fails the test if anything asks it a question.
-     *
-     * <p>This is the whole of how the check order in {@code SdUploader.start} is pinned: the link
-     * is consulted before the file, so a machine nothing has dialled must never reach a database
-     * lookup. Nothing else can state that - the two checks produce different refusals, but a
-     * refusal says nothing about what was consulted on the way to it.
-     */
+    // fails the test if anything asks it a question - pins the check order in SdUploader.start: the
+    // link is consulted before the file, so an undialled machine must never reach a database lookup.
     private GcodeFileService storeThatMustNotBeAsked() {
         return new GcodeFileService() {
             @Override
@@ -138,14 +123,11 @@ class PrinterControlServiceTest {
     }
 
     /**
-     * An upload to an id the farm has never heard of is {@code ABSENT}, and opens no runtime.
-     *
-     * <p><strong>The second half is the one with teeth.</strong> A reactor is a resource - a
-     * terminal manager, a replay sink and, since #54, two threads - and the obvious way to answer
-     * this question used to be to open one and discover it pointed at nowhere. Opening one per
-     * request naming a deleted printer is how a long-running farm accumulates threads for machines
-     * it no longer has. If this failed, nothing would say so: the farm would answer correctly and
-     * leak.
+     * An upload to an id the farm has never heard of is {@code ABSENT}, and opens no runtime - the
+     * second half is the one with teeth: a reactor is a resource (a terminal manager, a replay sink,
+     * two threads since #54), and opening one per request naming a deleted printer is how a
+     * long-running farm accumulates threads for machines it no longer has. If this failed, nothing
+     * would say so - the farm would answer correctly and leak.
      */
     @Test
     void anUploadToAMachineTheFarmDoesNotHaveIsAbsentAndOpensNoRuntime() {
@@ -168,15 +150,9 @@ class PrinterControlServiceTest {
 
     /**
      * An upload to a known machine nothing has dialled is {@code WRONG_STATE}, and asks no store.
-     *
-     * <p>409 rather than 404 at the web edge, because the printer is there: connecting it is the
-     * whole of what the operator has to do, and telling them it does not exist would send them
-     * looking for the wrong thing.
-     *
-     * <p><strong>And the file store is never consulted</strong>, which is the check order from
-     * {@code SdUploader.start} stated as a test: the link is a field read and the lookup is a
-     * blocking database round trip, so the cheap and certain one goes first. A farm whose printers
-     * are mostly unplugged is the normal case.
+     * 409 rather than 404 at the web edge, since the printer is there - connecting it is all the
+     * operator has to do. The file store is never consulted: the link is a field read and the
+     * lookup a blocking round trip, so the cheap and certain check goes first.
      */
     @Test
     void anUploadToAMachineThatWasNeverDialledIsWrongStateAndAsksNoStore() {
@@ -194,19 +170,13 @@ class PrinterControlServiceTest {
                 })
                 .verifyComplete();
 
-        // This one does open a runtime - it has to, to be able to say "this machine is not
-        // connected" about this machine - so it is let go of, threads and all.
+        // this one does open a runtime, to say "this machine is not connected" about it, so it is
+        // let go of, threads and all.
         manager.release(id);
     }
 
-    /**
-     * Stopping a transfer on a machine the farm does not have is {@code ABSENT}, and opens nothing.
-     *
-     * <p>The reason {@code PrinterReactorManager.knows} exists separately from
-     * {@code openReactorIfKnown}: a cancel must be able to say "there is no such machine" without
-     * building a socket's worth of runtime to answer a question about a transfer that is not
-     * running. A failure of the second assertion is the opposite of {@code release}'s whole point.
-     */
+    // the reason PrinterReactorManager.knows exists separately from openReactorIfKnown: a cancel
+    // must say "no such machine" without building a socket's worth of runtime for it.
     @Test
     void aCancelForAMachineTheFarmDoesNotHaveIsAbsentAndOpensNoRuntime() {
         var directory = directoryHolding(UUID.randomUUID());

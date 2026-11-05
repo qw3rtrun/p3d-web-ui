@@ -34,24 +34,10 @@ public class PrinterControlService implements PrinterControl {
 
     private final PrinterReactorManager manager;
 
-    /**
-     * The one operation that is not a command on a machine but a piece of work against it.
-     *
-     * <p>It is held here rather than reached through {@link PrinterReactor} because a transfer
-     * outlives the request that started it and has to be findable again to be stopped - which is
-     * state about work in progress, not about a printer.
-     */
+    /** Held here rather than reached through {@link PrinterReactor} because a transfer outlives the request that started it and must be findable again to be stopped - state about work in progress, not about a printer. */
     private final SdUploader uploads;
 
-    /**
-     * The machine's runtime, opened off the caller's thread.
-     *
-     * <p>{@code openReactor} is {@code synchronized} and builds a resource on a miss. It no longer
-     * reads a database - {@link PrinterDirectory} answers that - but a monitor is still not
-     * something an event-loop thread should queue on when several requests arrive for one printer.
-     *
-     * <p>The deferral also means a request cancelled before it is subscribed opens nothing at all.
-     */
+    /** Opened off the caller's thread: {@code openReactor} is {@code synchronized}, and a monitor is still not something an event-loop thread should queue on for several requests to one printer. Deferred, so a request cancelled before subscription opens nothing at all. */
     private Mono<PrinterReactor> reactor(UUID id) {
         return Mono.fromSupplier(() -> manager.openReactor(id)).subscribeOn(Schedulers.boundedElastic());
     }
@@ -72,19 +58,11 @@ public class PrinterControlService implements PrinterControl {
     }
 
     /**
-     * The reactor is opened first, so that a transfer to a machine nobody has dialled fails for
-     * that reason rather than for "there is no runtime".
-     *
-     * <p><strong>And opening it is what makes "not connected" a statement about <em>this</em>
-     * machine.</strong> Without a runtime there is nothing to ask, so the only honest answer would
-     * be about the farm's bookkeeping rather than about the printer - which is what the old
-     * {@code runtimeOf(id) == null} branch inside the uploader was saying, in the words of a
-     * connection failure. The runtime is opened here, handed in, and asked; what comes back names
-     * the machine either way.
-     *
-     * <p>Opened with {@link PrinterReactorManager#openReactorIfKnown}, so a machine the farm does
-     * not have is an {@code ABSENT} outcome rather than an {@code IllegalArgumentException} the
-     * web layer would have to classify.
+     * The reactor is opened first (with {@link PrinterReactorManager#openReactorIfKnown}, so an
+     * unknown machine is an {@code ABSENT} outcome rather than an {@code IllegalArgumentException}
+     * the web layer would have to classify), and handed to the uploader rather than looked up by it
+     * - so "not connected" is a statement about this machine, not about the farm's bookkeeping, the
+     * way the old {@code runtimeOf(id) == null} branch read.
      */
     @Override
     public Mono<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName) {
@@ -97,16 +75,11 @@ public class PrinterControlService implements PrinterControl {
     }
 
     /**
-     * Stops a transfer, and <strong>opens nothing to do it</strong>.
-     *
-     * <p>{@link PrinterReactorManager#knows} and not {@code openReactorIfKnown}: a cancel has to be
-     * able to say "there is no such machine", and building a runtime to say it would allocate a
-     * socket's worth of resource - including two threads, since #54 - in order to answer a question
-     * about a transfer that is not running. The uploader's own map is where a running transfer
-     * lives, and it needs no reactor to be looked in.
-     *
-     * <p>Nothing to stop stays {@code Accepted}; the page's button and the machine's state are
-     * different clocks.
+     * Stops a transfer, opening nothing to do it: {@link PrinterReactorManager#knows}, not
+     * {@code openReactorIfKnown}, since building a runtime (a socket's worth of resource, two
+     * threads since #54) just to say "there is no such machine" would be wasted on a transfer that
+     * is not running - the uploader's own map needs no reactor to be looked in. Nothing to stop
+     * stays {@code Accepted}; the page's button and the machine's state are different clocks.
      */
     @Override
     public Mono<ControlOutcome> cancelCardUpload(UUID id) {

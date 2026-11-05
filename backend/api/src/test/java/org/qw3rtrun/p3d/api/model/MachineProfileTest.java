@@ -13,11 +13,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * What a machine turned out to be, as the pages ask it.
  *
- * <p>These are the two questions the Storage tab is rendered from, and they are <strong>not the
- * same question</strong>: {@link MachineProfile#hasSdCard()} says whether the firmware has a card
- * reader, and {@link MachineProfile#isKnown()} says whether anything has ever asked. A tab can be
- * disabled for either reason and an operator needs to be told which, so a page that collapsed them
- * into one boolean would say "no SD card support" to somebody whose machine is merely unplugged.
+ * <p>Two different questions the Storage tab is rendered from: {@link MachineProfile#hasSdCard()}
+ * says whether the firmware has a card reader, {@link MachineProfile#isKnown()} says whether
+ * anything has ever asked - collapsing them would say "no SD card support" to an unplugged machine.
  */
 class MachineProfileTest {
 
@@ -36,11 +34,8 @@ class MachineProfileTest {
     }
 
     /**
-     * A machine that has reported but never mentioned the capability has none, as far as this goes.
-     *
-     * <p>Mainline Marlin always writes the line, so in practice this is a build that predates it or
-     * is not Marlin at all - and offering a card tab to a firmware that will not answer {@code M20}
-     * is worse than not offering one.
+     * A machine that has reported but never mentioned the capability has none, as far as this
+     * goes - mainline Marlin always writes the line, so offering a card tab here is worse than not.
      */
     @Test
     void anUnmentionedCapabilityIsNotACardReader() {
@@ -60,12 +55,8 @@ class MachineProfileTest {
     }
 
     /**
-     * Reported-with-no-reader and never-reported are both "no card", and tell apart on
-     * {@code isKnown}.
-     *
-     * <p>Stated as its own claim because it is the whole of the three-state rule in
-     * {@code monitor.html}: the tab is enabled on {@code hasSdCard}, and when it is not, which of
-     * the two sentences the tooltip carries is decided by {@code isKnown}.
+     * Reported-with-no-reader and never-reported are both "no card", told apart by
+     * {@code isKnown} - the whole of the three-state rule {@code monitor.html}'s tooltip is built on.
      */
     @Test
     void theTwoReasonsForNoCardAreToldApartByWhetherAnythingReported() {
@@ -82,15 +73,11 @@ class MachineProfileTest {
     // ------------------------------------------------------------------------------ the EEPROM
 
     /**
-     * The capability is spelled {@code EEPROM} on the wire, and that is the whole point of this
-     * test.
-     *
-     * <p>Issue #88's checklist calls it {@code EEPROM_SETTINGS}, which is Marlin's <em>build
-     * macro</em> and never leaves the compiler. What a machine writes is {@code Cap:EEPROM:1},
-     * measured off MarlinSim among its 38 {@code Cap:} lines and cross-checked against
-     * {@code Marlin/src/gcode/host/M115.cpp} on {@code 2.1.x}, where the line is emitted under
-     * {@code ENABLED(EEPROM_SETTINGS)}. A lookup on the macro name would be false on every machine
-     * that exists.
+     * The capability is spelled {@code EEPROM} on the wire - the whole point of this test. Issue
+     * #88's checklist calls it {@code EEPROM_SETTINGS}, Marlin's build macro, which never leaves
+     * the compiler; what a machine writes is {@code Cap:EEPROM:1}, measured off MarlinSim among
+     * its 38 {@code Cap:} lines and cross-checked against
+     * {@code Marlin/src/gcode/host/M115.cpp} on {@code 2.1.x}.
      */
     @Test
     void aFirmwareReportingAnEepromHasOne() {

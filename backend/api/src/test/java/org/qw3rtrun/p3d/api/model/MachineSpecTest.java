@@ -46,11 +46,9 @@ class MachineSpecTest {
     }
 
     /**
-     * Nulls are normalised on the way in, because this record is built from a web form.
-     *
-     * <p>An unticked checkbox and an absent JSON field both arrive as null, and a caller that has
-     * to null-check five accessors will miss one. Only {@code bedVolume} and {@code extruderCount}
-     * stay nullable, and they do so because for them "not declared" is a real third state.
+     * Nulls are normalised on the way in, since this record is built from a web form: an unticked
+     * checkbox and an absent JSON field both arrive as null. {@code bedVolume}/{@code extruderCount}
+     * stay nullable, since for them "not declared" is a real third state.
      */
     @Test
     void nullCollectionsBecomeEmptyOnes() {
@@ -70,12 +68,9 @@ class MachineSpecTest {
     }
 
     /**
-     * What a human typed wins over what the firmware said, and that is the whole point of having
-     * both.
-     *
-     * <p>A machine that under-reports its tools - a dual-extruder build flashed with a
-     * single-extruder configuration is the usual way - would otherwise have every command for tool
-     * 1 refused by {@code PrinterState}, with no way for the operator to say otherwise.
+     * What a human typed wins over what the firmware said - a dual-extruder build flashed with a
+     * single-extruder configuration would otherwise have every command for tool 1 refused, with
+     * no way for the operator to say otherwise.
      */
     @Test
     void aDeclaredExtruderCountOverridesWhatTheFirmwareReported() {
@@ -90,10 +85,8 @@ class MachineSpecTest {
     }
 
     /**
-     * And with neither, the profile's own default of one - not zero.
-     *
-     * <p>The caller is about to check a tool index against this, where zero refuses every command
-     * including the one for tool 0.
+     * And with neither, the profile's own default of one - not zero, since the caller is about to
+     * check a tool index against this, where zero refuses even tool 0.
      */
     @Test
     void withNothingDeclaredAndNothingReportedItIsOne() {

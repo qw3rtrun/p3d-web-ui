@@ -5,14 +5,11 @@ import java.time.LocalDateTime;
 /**
  * A machine's connection, as a health signal: where it is, since when, and why.
  *
- * <p>Answered without opening a stream, which is the difference between this and the
- * {@code ConnectionStateChanged} events carrying the same facts. A page that is about to render a
- * printer wants the current answer once; a page watching one wants every change.
+ * <p>Answered without opening a stream, unlike the {@code ConnectionStateChanged} events carrying
+ * the same facts - this is for a page about to render a printer once; that is for one watching it.
  *
- * @param state    the one state - see {@link MachineConnectionState}
- * @param since    when the machine entered it
- * @param attempt  which connection attempt is in flight, counting from 1. Zero when none is
- * @param reason   why, in whatever words the cause used. Null when there is nothing to explain
+ * @param attempt which connection attempt is in flight, counting from 1; zero when none is
+ * @param reason  why, in whatever words the cause used; null when there is nothing to explain
  */
 public record ConnectionStatus(MachineConnectionState state,
                                LocalDateTime since,

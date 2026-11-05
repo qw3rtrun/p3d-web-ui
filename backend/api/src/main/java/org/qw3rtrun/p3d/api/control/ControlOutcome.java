@@ -6,27 +6,18 @@ import java.util.UUID;
  * What a caller gets back from asking a machine to do something: it was taken on, or a stated
  * refusal.
  *
- * <p>The control surface's twin of {@code JobOutcome}, and it exists for the same reason. Two
- * ordinary outcomes of clicking a button - the store does not hold that file, the machine is not
- * connected - used to leave {@code PrinterControl} as an {@code IllegalArgumentException} and an
- * {@code IllegalStateException}, and a browser was told <strong>500</strong> for both. Neither is a
- * fault: the first is a stale page, the second is a printer somebody unplugged. A refusal that
- * travels as a value is answerable; a refusal that travels as an exception makes the web layer
- * guess a status from a class name, and that guess is a table that drifts.
+ * <p>The control surface's twin of {@code JobOutcome}: a refusal that travels as a value is
+ * answerable, where the {@code IllegalArgumentException}/{@code IllegalStateException} this
+ * replaced made the web layer guess a status from an exception's class - and the browser was told
+ * 500 for both the ordinary "no such file" and "machine not connected".
  *
- * <p><strong>Two refusals and not five, deliberately.</strong> {@link Refusal} is as coarse as it
- * is because its only consumer is the status mapping, which is a decision taken once for the web
- * module - {@code ABSENT} is <em>not here</em> and {@code WRONG_STATE} is <em>here, and it cannot
- * do this now</em>. A third constant would have to come with a third argument for what status it
- * deserves, and nobody has one: every refusal this surface can produce is one of those two
- * sentences. What carries the specificity the enum does not is {@link Refused#reason}, which is a
- * sentence that can be put in front of a person exactly as {@code JobOutcome.Refused.reason} is -
- * so "there is no file 8f2c… to upload" and "the farm has no machine 8f2c…" are both {@code ABSENT}
- * and still tell a user different things.
+ * <p>Two refusals, not five: {@code ABSENT} ("not here") and {@code WRONG_STATE} ("here, but
+ * cannot do this now") are the only two the status mapping needs. The specificity lives in
+ * {@link Refused#reason}, a sentence for a person, so two things both {@code ABSENT} can still
+ * read differently to a user.
  *
- * <p><strong>It names no HTTP status, and must not.</strong> {@code api} is the vocabulary every
- * submodel is written in, including the ones that have never seen a request; what a refusal is
- * worth over HTTP is the web surface's decision, and it is made in one place there.
+ * <p>Names no HTTP status - that mapping is the web surface's own decision, made in one place
+ * there.
  */
 public sealed interface ControlOutcome {
 
@@ -37,9 +28,7 @@ public sealed interface ControlOutcome {
     /**
      * The machine did not take it on, and here is why.
      *
-     * @param machineId the machine asked
-     * @param refusal   which of the two kinds of no this is
-     * @param reason    a sentence a user could be shown
+     * @param reason a sentence that can be shown to a user
      */
     record Refused(UUID machineId, Refusal refusal, String reason) implements ControlOutcome {
     }

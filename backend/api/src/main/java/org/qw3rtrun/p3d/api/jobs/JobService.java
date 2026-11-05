@@ -7,37 +7,28 @@ import java.util.UUID;
 /**
  * The farm's print queue.
  *
- * <p><strong>Every method that moves a job answers with a {@link JobOutcome}</strong>, so a refusal
- * is a value a caller can act on rather than an exception it has to catch and classify. See that
- * type for why.
+ * <p>Every method that moves a job answers with a {@link JobOutcome}, so a refusal is a value a
+ * caller can act on rather than an exception to catch and classify.
  *
- * <p><strong>The verbs are split by who does them</strong>, because they genuinely have different
- * callers and will get different authorisation: {@link #queue} and {@link #cancel} are a person;
- * {@link #assign} is a person or plan item D1's scheduler; {@link #start}, {@link #complete} and
- * {@link #fail} belong to whatever is actually feeding the machine, which is C3's streaming engine.
- * A single {@code moveTo(state)} would be fewer methods and would lose all of that.
+ * <p>The verbs are split by who calls them, since each has different authorisation: {@link #queue}
+ * and {@link #cancel} are a person; {@link #assign} is a person or D1's scheduler; {@link #start},
+ * {@link #complete} and {@link #fail} belong to whatever is actually feeding the machine (C3).
  *
- * <p>Blocking, like the rest of the persistence side. The web layer schedules it off the event loop.
+ * <p>Blocking, like the rest of the persistence side; the web layer schedules it off the event loop.
  */
 public interface JobService {
 
     /**
-     * Queues a file to be printed.
-     *
-     * <p>No machine yet: choosing one is {@link #assign}, and keeping the two apart is what lets a
-     * farm queue work before it knows which printer is free. Refused when the file is unknown,
-     * because a job pointing at nothing is a job that fails the moment anything tries to run it.
+     * Queues a file to be printed, with no machine yet - choosing one is {@link #assign}. Refused
+     * when the file is unknown.
      */
     default JobOutcome queue(UUID fileId) {
         return queue(fileId, JobRequirements.any());
     }
 
     /**
-     * The same, stating what the job needs of a machine - plan item D1.
-     *
-     * <p>A job that states nothing runs on the first idle printer. A job that names a machine waits
-     * for that machine however free the rest of the farm is, which is the manual override the plan
-     * asks for.
+     * The same, stating what the job needs of a machine - plan item D1. A job that names a machine
+     * waits for it however free the rest of the farm is, the manual override the plan asks for.
      */
     JobOutcome queue(UUID fileId, JobRequirements requires);
 
@@ -45,11 +36,9 @@ public interface JobService {
     JobOutcome assign(UUID jobId, UUID machineId);
 
     /**
-     * Takes a job back off a machine and returns it to the queue.
-     *
-     * <p>For a machine that went away before the job started. A job that was actually
-     * <em>running</em> on it cannot come back this way - the machine has already consumed part of
-     * the file, so what happens to it is {@link #fail} and plan item C5's recovery.
+     * Takes a job back off a machine and returns it to the queue - for a machine that went away
+     * before the job started. A job already <em>running</em> cannot come back this way; that is
+     * {@link #fail} and C5's recovery.
      */
     JobOutcome unassign(UUID jobId, String reason);
 
@@ -71,14 +60,9 @@ public interface JobService {
 
     /**
      * Records why a queued job has not been given a machine - plan item D1's "a stated reason".
-     *
-     * <p>It does not move the job: being unassignable is not a state, it is a fact about the farm
-     * at this moment, and a farm that gains a capable printer a minute later should start the job
-     * without anything having to undo a transition. So the reason lands on the job and the job
-     * stays {@code QUEUED}.
-     *
-     * <p>Refused for a job that is not queued, because there is nothing to explain about one that
-     * already has a machine.
+     * Does not move the job: being unassignable is a fact about the farm right now, not a state,
+     * so the reason lands on the job and it stays {@code QUEUED}. Refused for a job that is not
+     * queued.
      */
     JobOutcome blocked(UUID jobId, String why);
 

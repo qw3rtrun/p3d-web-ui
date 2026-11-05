@@ -11,63 +11,34 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /**
- * The whole farm on one stream - issue #43's feature 8, through {@code GET /api-farm/stream}.
+ * The whole farm on one stream - issue #43 feature 8, {@code GET /api-farm/stream}. The only class
+ * here with more than one machine, because only two machines can prove the stream keeps them apart
+ * rather than mislabelling them under the first id it thought of.
  *
- * <p><strong>It is the one test here with more than one machine in it</strong>, and that is not
- * decoration. Every other class drives a feature of <em>a</em> printer and could not tell a farm
- * that routes every event correctly from one that puts them all under the first id it thought of.
- * This endpoint exists because a dashboard holds one {@code EventSource} rather than one per
- * printer, so "two machines, one subscription, and each one's events arrive under its own
- * {@code EventMessage.id}" is the feature, not a detail of it.
+ * <p>Three claims, each with a failure mode that has shipped in something like it: it opens
+ * nothing - a farm view wired through {@code PrinterControl.updates(id)} would dial a runtime,
+ * forty reactors and forty sockets, per machine just to render a page that is only looking;
+ * {@link MockPrinter#sessions()} is where that dial would show. A late subscriber is told where
+ * everything is - there is no replay sink behind this stream (one would hold whichever machine
+ * spoke last, which is useless), so a snapshot is built per subscription. Membership changes reach
+ * the page, as {@code MachineJoinedFarm} and {@code MachineLeftFarm}.
  *
- * <p>Three claims, and each has a failure mode that has actually shipped in something like it:
+ * <p>§5 of the integration-test spec drives a feature over every configuration where the answer
+ * differs; here that axis is how many machines, not capability, so the matrix is one machine
+ * against two, on deliberately different profiles.
  *
- * <ul>
- *   <li><strong>it opens nothing.</strong> The obvious wiring for a farm view is to watch every
- *       machine through {@code PrinterControl.updates(id)}, which instantiates a runtime as a side
- *       effect - forty reactors, and on the version of that code that dialled on lookup, forty
- *       sockets, to render a page that is only looking. {@code FarmEvents} listens on the
- *       application event bus instead. What is observable from out here is the dial, and
- *       {@link MockPrinter#sessions()} is where it would show;</li>
- *   <li><strong>a late subscriber is told where everything is.</strong> There is no replay sink
- *       behind this stream - one would hold the farm's last event rather than each machine's, which
- *       is whichever printer spoke most recently and is useless - so a snapshot is built per
- *       subscription. Without it a dashboard opened on a quiet farm shows a row of blanks until
- *       each machine next says something, which for an idle printer is never;</li>
- *   <li><strong>membership changes reach the page.</strong> A printer registered or deleted while
- *       the page is open appears or disappears without a reload, as {@code MachineJoinedFarm} and
- *       {@code MachineLeftFarm}.</li>
- * </ul>
- *
- * <h2>What the configurations are here</h2>
- *
- * §5 of the integration-test spec asks a feature to be driven over every configuration where the
- * answer should differ, and for this one <em>no capability changes any answer</em>: a connection
- * state is announced the same way by a machine with a card and one without. The axis that does
- * change the answer is the one no other class varies - <em>how many machines</em> - so the matrix
- * here is one machine against two, and the pairs below are deliberately two different profiles so
- * that the demultiplexing is proved across machines that are genuinely not the same.
- *
- * <h2>The mid-snapshot window, and why nothing below depends on it</h2>
- *
- * {@code FarmEvents.updates()} is the snapshot {@code concatWith} the live sink, so the sink is
- * subscribed only once the snapshot has finished - and anything emitted in between reaches nobody.
- * The window is milliseconds and it is open; closing it means subscribing the sink before
- * prepending the snapshot, which is its own change and not this one. So every live event asserted
- * below is caused by <strong>a request this test makes after the snapshot has arrived</strong> -
- * an HTTP round trip later, which is orders of magnitude outside the window. Nothing here asserts
- * that the window is closed, and nothing here would pass only because it is.
+ * <p>{@code FarmEvents.updates()} is the snapshot {@code concatWith} the live sink, so anything
+ * emitted in the millisecond window before the sink subscribes reaches nobody; closing that window
+ * is a separate change. Every live event below is caused by a request made well after the snapshot
+ * arrives, so nothing here depends on the window being closed.
  */
 class FarmDashboardIntegrationTest extends FarmIntegrationTest {
 
     /**
-     * Two machines, one subscription, and each one's events arrive under its own id.
-     *
-     * <p>The connection walk proves both are carried; the reading proves they are kept apart.
-     * Asking one machine for a temperature and finding it under the other machine's id is the
-     * failure a single stream can have and forty streams cannot, and it is invisible to every other
-     * test in this module - a per-printer stream is addressed by the id in its URL, so it cannot
-     * mislabel anything.
+     * The connection walk proves both machines are carried; the reading proves they are kept apart.
+     * Finding alpha's reading under beta's id is a failure only a shared stream can have, and is
+     * invisible to every other test here - a per-printer stream is addressed by the id in its URL,
+     * so it cannot mislabel anything.
      */
     @Test
     void oneStreamCarriesEveryMachineAndKeepsThemApart() {
@@ -98,17 +69,11 @@ class FarmDashboardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Holding the stream open dials nothing, which is the reason the endpoint exists.
-     *
-     * <p>The claim is a negative, so it is given time to be wrong - and the positive case it is
-     * measured against is next door: {@code ConnectivityIntegrationTest} gets a machine from
-     * registered to {@code IDLE} in a round trip on loopback.
-     *
-     * <p><strong>What is observable from here is the dial and not the reactor.</strong> A farm view
-     * wired through {@code PrinterControl.updates(id)} would build a runtime per machine, and a
-     * runtime is a scheduler, a sink and a command queue that nothing asked for; whether one exists
-     * is not visible through any endpoint, and §3 forbids reaching in to look. The socket is, and
-     * it is the part a printer on the other side of the room would notice.
+     * A negative claim, so it is given time to be wrong; the positive case next door is
+     * {@code ConnectivityIntegrationTest}, getting a machine from registered to {@code IDLE} in a
+     * round trip on loopback. What is observable from here is the dial, not the reactor - §3 forbids
+     * reaching in to check whether one exists, but the socket is what a printer across the room
+     * would notice.
      */
     @Test
     void holdingTheStreamDialsNothing() {
@@ -132,19 +97,9 @@ class FarmDashboardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A page opened long after the farm started is told where every machine is, before anything else.
-     *
-     * <p>One connected, one never dialled, and the subscription comes last - so everything the
-     * stream would have carried live has already happened and been missed. What arrives is built
-     * rather than replayed, and the shape says which: a snapshot entry states where a machine
-     * <em>is</em>, so {@code from} and {@code to} are the same state, while a real transition states
-     * where it <em>went</em>.
-     *
-     * <p>The second half is the ordering, and it is structural rather than lucky:
-     * {@code concatWith} does not subscribe the live sink until the snapshot completes, so no live
-     * event can get in front of it. The reading asked for below therefore has to land behind the
-     * snapshot entry, and the first thing this machine ever said to this subscriber stays the
-     * snapshot.
+     * One connected, one never dialled, subscribed last, so nothing the stream would have carried
+     * live has reached this subscriber - what arrives is built, not replayed: a snapshot entry's
+     * {@code from} equals its {@code to} (a state, not a transition), unlike a real one.
      */
     @Test
     void aLateSubscriberIsToldWhereEveryMachineIsBeforeAnythingHappens() {
@@ -176,18 +131,13 @@ class FarmDashboardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A machine plugged in while the page is open joins the farm, by name.
+     * {@code MachineJoinedFarm} is the only message on this stream carrying a printer's name,
+     * because it is the only one a dashboard draws a new row from; a machine already present arrives
+     * via the snapshot instead, with its name from the roster.
      *
-     * <p>{@code MachineJoinedFarm} is the only thing on this stream that carries what a printer is
-     * called, because it is the only one a dashboard has to draw a new row from; a machine that was
-     * already there arrives in the snapshot instead, and the page already has its name from the
-     * roster. So the two paths onto a page are different and the assertion below says so: the
-     * machine registered before the subscription must <em>not</em> announce itself as an arrival.
-     *
-     * <p>{@code MRegisteredEvent} is a statement of current fact, re-published for every machine at
-     * startup and again whenever the roster learns something - a firmware report, an edited spec.
-     * Taking each one as an arrival would tell a dashboard that a printer had just appeared every
-     * time it said what it was, which is what {@code FarmEvents}'s set of known machines prevents.
+     * <p>{@code MRegisteredEvent} is republished whenever the roster learns anything - a firmware
+     * report, an edited spec - not only on first appearance; {@code FarmEvents}'s set of known
+     * machines is what stops every republish reading as a new arrival.
      */
     @Test
     void aMachineRegisteredWhileThePageIsOpenJoinsTheFarm() {
@@ -209,12 +159,9 @@ class FarmDashboardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A machine deleted while the page is open leaves it, and the others are untouched.
-     *
-     * <p>The second half is what makes this a farm test rather than a second copy of
-     * {@code PrinterManagementIntegrationTest}'s delete: on one stream shared by every machine, a
-     * removal that reached the wrong id - or every id - would read as the whole farm vanishing from
-     * a page while the printers carried on printing.
+     * What makes this a farm test and not a copy of {@code PrinterManagementIntegrationTest}'s
+     * delete: on one stream shared by every machine, a removal reaching the wrong id - or every id -
+     * reads as the whole farm vanishing while the other printers carry on.
      */
     @Test
     void aMachineDeletedWhileThePageIsOpenLeavesTheFarm() {
@@ -235,12 +182,8 @@ class FarmDashboardIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- helpers
 
     /**
-     * Waits until the snapshot has carried each of these machines.
-     *
-     * <p>Two things at once, and the second is the load-bearing one. It is the assertion that a
-     * dashboard knows where every machine is the moment it attaches - and it is also the only
-     * signal a test gets that the <em>live</em> sink is subscribed, because the snapshot is what
-     * precedes it. Causing anything before this has arrived would be racing the subscription.
+     * Doubles as the only signal a test gets that the live sink is subscribed, since the snapshot
+     * precedes it; causing anything before this has arrived would race the subscription.
      */
     private static void awaitSnapshot(Events dashboard, UUID... machines) {
         for (var machine : machines) {
@@ -258,12 +201,10 @@ class FarmDashboardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The dial, as this machine walked it on the shared stream - the tail of its transitions.
-     *
-     * <p>Only the tail, because the first entry is the snapshot: wherever the machine happened to
-     * be when this subscriber attached, which is not part of the claim. What is part of the claim is
-     * that merging two machines onto one stream does not reorder either of them - a page told
-     * {@code ONLINE} after {@code IDLE} draws a machine that just became unusable.
+     * Only the tail: the first entry is the snapshot (wherever the machine was when this subscriber
+     * attached), not part of the claim, which is that merging two machines onto one stream does not
+     * reorder either - {@code ONLINE} after {@code IDLE} would draw a machine that just became
+     * unusable.
      */
     private static List<String> walkOn(Events dashboard, UUID machine) {
         var walk = dashboard.from(machine).stream()

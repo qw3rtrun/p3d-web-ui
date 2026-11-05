@@ -16,47 +16,30 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The farm's own G-code store - issue #43's feature 6, through {@code /api-files}.
+ * The farm's own G-code store - issue #43 feature 6, {@code /api-files}. The one feature here with
+ * no machine in it: a stored file is the farm's, uploaded once and sent to any number of printers
+ * or none, so there is no {@code MockPrinter} and no configuration matrix - §5 applied rather than
+ * suspended, since nothing about a printer changes any answer here.
  *
- * <p><strong>It is the one feature here with no machine in it.</strong> A stored file is the
- * farm's, not a printer's: it is uploaded once and can be sent to any number of machines, or to
- * none. So there is no {@code MockPrinter} below and no configuration matrix, which is the rule in
- * §5 of the integration-test spec applied rather than suspended - a feature is driven over every
- * configuration where the answer should differ, and nothing about a printer changes any answer
- * here. The second observable, what reached the machine, simply has no machine to reach.
+ * <p>What this endpoint carries, and nowhere else does as much of: content addressed by its hash,
+ * so a second upload of the same bytes answers with the first record ({@code GcodeFileServiceTest}
+ * proves this of the service, this proves it of the HTTP layer); what the slicer said, in both
+ * dialects and from both ends of the file, with no comments being a fact rather than an error;
+ * {@code Content-Disposition} and {@code Content-Length} on download, for the filename and the
+ * progress bar; and that nothing on the path turns the content into a {@code byte[]} - enforced by
+ * {@code GcodeFileService}'s {@code Publisher<ByteBuffer>} signature and measured in
+ * {@code GcodeBlobStoreTest}, neither visible here, where what can be said is that an oversized
+ * file round-trips byte for byte.
  *
- * <p>What is left is the first observable, and there is a lot of it, because this endpoint carries
- * more browser-visible contract than any other in the application:
- *
- * <ul>
- *   <li><strong>the content is addressed by its hash</strong>, so the same bytes stored twice are
- *       one file. {@code GcodeFileServiceTest} proves that of the service; what is proved here is
- *       that a second HTTP upload answers with the first record rather than making a second;</li>
- *   <li><strong>what the slicer said reaches {@code slice}</strong>, in both dialects and from both
- *       ends of the file - and a file with no slicer comments is a fact, not an error;</li>
- *   <li><strong>the download carries {@code Content-Disposition} and {@code Content-Length}</strong>,
- *       because a browser names the saved file by the first and draws a progress bar from the
- *       second;</li>
- *   <li><strong>nothing on the path turns the content into a {@code byte[]}.</strong> That is
- *       enforced by signature in {@code api} - {@code GcodeFileService} takes and returns a
- *       {@code Publisher<ByteBuffer>} - and measured in {@code GcodeBlobStoreTest}, which asserts
- *       how many chunks are ever in flight. Neither fact is visible from out here. What this level
- *       can honestly say is that a file too large for one socket read goes in and comes back byte
- *       for byte, which is the thing a user would notice if any of it were wrong.</li>
- * </ul>
- *
- * <p>Every fixture carries its own mark, so no two tests here upload the same bytes by accident.
- * See {@link GcodeFixture} - the store would quite correctly hand the second one the first one's
- * record, and the test would be reading another test's file.
+ * <p>Every fixture carries its own mark (see {@link GcodeFixture}) so no two tests upload the same
+ * bytes and collide on the dedup the first bullet above tests.
  */
 class GcodeFileIntegrationTest extends FarmIntegrationTest {
 
     /**
-     * An upload answers with the record it became: its identity, its size, its line count.
-     *
-     * <p>The hash is computed by the fixture rather than read out of the response and compared to
-     * itself. It is the one field a browser cannot check and the one the rest of the farm leans
-     * on - a job holds a file id for hours and has to be able to say which bytes it meant.
+     * The hash is computed by the fixture rather than read out of the response and compared to
+     * itself - it is the one field a browser cannot check, and the one a job leans on for hours to
+     * say which bytes it meant.
      */
     @Test
     void anUploadComesBackAsTheRecordItBecame() {
@@ -77,12 +60,9 @@ class GcodeFileIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * What the slicer wrote reaches the browser, in Cura's dialect.
-     *
-     * <p>The numbers are the ones {@code SliceInfoReaderTest} measures in {@code :backend:core}, so
-     * this is not re-deciding what {@code 1.2345m} means - it is asserting that the reading survived
-     * being stored, read back out of the row and serialised. The field is a nested object and the
-     * names below are what a browser would switch on.
+     * The numbers are the ones {@code SliceInfoReaderTest} measures in {@code :backend:core} - not
+     * re-deciding what {@code 1.2345m} means, just that the reading survives storage, the row and
+     * serialisation.
      */
     @Test
     void whatTheSlicerSaidReachesTheBrowser() {
@@ -98,11 +78,9 @@ class GcodeFileIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A file nothing could be read from is stored anyway, and says so rather than lying.
-     *
-     * <p>Hand-written G-code is a perfectly printable file. The record carries a {@code slice}
-     * whose every field is null, which is the honest answer; a zero would read as a print that
-     * takes no time and uses no filament.
+     * Hand-written G-code is a perfectly printable file; the record's {@code slice} has every field
+     * null rather than zero, since zero would read as a print that takes no time and uses no
+     * filament.
      */
     @Test
     void aFileWithNoSlicerCommentsIsStoredAnyway() {
@@ -121,13 +99,10 @@ class GcodeFileIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A summary written at the <em>end</em> of a large file is still read.
-     *
-     * <p>PrusaSlicer names itself at the top and repeats its configuration at the bottom, and the
-     * store reads bounded windows at each end rather than the whole file - so on a file this size
-     * the slicer's name and its numbers come from two different reads with 192 KiB of motion
-     * between them. A reader that only looked at the top would answer with the name and three
-     * nulls, which is the least useful subset and would pass any test that used a small file.
+     * PrusaSlicer names itself at the top and repeats its configuration at the bottom; the store
+     * reads bounded windows at each end, so here the name and the numbers come from two different
+     * reads with 192 KiB of motion between them - a top-only reader would pass on a small file but
+     * answer with the name and three nulls here.
      */
     @Test
     void aSummaryAtTheEndOfALargeFileIsStillRead() {
@@ -147,17 +122,9 @@ class GcodeFileIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A file larger than one socket read goes in and comes back byte for byte.
-     *
-     * <p>This is what this level can say about the rule that nothing on the path holds the content.
-     * The real enforcement is a signature in {@code api} and a chunk count in
-     * {@code GcodeBlobStoreTest}, neither visible from here; what is visible is that a file that
-     * cannot arrive in one buffer survives the round trip intact - which is exactly what would stop
-     * being true if some later change read the body into an array and truncated, re-ordered or
-     * re-encoded it.
-     *
-     * <p>Both ends are checked: the hash on the record proves the server received these bytes, and
-     * the download proves it can give them back.
+     * Both ends are checked: the hash on the record proves the server received these bytes, and the
+     * download proves it can give them back - what would fail if a later change read the body into
+     * an array and truncated, re-ordered or re-encoded it.
      */
     @Test
     void aFileLargerThanOneBufferRoundTripsByteForByte() {
@@ -175,13 +142,11 @@ class GcodeFileIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The download carries what a browser saves by.
-     *
-     * <p>{@code Content-Disposition} is how the file gets its name back - without it the browser
-     * saves it as the id - and {@code Content-Length} is the only thing that lets a client show
-     * progress without the server buffering the file to find out how big it is. Both are easy to
-     * lose: a change that returned the {@code Flux} directly instead of a {@code ResponseEntity}
-     * would still answer 200 with the right bytes and silently drop both.
+     * {@code Content-Disposition} is how the file gets its name back (without it the browser saves
+     * it as the id); {@code Content-Length} lets a client show progress without the server buffering
+     * to find out how big the file is. Both are easy to lose: returning the {@code Flux} directly
+     * instead of a {@code ResponseEntity} would still answer 200 with the right bytes and silently
+     * drop both.
      */
     @Test
     void theDownloadCarriesWhatABrowserSavesBy() {
@@ -198,15 +163,9 @@ class GcodeFileIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The same bytes uploaded twice are one file, under the name they arrived with first.
-     *
-     * <p>Two fixtures with the same mark and different names: identical content, different
-     * {@code X-File-Name}. The second upload answers with the first record - same id, same name -
-     * and the farm holds one file rather than two.
-     *
-     * <p>That the second name is <em>lost</em> is the deliberate part. A job holds a file id, and
-     * two ids over identical bytes would mean a print that outlived a restart had to guess which
-     * copy it was reading.
+     * Two fixtures, same mark, different names: the second upload answers with the first record, and
+     * losing the second name is deliberate - a job holds a file id, and two ids over identical bytes
+     * would mean a print outliving a restart had to guess which copy it meant.
      */
     @Test
     void theSameBytesUploadedTwiceAreOneFile() {

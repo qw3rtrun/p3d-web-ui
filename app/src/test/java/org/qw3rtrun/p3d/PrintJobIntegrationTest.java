@@ -17,49 +17,32 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The print queue - issue #43's feature 7, through {@code /api-jobs}, and issue #51.
+ * The print queue - issue #43's feature 7, through {@code /api-jobs}, and issue #51. The state
+ * table is deliberately not here: which transitions are legal is {@code JobServiceTest}'s subject
+ * in {@code :backend:core}, driven against the entity that owns it, and restating it over HTTP
+ * would be a second copy that goes stale. What is left for this level is what only exists once the
+ * modules are assembled: a refusal is a status and a legible body ({@code JobOutcome} is sealed
+ * precisely so the web layer does not guess from an exception's class - 409 for "not where you
+ * thought", 404 for "no such job or file" - and whether that mapping is right can only be asked of
+ * a running server); starting a job feeds the file to the machine (the half no unit test spans:
+ * {@code jobs} publishes a transition, {@code core} reads the file and hands it to the transport,
+ * and the transport numbers, frames and writes it - asserted here as the G-code that reached
+ * {@link MockPrinter}); and a feed at {@code BACKGROUND} is preempted and carries on where it was
+ * (the one with teeth and the reason the issue exists, spanning the priority queue in
+ * {@code :backend:terminal}, the send window in {@code :gcode} and the feeder in
+ * {@code :backend:core}, needing a real file, a real window and a second source mid-stream - no
+ * unit test anywhere can see it). There is no UI for any of this yet, so these endpoints are the
+ * whole contract.
  *
- * <p><strong>The state table is deliberately not here.</strong> Which transitions are legal is
- * {@code JobServiceTest}'s subject in {@code :backend:core}, where it is driven against the entity
- * that owns it; restating it over HTTP would be a second copy of a table that already has one, and
- * the second copy is the one that goes stale. What is left for this level is everything that only
- * exists once the modules are assembled:
+ * <p>{@code FarmScheduler} is always running, assigning any {@code QUEUED} job the moment a machine
+ * is {@code IDLE} and free - on every transition and a five-second sweep - so a test that queued
+ * against a connected machine and posted {@code /assign} would race it into a 409. A job here is
+ * therefore queued pinned to a machine the farm has never heard of, left queued with a stated
+ * reason until moved by hand.
  *
- * <ul>
- *   <li><strong>a refusal is a status and a legible body.</strong> {@code JobOutcome} is a sealed
- *       value precisely so that the web layer does not have to guess from an exception's class, and
- *       whether that mapping is right - 409 for "the job is not where you thought", 404 for "there
- *       is no such job or file" - can only be asked of a running server;</li>
- *   <li><strong>starting a job feeds the file to the machine.</strong> That is the half no unit test
- *       in either module spans: {@code jobs} publishes a transition, {@code core} reads the file and
- *       hands it to the transport, and the transport numbers, frames and writes it. The assertion is
- *       the G-code that reached {@link MockPrinter};</li>
- *   <li><strong>a feed at {@code BACKGROUND} is preempted and then carries on where it was.</strong>
- *       This is the one with teeth and the reason the issue exists. It spans the priority queue in
- *       {@code :backend:terminal}, the send window in {@code :gcode} and the feeder in
- *       {@code :backend:core}, and no unit test in any of them can see it, because it needs a real
- *       file, a real window and a second source arriving mid-stream.</li>
- * </ul>
- *
- * <p><strong>There is no UI for any of this yet</strong>, so these endpoints are the whole contract
- * and nothing here is a stand-in for a page test.
- *
- * <h2>Two things about the farm that shape every test below</h2>
- *
- * <p><strong>The scheduler is always running.</strong> {@code FarmScheduler} assigns and starts any
- * {@code QUEUED} job the moment a machine is {@code IDLE} and free - on every job transition and on
- * a five-second sweep. A test that queued a job against a connected machine and then posted
- * {@code /assign} would be racing it and would get a 409 for its trouble. So a job here is queued
- * <em>pinned to its machine while that machine is still offline</em>, which leaves it queued with a
- * stated reason, and it is moved by hand before the machine is dialled. The queue-only tests pin to
- * a machine the farm has never heard of, so no scheduler pass can take them whatever else the suite
- * has left connected.
- *
- * <p><strong>Jobs outlive the test that made them.</strong> {@code DELETE /api-jobs/{id}} cancels a
- * job and deliberately does not remove the row - a cancelled job is a record of something somebody
- * decided - and the whole module shares one database. A job left {@code QUEUED} would therefore be
- * picked up by the next test's printer. {@link #cancelWhatWasQueued()} is what stops that, and it is
- * here rather than in {@code FarmIntegrationTest} because no other feature creates one.
+ * <p>Jobs outlive the test that made them: {@code DELETE /api-jobs/{id}} cancels without removing
+ * the row, and the whole module shares one database, so a job left {@code QUEUED} would be picked
+ * up by the next test's printer. {@link #cancelWhatWasQueued()} is what stops that.
  */
 class PrintJobIntegrationTest extends FarmIntegrationTest {
 
@@ -70,13 +53,9 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     private final List<UUID> queued = new ArrayList<>();
 
     /**
-     * Takes every job this test queued off the queue.
-     *
-     * <p>Not optional, and not tidiness. A {@code QUEUED} job is work the farm is actively looking
-     * for a printer for, so one left behind is handed to the first {@code IDLE} machine any later
-     * test registers - which would start a print nobody asked for, against a mock asserting on an
-     * exact list of commands. Cancelling is the only way to take one out of consideration, since
-     * the row stays.
+     * Not tidiness: a {@code QUEUED} job left behind is handed to the first {@code IDLE} machine
+     * any later test registers, starting a print nobody asked for against a mock asserting an
+     * exact command list.
      */
     @AfterEach
     void cancelWhatWasQueued() {
@@ -84,8 +63,7 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
             try {
                 farm.delete().uri("/api-jobs/{id}", id).exchange();
             } catch (RuntimeException e) {
-                // A job that already ended answers 409. A failed cleanup must not mask the failure
-                // that matters.
+                // A job that already ended answers 409; a failed cleanup must not mask the failure that matters.
             }
         }
         queued.clear();
@@ -94,12 +72,10 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- the queue, with no machine
 
     /**
-     * Queueing a file answers with the job it became, and the queue can be read back.
-     *
-     * <p>Pinned to a machine that does not exist, so that it stays where it is put: this test is
-     * about the record and the listing, and a scheduler quietly starting it would turn every field
-     * below into a race. {@code reason} on a queued job carries why it has not been given a machine,
-     * which is a different sentence from why a job ended - see {@code JobEntity.describe}.
+     * Pinned to a nonexistent machine so it stays put while every field below is checked - a
+     * scheduler quietly starting it would turn this into a race. {@code reason} on a queued job
+     * says why it has no machine yet, a different sentence from why a job ended - see
+     * {@code JobEntity.describe}.
      */
     @Test
     void queueingAFileAnswersWithTheJobItBecame() {
@@ -125,11 +101,9 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A job names a file the farm holds, and one that names nothing is a 404.
-     *
-     * <p>404 and not 409: {@code JobOutcome.Refused} carries no state here, because there is no job
-     * to have one, and that is exactly what the controller keys on rather than guessing from an
-     * exception class. A 500 would be the alternative and is what this shape exists to avoid.
+     * 404, not 409: {@code JobOutcome.Refused} carries no state here since there is no job to have
+     * one, which is what the controller keys on rather than guessing from an exception class - the
+     * alternative is the 500 this shape exists to avoid.
      */
     @Test
     void queueingAFileTheFarmDoesNotHoldIsNotFound() {
@@ -147,13 +121,10 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A move the job cannot make is a 409 saying where it actually is.
-     *
-     * <p>The three fields are the whole of what a browser needs to recover: where it is, what was
-     * asked, and a sentence to show. The common cause is an ordinary race - somebody clicks Start as
-     * the scheduler does - so the right answer is to tell them the truth and let the page re-read.
-     *
-     * <p>Which moves are legal is not asserted here; one that is not is enough to pin the mapping.
+     * The three fields are what a browser needs to recover: where it is, what was asked, a sentence
+     * to show - the common cause is an ordinary race (somebody clicks Start as the scheduler does),
+     * so the right answer is the truth, not a guess. Which moves are legal is not asserted here; one
+     * illegal move is enough to pin the mapping.
      */
     @Test
     void aMoveTheJobCannotMakeIsAConflictSayingWhereItIs() {
@@ -173,10 +144,8 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A job the farm does not have is a 404 at every verb, and never a 500.
-     *
-     * <p>All six, because a browser's client parses the body of each of them and a missing job is
-     * the ordinary consequence of two tabs being open on the same queue.
+     * All six verbs, because a browser's client parses each body and a missing job is the ordinary
+     * consequence of two tabs open on the same queue.
      */
     @Test
     void aJobTheFarmDoesNotHaveIsNotFoundAtEveryVerb() {
@@ -195,11 +164,9 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The queue can be read whole or for one machine.
-     *
-     * <p>Two different pages ask these: a farm-wide queue and a printer's own panel. Asserted by
-     * containment rather than by equality, because every job the suite has ever queued is still a
-     * row - see the class note on why that is deliberate.
+     * Two different pages ask these - a farm-wide queue and a printer's own panel - asserted by
+     * containment, not equality, since every job the suite has ever queued is still a row (see the
+     * class note).
      */
     @Test
     void theQueueCanBeReadWholeOrForOneMachine() {
@@ -223,12 +190,9 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- what reaches the machine
 
     /**
-     * A started job's file reaches the machine, block for block, and the job ends {@code COMPLETED}.
-     *
-     * <p>The baseline. What is asserted is the whole command log after the opening handshake, so a
-     * block invented, duplicated, reordered or dropped anywhere between the file store and the
-     * socket fails it - which is the failure this repository has shipped three times with every
-     * other test passing.
+     * The baseline: the whole command log after the opening handshake is asserted, so a block
+     * invented, duplicated, reordered or dropped anywhere between the file store and the socket
+     * fails it - the failure this repository has shipped three times with every other test passing.
      */
     @Test
     void aStartedJobFeedsItsWholeFileToTheMachine() {
@@ -236,18 +200,12 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The same, against a firmware that acknowledges with a bare {@code ok}.
-     *
-     * <p><strong>The acknowledgement dialect is the configuration axis a print job has.</strong> It
-     * decides how much the host may have outstanding: a machine reporting {@code ok P15 B3} lets the
-     * window hold three blocks, and one that reports no buffer counts holds it at the single block
-     * {@code AdvancedOkRs(1, 1, null)} starts it at. A job is a stream of tens of thousands of
-     * blocks through exactly that gate, so "it prints to the end either way" is a real claim and the
-     * file that comes out has to be identical.
-     *
-     * <p>The other profiles change nothing here and are not driven: an extruder count is not
-     * consulted by a feed, a card is not involved in printing from the host, and a machine that
-     * never answers is {@code ConnectivityIntegrationTest}'s subject.
+     * The acknowledgement dialect is the configuration axis a print job has: it decides how much
+     * the host may hold outstanding, from {@code ok P15 B3}'s three blocks down to
+     * {@code AdvancedOkRs(1, 1, null)}'s one, so "it prints to the end either way" is a real claim
+     * over tens of thousands of blocks. The other profiles change nothing here and are not driven -
+     * extruder count is not consulted by a feed, a card is not involved in host printing, and a
+     * mute machine is {@code ConnectivityIntegrationTest}'s subject.
      */
     @Test
     void aJobPrintsToTheEndOnAFirmwareThatReportsNoBufferCounts() {
@@ -275,38 +233,20 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A print is preempted by an interactive command and then carries on where it was.
+     * A job feeds at {@code BACKGROUND} and an interactive command is queued at {@code REGULAR},
+     * so: {@code M105} takes the very next slot rather than waiting behind the file (the difference
+     * between answering now and in six hours on a real print); the job is not restarted (no block
+     * twice); and it is not dropped (no block missing) - the queue hands its remaining demand back
+     * to the source it took it from. All three fall out of one assertion: remove {@code M105} from
+     * what the machine received and what is left must be the file, exactly, in order.
      *
-     * <p><strong>This is the assertion the issue exists for, and the three things it proves are
-     * three different claims.</strong> A job feeds at {@code BACKGROUND} and an interactive command
-     * is queued at {@code REGULAR}, so:
-     *
-     * <ul>
-     *   <li><strong>it is preempted</strong> - {@code M105} takes the very next slot on the wire,
-     *       rather than waiting behind the rest of the file. On a real print that is the difference
-     *       between a temperature query answering now and answering in six hours;</li>
-     *   <li><strong>the job is not restarted</strong> - no block appears twice;</li>
-     *   <li><strong>and it is not dropped</strong> - no block is missing. The queue hands its
-     *       remaining demand back to the source it took it from, so the feed continues at the block
-     *       it had reached.</li>
-     * </ul>
-     *
-     * <p>All three fall out of one assertion: remove the {@code M105} from what the machine received
-     * and what is left must be the file, exactly, in order.
-     *
-     * <h2>How the timing is made honest</h2>
-     *
-     * <p>A print against a mock that answers instantly is over before the next line of the test
-     * runs, so there would be nothing to preempt. {@link MockPrinter#holdRepliesFrom(String)} stops
-     * the machine answering from a named block onwards, and the send window does the rest: the host
-     * may not have more outstanding than the printer's buffer allows, so the conversation stops
-     * within a few blocks and stays stopped. The sample taken below is therefore a number that
-     * cannot move, which is asserted rather than assumed.
-     *
-     * <p>The ordering of the two sources is not a race either. {@code PrinterReactor.handle}
-     * applies a command on the aggregate's own executor and completes its {@code Mono} afterwards,
-     * so a 200 from {@code /report-temp} means the {@code M105} is already in the priority queue -
-     * before anything is released, and therefore before the job can be given another unit of demand.
+     * <p>{@link MockPrinter#holdRepliesFrom(String)} stops the machine answering so there is
+     * something to preempt (an instant-answering mock finishes before the next test line runs); the
+     * send window then holds the conversation at a few blocks, giving a sample that cannot move. The
+     * ordering is not a race either: {@code PrinterReactor.handle} applies a command on the
+     * aggregate's own executor and completes its {@code Mono} afterwards, so a 200 from
+     * {@code /report-temp} means the {@code M105} is already queued before the job can be given
+     * another unit of demand.
      */
     @Test
     void aFeedingJobIsPreemptedByAnInteractiveCommandAndResumesWhereItWas() {
@@ -340,17 +280,12 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Pausing records where the job got to, and resuming goes on from there.
-     *
-     * <p><strong>The checkpoint is the mechanism and it is worth asserting directly.</strong>
-     * {@code JobFeeder} takes one exact reading at the moment it stops - the timer's checkpoints are
-     * up to a second stale - and a resume seeks to whatever was written down. A number that is even
-     * slightly behind means the machine extrudes over what it has already printed, which was
-     * observed on a live run before the reading was made exact.
-     *
-     * <p>So: stop the machine answering, pause, and the number on the job must be exactly the number
-     * of blocks that reached the machine. Then let it go, resume, and the file that comes out has to
-     * be the file - the same assertion as the preemption test, and for the same reason.
+     * {@code JobFeeder} takes one exact reading at the moment it stops (the timer's checkpoints are
+     * up to a second stale) and a resume seeks to it - a number even slightly behind means the
+     * machine extrudes over what it has already printed, observed on a live run before the reading
+     * was made exact. So: pause, and the job's number must be exactly the blocks that reached the
+     * machine; then resume, and the file that comes out has to be the file, same assertion as the
+     * preemption test.
      */
     @Test
     void pausingRecordsWhereTheJobGotToAndResumingContinuesFromThere() {
@@ -384,17 +319,12 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Cancelling a print stops it and leaves the machine cool, rather than finishing the file.
-     *
-     * <p>Two halves, and the second is why the cool-down is queued at {@code REGULAR} rather than
-     * appended: a cancellation that waited behind the rest of a six-hour print would turn the heaters
-     * off six hours after somebody asked. So the five blocks go in <em>front</em> of what is left of
-     * the file, and what is left of the file never goes at all.
-     *
-     * <p>It does not home, park or disable the steppers, and this asserts that too by asserting the
-     * exact list: homing drags the nozzle across the part and dropping the steppers drops the Z axis
-     * on a machine with no brake. Both are recorded as debt in {@code JobFeeder.coolDown} rather
-     * than guessed at, and a change that started doing either should have to come through here.
+     * The cool-down is queued at {@code REGULAR} rather than appended, so it does not wait behind
+     * the rest of a six-hour print - the five blocks go in front, and what is left of the file
+     * never goes. It does not home, park or disable the steppers either (homing drags the nozzle
+     * across the part, dropping steppers drops Z with no brake), both recorded as debt in
+     * {@code JobFeeder.coolDown} rather than guessed at; a change doing either should come through
+     * here.
      */
     @Test
     void cancellingAPrintStopsItAndCoolsTheMachineDown() {
@@ -434,25 +364,19 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- when blocks are lost
 
     /**
-     * A job whose blocks the transport abandoned fails, rather than reporting {@code COMPLETED} -
-     * issue #60.
+     * #60: a wrong outcome, not a wrong number. The firmware rejects {@code G21}, {@code G90} and
+     * {@code G28} because its line counter is where a previous host session left it; the host
+     * cannot answer a {@code Resend:} for a block it never framed, so
+     * {@code CommandProcessor.resynchronise} renumbers and drops what it was holding, and the rest
+     * of the file prints perfectly - before this fix the job reported {@code COMPLETED} with its
+     * {@code G28} silently skipped.
      *
-     * <p><strong>This is a wrong outcome and not a wrong number.</strong> The firmware rejects
-     * {@code G21}, {@code G90} and {@code G28} because its line counter is where a previous host
-     * session left it; the host cannot answer a {@code Resend:} for a block it has never framed,
-     * so {@code CommandProcessor.resynchronise} starts the numbering again and drops what it was
-     * holding; the rest of the file then prints perfectly. Before this issue the job reported
-     * {@code COMPLETED}, and a print that silently skipped its {@code G28} homed nowhere.
-     *
-     * <p><strong>Why no test caught it.</strong> A fresh {@link MockPrinter} starts at line 0 and a
-     * fresh host numbers from 1, so the two agreed by construction and the case could not arise -
-     * see {@link MockPrinter#checkLineNumbersFrom(String, int)}, which is the fixture that makes a
-     * machine able to outlive a host session, and whose every reply line is measured.
-     *
-     * <p><strong>Why the drift is armed mid-file rather than by reconnecting.</strong> On a
-     * reconnect this host opens with {@code M110 N0} and waits for its acknowledgement before any
-     * real block is pulled - the send window starts at one outstanding block, so it has to - and
-     * that genuinely repairs the sequence. Measured, on the wire, by {@code ResendOnReconnectProbe}:
+     * <p>No test caught it because a fresh {@link MockPrinter} starts at line 0 and a fresh host
+     * numbers from 1, agreeing by construction; {@link MockPrinter#checkLineNumbersFrom(String, int)}
+     * is the fixture that lets a machine outlive a host session, every reply line measured. The
+     * drift is armed mid-file rather than by reconnecting because a reconnect's opening
+     * {@code M110 N0} already repairs the sequence - measured on the wire by
+     * {@code ResendOnReconnectProbe}:
      *
      * <pre>
      *   -&gt; N1 M110 N0*124
@@ -460,25 +384,19 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
      *   -&gt; N1 G21*27
      * </pre>
      *
-     * <p>So prevention at the opening is not the missing piece; it is already there and it already
-     * works. What it cannot prevent is the two ends disagreeing <em>after</em> the opening - a lost
-     * {@code ok}, a half-line the firmware buffered from the previous session, an {@code Error:} on
-     * a line the window has moved past - and every one of those arrives at
-     * {@code resynchronise} the same way. One counter that is already pushed when the file's first
-     * block arrives stands for all of them, and what goes over the wire below it is exactly what
-     * the simulator produced.
+     * What the opening cannot prevent is the two ends disagreeing <em>after</em> it - a lost
+     * {@code ok}, a buffered half-line, an {@code Error:} on a line the window has passed - and
+     * every one reaches {@code resynchronise} the same way, so one counter pushed before the file's
+     * first block stands for all of them; what goes over the wire below is exactly what the
+     * simulator produced. The three assertions are three different claims: the blocks really were
+     * lost, the job says so, and it says why in words an operator can act on.
      *
-     * <p>The three assertions are three different claims: the blocks really were lost, the job says
-     * so, and it says why in words an operator can act on.
-     *
-     * <h2>Why the machine is also stopped mid-file</h2>
-     *
-     * <p><strong>Without the gate this test is a coin flip, and it was measured as one: four passes
-     * in nine runs.</strong> The abandonment crosses two {@code publishOn(executor)} hops onto the
-     * aggregate's thread — {@code PrinterReactor.gEvent}'s and {@code updates()}' — while the feed's
-     * completion arrives independently on the netty thread. Against a mock that
-     * answers instantly an eighteen-block file is over in about ten milliseconds, so the two race,
-     * and whichever lands first decides whether the job reports {@code FAILED} or {@code COMPLETED}.
+     * <p>The machine is also stopped mid-file because without that gate this test is a coin flip,
+     * measured as one: four passes in nine runs. The abandonment crosses two
+     * {@code publishOn(executor)} hops onto the aggregate's thread ({@code PrinterReactor.gEvent}'s
+     * and {@code updates()}'), while the feed's completion arrives independently on the netty
+     * thread; against a mock that answers instantly, an eighteen-block file finishes in about ten
+     * milliseconds, so the two race for whether the job reports {@code FAILED} or {@code COMPLETED}.
      * From a failing run:
      *
      * <pre>
@@ -489,24 +407,18 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
      *   52.022 nio-4    JobFeeder: job … sent its last block (18 in all)
      * </pre>
      *
-     * <p>The capture is from before issue #54, when that executor was the farm-wide
-     * {@code Schedulers.single()} — hence {@code single-1}. The same two hops now land on this
-     * machine's own {@code p3d-printer-<id>} thread, which removes the farm's queueing from the gap
-     * and leaves the race itself exactly as measured: it is two paths, not two speeds.
-     *
-     * <p><strong>That race is real but it is at fixture scale, and it is not what this test is
-     * for.</strong> On a print of any length the blocks are abandoned thousands of blocks before
-     * the file ends; the window in which the two can swap is the last few milliseconds of a job.
-     * It is recorded as debt in the {@code spring-backend-dev} skill with the measurement above,
-     * and closing it properly means making the fact synchronously available to the completion path
-     * rather than racing it — which touches the same code as
-     * [#62](https://github.com/qw3rtrun/p3d-web-ui/issues/62) and belongs with it.
-     *
-     * <p>So {@link MockPrinter#holdRepliesFrom(String)} stops the machine answering partway through
-     * the file — §4.4's tool, and the same one the preemption and pause tests use. The file then
-     * <em>cannot</em> run out, so the only terminal state this job can reach is the one the
-     * abandonment puts it in, and the assertion is about the outcome rather than about the
-     * scheduler. A regression leaves the job {@code RUNNING} and the wait says so.
+     * Captured before #54, when that executor was the farm-wide {@code Schedulers.single()} (hence
+     * {@code single-1}); the same two hops now land on this machine's own {@code p3d-printer-<id>}
+     * thread, which removes the farm's queueing from the gap and leaves the race itself exactly as
+     * measured - two paths, not two speeds. That race is real but at fixture scale and not what
+     * this test is for: on a real print the blocks are abandoned thousands of blocks before the
+     * end, and the window to swap is the last few milliseconds. Recorded as known debt (closing it
+     * needs the completion path to consult the fact synchronously rather than race it, which
+     * touches the same code as #62 and belongs with it). So
+     * {@link MockPrinter#holdRepliesFrom(String)} stops the machine mid-file (§4.4's tool, shared
+     * with the preemption and pause tests): the file cannot run out, so the only terminal state
+     * reachable is the one the abandonment puts it in, and a regression leaves the job
+     * {@code RUNNING}.
      */
     @Test
     void aJobWhoseBlocksWereAbandonedFailsRatherThanReportingCompleted() {
@@ -515,12 +427,12 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
         var file = GcodeFixture.unsliced("abandoned").named("abandoned.gcode").withBodyLines(12);
         var blocks = file.blocks();
 
-        // From the file's first block on, this is a machine whose counter stands at 14 - which is
-        // where a machine that outlived a host session stands. The opening handshake is answered
-        // normally: M110 N0, M115 and M155 S1 are not blocks out of a file.
+        // From the file's first block on, this machine's counter stands at 14 - where a machine
+        // that outlived a host session stands. The opening handshake (M110 N0, M115, M155 S1) is
+        // answered normally, since those are not blocks out of a file.
         printer.checkLineNumbersFrom(blocks.getFirst(), 14);
-        // And it stops answering well after the resynchronisation, so the file cannot finish
-        // before the abandonment has been acted on. See the note above.
+        // Stops answering well after the resynchronisation, so the file cannot finish before the
+        // abandonment is acted on - see the note above.
         printer.holdRepliesFrom(blocks.get(8));
 
         var job = startOn(id, printer, file);
@@ -542,12 +454,11 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A resend the host <em>can</em> answer costs the job nothing - the control for the test above.
-     *
-     * <p>Without this, "fail the job when a {@code Resend:} arrives" would pass the test above and
-     * be badly wrong: a corrupted block is ordinary traffic on a serial line, the window holds
-     * every block until the {@code ok} that accepts it, and replaying one is the mechanism spec
-     * 8.5 exists for. Measured in the same probe run as the rejection, as the control it is:
+     * The control for the test above: a resend the host <em>can</em> answer costs the job nothing.
+     * Without this, "fail the job when a {@code Resend:} arrives" would pass the test above and be
+     * badly wrong - a corrupted block is ordinary traffic, the window holds every block until the
+     * {@code ok} that accepts it, and replaying one is the mechanism spec 8.5 exists for. Measured
+     * in the same probe run as the rejection, as the control:
      *
      * <pre>
      *   &gt;&gt; N2 G90*19  &lt;&lt; Error:checksum mismatch, Last Line: 1
@@ -556,10 +467,10 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
      *   &gt;&gt; N2 G90*18  &lt;&lt; ok N2 P15 B3
      * </pre>
      *
-     * <p>The push is the firmware's half of that, put to a session whose window is holding the
-     * block being asked for - the same shape as
-     * {@code ConnectivityIntegrationTest.aStrayAcknowledgementDoesNotShiftTheSendWindow}, with a
-     * job behind it. The block goes out a second time, byte for byte, and the job finishes.
+     * The push is the firmware's half of that, to a session whose window is holding the block asked
+     * for - the same shape as
+     * {@code ConnectivityIntegrationTest.aStrayAcknowledgementDoesNotShiftTheSendWindow}, with a job
+     * behind it.
      */
     @Test
     void aResendTheHostCanAnswerDoesNotFailTheJob() {
@@ -599,12 +510,9 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- driving one job
 
     /**
-     * Queues a file for a machine, gives it to that machine, dials it, and starts it.
-     *
-     * <p>The order is what keeps the scheduler out of the way, and it is the honest order anyway:
-     * the job is pinned while the machine is still offline, so no pass can take it; it is assigned
-     * by hand, which takes it out of {@code queued()} for good; and only then is the machine dialled
-     * and the job started. Every step is the endpoint a browser would call.
+     * The order keeps the scheduler out of the way and is the honest order anyway: pinned while
+     * offline so no pass can take it, assigned by hand (out of {@code queued()} for good), then
+     * dialled and started - every step the endpoint a browser would call.
      */
     private UUID startOn(UUID machineId, MockPrinter printer, GcodeFixture file) {
         var stored = idOf(upload(file));

@@ -25,7 +25,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class TemperatureControlIntegrationTest extends FarmIntegrationTest {
 
-    /** Setting the hotend reaches the machine as {@code M104}, carrying the target. */
     @Test
     void settingTheHotendReachesTheMachine() {
         var printer = machine(MockPrinter.marlin());
@@ -39,7 +38,6 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
         assertTrue(sent.contains("S210"), "the target must survive the trip: " + sent);
     }
 
-    /** And the bed as {@code M140}. */
     @Test
     void settingTheBedReachesTheMachine() {
         var printer = machine(MockPrinter.marlin());
@@ -53,13 +51,10 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Asking for a reading sends {@code M105}, and the answer comes back on the stream.
-     *
-     * <p>The answer arrives <em>on the acknowledgement</em> - {@code ok T:210.00 /210.00 …} - which
-     * is why {@code OkTemperatureRs} is a type apart from {@code BareTemperatureRs}. An {@code ok}
-     * taken only as a window credit and then dropped takes the answer with it, and that is exactly
-     * what used to happen: every temperature the host ever saw came from an {@code M155}
-     * auto-report, and an {@code M105} asked on demand was answered into the void.
+     * The answer arrives <em>on the acknowledgement</em> ({@code ok T:210.00 /210.00 …}), which is
+     * why {@code OkTemperatureRs} is a type apart from {@code BareTemperatureRs}: an {@code ok}
+     * taken only as a window credit and dropped used to take every on-demand {@code M105} reading
+     * with it, with every temperature the host saw coming from {@code M155} instead.
      */
     @Test
     void askingForAReadingPutsTheAnswerOnTheStream() {
@@ -76,11 +71,9 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * An unsolicited auto-report reaches the browser as a bare reading.
-     *
-     * <p>The two classes are one reading and two meanings - answered when asked, against volunteered
-     * - and the browser has to match them as a family. This asserts the volunteered one travels
-     * under its own name, which is the string a TypeScript client switches on.
+     * The two classes are one reading, two meanings - answered when asked, against volunteered - and
+     * the browser matches them as a family; this is the volunteered one traveling under its own
+     * name, the string a TypeScript client switches on.
      */
     @Test
     void anAutoReportReachesTheBrowser() {
@@ -98,13 +91,10 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A page opened on a warm printer shows its temperature at once - #85.
-     *
-     * <p>The stream used to replay only whatever was said last, so a page opened between two
-     * auto-reports drew no temperature until the next one - and with {@code M155} off, never. It
-     * now opens with what the aggregate holds, and the last reading is part of that. The reading is
-     * made <em>before</em> the stream is opened, and the machine says nothing after it, so the
-     * figure can only have come from the snapshot.
+     * #85: the stream used to replay only whatever was said last, so a page opened between two
+     * auto-reports drew no temperature until the next one - never, with {@code M155} off. It now
+     * opens with what the aggregate holds; the reading here is made <em>before</em> the stream opens
+     * and the machine says nothing after, so the figure can only come from the snapshot.
      */
     @Test
     void aPageOpenedLaterIsHandedTheLastReading() {
@@ -129,12 +119,10 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The last reading is also answerable without a stream.
-     *
-     * <p>A page rendering a printer wants the current figure once; a page watching one wants every
-     * change. {@code GET /api-printer/{id}} is the first, and before anything has been reported it
-     * answers with <strong>nothing at all</strong> rather than a zero - a reading of zero cannot be
-     * told apart from one the firmware really sent.
+     * {@code GET /api-printer/{id}} answers the current figure once, for a page that renders rather
+     * than watches; before anything is reported it answers with <strong>nothing at all</strong>
+     * rather than a zero, since a zero reading cannot be told apart from one the firmware really
+     * sent.
      */
     @Test
     void theLastReadingIsAnsweredWithoutAStream() {
@@ -155,9 +143,8 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
                     .expectBody(String.class).returnResult().getResponseBody();
             return body != null && body.contains("42.50");
         });
-        // The body is the hotend reading itself - current, target, power - and not a wrapper around
-        // every heater. `PrinterControl.state` answers "the last hotend reading", which is what a
-        // page shows beside the nozzle; everything else a machine reports arrives on the stream.
+        // The body is the hotend reading itself, not a wrapper around every heater - PrinterControl.state
+        // answers "the last hotend reading" shown beside the nozzle; everything else arrives on the stream.
         var reading = json(farm.get().uri("/api-printer/{id}", id).exchange().expectStatus().isOk());
         assertEquals(42.5, degrees(reading, "current"));
         assertEquals(0.0, degrees(reading, "target"));
@@ -166,21 +153,18 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- over several configurations
 
     /**
-     * A target for tool 1 on a machine with one tool reaches nothing.
-     *
-     * <p>The machine reported {@code EXTRUDER_COUNT:1} in its {@code M115}, so the aggregate knows
-     * the index is out of range and declines to send. That decision is the reason
-     * {@code handle(SetHotendTemperature)} exists as a named handler rather than a pass-through -
-     * it is where the domain rule lands.
+     * The machine reported {@code EXTRUDER_COUNT:1} in its {@code M115}, so the aggregate knows the
+     * index is out of range and declines to send - the reason {@code handle(SetHotendTemperature)}
+     * exists as a named handler rather than a pass-through: it is where the domain rule lands.
      */
     @Test
     void aTargetForASecondToolIsNotSentToASingleExtruderMachine() {
         var printer = machine(MockPrinter.marlin());
         var id = register("one tool", printer);
-        // connectAndLearn, not "wait until M155 S1 is on the wire". That only proves the ok closing
-        // M115 was handled on the netty inbound thread, which writes the next block itself; the
-        // FirmwareInfoRs from the same reply is queued onto the aggregate's scheduler and may not
-        // have run. The refusal below is the aggregate reading its own extruder count.
+        // connectAndSettle, not "wait until M155 S1 is on the wire": that only proves the ok closing
+        // M115 ran on netty's inbound thread, which writes the next block itself, while FirmwareInfoRs
+        // from the same reply is queued onto the aggregate's scheduler and may not have run. The
+        // refusal below reads the aggregate's own extruder count.
         connectAndSettle(id, printer);
 
         command(id, "/set-temp", "{\"index\":1,\"temp\":210}").expectStatus().isOk();
@@ -191,14 +175,13 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
                 "this machine has one hotend; a target for the second must not reach it");
     }
 
-    /** The identical request, to a machine that reported two tools, does reach the wire. */
     @Test
     void theSameTargetIsSentToADualExtruderMachine() {
         var printer = machine(MockPrinter.dualExtruder());
         var id = register("two tools", printer);
-        // Same reason as the single-extruder case above, and this is the direction that would have
-        // failed rather than passed for the wrong reason: the default count is 1, so an aggregate
-        // that has not yet read EXTRUDER_COUNT:2 refuses the command and no M104 ever arrives.
+        // Same reason as above, and the direction that would fail for the wrong reason: the default
+        // count is 1, so an aggregate that has not yet read EXTRUDER_COUNT:2 refuses the command and
+        // no M104 arrives.
         connectAndSettle(id, printer);
 
         command(id, "/set-temp", "{\"index\":1,\"temp\":210}").expectStatus().isOk();
@@ -210,11 +193,8 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Turning the auto-report on is a command like any other, and the period travels.
-     *
-     * <p>Named {@code period} and not {@code seconds}: the browser and the server disagreed about
-     * that once, which bound null into every request and was invisible because the endpoint still
-     * answered 200.
+     * Named {@code period}, not {@code seconds}: browser and server once disagreed, binding null
+     * into every request invisibly, since the endpoint still answered 200.
      */
     @Test
     void theAutoReportPeriodTravels() {
@@ -230,7 +210,6 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
         });
     }
 
-    /** A machine nothing is connected to is not commanded, and the request still answers cleanly. */
     @Test
     void aTargetForAnUnconnectedMachineIsRefusedRatherThanFailing() {
         var printer = machine(MockPrinter.marlin());
@@ -245,12 +224,9 @@ class TemperatureControlIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * One figure off a reading, as a number.
-     *
-     * <p>{@code HeaterReading.current} is a {@code BigDecimal} and reaches the browser as a JSON
-     * <em>number</em> - {@code 42.50}, not {@code "42.50"} - so a client reads it as a double and
-     * the trailing zero is the firmware's precision rather than anything the wire preserves.
-     * Comparing the text would be asserting on Jackson's rendering of a scale.
+     * {@code HeaterReading.current} is a {@code BigDecimal} that reaches the browser as a JSON
+     * <em>number</em> ({@code 42.50}, not {@code "42.50"}), so this reads it as a double - the
+     * trailing zero is firmware precision, not something comparing the text would preserve.
      */
     private static double degrees(Map<String, Object> reading, String field) {
         var value = reading.get(field);

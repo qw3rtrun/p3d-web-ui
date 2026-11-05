@@ -10,61 +10,44 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The machine's settings - issue #88's feature, and the five operations of {@code M500}-{@code M504}.
- *
- * <p>Every test here asserts <strong>both</strong> ends of one round trip: the command that reached
- * the machine and the event that reached a browser. That is not thoroughness for its own sake. This
- * repository has shipped three features that were complete, green and inert - the motion commands,
- * then the Storage tab's commands, then its replies - and each of them would have passed a test
- * that checked only one end. {@code SdCardIntegrationTest} says the same thing at more length.
+ * The machine's settings - issue #88's feature, the five operations of {@code M500}-{@code M504}.
+ * Every test asserts <strong>both</strong> ends of one round trip, the command reaching the machine
+ * and the event reaching the browser - this repository has shipped three complete, green, inert
+ * features (the motion commands, then the Storage tab's commands, then its replies) that a
+ * one-ended test would have passed; {@code SdCardIntegrationTest} says the same thing at length.
  *
  * <h2>What was measured, and what was not</h2>
  *
  * <p>Probed against {@code FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56)
- * MACHINE_TYPE:MarlinSim} on 2026-11-04. The facts these tests are built on:
- *
- * <ul>
- *   <li>{@code M503} reports live memory as <em>the commands that would restore it</em>, in two
- *       shapes - {@code echo:}-prefixed with section headers, and, under {@code S0}, bare and
- *       indented with no headers at all. A bare single-setting query answers in the second shape,
- *       which is why one reply type covers a dump and a read-back.</li>
- *   <li><strong>{@code M501} and {@code M502} answer a bare {@code ok} and say nothing about what
- *       they changed.</strong> This is the fact the design had to be built around, and
- *       {@link #revertingReReadsTheSettingsBecauseTheFirmwareWillNotSayWhatChanged()} is the test
- *       that pins the answer.</li>
- *   <li>{@code M500} answers {@code //action:notification Settings Stored}, which already decodes
- *       to {@code ActionRs} and needed no new type.</li>
- *   <li>{@code M504} answers {@code echo:EEPROM OK}. Its <em>failure</em> text is UNMEASURED, so
- *       nothing here asserts a negative verdict and the reply carries the message verbatim rather
- *       than a boolean.</li>
- * </ul>
+ * MACHINE_TYPE:MarlinSim} on 2026-11-04. {@code M503} reports live memory as the commands that
+ * would restore it, in two shapes - {@code echo:}-prefixed with section headers, and under
+ * {@code S0} bare and indented with no headers, which a single-setting query also answers in, so
+ * one reply type covers a dump and a read-back. {@code M501} and {@code M502} answer a bare
+ * {@code ok} and say nothing about what changed - the fact the design is built around, pinned by
+ * {@link #revertingReReadsTheSettingsBecauseTheFirmwareWillNotSayWhatChanged()}. {@code M500}
+ * answers {@code //action:notification Settings Stored}, decoding to the existing {@code ActionRs}.
+ * {@code M504} answers {@code echo:EEPROM OK}; its <em>failure</em> text is UNMEASURED, so nothing
+ * here asserts a negative verdict and the reply carries the message verbatim rather than a boolean.
  *
  * <h2>The configuration axis is which half of the EEPROM story the firmware tells</h2>
  *
- * <p>Three profiles, because issue #88's two named "capabilities" turned out not to be the same
- * kind of thing at all:
- *
- * <ul>
- *   <li>{@link MockPrinter#marlin()} - {@code Cap:EEPROM:1} and {@code M503} present. The baseline.</li>
- *   <li>{@link MockPrinter#withoutEeprom()} - {@code Cap:EEPROM:0}. Decided from the capability, so
- *       the tab is never offered and the server is the one deciding.</li>
- *   <li>{@link MockPrinter#withoutSettingsReport()} - EEPROM but no {@code M503}, Marlin's
- *       {@code DISABLE_M503}. <strong>There is no capability line for this under any spelling</strong>
- *       - verified against the simulator's 38 {@code Cap:} lines and against Marlin's own
- *       {@code M115.cpp} - so the farm cannot read it and has to learn it from the reply. That
- *       asymmetry is the subject of {@link #aFirmwareWithoutM503IsLearnedFromItsRefusal()}.</li>
- * </ul>
+ * <p>Three profiles, because issue #88's two named "capabilities" are not the same kind of thing:
+ * {@link MockPrinter#marlin()} ({@code Cap:EEPROM:1} and {@code M503} present, the baseline);
+ * {@link MockPrinter#withoutEeprom()} ({@code Cap:EEPROM:0}, so the tab is never offered and the
+ * server decides); and {@link MockPrinter#withoutSettingsReport()} (EEPROM but no {@code M503},
+ * Marlin's {@code DISABLE_M503}) - there is no capability line for this under any spelling,
+ * verified against the simulator's 38 {@code Cap:} lines and Marlin's own {@code M115.cpp}, so the
+ * farm learns it only from the reply, which {@link #aFirmwareWithoutM503IsLearnedFromItsRefusal()}
+ * covers.
  */
 class EepromSettingsIntegrationTest extends FarmIntegrationTest {
 
     // ------------------------------------------------------------------ reading the settings
 
     /**
-     * Reading the settings reaches the machine and the whole report reaches the browser.
-     *
-     * <p>Twenty-five lines on the wire become twenty-five messages, and the count is asserted
-     * because the failure this guards against is a host that decodes the first line and drops the
-     * rest - which is precisely what happened before {@code SdFileListReader} existed.
+     * Twenty-five lines on the wire become twenty-five messages; the count is asserted because the
+     * failure this guards against is a host that decodes the first line and drops the rest -
+     * precisely what happened before {@code SdFileListReader} existed.
      */
     @Test
     void readingTheSettingsBringsTheWholeReportToTheBrowser() {
@@ -93,12 +76,10 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A value carries the firmware's own command text, which is what the tab edits.
-     *
-     * <p>Asserted as the string the browser receives rather than against a parsed model: the report
-     * <em>is</em> G-code, and keeping it that way is the decision that let this feature avoid a
-     * second number model. A payload that had been helpfully parsed into fields would pass a test
-     * written against fields and tell the browser nothing it could round-trip.
+     * Asserted as the string the browser receives, not a parsed model: the report <em>is</em>
+     * G-code, which is the decision that let this feature avoid a second number model - a payload
+     * parsed into fields would pass a test written against fields and tell the browser nothing it
+     * could round-trip.
      */
     @Test
     void aSettingArrivesAsTheCommandThatWouldRestoreIt() {
@@ -118,12 +99,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A browser opening the tab after the report was read is handed it anyway.
-     *
-     * <p>The snapshot half of the aggregate's contract, and the reason {@code EEPROMSettingsControl}
-     * exists at all rather than the replies simply being forwarded. Without it, a page opened a
-     * second after somebody else pressed Read shows an empty table and the only way out is to ask
-     * the machine again.
+     * The snapshot half of the aggregate's contract, and the reason {@code EEPROMSettingsControl}
+     * exists rather than the replies being simply forwarded - without it a page opened after
+     * somebody else pressed Read shows an empty table with no way out but asking again.
      */
     @Test
     void aTabOpenedLaterIsHandedTheSettingsAlready() {
@@ -147,12 +125,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     // ------------------------------------------------------------------ changing a setting
 
     /**
-     * Setting a value reaches the machine as the setting's own command, and the machine keeps it.
-     *
-     * <p>Two observables, because either alone has been wrong here before: {@code printer.commands()}
-     * is the byte sequence that left the host, and {@code printer.setting} is what the machine holds
-     * afterwards. The second is what makes this a round trip rather than an assertion that a POST
-     * returned 200.
+     * Two observables, because either alone has been wrong here before: {@code printer.commands()}
+     * is what left the host, {@code printer.setting} is what the machine holds afterwards - the
+     * second is what makes this a round trip rather than an assertion that a POST returned 200.
      */
     @Test
     void settingStepsPerUnitChangesWhatTheMachineHolds() {
@@ -171,9 +146,7 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A setting changed live is <strong>not</strong> in the EEPROM until {@code M500} says so.
-     *
-     * <p>The distinction issue #88 draws in its own words - "machine live memory, not eeprom" - and
+     * The distinction issue #88 draws in its own words - "machine live memory, not eeprom" - and
      * the one an operator loses money on if the farm blurs it.
      */
     @Test
@@ -223,16 +196,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     // ------------------------------------------------------- reverting, saving and defaulting
 
     /**
-     * Reverting rolls live memory back to the EEPROM - and re-reads it, because nothing else will.
-     *
-     * <p><strong>This is the design decision the probe forced.</strong> {@code M501} answers a bare
-     * {@code ok}: the firmware changes every value in live memory and announces none of them. A
-     * farm that sent {@code M501} and stopped would be holding a settings report that is now a lie,
-     * and the browser would show it until somebody thought to press Read.
-     *
-     * <p>So the aggregate sends its own {@code M503} behind the {@code M501}, and the browser is
-     * told the reverted values. The assertion is the reverted value arriving on the stream, not the
-     * {@code M503} being sent - the command is the mechanism and the event is the promise.
+     * The aggregate sends its own {@code M503} behind the {@code M501}, so the browser is told the
+     * reverted values; the assertion is the value arriving on the stream, not the {@code M503}
+     * being sent - the command is the mechanism, the event is the promise.
      */
     @Test
     void revertingReReadsTheSettingsBecauseTheFirmwareWillNotSayWhatChanged() {
@@ -257,12 +223,10 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Resetting to the firmware defaults is a different operation from reverting, and is proved so.
-     *
-     * <p>On the simulator the stored settings and the defaults differ in exactly one line - the
-     * auto-temperature line - and that measured difference is the only thing that can tell a
-     * correct {@code M502} from an {@code M501} wearing its name. A mock whose defaults equalled
-     * its EEPROM would let the two be swapped silently.
+     * On the simulator the stored settings and the defaults differ in exactly one line - the
+     * auto-temperature line - the only thing that can tell a correct {@code M502} from an
+     * {@code M501} wearing its name; a mock whose defaults equalled its EEPROM would let the two be
+     * swapped silently.
      */
     @Test
     void resettingToFirmwareDefaultsIsNotTheSameAsReverting() {
@@ -300,11 +264,8 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Validating the EEPROM reaches the machine and its verdict reaches the browser.
-     *
-     * <p>The message is asserted verbatim because {@code echo:EEPROM OK} is what was measured. The
-     * failing verdict's text was not, so there is no test for it and no boolean in the reply to
-     * invite one - see the class note.
+     * Asserted verbatim because {@code echo:EEPROM OK} is what was measured; the failing verdict's
+     * text was not (UNMEASURED), so there is no test for it and no boolean in the reply to invite one.
      */
     @Test
     void validatingTheEepromReportsItsVerdict() {
@@ -321,15 +282,11 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     // ------------------------------------------------------------------ the two capability gates
 
     /**
-     * A firmware that reports no EEPROM is not offered the tab, and the <em>server</em> decides.
-     *
-     * <p>The same arrangement the Storage tab has: a capability is true at request time, so the
-     * page is rendered without the tab rather than the island mounting and discovering it has
-     * nothing to do. The assertion is on the HTML a browser is served, because that is where the
-     * decision is visible - a test of a Java predicate would be the server agreeing with itself.
-     *
-     * <p>The capability is {@code EEPROM}. Issue #88 calls it {@code EEPROM_SETTINGS}, which is the
-     * build macro; what appears on the wire is {@code Cap:EEPROM:0|1}.
+     * The same arrangement as the Storage tab: the page is rendered without the tab rather than the
+     * island mounting and discovering it has nothing to do, asserted on the served HTML since a Java
+     * predicate test would just be the server agreeing with itself. The capability is
+     * {@code EEPROM} - issue #88 calls it {@code EEPROM_SETTINGS}, the build macro; the wire shows
+     * {@code Cap:EEPROM:0|1}.
      */
     @Test
     void aFirmwareWithoutEepromIsNotOfferedTheSettingsTab() {
@@ -353,17 +310,10 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A firmware without {@code M503} is learned from its refusal, because nothing else tells us.
-     *
-     * <p><strong>{@code DISABLE_M503} is not a capability.</strong> Marlin's {@code M115} reports
-     * nothing about {@code M503} under any spelling - checked against the simulator's 38
-     * {@code Cap:} lines and against {@code M115.cpp} on {@code 2.1.x}. So unlike the EEPROM gate
-     * above, this one cannot be decided before the question has been asked once and refused.
-     *
-     * <p>What the browser is handed is the {@code UnknownCommand} the firmware sent, naming
-     * {@code M503}. That is deliberately the firmware's own reply rather than a farm-invented
-     * "unsupported" event: the thing that announced the fact is the thing that is published, which
-     * is the rule the aggregate's snapshot keeps everywhere else.
+     * Unlike the EEPROM gate above, this cannot be decided before being asked once and refused -
+     * what the browser is handed is the firmware's own {@code UnknownCommand} naming {@code M503},
+     * not a farm-invented "unsupported" event, since the thing that announced the fact is the thing
+     * published.
      */
     @Test
     void aFirmwareWithoutM503IsLearnedFromItsRefusal() {
@@ -383,12 +333,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Having learned that, the farm stops asking - and says why.
-     *
-     * <p>A second Read must not put another {@code M503} on the wire. The cost of getting this
-     * wrong is small and the reason to get it right is not: a tab that retries a command the
-     * machine has already said it does not have will do it on every page load, for the life of the
-     * connection, and the only evidence will be traffic.
+     * A tab that retries a command the machine has already refused will do it on every page load
+     * for the life of the connection, with only traffic as evidence - small cost, large reason to
+     * get right.
      */
     @Test
     void theFarmStopsAskingForAReportTheFirmwareDoesNotHave() {
@@ -407,13 +354,10 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A reconnect forgets what the last session's machine said.
-     *
-     * <p>A link that was down may have been down because the machine was switched off, and what
-     * comes back up can be a different firmware on the same address - a reflash, or a cable moved.
-     * {@code SdCardControl} keeps this rule for the card and the settings keep it for the same
-     * reason: holding a previous session's report would show an operator values this machine does
-     * not have.
+     * A link that was down may come back up as a different firmware on the same address - a
+     * reflash, a cable moved. {@code SdCardControl} keeps this rule for the card; settings keep it
+     * for the same reason - holding a previous session's report would show an operator values this
+     * machine lacks.
      */
     @Test
     void aNewSessionForgetsTheLastOnesSettings() {
@@ -428,11 +372,10 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         disconnect(id);
         connectAndWait(id);
 
-        // Watched *after* the redial, which is the honest shape of the question. The aggregate
-        // forgets on going online, so a stream opened while the machine was still down is handed
-        // the previous session's report in its snapshot and is never told it went stale - see the
-        // note below. What this asserts is the promise a page actually depends on: open the tab on
-        // a machine that has just reconnected and nothing from before is presented as current.
+        // Watched *after* the redial - the honest shape of the question. The aggregate forgets on
+        // going online; a stream opened while still down would get the previous session's report in
+        // its snapshot (see the note below). This asserts the promise a page depends on: open the
+        // tab on a just-reconnected machine and nothing from before is presented as current.
         try (var fresh = watch(id)) {
             quiet();
             assertTrue(fresh.allOf("SettingsValue").isEmpty(),
@@ -442,22 +385,15 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A subscriber that was already watching when the link bounced keeps the old report, and that
-     * is <strong>known and left alone</strong>.
-     *
-     * <p>Not a test of a fix - a test of a limitation, so that it is written down somewhere that
-     * fails if it ever silently changes. {@code PrinterReactor.updates()} reads the aggregate's
-     * snapshot once, at subscribe time. Subscribe while the machine is down and the snapshot is the
-     * previous session's; the {@code sessionStarted} that clears it happens afterwards and emits
-     * nothing, because forgetting is not something the machine said.
-     *
-     * <p><strong>Why that is acceptable rather than a bug to fix here.</strong> The reconnect is
-     * announced - {@code ConnectionStateChanged} reaches the browser - so the page has the signal it
-     * needs to re-read, and re-reading is one {@code M503}. The alternative is an event meaning
-     * "forget what I told you", which is a new kind of message in a stream whose every other member
-     * is something a machine actually said. {@code SdCardControl} has exactly the same property for
-     * a card listing and has had it since the Storage tab shipped. Worth its own issue, not worth
-     * widening this one.
+     * A subscriber already watching when the link bounces keeps the old report - <strong>known and
+     * left alone</strong>, not a bug: {@code PrinterReactor.updates()} reads the aggregate's
+     * snapshot once, at subscribe time, and {@code sessionStarted} clears it afterwards without
+     * emitting, since forgetting is not something the machine said. Acceptable because the
+     * reconnect itself is announced ({@code ConnectionStateChanged}), giving the page the signal to
+     * re-read with one {@code M503} - the alternative, an event meaning "forget what I told you", is
+     * a new kind of message in a stream whose every other member is something a machine actually
+     * said. {@code SdCardControl} has had the same property since the Storage tab shipped; worth its
+     * own issue, not this one's.
      */
     @Test
     void aSubscriberWatchingAcrossAReconnectKeepsTheOldReportAndIsNotToldOtherwise() {
@@ -479,11 +415,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     // ------------------------------------------------------------------ the move off the Monitor
 
     /**
-     * The Monitor tab no longer carries the settings, and the Settings tab does.
-     *
-     * <p>Item 1 of issue #88, asserted on the page a browser is served. The store button moved
-     * rather than being duplicated, so this checks both halves - a move that left the original
-     * behind would pass a test that only looked for the new one.
+     * Item 1 of issue #88, asserted on the served page. The store button moved rather than being
+     * duplicated, so this checks both halves - a move that left the original behind would pass a
+     * test that only looked for the new one.
      */
     @Test
     void theSettingsBlockHasMovedOffTheMonitorTab() {

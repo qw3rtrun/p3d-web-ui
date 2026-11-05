@@ -20,90 +20,67 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * A printer, mocked at the far end of a real socket.
+ * A printer, mocked at the far end of a real socket — the harness issue #43 asks for.
  *
- * <p><strong>Why a socket and not a stubbed bean.</strong> Issue #43 asks for tests that call
- * endpoints and that mock the simulator. The obvious place to mock a printer would be a Spring bean,
- * and there is not one: {@code PrinterReactorManager.startReactor} says
+ * <p>The address is the only seam: {@code PrinterReactorManager.startReactor} says
  * {@code new TerminalManager(entry.connection())} inline, so nothing between the aggregate and the
- * wire is overridable. What <em>is</em> overridable is the address - a machine is registered through
- * {@code POST /api-manager} with a host and a port, and this binds one.
+ * wire is overridable, but a machine is registered through {@code POST /api-manager} with a host and
+ * a port. It is also the best seam — mocking the machine skips no layer (the send window numbers and
+ * checksums real blocks, {@code MarlinRsDecoder} reads real reply lines) and needs no production
+ * change. {@link #commands()} and {@link #written(String)} are the far boundary of the system under
+ * test, as the HTTP response is the near one; three features here shipped green end to end with
+ * nothing on the wire, and asserting the bytes is the only thing that has caught that.
  *
- * <p>That turns out to be the better seam anyway. Mocking {@code PrinterControl} would skip
- * {@code :backend:core}; mocking {@code TerminalManager} would skip {@code :backend:terminal} and
- * {@code :gcode}. Mocking the machine itself skips nothing: the send window numbers and checksums
- * real blocks, {@code MarlinRsDecoder} reads real reply lines, and the aggregate routes them. It is
- * also the only arrangement that needs <strong>no production change at all</strong>.
+ * <p><strong>Every reply string below is measured, or says it is not.</strong> They come from
+ * {@code gcode/src/test/resources/marlin-replies.census.txt}, captured from a running MarlinSim.
+ * Lines absent from the census are marked UNMEASURED here and in
+ * {@code doc/specs/INTEGRATION_TESTS_spec.md}, and no test may assert their exact text — see
+ * {@link Profile#sdCard}.
  *
- * <p><strong>What it says is measured, and where it is not it says so.</strong> Every reply string
- * below is a line from {@code gcode/src/test/resources/marlin-replies.census.txt}, which was
- * captured from a running MarlinSim and carries the decoded type beside each line. Where a line is
- * <em>not</em> in the census it is marked UNMEASURED here and in
- * {@code doc/specs/INTEGRATION_TESTS_spec.md}, and no test is allowed to assert on its exact text -
- * see {@link Profile#sdCard} for the one that matters.
- *
- * <p>That claim used to be made of the whole file and it was not true of {@link #ok()}, which is
- * what issue #61 is about. <strong>A census line is a line in the exchange it was captured
- * from</strong>, and carrying one into a different exchange can be wrong even though the string is
- * real. Most of the census's {@code ok P15 B3} lines answer blocks {@code ReplyCorpusProbe} sent
- * <em>without</em> a number, and this farm numbers every block it sends - so the mock was speaking
- * a shape that never occurs in production. Being measured is therefore a property of the rule a
- * string is chosen by, and not of the string alone.
- *
- * <p><strong>It is an observable, not a probe.</strong> {@link #commands()} is what reached the
- * machine, which is the far boundary of the system under test, exactly as the HTTP response is the
- * near one. This repository has shipped three features that were green end to end and put nothing on
- * the wire; asserting the bytes is the only thing that has ever caught that.
+ * <p><strong>A census line is a line in the exchange it was captured from</strong> (issue #61).
+ * Carrying one into a different exchange can be wrong even though the string is real: most census
+ * {@code ok P15 B3} lines answer blocks {@code ReplyCorpusProbe} sent <em>without</em> a number, and
+ * this farm numbers every block, so the mock spoke a shape production never produces. See
+ * {@link #ok()}. Measured is a property of the rule a string is chosen by, not of the string.
  *
  * <h2>Threading</h2>
  * One daemon acceptor thread serves one session at a time, reading lines and writing replies on that
- * thread. {@link #commands()} and {@link #blocks()} hand back copies under the monitor, and
- * {@link #push(String)} writes under the same writer lock the responder uses, so an unsolicited
- * report can never interleave halfway through a reply.
+ * thread. {@link #commands()} and {@link #blocks()} copy under the monitor; {@link #push(String)}
+ * writes under the responder's writer lock, so an unsolicited report cannot interleave halfway
+ * through a reply.
  *
- * <h2>Deciding when it answers</h2>
- * {@link #holdRepliesFrom(String)} stops the conversation at a named command and lets a test move it
- * on one acknowledgement at a time. See that method: it is what makes a feeding print observable,
- * because a print that is not stopped is over before anything can be asked of it.
- *
- * <h2>It is also a file sink, between {@code M28} and {@code M29}</h2>
- * A real Marlin stops <em>executing</em> what it is sent while a file is open for write and stores
- * it instead, acknowledging each line as it goes. {@link #written(String)} is what came out of that,
- * and it is a second observable at the same boundary: an upload is proved by the file on the card
- * and not only by the traffic that produced it. See {@link #respond(String)}.
+ * <h2>Holding the conversation, and the file sink</h2>
+ * {@link #holdRepliesFrom(String)} stops at a named command and lets a test advance one
+ * acknowledgement at a time — a print that is not stopped is over before anything can be asked of
+ * it. Between {@code M28} and {@code M29} a real Marlin stores what it is sent instead of executing
+ * it, acknowledging each line; {@link #written(String)} is that file. See {@link #respond(String)}.
  */
 public final class MockPrinter implements AutoCloseable {
 
     /**
-     * What kind of machine this is - the capability axis issue #43 item 6 asks tests to vary over.
+     * What kind of machine this is — the capability axis issue #43 item 6 asks tests to vary over.
      *
-     * @param label        what to call it in a test name and in a failure message
-     * @param firmware     the {@code M115} line, or null for a machine that answers {@code M115}
-     *                     with a bare {@code ok} - a firmware too old to report anything
+     * @param firmware     the {@code M115} line, or null for a firmware too old to report anything,
+     *                     which answers {@code M115} with a bare {@code ok}
      * @param capabilities the {@code Cap:} lines that follow it, in order
-     * @param sdCard       whether a card is in the reader. <strong>UNMEASURED when false:</strong>
-     *                     the simulator always has a card, so the no-card replies could not be
-     *                     captured. The text below is Marlin's documented wording; a test must
-     *                     assert on the <em>absence</em> of {@code SdCardOk}/{@code SdFileList},
-     *                     which is what the Storage tab actually keys on, and never on the echo
-     *                     string itself
-     * @param advancedOk   whether this firmware was built with {@code ADVANCED_OK}. True is
-     *                     MarlinSim: {@code ok N2 P15 B3} for a numbered block and {@code ok P15 B3}
-     *                     for an unnumbered one, which is {@link #ok()}'s whole subject. False is a
-     *                     bare {@code ok} to everything - no number and no buffer counts, which
-     *                     holds the send window at one block
-     * @param answers      false for a machine that accepts the socket and then says nothing. That
-     *                     is a terminal server with nothing plugged into it, and it is the case
-     *                     that distinguishes {@code ONLINE} from {@code IDLE}
-     * @param reportsSettings whether this firmware has {@code M503} at all - Marlin's
-     *                     {@code DISABLE_M503} compiles it out. <strong>UNMEASURED when
-     *                     false:</strong> the simulator cannot be built with that option, so what
-     *                     such a firmware answers is assumed to be
-     *                     {@code echo:Unknown command: "M503"}, on the strength of that being how
-     *                     it answers every code it does not have - measured for {@code M851},
-     *                     {@code M304} and {@code M998}. It is also <em>not</em> a capability:
-     *                     Marlin's {@code M115} reports nothing about {@code M503} under any
-     *                     spelling, which is why the farm has to learn this from the reply
+     * @param sdCard       a card in the reader. <strong>UNMEASURED when false</strong> — the
+     *                     simulator always has one, so the text below is Marlin's documented
+     *                     wording. Assert on the <em>absence</em> of {@code SdCardOk}/
+     *                     {@code SdFileList}, which is what the Storage tab keys on, never on the
+     *                     echo string
+     * @param advancedOk   built with {@code ADVANCED_OK}. True is MarlinSim: {@code ok N2 P15 B3}
+     *                     numbered, {@code ok P15 B3} unnumbered — see {@link #ok()}. False is a
+     *                     bare {@code ok} to everything, which holds the send window at one block
+     * @param answers      false for a socket that accepts and then says nothing — a terminal server
+     *                     with nothing plugged in, the case that separates {@code ONLINE} from
+     *                     {@code IDLE}
+     * @param reportsSettings whether {@code M503} exists at all; Marlin's {@code DISABLE_M503}
+     *                     compiles it out. <strong>UNMEASURED when false</strong> — the simulator
+     *                     cannot be built that way, so {@code echo:Unknown command: "M503"} is
+     *                     assumed from how it answers codes it does not have, measured for
+     *                     {@code M851}, {@code M304} and {@code M998}. Not a capability: Marlin's
+     *                     {@code M115} reports nothing about {@code M503}, so the farm must learn
+     *                     it from the reply
      */
     public record Profile(String label,
                           String firmware,
@@ -174,34 +151,18 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * A firmware that acknowledges with a bare {@code ok} - no buffer counts and no line number.
+     * A firmware built with {@code ADVANCED_OK} off: a bare {@code ok}, no buffer counts, no line
+     * number, ever. The window stays at the one block {@code AdvancedOkRs(1, 1, null)} starts it at,
+     * which proves the farm does not <em>require</em> the advanced acknowledgement to progress.
      *
-     * <p>The host's window then stays at the one block {@code AdvancedOkRs(1, 1, null)} starts it
-     * at, so this is the configuration that proves the farm does not <em>require</em> Marlin's
-     * advanced acknowledgement to make progress.
-     *
-     * <p><strong>It is also the un-numbered dialect, and issue #61 asked for that to be kept rather
-     * than deleted.</strong> Two readings of "acknowledges without a number" were available and
-     * this is the first of them:
-     *
-     * <ul>
-     *   <li><strong>a firmware that does not report numbers</strong> - {@code ADVANCED_OK} off, so
-     *       {@code ok} carries nothing, ever. That is this profile, it is a build option a real
-     *       Marlin ships with, and it is a property of the machine, which is what a {@link Profile}
-     *       is allowed to be;</li>
-     *   <li><strong>a session that is not numbering</strong> - rejected, on two grounds. It is not
-     *       a property of a machine, so a {@link Profile} is the wrong place for it; and no
-     *       endpoint can put the farm in it anyway, because {@code GSendWindow} numbers every
-     *       block. It is also not a second dialect: put to the simulator, an unnumbered block in
-     *       the middle of a numbered session is answered {@code ok P15 B3} and the numbering
-     *       carries straight on, which is the arm {@link #ok()} already has for it. §4.2.1 of the
-     *       integration-test spec has the transcript.</li>
-     * </ul>
-     *
-     * <p>So the cost of this dialect is real and is asserted rather than described -
+     * <p>This is the un-numbered dialect issue #61 asked to keep, in its only valid reading — a
+     * property of the machine, which is what a {@link Profile} may be. "A session that is not
+     * numbering" was rejected: no endpoint can reach it ({@code GSendWindow} numbers every block),
+     * and it is not a second dialect anyway — an unnumbered block mid-session is answered
+     * {@code ok P15 B3} and the numbering carries on, the arm {@link #ok()} already has. Transcript
+     * in §4.2.1 of the integration-test spec. The cost is asserted, not described:
      * {@code ConnectivityIntegrationTest.aStrayAcknowledgementResynchronisesAnUnnumberedSession}
-     * drives the same stray {@code ok} against this profile and against {@link #marlin()}, and the
-     * two outcomes differ.
+     * drives the same stray {@code ok} against this profile and {@link #marlin()}, and they differ.
      */
     public static Profile legacyOk() {
         return new Profile("legacy-bare-ok", MARLIN_SIM_M115, simCapabilities(true),
@@ -220,19 +181,16 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * A firmware built without {@code EEPROM_SETTINGS} - the Settings tab's "there is nothing to
-     * settle" state.
+     * A firmware built without {@code EEPROM_SETTINGS} — the Settings tab's "nothing to settle".
      *
-     * <p><strong>The capability is spelled {@code EEPROM} and not {@code EEPROM_SETTINGS}.</strong>
-     * The latter is the build macro; what reaches the wire is {@code Cap:EEPROM:0|1}, measured on
-     * the simulator and cross-checked against Marlin's own {@code M115.cpp}. Issue #88's checklist
-     * names the macro, which is why this is worth saying twice.
+     * <p><strong>The capability is spelled {@code EEPROM}, not {@code EEPROM_SETTINGS}</strong>;
+     * the latter is the build macro, while the wire carries {@code Cap:EEPROM:0|1}, measured on the
+     * simulator and cross-checked against Marlin's {@code M115.cpp}. Issue #88's checklist names the
+     * macro, which is why it is worth saying twice.
      *
-     * <p><strong>UNMEASURED.</strong> The simulator always has EEPROM, so what such a firmware
-     * answers to {@code M500} could not be captured. This profile therefore changes only the
-     * capability line and keeps answering the settings commands, because the farm's decision is
-     * taken from the capability and never from the reply - the tab is not offered at all. A test
-     * here must assert the gate and not a reply string.
+     * <p><strong>UNMEASURED</strong> — the simulator always has EEPROM. So this changes only the
+     * capability line and keeps answering the settings commands: the farm decides from the
+     * capability, never from the reply. Assert the gate, not a reply string.
      */
     public static Profile withoutEeprom() {
         var caps = new LinkedHashMap<>(simCapabilities(true));
@@ -268,14 +226,11 @@ public final class MockPrinter implements AutoCloseable {
     private final Map<String, Integer> card = Collections.synchronizedMap(new LinkedHashMap<>());
 
     /**
-     * What was stored in each file written with {@code M28}, one entry per line, under the monitor
-     * of {@link #card}.
-     *
-     * <p>Kept apart from {@link #commands()} on purpose: the whole claim of an upload is that these
-     * two lists are <em>different</em>. A command that reached the machine during a transfer went
-     * into the file rather than being run, and nothing on either end says which happened - so a
-     * test that only had the traffic could not tell the two apart, which is exactly the fault
-     * exclusivity exists to prevent.
+     * What was stored in each file written with {@code M28}, one entry per line, under
+     * {@link #card}'s monitor. Kept apart from {@link #commands()} because an upload's whole claim
+     * is that the two lists <em>differ</em>: a command that arrived during a transfer went into the
+     * file rather than being run, nothing on the wire says which happened, and a test holding only
+     * the traffic could not tell — which is the fault exclusivity exists to prevent.
      */
     private final Map<String, List<String>> stored =
             Collections.synchronizedMap(new LinkedHashMap<>());
@@ -283,11 +238,9 @@ public final class MockPrinter implements AutoCloseable {
     // ------------------------------------------------------- the settings, in two memories
 
     /**
-     * The settings report, section by section, exactly as MarlinSim writes it.
-     *
-     * <p>Each entry is a section title and the command lines under it. Captured verbatim from a
-     * probe run against {@code FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56)
-     * MACHINE_TYPE:MarlinSim} on 2026-11-04:
+     * The settings report, section title to the command lines under it, captured verbatim from
+     * {@code FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56) MACHINE_TYPE:MarlinSim} on
+     * 2026-11-04:
      *
      * <pre>
      * &gt;&gt; M503   &lt;&lt; echo:; Steps per unit:
@@ -296,10 +249,9 @@ public final class MockPrinter implements AutoCloseable {
      *           &lt;&lt; ok P15 B3
      * </pre>
      *
-     * <p><strong>The section titles are data and not decoration.</strong> They are what the
-     * Settings tab groups by, so a mock that invented them would be testing the test. The awkward
-     * ones - {@code Acceleration (units/s2) (P<print-accel> ...)} - are kept with their brackets
-     * and angle brackets because they are what the decoder has to survive.
+     * <p>The section titles are data, not decoration — the Settings tab groups by them, so invented
+     * ones would test the test. The awkward brackets and angle brackets are kept because they are
+     * what the decoder has to survive.
      */
     private static final List<Map.Entry<String, List<String>>> SETTINGS_REPORT = List.of(
             Map.entry("Linear Units", List.of("G21 ; (mm)")),
@@ -321,11 +273,9 @@ public final class MockPrinter implements AutoCloseable {
             Map.entry("Hotend PID", List.of("M301 P22.20 I1.08 D114.00")));
 
     /**
-     * What a factory reset puts in live memory, where it differs from what is in the EEPROM.
-     *
-     * <p><strong>Measured, and the measurement is the point.</strong> On the simulator the stored
-     * settings and the firmware defaults genuinely differ in one line, which is what makes
-     * {@code M501} and {@code M502} distinguishable at all:
+     * What a factory reset puts in live memory, where it differs from the EEPROM. On the simulator
+     * the two genuinely differ in one line, which is the only thing that makes {@code M501} and
+     * {@code M502} distinguishable:
      *
      * <pre>
      * &gt;&gt; M503   &lt;&lt; echo:  M104 S0 B250 F0.00      (from the EEPROM)
@@ -342,14 +292,9 @@ public final class MockPrinter implements AutoCloseable {
             Map.of("M104", "M104 S210 B250 F0.10");
 
     /**
-     * The settings the machine is running on - Marlin's live memory, which {@code M503} reports.
-     *
-     * <p>Named {@code liveSettings} and not {@code live}, which is already this class's open
-     * {@link Socket}.
-     *
-     * <p>Keyed the way the report has to be keyed: the command code, except {@code M145}, which is
-     * the one code the firmware reports <em>twice</em> in a single dump and so needs its index in
-     * the key. See {@link #settingsKey(String)}.
+     * Marlin's live memory, which {@code M503} reports. Keyed by command code, except {@code M145} —
+     * the one code the firmware reports <em>twice</em> in a dump, so its key carries an index. See
+     * {@link #settingsKey(String)}.
      */
     private final Map<String, String> liveSettings =
             Collections.synchronizedMap(new LinkedHashMap<>());
@@ -371,21 +316,13 @@ public final class MockPrinter implements AutoCloseable {
     private volatile boolean closed;
 
     /**
-     * The {@code N} of the block being answered right now, or null when it carried none.
-     *
-     * <p>A field rather than a parameter threaded through {@link #respond(String)}, and the reason
-     * is ownership rather than convenience: {@link #serve()} reads one line at a time on one
-     * acceptor thread, and {@link #receive(String)} is the only writer. Every read is on that same
-     * thread, inside the {@link #respond(String)} call {@link #receive(String)} makes, so it is
-     * plain and needs no {@code volatile}.
-     *
-     * <p>It also keeps {@link #ok()} a no-argument method, which is what lets a new arm in
-     * {@link #respond(String)} answer with the right number without knowing this exists.
-     *
-     * <p>A parked answer carries its number with it, because {@link #respond(String)} renders the
-     * whole answer to strings before {@link #answer(String, List)} decides whether to write it -
-     * so {@link #answerOne()} releasing a reply much later still releases the number that reply
-     * was built with.
+     * The {@code N} of the block being answered right now, or null when it carried none. Plain, not
+     * {@code volatile}: {@link #receive(String)} is the only writer and every read happens on the
+     * same acceptor thread inside the {@link #respond(String)} call it makes. Being a field keeps
+     * {@link #ok()} a no-argument method, so a new arm in {@link #respond(String)} gets the right
+     * number without knowing this exists. A parked answer carries its number because
+     * {@link #respond(String)} renders the whole answer before {@link #answer(String, List)} decides
+     * whether to write it.
      */
     private Integer answering;
 
@@ -396,13 +333,9 @@ public final class MockPrinter implements AutoCloseable {
     private boolean holding;
 
     /**
-     * The command at which the line-number check is armed, or null while it is not.
-     *
-     * <p>{@code volatile}, where {@link #holdFrom} beside it is plain, and the difference is where
-     * they are read. The gate is consulted inside {@link #answer(String, List)}, under the
-     * {@link #writing} monitor the test thread also sets it under; this one is consulted in
-     * {@link #rejectsLineNumber(String)}, which runs before that monitor is taken. Three rare
-     * writes from a test thread, read on every block by the acceptor - the cheapest honest answer.
+     * The command at which the line-number check is armed, or null. {@code volatile} where
+     * {@link #holdFrom} beside it is plain, because {@link #rejectsLineNumber(String)} reads this
+     * <em>before</em> the {@link #writing} monitor is taken, while the hold gate is read under it.
      */
     private volatile String checkFrom;
 
@@ -436,11 +369,8 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * A port with nothing behind it, for the machine that cannot be reached.
-     *
-     * <p>Bound and immediately released, so the number is one the operating system has handed out
-     * and is now free - which is as close to "unplugged" as a test can get without picking a
-     * constant and hoping.
+     * A port with nothing behind it: bound and immediately released, so the number is one the OS
+     * handed out and has freed - as close to "unplugged" as a test gets without guessing a constant.
      */
     public static int deadPort() {
         try (var probe = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
@@ -464,12 +394,10 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * Whether a socket to this machine is open right now.
-     *
-     * <p>Worth having its own observable because closing it has been got wrong before: cancelling
-     * a terminal's two halves does not close the connection, and a disconnect once reported
-     * {@code OFFLINE} while leaving the socket {@code Established} on the printer. From here that
-     * is visible; from the host it is not.
+     * Whether a socket to this machine is open right now. Its own observable because closing has
+     * been got wrong before: cancelling a terminal's two halves does not close the connection, and
+     * a disconnect once reported {@code OFFLINE} while leaving the socket {@code Established} on
+     * the printer - visible from here, not from the host.
      */
     public boolean sessionOpen() {
         var socket = live;
@@ -499,10 +427,9 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * Whether a command starting with {@code prefix} has reached the machine.
-     *
-     * <p>A prefix and not an equality, because a command carries its parameters:
-     * {@code sent("M104")} is "the hotend was set", {@code sent("M104 S210")} is "to 210".
+     * Whether a command starting with {@code prefix} has reached the machine. A prefix, not an
+     * equality, because a command carries its parameters: {@code sent("M104")} is "the hotend was
+     * set", {@code sent("M104 S210")} is "to 210".
      */
     public boolean sent(String prefix) {
         synchronized (commands) {
@@ -526,12 +453,9 @@ public final class MockPrinter implements AutoCloseable {
     // ------------------------------------------------------------------ what is on the card
 
     /**
-     * The lines stored in a file written with {@code M28}, or an empty list if there is no such
-     * <em>closed</em> file.
-     *
-     * <p>Only a closed file answers. That is the distinction the cancel case turns on: a transfer
-     * that was stopped properly has an {@code M29} behind it and so has a file here, and one that
-     * was torn out leaves {@link #writingTo()} naming it forever.
+     * The lines stored in a file written with {@code M28}, empty if there is no such <em>closed</em>
+     * file. Only a closed file answers, which is what the cancel case turns on: a transfer stopped
+     * properly has an {@code M29} behind it, one torn out leaves {@link #writingTo()} naming it.
      */
     public List<String> written(String name) {
         synchronized (card) {
@@ -540,12 +464,9 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * The file {@code M28} opened and {@code M29} has not closed, or null when the wire is a
-     * command channel again.
-     *
-     * <p>A test asserts this is null after a cancel. A file left open is the failure
-     * {@code SdUploader}'s {@code concat} exists to prevent, and from the host it is invisible -
-     * every subsequent command is acknowledged exactly as if it had been run.
+     * The file {@code M28} opened and {@code M29} has not closed, or null when the wire is a command
+     * channel again. A file left open is the failure {@code SdUploader}'s {@code concat} prevents,
+     * and it is invisible from the host - every later command is acknowledged as if it had run.
      */
     public String writingTo() {
         return openFile;
@@ -554,11 +475,9 @@ public final class MockPrinter implements AutoCloseable {
     // ------------------------------------------------------------------ what the machine says
 
     /**
-     * Writes a line the host did not ask for - an auto-report, a busy notice, a fault.
-     *
-     * <p>Deterministic by design: nothing here runs on a timer. A real Marlin with {@code M155 S1}
-     * writes a temperature every second, and a test that waited for one would be asserting on a
-     * clock. A test that wants a reading asks for one.
+     * Writes a line the host did not ask for - an auto-report, a busy notice, a fault. Nothing here
+     * runs on a timer: a real Marlin with {@code M155 S1} reports every second, and a test that
+     * waited for one would be asserting on a clock.
      */
     public void push(String line) {
         write(line);
@@ -584,21 +503,14 @@ public final class MockPrinter implements AutoCloseable {
     /**
      * Stops answering from the first command starting with {@code prefix}, inclusive.
      *
-     * <p><strong>Why a test needs this at all.</strong> Everything else here answers instantly, so a
-     * print job started against this machine is finished before the test's next line runs - and the
-     * two facts #51 exists to prove are both about a print that is <em>still going</em>: that an
-     * interactive command overtakes it, and that it then carries on from the block it had reached.
-     * Timing the window by hand would be a race on a loaded runner, and a file big enough to be slow
-     * would make it a slower race rather than a settled one.
+     * <p>Everything else here answers instantly, so a print finishes before the test's next line
+     * runs — and both facts #51 exists to prove are about a print that is <em>still going</em>.
+     * Determinism comes from the send window, not a clock: the host may not hold more blocks
+     * outstanding than the buffer count allows ({@code B3} here, one on {@link #legacyOk()}), so a
+     * machine that stops acknowledging halts the conversation within a few blocks and for good,
+     * until {@link #answerOne()} or {@link #answerFreely()}.
      *
-     * <p><strong>What makes it deterministic is the send window, not a clock.</strong> The host may
-     * not have more blocks outstanding than the printer's buffer count allows - {@code B3} on this
-     * profile, one on {@link #legacyOk()} - so a machine that stops acknowledging stops the
-     * conversation within a few blocks and stops it for good. Nothing further can reach the machine
-     * until {@link #answerOne()} or {@link #answerFreely()} lets it, which is what lets a test
-     * sample what is on the wire and know the number will not move under it.
-     *
-     * <p>Set before the machine is dialled: the opening handshake is answered normally, because
+     * <p>Set before the machine is dialled; the handshake still answers normally, since
      * {@code M110 N0}, {@code M115} and {@code M155 S1} do not start with a block out of a file.
      */
     public MockPrinter holdRepliesFrom(String prefix) {
@@ -615,15 +527,13 @@ public final class MockPrinter implements AutoCloseable {
      * Arms Marlin's line-number continuity check from the first command starting with
      * {@code prefix}, with this firmware's counter already standing at {@code lastLine}.
      *
-     * <p><strong>This is the one machine state the rest of this mock cannot be in, and issue #60
-     * is the bug that hid behind it.</strong> A fresh mock starts at line 0 and a fresh host
-     * numbers from 1, so the two agree by construction and every block is accepted - which is why
-     * nothing in this suite had ever seen a firmware reject one. A real machine outlives host
-     * sessions and remembers the number it last accepted, so the disagreement is the ordinary case
-     * on a bench and the unreachable one here.
+     * <p>The one machine state the rest of this mock cannot reach, and issue #60 is the bug that
+     * hid behind it: a fresh mock starts at line 0 and a fresh host numbers from 1, so they agree
+     * by construction and no block is ever rejected. A real machine outlives host sessions and
+     * remembers its counter, making the disagreement ordinary on a bench.
      *
-     * <p><strong>Everything it answers is measured</strong>, by {@code ResendDriftProbe} against
-     * MarlinSim bugfix-2.1.x on 2026-11-01, with the counter pushed to 14 - see §4.2.2 of
+     * <p>Everything it answers is measured by {@code ResendDriftProbe} against MarlinSim
+     * bugfix-2.1.x on 2026-11-01 with the counter pushed to 14 — §4.2.2 of
      * {@code doc/specs/INTEGRATION_TESTS_spec.md}:
      *
      * <pre>
@@ -634,30 +544,26 @@ public final class MockPrinter implements AutoCloseable {
      *   &gt;&gt; N1 G21*27      &lt;&lt; ok N1 P15 B3
      * </pre>
      *
-     * <p>Three facts out of that transcript are reproduced exactly, and each one matters:
+     * <p>Three facts from that transcript are reproduced exactly:
      *
      * <ul>
-     *   <li><strong>the {@code Resend:} names {@code last_N + 1}</strong>, which is a block the
-     *       host has never framed - so {@code GSendWindow.resendFrom} finds nothing and
-     *       {@code CommandProcessor.resynchronise} abandons what it is holding. A {@code Resend:}
-     *       for a number the host <em>does</em> hold is an entirely different thing and is fully
-     *       recoverable; that is the control in the same probe run;</li>
-     *   <li><strong>{@code M110} repairs it, and the firmware reads the parameter</strong> and not
-     *       the line's own {@code N}: {@code N7 M110 N0} leaves the counter at 0, so the next block
-     *       may be {@code N1}. That is why {@code GSendWindow.reset(0)} framing the {@code M110}
-     *       as {@code N1} and then numbering the next block {@code N1} as well is harmless on the
-     *       wire;</li>
-     *   <li><strong>the rejection's {@code ok} is bare</strong> - no {@code N}, no buffer counts.
-     *       It is the firmware saying it is ready again and acknowledges no block, which is what
+     *   <li>the {@code Resend:} names {@code last_N + 1}, a block the host never framed, so
+     *       {@code GSendWindow.resendFrom} finds nothing and
+     *       {@code CommandProcessor.resynchronise} abandons what it holds. A {@code Resend:} for a
+     *       number the host <em>does</em> hold is fully recoverable — the control in the same run;</li>
+     *   <li>{@code M110} repairs it and the firmware reads the <em>parameter</em>, not the line's
+     *       own {@code N}: {@code N7 M110 N0} leaves the counter at 0, so the next block may be
+     *       {@code N1}. Hence {@code GSendWindow.reset(0)} framing the {@code M110} as {@code N1}
+     *       and then numbering the next block {@code N1} too is harmless;</li>
+     *   <li>the rejection's {@code ok} is bare — no {@code N}, no buffer counts — the firmware
+     *       saying it is ready and acknowledging no block, which
      *       {@code CommandProcessor.rewinding} consumes as credit only.</li>
      * </ul>
      *
-     * <p><strong>A rejected block reaches {@link #blocks()} and not {@link #commands()}</strong>,
-     * because it arrived on the wire and was thrown away unread. That difference is the whole
-     * observable of issue #60: a print that skipped its {@code G28} homed nowhere.
-     *
-     * <p>Not a {@link Profile}, for the reason the unnumbered dialect <em>is</em> one: where a
-     * firmware's counter stands is a property of a session rather than of a machine.
+     * <p>A rejected block reaches {@link #blocks()} and not {@link #commands()}: it arrived and was
+     * thrown away unread. That difference is the whole observable of issue #60 — a print that
+     * skipped its {@code G28} homed nowhere. Not a {@link Profile}, because where a counter stands
+     * is a property of a session, not of a machine.
      */
     public MockPrinter checkLineNumbersFrom(String prefix, int lastLine) {
         synchronized (writing) {
@@ -750,13 +656,10 @@ public final class MockPrinter implements AutoCloseable {
      * Marlin's continuity check: whether this block is thrown away unread, advancing the counter
      * when it is not.
      *
-     * <p>Disarmed unless {@link #checkLineNumbersFrom(String, int)} armed it, so every other test
-     * in this module sees exactly what it saw before. A machine that does not answer at all cannot
-     * answer a rejection either, so {@link Profile#answers()} disarms it too.
-     *
-     * <p>An unnumbered block is ordinary traffic and costs the sequence nothing - §4.2.1 of the
-     * integration-test spec measures that against a running simulator. Nothing in this farm sends
-     * one.
+     * <p>Disarmed unless {@link #checkLineNumbersFrom(String, int)} armed it, and disarmed by
+     * {@link Profile#answers()} being false - a machine that says nothing cannot say no either. An
+     * unnumbered block is ordinary traffic and costs the sequence nothing, measured in §4.2.1 of
+     * the integration-test spec.
      */
     private boolean rejectsLineNumber(String command) {
         if (checkFrom == null || !profile.answers()) {
@@ -803,11 +706,9 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * Writes one command's answer, or parks it whole when the gate is shut.
-     *
-     * <p>Parked whole rather than line by line, because a command's answer and its acknowledgement
-     * are one thing on the wire: {@code M115} is a firmware line, five capabilities and then an
-     * {@code ok}, and releasing half of that would be a machine no firmware resembles.
+     * Writes one command's answer, or parks it whole when the gate is shut - whole, because an
+     * answer and its acknowledgement are one thing on the wire ({@code M115} is a firmware line,
+     * five capabilities and an {@code ok}), and half of one is a machine no firmware resembles.
      */
     private void answer(String command, List<String> lines) {
         synchronized (writing) {
@@ -823,21 +724,19 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * One command as the lines a Marlin answers it with, the acknowledgement last.
-     *
-     * <p>{@code M105} is the exception and has no separate {@code ok}: its answer <em>is</em> the
-     * acknowledgement - {@code ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0} - which is the whole
-     * reason {@code OkTemperatureRs} exists as a type apart from {@code BareTemperatureRs}.
+     * One command as the lines a Marlin answers it with, the acknowledgement last. {@code M105} is
+     * the exception: its answer <em>is</em> the acknowledgement,
+     * {@code ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0}, which is why {@code OkTemperatureRs}
+     * exists apart from {@code BareTemperatureRs}.
      */
     private List<String> respond(String command) {
         var lines = new ArrayList<String>();
         var word = word(command);
 
-        // Between M28 and M29 the wire is a file sink and not a command channel: the line is
-        // stored rather than run, and it is still acknowledged. That acknowledgement is what makes
-        // the fault invisible from the host - the transfer and the stray command are answered
-        // identically, and the difference only shows up much later as a line of nonsense mid-print.
-        // Measured, with the firmware numbering requirement alongside it (SdWriteProbe, below).
+        // Between M28 and M29 the wire is a file sink: the line is stored rather than run, and is
+        // still acknowledged. That identical acknowledgement is what makes a stray command during a
+        // transfer invisible from the host until it shows up as nonsense mid-print. Measured by
+        // SdWriteProbe, below.
         if (openFile != null && !"M29".equals(word)) {
             synchronized (card) {
                 openLines.add(command);
@@ -855,9 +754,9 @@ public final class MockPrinter implements AutoCloseable {
             //                           << //action:notification test.gco
             //                           << ok N1 P15 B3
             //
-            // All three are reproduced rather than trimmed to the one the feature reads. Unlike
-            // the busy notices around an M84 - timing chatter, and left out - these are a fixed
-            // part of M28's answer, and all three decode: SdFreshFile, SdWritingToFile, ActionRs.
+            // All three reproduced, not trimmed to the one the feature reads: unlike the busy
+            // notices around an M84 (timing chatter, left out) they are a fixed part of M28's
+            // answer, and all three decode - SdFreshFile, SdWritingToFile, ActionRs.
             case "M28" -> {
                 var name = argument(command);
                 synchronized (card) {
@@ -874,14 +773,13 @@ public final class MockPrinter implements AutoCloseable {
             //   >> N6 M29*30            << Done saving file.
             //                           << ok N6 P15 B3
             //
-            // The size the card then reports is the stored payloads plus a CRLF each and nothing
-            // else - that run wrote G28, M117 Created, M118 Done and M118 P0 Done-P0, and M20
-            // answered `TEST.GCO 47`, which is 5 + 14 + 11 + 17. So the N word and the checksum
-            // are stripped before the line is stored, and that is why `written` can be compared
-            // against the blocks of a fixture directly.
+            // The card then reports the stored payloads plus a CRLF each and nothing else: that run
+            // wrote G28, M117 Created, M118 Done, M118 P0 Done-P0 and M20 answered `TEST.GCO 47` =
+            // 5 + 14 + 11 + 17. The N word and checksum are stripped before storing, which is why
+            // `written` compares directly against a fixture's blocks.
             //
-            // An M29 with no file open is UNMEASURED - the probe never sent one - so it is
-            // acknowledged and nothing more, and no test drives it.
+            // An M29 with no file open is UNMEASURED - the probe never sent one - so it is merely
+            // acknowledged, and no test drives it.
             case "M29" -> {
                 synchronized (card) {
                     if (openFile != null) {
@@ -941,20 +839,18 @@ public final class MockPrinter implements AutoCloseable {
                 lines.add(had ? "File deleted:" + name : "Deletion failed, File: " + name + ".");
                 lines.add(ok());
             }
-            // Acknowledged and nothing else. G21, M83 and M84 joined this list with #51, because
-            // they are what a print job and the cool-down after a cancelled one actually send, and
-            // they were falling to the default arm below - so every print the suite drove would have
-            // put three "echo:Unknown command" lines on the event stream that a real machine does
-            // not send. Measured against MarlinSim rather than assumed:
+            // Acknowledged and nothing else. G21, M83 and M84 joined with #51: they are what a
+            // print and the cool-down after a cancelled one send, and they were falling to the
+            // default arm, putting three "echo:Unknown command" lines on the event stream that a
+            // real machine never sends. Measured, not assumed:
             //
             //   >> N2 G21*24          << ok N2 P15 B3
             //   >> N9 M84*22          << echo:busy: processing (x2), ok N9 P15 B3
             //   >> N13 M83*42         << ok N13 P15 B3
             //   >> N14 G1 E-2 F2400*7 << echo: cold extrusion prevented, ok N14 P15 B3
             //
-            // The busy notices and the cold-extrusion echo are the simulator's own chatter around an
-            // acknowledgement rather than instead of one, and are not reproduced here - see the
-            // class note on this being a mock and not a simulator.
+            // The busy notices and the cold-extrusion echo are chatter around an acknowledgement
+            // rather than instead of one, and are not reproduced: this is a mock, not a simulator.
             // ------------------------------------------------------------------ the settings
 
             // M503 - the whole of live memory, as the commands that would restore it. Two shapes,
@@ -983,9 +879,8 @@ public final class MockPrinter implements AutoCloseable {
             }
 
             // M500 - live memory into the EEPROM. The notification is part of the answer, not
-            // chatter around it: measured `//action:notification Settings Stored` then `ok P15 B3`.
-            // It decodes to ActionRs, which already reaches a browser, so reproducing it costs
-            // nothing and leaving it out would hide the one confirmation M500 gives.
+            // chatter: measured `//action:notification Settings Stored` then `ok P15 B3`. It
+            // decodes to ActionRs and is the only confirmation M500 gives.
             case "M500" -> {
                 synchronized (liveSettings) {
                     eeprom.clear();
@@ -995,10 +890,10 @@ public final class MockPrinter implements AutoCloseable {
                 lines.add(ok());
             }
 
-            // M501 - the EEPROM back into live memory, and M502 - the firmware defaults into it.
-            // Both answer a BARE ok and say nothing about what they changed. Measured, and it is
-            // the fact the whole feature had to be designed around: a host holding a settings
-            // report is silently wrong after either of these.
+            // M501 - EEPROM back into live memory; M502 - the firmware defaults into it. Both
+            // answer a BARE ok and say nothing about what changed. Measured, and the fact the
+            // feature was designed around: a host holding a settings report is silently wrong
+            // after either.
             case "M501" -> {
                 synchronized (liveSettings) {
                     liveSettings.clear();
@@ -1054,40 +949,31 @@ public final class MockPrinter implements AutoCloseable {
     /**
      * The acknowledgement, in whichever shape this machine speaks - issue #61.
      *
-     * <p><strong>Marlin's rule, not an assumption.</strong> {@code ok_to_send} writes the advanced
-     * fields when the firmware was built with {@code ADVANCED_OK}, and inside that it copies the
-     * {@code N} field <em>only if the command it is answering carried one</em>. So one firmware
-     * speaks two shapes and the block decides which:
+     * <p>Marlin's rule, not an assumption: {@code ok_to_send} writes the advanced fields when built
+     * with {@code ADVANCED_OK}, and inside that copies {@code N} <em>only if the command it answers
+     * carried one</em>. One firmware, two shapes, the block deciding:
      *
      * <pre>
      * N2 M114*21  -&gt; ok N2 P15 B3     a numbered block, answered with its number
      * M114        -&gt; ok P15 B3        the same firmware, an unnumbered block
      * </pre>
      *
-     * <p><strong>Both halves are in the census, from the same probe run.</strong>
-     * {@code ReplyCorpusProbe} sends most of its steps unnumbered and five of them framed, and
-     * {@code marlin-replies.census.txt} records the answers side by side - twenty-odd
-     * {@code AdvancedOkRs ok P15 B3}, and {@code ok N2 P15 B3} / {@code ok N3 P15 B3} against the
-     * probe's "framed position" and "the resend" steps. §4.2.1 of
-     * {@code doc/specs/INTEGRATION_TESTS_spec.md} has that table and two further transcripts that
-     * measure the same rule against a running MarlinSim. Nothing here is hand-written.
+     * <p>Both halves are in {@code marlin-replies.census.txt} from one {@code ReplyCorpusProbe} run
+     * — twenty-odd {@code ok P15 B3}, plus {@code ok N2 P15 B3} / {@code ok N3 P15 B3} against its
+     * framed steps. §4.2.1 of {@code doc/specs/INTEGRATION_TESTS_spec.md} has the table and two
+     * further transcripts. Nothing here is hand-written.
      *
-     * <p><strong>What that fixes.</strong> This used to answer {@code ok P15 B3} always, which is
-     * a reply shape a real session never sees - the farm numbers every block - and it meant
-     * {@code CommandProcessor.applyWindowEvents} took the FIFO {@code window.acknowledge()} branch
-     * in every test in this module, so {@code GSendWindow.acknowledge(number)} was exercised by
-     * nothing. See {@code ConnectivityIntegrationTest.aStrayAcknowledgementDoesNotShiftTheSendWindow}
-     * for what that branch is worth.
+     * <p>This used to answer {@code ok P15 B3} always — a shape a real session never sees, since the
+     * farm numbers every block — so {@code CommandProcessor.applyWindowEvents} took the FIFO
+     * {@code window.acknowledge()} branch in every test here and
+     * {@code GSendWindow.acknowledge(number)} was exercised by nothing. See
+     * {@code ConnectivityIntegrationTest.aStrayAcknowledgementDoesNotShiftTheSendWindow}. The
+     * unnumbered arm is unreachable in this farm but kept: it is half of the firmware's rule.
      *
-     * <p>The unnumbered arm stays reachable in principle and is not reached in practice, because
-     * nothing in this farm sends an unnumbered block. It is kept because it is the firmware's rule
-     * and deleting half of a rule is how the first version of this method went wrong.
-     *
-     * <p>{@code M105} is the one acknowledgement that does <strong>not</strong> come through here,
-     * and that is measured too: Marlin answers {@code M105} from the gcode handler and returns
-     * before {@code ok_to_send}, so a framed {@code N1 M105*…} is answered
-     * {@code ok T:210.00 /210.00 …} with neither a number nor buffer counts - which is the census
-     * line the {@code M105} arm above replies with, verbatim.
+     * <p>{@code M105} does <strong>not</strong> come through here, also measured: Marlin answers it
+     * from the gcode handler and returns before {@code ok_to_send}, so a framed {@code N1 M105*…}
+     * gets {@code ok T:210.00 /210.00 …} with neither number nor buffer counts — the census line the
+     * {@code M105} arm replies with verbatim.
      *
      * @see #answering
      */
@@ -1137,11 +1023,9 @@ public final class MockPrinter implements AutoCloseable {
 
     /**
      * A framed block as the command it carries: {@code N1 M110 N0*124} to {@code M110 N0}.
-     *
-     * <p>The inverse of {@code GEncoder.frame}, and deliberately a dumb one - it does not verify
-     * the checksum. Verifying it here would make every test that reads {@link #commands()} also a
-     * test of {@code :gcode}'s checksum, which has its own tests and a spec section; a failure
-     * would then surface as "the temperature was not set".
+     * Deliberately does not verify the checksum - that would make every test reading
+     * {@link #commands()} a test of {@code :gcode}'s checksum, surfacing as "the temperature was
+     * not set".
      */
     static String bare(String block) {
         var text = block;
@@ -1163,12 +1047,9 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * What {@code M20} will report for a file written with {@code M28}: the payloads plus a
-     * {@code CRLF} each.
-     *
-     * <p>Measured rather than assumed - see the {@code M29} arm. It matters because a listing is
-     * how a test can say the file is really there at really that length, which is the only thing
-     * that distinguishes a finished transfer from a cancelled one from outside.
+     * What {@code M20} reports for a file written with {@code M28}: the payloads plus a
+     * {@code CRLF} each, measured - see the {@code M29} arm. The listing is the only thing that
+     * distinguishes a finished transfer from a cancelled one from outside.
      */
     private static int sizeOnCard(List<String> lines) {
         var size = 0;
@@ -1179,20 +1060,10 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * The line number a framed block carries: {@code N1 M110 N0*124} to {@code 1}, or null.
-     *
-     * <p>The other half of {@link #bare(String)} and written to agree with it exactly - the same
-     * walk over the same leading digits, so a block one of them accepts as numbered is one the
-     * other does too. They answer the two halves of one question, which is why this is a sibling
-     * and not a second parser: {@code bare} is what the host asked for and this is what it called
-     * it, and a block the firmware acknowledges by number has to have both read the same way.
-     *
-     * <p>Deliberately not a checksum check, for {@link #bare(String)}'s reason: verifying it here
-     * would make every acknowledgement in this module a test of {@code :gcode}'s checksum, and a
-     * failure would surface as a stalled send window rather than as a bad checksum.
-     *
-     * <p>Null for a block with no {@code N}, which is what {@link #ok()} answers without a number.
-     * Nothing in this farm sends one - see {@link #ok()}.
+     * The line number a framed block carries: {@code N1 M110 N0*124} to {@code 1}, or null when it
+     * has none. The other half of {@link #bare(String)}, walking the same leading digits so the two
+     * always agree on whether a block is numbered. No checksum check, for {@link #bare(String)}'s
+     * reason.
      */
     static Integer number(String block) {
         var text = block.trim();
@@ -1224,11 +1095,9 @@ public final class MockPrinter implements AutoCloseable {
     // ----------------------------------------------------------------- the settings, observable
 
     /**
-     * Live memory as the lines {@code M503 S0} would print, in report order.
-     *
-     * <p>An observable in its own right, like {@link #written(String)}: a test can assert what the
-     * machine <em>holds</em> rather than only what it was told, which is the difference between
-     * proving {@code M501} reverted a value and proving an {@code M501} was sent.
+     * Live memory as the lines {@code M503 S0} would print, in report order. An observable like
+     * {@link #written(String)}: the difference between proving {@code M501} reverted a value and
+     * proving an {@code M501} was sent.
      */
     public List<String> settingsLines() {
         var ordered = new ArrayList<String>();
@@ -1256,15 +1125,10 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
-     * The key one reported line is held under.
-     *
-     * <p>The code, with one named exception: {@code M145} is the only code MarlinSim reports twice
-     * in a single dump - {@code M145 S0 H180.00 ...} and {@code M145 S1 H240.00 ...} - so keying it
-     * on {@code M145} alone would collapse the two presets into one. Its index joins the key.
-     *
-     * <p>A named exception rather than a clever general rule, because the general rules all guess:
-     * {@code M200 S0 D1.75} also has an {@code S} word and is reported once. When another indexed
-     * setting turns up it joins this list, and the list is readable.
+     * The key a reported line is held under: the code, except {@code M145}, the only code MarlinSim
+     * reports twice in one dump ({@code S0} and {@code S1} presets), whose index joins the key. A
+     * named exception rather than a general rule, because the general rules guess -
+     * {@code M200 S0 D1.75} also has an {@code S} word and is reported once.
      */
     private static String settingsKey(String reported) {
         var code = word(reported);

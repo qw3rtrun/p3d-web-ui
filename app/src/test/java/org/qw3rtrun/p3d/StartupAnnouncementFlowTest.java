@@ -26,26 +26,23 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * What a restart remembers - <strong>the one seam in this module with no HTTP surface</strong>.
+ * What a restart remembers - <strong>the one seam in this module with no HTTP surface</strong>,
+ * the deliberate exception #43 names in {@code doc/specs/INTEGRATION_TESTS_spec.md}. The fact under
+ * test: {@code announceTheFarm()}, run once on {@code ApplicationReadyEvent}, carries enough for
+ * {@code core} to rebuild its replica from nothing - a replica that is empty when the process
+ * begins, so an announcement carrying only a host and a port would leave the farm knowing where to
+ * dial every machine and what none of them were.
  *
- * <p>Issue #43 says tests call endpoints. This is the deliberate exception, and it is written down
- * in {@code doc/specs/INTEGRATION_TESTS_spec.md} as the only one. The fact under test is that
- * {@code announceTheFarm()} - which runs once, on {@code ApplicationReadyEvent} - carries enough for
- * {@code core} to rebuild its replica from nothing: a replica is empty when the process begins, so
- * an announcement that carried only a host and a port would leave the farm knowing where to dial
- * every machine and what none of them were.
+ * <p>No request triggers it and no response reveals it, and a test here cannot restart a context,
+ * so it is driven by calling the announcement and reading the replica - the shape the three
+ * {@code *FlowTest}s this consolidates had. Everything else they covered is now in
+ * {@link PrinterManagementIntegrationTest} and {@link ConnectivityIntegrationTest}, driven through
+ * endpoints against a mocked printer, and better for it: the firmware report there is a real
+ * {@code M115}, not an event the test publishes.
  *
- * <p>There is no request that triggers it and no response that reveals it, and a test here cannot
- * restart a context. So it is driven by calling the announcement and read from the replica, which
- * is the shape the three {@code *FlowTest}s this consolidates had. Everything else they covered is
- * now in {@link PrinterManagementIntegrationTest} and {@link ConnectivityIntegrationTest}, driven
- * through endpoints against a mocked printer - and better for it, because the firmware report there
- * is a real {@code M115} rather than an event published by the test.
- *
- * <p><strong>The replica is the right observable for what is left.</strong> {@code PrinterDirectory}
- * is built from {@code MRegisteredEvent} and from nothing else, so a fact being in the replica is
- * the same statement as the announcement having carried it - without a listener bean of its own,
- * which would fork the application context and cost the suite a second boot.
+ * <p>{@code PrinterDirectory} is built from {@code MRegisteredEvent} and nothing else, so a fact
+ * being in the replica is the same statement as the announcement having carried it - without a
+ * listener bean of its own, which would fork the context and cost the suite a second boot.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -66,11 +63,9 @@ class StartupAnnouncementFlowTest {
     private final List<UUID> registered = new ArrayList<>();
 
     /**
-     * Every machine is removed again, which also releases any runtime the announcement started.
-     *
-     * <p>{@code announceTheFarm} dials whatever was connected, so a machine left behind in a linked
-     * state would be redialled by every later call - including the ones the other test classes
-     * make through their own fixtures.
+     * {@code announceTheFarm} dials whatever was connected, so a machine left behind linked would
+     * be redialled by every later call - including the ones other test classes make through their
+     * own fixtures.
      */
     @AfterEach
     void removeTheMachines() {
@@ -86,11 +81,9 @@ class StartupAnnouncementFlowTest {
     }
 
     /**
-     * The announcement carries what the machine reported, so a restart does not have to ask again.
-     *
-     * <p>Without it, the extruder count the aggregate checks a tool index against would be back to
-     * a default until something connected - and every command for a second tool would be refused in
-     * the window between starting the farm and dialling the printer.
+     * Without it, the extruder count the aggregate checks a tool index against would default until
+     * something connected, refusing every command for a second tool in the window between starting
+     * and dialling.
      */
     @Test
     void theAnnouncementCarriesWhatTheMachineReported() {
@@ -106,11 +99,8 @@ class StartupAnnouncementFlowTest {
     }
 
     /**
-     * And what a person declared, which is the half that would otherwise be lost every restart.
-     *
-     * <p>An announcement carrying only what the machine had reported would discard every override
-     * at every start - and an override exists precisely for a machine whose firmware is wrong, so
-     * it would come back wrong.
+     * Without this half, every override would be discarded at every restart - and an override
+     * exists precisely for a machine whose firmware is wrong, so it would come back wrong.
      */
     @Test
     void theAnnouncementCarriesWhatSomebodyDeclared() {
@@ -129,12 +119,9 @@ class StartupAnnouncementFlowTest {
     }
 
     /**
-     * And the connection state, which is what gives the persisted column a reader.
-     *
-     * <p>{@code printer_entity.connection_state} is written from {@code core} - knowing whether a
-     * machine is connected means holding the socket - and read exactly here, to decide what to dial
-     * again. Written and never read is the write-only {@code connected} boolean this replaced, so
-     * both halves are required or neither is worth having.
+     * {@code printer_entity.connection_state} is written from {@code core} (knowing a machine is
+     * connected means holding the socket) and read exactly here, to decide what to dial again - both
+     * halves required, unlike the write-only {@code connected} boolean this replaced.
      */
     @Test
     void theAnnouncementCarriesTheConnectionStateSoAMachineIsDialledAgain() {

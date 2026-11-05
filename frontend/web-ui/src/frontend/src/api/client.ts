@@ -210,6 +210,103 @@ export function printer(uuid: string) {
         storeSettings: () => send(at('/store-settings'), {}),
 
         /**
+         * Ask what the machine's settings are (M503).
+         *
+         * The report arrives on the event stream as a run of `SettingsSection` and `SettingsValue`
+         * events, interleaved in the order the firmware wrote them - **not** from this call. The
+         * aggregate keeps the run and hands it to a late subscriber, so a tab opened after somebody
+         * else pressed Read is given the report rather than an empty table; that is also why a tab
+         * should not fire this on mount if anything has already arrived, or the report renders
+         * twice.
+         *
+         * A build with `DISABLE_M503` refuses it, and the refusal is the only notice there is:
+         * `UnknownCommand` with `command: 'M503'`.
+         */
+        readSettings: () => send(at('/settings/read'), {}),
+
+        /**
+         * Load the EEPROM's copy back over live memory (M501) - the undo for this session's edits.
+         *
+         * **Recoverable, so no confirmation is warranted.** What is stored stays stored; the only
+         * thing lost is whatever was changed and not saved.
+         *
+         * M501 answers a bare `ok` and announces nothing it changed, so the server re-reads behind
+         * it and the reverted values arrive on the stream by themselves. Do **not** prompt the
+         * operator to press Read afterwards.
+         */
+        revertSettings: () => send(at('/settings/revert'), {}),
+
+        /**
+         * Load the values the firmware was compiled with (M502).
+         *
+         * **The destructive one, and the page must say so.** It discards everything in live memory
+         * including anything just typed, and followed by `storeSettings()` it overwrites the only
+         * record of every calibration the machine has ever been given. The defaults and the stored
+         * settings really do differ on a measured machine, so this is no no-op.
+         *
+         * Like M501 it announces nothing and the server re-reads.
+         */
+        resetSettingsToDefaults: () => send(at('/settings/defaults'), {}),
+
+        /**
+         * Ask whether what is in the EEPROM is readable (M504).
+         *
+         * The verdict arrives as `EepromReport`, carrying the firmware's own message. `OK` is the
+         * only text anybody has measured, so **render the message** - there is nothing to build a
+         * tick or a cross out of.
+         */
+        validateSettings: () => send(at('/settings/validate'), {}),
+
+        /**
+         * Steps per millimetre (M92). **Live memory only** - `storeSettings()` is what persists it.
+         *
+         * Every setter below takes the same shape and the same rule: an omitted axis is left alone,
+         * and that is not the same as zero. Send only what is being changed.
+         */
+        setStepsPerUnit: (axes: { x?: number; y?: number; z?: number; e?: number }) =>
+            send(at('/settings/steps-per-unit'), axes),
+
+        /** Per-axis speed ceiling (M203), in mm per **second** - not a move's mm per minute. */
+        setMaxFeedrates: (axes: { x?: number; y?: number; z?: number; e?: number }) =>
+            send(at('/settings/max-feedrate'), axes),
+
+        /** Per-axis acceleration ceiling (M201), mm/s². What the hardware can take. */
+        setMaxAccelerations: (axes: { x?: number; y?: number; z?: number; e?: number }) =>
+            send(at('/settings/max-acceleration'), axes),
+
+        /**
+         * What a move is asked to accelerate at (M204 P/R/T), mm/s².
+         *
+         * Clamped by `setMaxAccelerations` - Marlin applies the lower of the two - so a value above
+         * that ceiling changes nothing an operator can see.
+         */
+        setAccelerations: (values: { print?: number; retract?: number; travel?: number }) =>
+            send(at('/settings/acceleration'), values),
+
+        /**
+         * The planner's own limits (M205 B/S/T/J).
+         *
+         * `minSegmentTimeUs` is microseconds and an integer; the two feedrates are mm/s;
+         * `junctionDeviation` is millimetres. The jerk words the same Marlin command carries are
+         * deliberately absent - a build using junction deviation ignores them while appearing to
+         * take them.
+         */
+        setAdvancedMotion: (values: {
+            minSegmentTimeUs?: number; minFeedrate?: number
+            minTravelFeedrate?: number; junctionDeviation?: number
+        }) => send(at('/settings/advanced'), values),
+
+        /**
+         * Where the machine thinks its origin is (M206), in millimetres.
+         *
+         * Added to every position after homing, so `z` is what decides how close the nozzle comes
+         * to the bed - and an `M206` naming one axis must not zero the other two, which is why an
+         * omitted axis is left alone here as everywhere in this group.
+         */
+        setHomeOffset: (axes: { x?: number; y?: number; z?: number }) =>
+            send(at('/settings/home-offset'), axes),
+
+        /**
          * Ask where the toolhead is (M114).
          *
          * The answer arrives on the event stream as `PositionRs`, not from this call. There

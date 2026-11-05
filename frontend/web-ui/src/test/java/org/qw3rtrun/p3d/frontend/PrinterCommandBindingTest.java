@@ -240,6 +240,94 @@ class PrinterCommandBindingTest {
         assertEquals("M105", sent());
     }
 
+    // ------------------------------------------------- the Settings tab
+
+    /**
+     * The four settings operations that ask for nothing, so carry no body.
+     *
+     * <p>No body rather than {@code {}}, which is how the integration tests drive them - a
+     * {@code @RequestBody} on any of these would answer 400 to a request the browser is entitled to
+     * make, and {@code client.ts} happens to send {@code {}} so the mistake would hide until
+     * something else called them.
+     */
+    @Test
+    void theFourSettingsOperationsNeedNoBody() {
+        client().post().uri("/api-printer/" + id + "/settings/read").exchange().expectStatus().isOk();
+        assertEquals("M503", sent());
+
+        client().post().uri("/api-printer/" + id + "/settings/revert").exchange().expectStatus().isOk();
+        assertEquals("M501", sent());
+
+        client().post().uri("/api-printer/" + id + "/settings/defaults").exchange().expectStatus().isOk();
+        assertEquals("M502", sent());
+
+        client().post().uri("/api-printer/" + id + "/settings/validate").exchange().expectStatus().isOk();
+        assertEquals("M504", sent());
+    }
+
+    /**
+     * {@code client.setStepsPerUnit({x})} and the five setters beside it, each as the browser sends
+     * it.
+     *
+     * <p>Asserted as the wire text, which is what makes this a binding test and not a wish: a field
+     * that binds into the record and is then written under the wrong letter reads here as the wrong
+     * string. The home offset is the one that would have shown it - its generated class's first
+     * parameter writes {@code P}, the tool index.
+     */
+    @Test
+    void everySettingPayloadBindsAndKeepsItsLetter() {
+        post("/settings/steps-per-unit", "{\"x\":81}");
+        assertEquals("M92 X81", sent());
+
+        post("/settings/max-feedrate", "{\"x\":250,\"z\":5}");
+        assertEquals("M203 X250 Z5", sent());
+
+        post("/settings/max-acceleration", "{\"x\":2500}");
+        assertEquals("M201 X2500", sent());
+
+        post("/settings/acceleration", "{\"print\":2000,\"retract\":3000,\"travel\":4000}");
+        assertEquals("M204 P2000 R3000 T4000", sent());
+
+        post("/settings/advanced", "{\"minSegmentTimeUs\":20000,\"junctionDeviation\":0.02}");
+        assertEquals("M205 B20000 J0.02", sent());
+
+        post("/settings/home-offset", "{\"z\":-0.1}");
+        assertEquals("M206 Z-0.1", sent());
+    }
+
+    /**
+     * An axis the browser left out of the JSON reaches the machine as no word at all.
+     *
+     * <p>Not as a zero. {@code client.ts} sends only the fields the operator typed, and the whole
+     * point of that is lost if an absent field binds to something: {@code M92 X81 Y0 Z0 E0} would
+     * stop three axes moving, and {@code M206 X0 Y0 Z-0.1} would silently re-home two axes nobody
+     * mentioned.
+     */
+    @Test
+    void anAbsentFieldSendsNoWord() {
+        post("/settings/steps-per-unit", "{\"e\":500}");
+        assertEquals("M92 E500", sent());
+
+        post("/settings/home-offset", "{\"z\":-0.1}");
+        assertTrue(!sent().contains("X"), "an unmentioned axis must not be zeroed");
+    }
+
+    /**
+     * The scale the browser sent is the scale that travels.
+     *
+     * <p>{@code BigDecimal}, so {@code 0.013} is not rounded on the way through and
+     * {@code 80.00} is not shortened to {@code 80}. A junction deviation is three decimal places on
+     * a real machine and a layer that normalised it would be making up the digits.
+     */
+    @Test
+    void aSettingKeepsThePrecisionItWasSentWith() {
+        post("/settings/advanced", "{\"junctionDeviation\":0.013}");
+        assertEquals("M205 J0.013", sent());
+
+        post("/settings/steps-per-unit", "{\"z\":400.00}");
+        assertEquals("M92 Z400.00", sent());
+    }
+
     // ------------------------------------------------- the Storage tab
 
     /** The three that ask for nothing and so carry no body. */

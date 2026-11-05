@@ -184,6 +184,150 @@ class PrinterCommandTranslationTest {
         assertEquals("M114", one(new RequestPosition()));
     }
 
+    /**
+     * The four settings operations that carry nothing, each a bare M-code.
+     *
+     * <p>{@code M503} is asserted <em>bare</em> rather than with {@code S} or {@code C}. Both flags
+     * are legal and both change the answer: {@code S0} drops the section headings the Settings tab
+     * groups the report by, and {@code C} compares against the compiled defaults instead of
+     * reporting what is live. A flag that slipped in here would be invisible on this side and would
+     * show up as a tab that renders an ungrouped list.
+     */
+    @Test
+    void theFourSettingsOperationsAreBareMCodes() {
+        assertEquals("M503", one(new ReadSettings()));
+        assertEquals("M501", one(new RevertSettings()));
+        assertEquals("M502", one(new ResetSettingsToDefaults()));
+        assertEquals("M504", one(new ValidateSettings()));
+    }
+
+    // ------------------------------------------------- changing a setting
+
+    /*
+     * Every assertion below is the exact wire text, and that is the whole point of this block.
+     *
+     * The generated command classes' parameter names are generator artifacts and several of them
+     * name a different letter than they write: SetAxisStepsPerUnit's first parameter is `steps` and
+     * writes X, SetStartingAcceleration's is `accel` and writes P, SetHomeOffsets' is `offset` and
+     * writes *P* rather than X. A test written against field names would have agreed with a record
+     * that put `M206 P-0.1` - select a tool - on the wire in place of `M206 Z-0.1` - lower a
+     * nozzle. Only the string catches that.
+     */
+
+    @Test
+    void stepsPerUnitIsM92WithTheAxesItWasGiven() {
+        assertEquals("M92 X80 Y80 Z400 E500",
+                one(new SetStepsPerUnit(new BigDecimal("80"), new BigDecimal("80"),
+                        new BigDecimal("400"), new BigDecimal("500"))));
+    }
+
+    /**
+     * An axis nobody named is an axis the command does not mention.
+     *
+     * <p>Not zero. An axis with no steps per millimetre cannot move, so "leave this one alone" and
+     * "set this one to nothing" must not be the same request - and the same rule holds for every
+     * setter in this group.
+     */
+    @Test
+    void anUnnamedAxisIsLeftOutRatherThanZeroed() {
+        var line = one(new SetStepsPerUnit(new BigDecimal("81"), null, null, null));
+        assertEquals("M92 X81", line);
+        assertFalse(line.contains("Y"), line);
+        assertFalse(line.contains("E0"), line);
+    }
+
+    @Test
+    void maxFeedratesAreM203() {
+        assertEquals("M203 X300 Y300 Z5 E25",
+                one(new SetMaxFeedrates(new BigDecimal("300"), new BigDecimal("300"),
+                        new BigDecimal("5"), new BigDecimal("25"))));
+        assertEquals("M203 X250", one(new SetMaxFeedrates(new BigDecimal("250"), null, null, null)));
+    }
+
+    /** {@code M201}, whose first generated parameter is called {@code accel} and writes {@code X}. */
+    @Test
+    void maxAccelerationsAreM201AndTheFirstWordIsX() {
+        assertEquals("M201 X2500 Y2500 Z100 E5000",
+                one(new SetMaxAccelerations(new BigDecimal("2500"), new BigDecimal("2500"),
+                        new BigDecimal("100"), new BigDecimal("5000"))));
+        assertEquals("M201 X2500",
+                one(new SetMaxAccelerations(new BigDecimal("2500"), null, null, null)));
+    }
+
+    /**
+     * {@code M204}'s three accelerations land in {@code P}, {@code R} and {@code T} in that order.
+     *
+     * <p>The generated class also carries {@code S}, a legacy spelling of the print acceleration
+     * that mainline Marlin still reads. It stays out: two words for one setting in one command is
+     * two answers to one question, and the assertion that {@code S} is absent is what keeps it out.
+     */
+    @Test
+    void accelerationsAreM204InPrintRetractTravelOrder() {
+        var line = one(new SetAccelerations(new BigDecimal("2000"), new BigDecimal("3000"),
+                new BigDecimal("4000")));
+        assertEquals("M204 P2000 R3000 T4000", line);
+        assertFalse(line.contains("S"), "the legacy S spelling must not be sent beside P: " + line);
+
+        assertEquals("M204 P2000",
+                one(new SetAccelerations(new BigDecimal("2000"), null, null)));
+    }
+
+    /**
+     * {@code M205}'s four words, and <strong>no jerk</strong>.
+     *
+     * <p>{@code B} is an integer and the rest are decimals, which is the firmware's own split.
+     * {@code J} is the junction deviation, written by a generated parameter called
+     * {@code deviation}; the four jerk parameters ahead of it - the first of which is called
+     * {@code jerk} and writes {@code X} - are left null, because a build using junction deviation
+     * ignores a jerk word while appearing to take it.
+     */
+    @Test
+    void advancedMotionIsM205WithNoJerkWords() {
+        var line = one(new SetAdvancedMotion(20000, new BigDecimal("0"), new BigDecimal("0"),
+                new BigDecimal("0.013")));
+        assertEquals("M205 B20000 S0 T0 J0.013", line);
+        assertFalse(line.contains("X"), "a jerk word would be ignored and look applied: " + line);
+
+        assertEquals("M205 J0.02",
+                one(new SetAdvancedMotion(null, null, null, new BigDecimal("0.02"))));
+    }
+
+    /**
+     * {@code M206}'s axes are {@code X}, {@code Y}, {@code Z} - and emphatically not {@code P}.
+     *
+     * <p>This is the record where the generated class's names would have done real damage.
+     * {@code SetHomeOffsets}' first parameter is called {@code offset} and writes {@code P}, which
+     * on a build with per-tool offsets is the <em>tool index</em>. A record that bound a Z offset
+     * to it would have sent {@code M206 P-0.1}: a tool selection where a nozzle was meant to come
+     * down a tenth of a millimetre, and a test written against the field name would have passed.
+     */
+    @Test
+    void aHomeOffsetIsM206AndNeverCarriesP() {
+        var line = one(new SetHomeOffset(null, null, new BigDecimal("-0.1")));
+        assertEquals("M206 Z-0.1", line);
+        assertFalse(line.contains("P"), "P is the tool index, not an offset: " + line);
+
+        assertEquals("M206 X0 Y0 Z-0.1",
+                one(new SetHomeOffset(new BigDecimal("0"), new BigDecimal("0"),
+                        new BigDecimal("-0.1"))));
+    }
+
+    /**
+     * The scale the caller gave is the scale that travels.
+     *
+     * <p>{@code BigDecimal} keeps {@code 80.00} and {@code 80} apart and the encoder writes what it
+     * is handed, so a browser posting {@code 81} gets {@code M92 X81} rather than a number this
+     * layer decided to format. Nothing in this chain invents a precision, which matters because the
+     * firmware's own report comes back at two decimal places and a host that normalised to that
+     * would be making up the digits.
+     */
+    @Test
+    void nothingInTheChainInventsAScale() {
+        assertEquals("M92 X81", one(new SetStepsPerUnit(new BigDecimal("81"), null, null, null)));
+        assertEquals("M92 X81.00",
+                one(new SetStepsPerUnit(new BigDecimal("81.00"), null, null, null)));
+    }
+
     // ------------------------------------------------- the card
 
     @Test

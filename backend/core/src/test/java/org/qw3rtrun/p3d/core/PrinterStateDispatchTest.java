@@ -6,16 +6,32 @@ import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
+import org.qw3rtrun.p3d.g.marlin.command.FactoryReset;
 import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
+import org.qw3rtrun.p3d.g.marlin.command.PrintTravelMoveLimits;
+import org.qw3rtrun.p3d.g.marlin.command.ReportSettings;
+import org.qw3rtrun.p3d.g.marlin.command.RestoreSettings;
+import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
+import org.qw3rtrun.p3d.g.marlin.command.SetAdvancedSettings;
+import org.qw3rtrun.p3d.g.marlin.command.SetAxisStepsPerUnit;
 import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber;
+import org.qw3rtrun.p3d.g.marlin.command.SetHomeOffsets;
+import org.qw3rtrun.p3d.g.marlin.command.SetMaxFeedrate;
+import org.qw3rtrun.p3d.g.marlin.command.SetStartingAcceleration;
 import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
+import org.qw3rtrun.p3d.g.marlin.command.ValidateEEPROMContents;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
 import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsSection;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsValue;
+import org.qw3rtrun.p3d.g.marlin.event.UnknownCommand;
 import org.qw3rtrun.p3d.g.protocol.DebugRs;
+import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.g.protocol.ErrorPrefix;
 import org.qw3rtrun.p3d.g.protocol.ErrorRs;
 import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs;
@@ -28,6 +44,8 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The aggregate's own dispatch: which messages it acts on, and what happens to the rest.
@@ -70,6 +88,11 @@ class PrinterStateDispatchTest {
 
     private static BareTemperatureRs temperatures(HeaterReading hotend, HeaterReading bed) {
         return new BareTemperatureRs(hotend, bed, null, null, null, null, null, Map.of());
+    }
+
+    /** What reached a subscriber, with the connection transitions filtered out. */
+    private List<Object> published() {
+        return emitted.stream().filter(e -> !(e instanceof ConnectionStateChanged)).toList();
     }
 
     @Test
@@ -342,6 +365,205 @@ class PrinterStateDispatchTest {
         printer.onCommand(new FullShutdown());
 
         assertEquals(List.of(), sent, "none of these may reach the wire through onCommand");
+    }
+
+    // ------------------------------------------------------------- the EEPROM settings, issue #88
+
+    /** What the aggregate wrote, given the commands {@code PrinterControl.send} handed it. */
+    private List<String> wire(PrinterState printer, GRq<?>... commands) {
+        for (var command : commands) {
+            printer.onCommand(command);
+        }
+        return List.copyOf(sent);
+    }
+
+    /**
+     * Each of the EEPROM operations as the exact bytes it puts on the wire.
+     *
+     * <p><strong>The string and not the class</strong>, because the class names are no guide to
+     * what they write. These three happen to be bare, but the six setters below are not, and the
+     * whole point of asserting at this level is that a generated parameter name has no vote.
+     *
+     * <p>{@code M500} is here although it had a handler before this feature: it is the one command
+     * of the five that writes the EEPROM, and this is the sequence an operator performs - read,
+     * validate, save.
+     */
+    @Test
+    void theEepromOperationsReachTheWireAsThemselves() {
+        var printer = online();
+
+        assertEquals(List.of("M503", "M504", "M500"),
+                wire(printer, new ReportSettings(), new ValidateEEPROMContents(), new SaveSettings()));
+    }
+
+    /**
+     * {@code M501} puts <strong>two</strong> commands on the wire, in order: the restore, then an
+     * {@code M503} the aggregate asked for itself.
+     *
+     * <p><strong>This is the test that would have caught the stale-settings bug.</strong>
+     * {@code M501} answers a bare {@code ok} and announces nothing at all - measured - while
+     * genuinely replacing every live setting, so a host that merely forgets its held report shows
+     * an empty tab and a host that keeps it shows a wrong one. Neither is correctable by anything
+     * the firmware will ever say next. The re-ask puts the tab right within one round trip, and it
+     * costs one command and about 25 reply lines.
+     */
+    @Test
+    void aRestoreAsksForTheSettingsAgain() {
+        var printer = online();
+
+        assertEquals(List.of("M501", "M503"), wire(printer, new RestoreSettings()));
+    }
+
+    /** And so does {@code M502}, for the same reason and with the same measurement behind it. */
+    @Test
+    void aFactoryResetAsksForTheSettingsAgain() {
+        var printer = online();
+
+        assertEquals(List.of("M502", "M503"), wire(printer, new FactoryReset()));
+    }
+
+    /**
+     * On a firmware that has no {@code M503}, the request is refused and the re-ask is skipped.
+     *
+     * <p>{@code DISABLE_M503} removes the report from a build that stores settings perfectly well,
+     * and the only thing that says so is the refusal. Once one has arrived, asking again would put
+     * a command on the wire that is known to be refused - once per reset, for the rest of the
+     * session.
+     */
+    @Test
+    void aFirmwareWithNoM503IsNotAskedForTheReport() {
+        var printer = online();
+        printer.onEvent(new UnknownCommand("M503"));
+        sent.clear();
+
+        assertEquals(List.of(), wire(printer, new ReportSettings()),
+                "a command this machine has already refused must not be sent again");
+
+        sent.clear();
+        assertEquals(List.of("M501"), wire(printer, new RestoreSettings()),
+                "the restore still goes; only the re-ask is skipped");
+    }
+
+    /**
+     * The six settings this feature may change, as the exact bytes each one writes.
+     *
+     * <p><strong>Every one of these would be wrong if it trusted the generated parameter
+     * name.</strong> {@code SetAxisStepsPerUnit.steps} writes {@code X},
+     * {@code PrintTravelMoveLimits.accel} writes {@code X},
+     * {@code SetStartingAcceleration.accel} writes {@code P}, {@code SetAdvancedSettings.jerk}
+     * writes {@code X} and its {@code deviation} writes {@code J}, and
+     * {@code SetHomeOffsets.offset} writes {@code P}. The generator names a parameter after the
+     * value {@code commands.json} documents rather than after its letter, so the field names record
+     * Marlin's documentation and not the wire. Asserting the string is the only way this test can
+     * disagree with the code.
+     */
+    @Test
+    void theSixSettersReachTheWireAsTheBytesTheyActuallyWrite() {
+        var printer = online();
+
+        assertEquals(
+                List.of("M92 X81.00",
+                        "M203 X300.00",
+                        "M201 X3000.00",
+                        "M204 P3000.00",
+                        "M205 X10.00 J0.01",
+                        "M206 P0.00"),
+                wire(printer,
+                        new SetAxisStepsPerUnit(new BigDecimal("81.00"), null, null, null, null,
+                                null, null, null, null, null, null),
+                        new SetMaxFeedrate(new BigDecimal("300.00"), null, null, null, null),
+                        new PrintTravelMoveLimits(new BigDecimal("3000.00"), null, null, null, null,
+                                null, null),
+                        new SetStartingAcceleration(new BigDecimal("3000.00"), null, null, null),
+                        new SetAdvancedSettings(new BigDecimal("10.00"), null, null, null, null,
+                                null, null, new BigDecimal("0.01")),
+                        new SetHomeOffsets(new BigDecimal("0.00"), null, null, null, null, null,
+                                null, null, null, null, null)));
+    }
+
+    /**
+     * A settings line is republished <em>and</em> held, which is the pair of claims that matters.
+     *
+     * <p>Republished because somebody just asked: these are answers to an {@code M503} a page
+     * pressed a button for, so a repeat is still news to that page - the same reading
+     * {@code on(SdCardRs)} takes and the opposite of the temperature's. Held because a page opened
+     * a minute later has to see the settings without pressing the button again.
+     *
+     * <p>Asserting only the first half is how both halves of the Storage tab shipped dead: the
+     * replies arrived, decoded perfectly, and the aggregate dropped them.
+     */
+    @Test
+    void aSettingsLineIsRepublishedAndHeld() {
+        var printer = online();
+        var section = new SettingsSection("Steps per unit");
+        var value = new SettingsValue("M92", "M92 X80.00 Y80.00 Z400.00 E500.00");
+
+        printer.onEvent(section);
+        printer.onEvent(value);
+
+        assertEquals(List.of(section, value), published(),
+                "a settings line has to reach the page that asked for it");
+        assertTrue(printer.snapshot().containsAll(List.of(section, value)),
+                "and a page opened later has to be handed it: " + printer.snapshot());
+    }
+
+    /** {@code M504}'s verdict travels the same way, as the message the firmware wrote. */
+    @Test
+    void theEepromVerdictIsRepublishedAndHeld() {
+        var printer = online();
+        var verdict = new EepromReport("OK");
+
+        printer.onEvent(verdict);
+
+        assertEquals(List.of(verdict), published());
+        assertTrue(printer.snapshot().contains(verdict));
+    }
+
+    /**
+     * An {@code Unknown command:} reply is republished whatever it names - the regression this
+     * feature could most easily have caused.
+     *
+     * <p>Before issue #88 {@code UnknownCommand} reached {@code republish} through the
+     * {@code default} arm and the browser saw it. Giving it a named arm so the settings control can
+     * learn from an {@code M503} refusal is exactly the shape of change that quietly stops that:
+     * the handler consumes the reply and the page loses every refusal of every other command. So
+     * the arm offers it to the control and republishes regardless.
+     */
+    @Test
+    void anUnknownCommandStillReachesTheBrowserWhateverItNames() {
+        var printer = online();
+        var aboutSettings = new UnknownCommand("M503");
+        var aboutSomethingElse = new UnknownCommand("M851");
+
+        printer.onEvent(aboutSettings);
+        printer.onEvent(aboutSomethingElse);
+
+        assertEquals(List.of(aboutSettings, aboutSomethingElse), published(),
+                "a refusal of any command is still news to whoever sent it");
+        assertEquals(List.of(), sent, "and the aggregate answers none of them on the wire");
+    }
+
+    /**
+     * A new session forgets a refusal, so a reflashed machine is asked again.
+     *
+     * <p>{@code onOnline} is where every control is told the session changed, and this one has to
+     * be told for the same reason the card is: what comes back up on the same address can be a
+     * different firmware, or a different machine on a cable that was moved.
+     */
+    @Test
+    void aNewSessionAsksAFirmwareWithNoM503Again() {
+        var printer = online();
+        printer.onEvent(new UnknownCommand("M503"));
+        printer.onEvent(new SettingsValue("M92", "M92 X80.00"));
+
+        printer.onOffline("the cable was moved");
+        printer.onOnline(new GSender(this::capture));
+        sent.clear();
+
+        assertEquals(List.of("M503"), wire(printer, new ReportSettings()),
+                "a reflashed machine may well answer M503 now");
+        assertFalse(printer.snapshot().contains(new SettingsValue("M92", "M92 X80.00")),
+                "and the last session's settings are not this session's: " + printer.snapshot());
     }
 
     /**

@@ -11,6 +11,7 @@ import * as bootstrap from 'bootstrap'
 import {createApp, type Component} from 'vue'
 import FarmDashboard from './components/FarmDashboard.vue'
 import PrinterMonitor from './components/PrinterMonitor.vue'
+import SettingsTab from './components/SettingsTab.vue'
 import StorageTab from './components/StorageTab.vue'
 import {startTheme} from './theme'
 
@@ -38,6 +39,7 @@ import {startTheme} from './theme'
 const ISLANDS: Record<string, Component> = {
     'farm-dashboard': FarmDashboard,
     'printer-monitor': PrinterMonitor,
+    'settings-tab': SettingsTab,
     'storage-tab': StorageTab,
 }
 

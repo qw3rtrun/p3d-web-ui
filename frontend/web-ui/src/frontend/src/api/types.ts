@@ -52,9 +52,24 @@ export interface ConnectionStatus {
     reason: string | null
 }
 
+/**
+ * What a machine turned out to be - `api.model.MachineProfile`.
+ *
+ * **`capabilities` is a map of booleans, not of strings.** The server's record declares
+ * `Map<String, Boolean>` and Jackson serialises `{"EEPROM": true}`; this file said
+ * `Record<string, string>` for as long as nothing in TypeScript read it, so the mismatch was
+ * invisible - a `capabilities[x]` compared against `'1'` would have type-checked and been false on
+ * every machine there is. The Settings tab is the first thing on this side to care, and the
+ * capability it cares about is read by Thymeleaf through `hasEeprom()` rather than from here, so
+ * nothing broke when this was corrected.
+ *
+ * `known` is the server's `isKnown()` getter, which Jackson writes as a property - so there are
+ * four fields on the wire and the record has three components. A **template** must call
+ * `isKnown()`, because Thymeleaf reads the record and not the payload.
+ */
 export interface MachineProfile {
     firmware: Record<string, string>
-    capabilities: Record<string, string>
+    capabilities: Record<string, boolean>
     learnedAt: string | null
     known: boolean
 }
@@ -320,6 +335,84 @@ export interface SdUploadProgressed {
     bytesTotal: number
     blocksSent: number
     reason: string | null
+}
+
+/**
+ * `type: "SettingsSection"` - a heading in `M503`'s report, naming the group of values under it.
+ *
+ * **Sections and values are interleaved on the stream**, in the order the firmware wrote them, so a
+ * value belongs to the most recent section that arrived before it. There is no nesting on the wire
+ * and nothing numbers the lines: grouping the report means tracking that as it comes in.
+ *
+ * `title` is the heading without its punctuation, and it can contain plenty of its own -
+ * `Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>)` is one real section
+ * name - so it is rendered as text and never parsed.
+ *
+ * Eleven sections on the measured build, one of which ("Material heatup parameters") holds **two**
+ * values rather than one.
+ */
+export interface SettingsSection {
+    title: string
+}
+
+/**
+ * `type: "SettingsValue"` - one setting, as the G-code that would restore it.
+ *
+ * **The report *is* G-code, and that is deliberate.** `command` is the firmware's own line -
+ * `M92 X80.00 Y80.00 Z400.00 E500.00` - and there is no parsed model of it on the server, now or
+ * later: the report already carries Marlin's command set, so a second number model would be a
+ * second place for the scale rules to drift. A control that wants editable fields tokenises the
+ * text here, in the browser.
+ *
+ * `code` is the head - `M92`, `G21` - in the firmware's own casing, and it is what a view switches
+ * on to decide which setting a line is about. **It is not unique within a report**: both
+ * `M145` preset lines carry the same code, so it is not a key.
+ *
+ * A trailing comment stays in `command` verbatim - `G21 ; (mm)` is what the firmware said - so
+ * anything tokenising it has to stop at the `;`.
+ */
+export interface SettingsValue {
+    code: string
+    command: string
+}
+
+/**
+ * `type: "EepromReport"` - `M504`'s verdict on the stored settings.
+ *
+ * **A message, not a boolean, and a page must render it as one.** `echo:EEPROM OK` is what MarlinSim
+ * writes and the only answer anyone here has measured; the *failure* text is unknown, because the
+ * simulator has no way to be asked for a corrupt EEPROM. So there is nothing to derive a green tick
+ * or a red cross from without inventing the rule, and inventing reply formats is how this
+ * repository got reply formats wrong before.
+ */
+export interface EepromReport {
+    message: string
+}
+
+/**
+ * `type: "UnknownCommand"` - the firmware refusing something it does not have.
+ *
+ * `command` is what it did not recognise, as the firmware quoted it back. **`command === 'M503'` is
+ * how a page learns that this build has no settings report**: Marlin's `DISABLE_M503` removes it
+ * from a firmware that still stores settings perfectly well, and `M115` reports nothing about it
+ * under any spelling - checked against the simulator's 38 `Cap:` lines. So unlike the EEPROM
+ * capability, which the server decides before rendering, this one can only be learned by asking
+ * once and being refused.
+ */
+export interface UnknownCommand {
+    command: string
+}
+
+/**
+ * `type: "ActionRs"` - an `//action:` line, the firmware asking the host for something.
+ *
+ * `M500`'s confirmation arrives as one of these: `action: 'notification'`,
+ * `argument: 'Settings Stored'`. **`argument` is nullable** - plenty of actions carry no payload -
+ * so a view that renders it has to cope.
+ */
+export interface ActionRs {
+    action: string
+    argument: string | null
 }
 
 /** `type: "MachineJoinedFarm"` - a printer registered while the page was open. */

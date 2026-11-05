@@ -187,6 +187,23 @@ class GReplyCorpusTest {
         }
 
         @Test
+        fun `the M503 settings dump is in it, headings and values both`() {
+            // 25 lines of it, and the whole block used to census as undifferentiated EchoMessage
+            // prose - which it only was because nothing read it. The capture is the evidence that
+            // the two shapes are what the firmware writes rather than what the decoder expects.
+            val sections = census.filter { typeOf(it) == "SettingsSection" }
+            val values = census.filter { typeOf(it) == "SettingsValue" }
+            assertEquals(12, sections.size) { "the M503 dump's headings: $sections" }
+            assertEquals(13, values.size) { "the M503 dump's settings: $values" }
+            assertTrue(values.any { it.substringAfter('\t') == "echo:  M92 X80.00 Y80.00 Z400.00 E500.00" }) {
+                "no steps-per-unit line - the one a Settings view is for"
+            }
+            assertTrue(sections.any { it.substringAfter('\t').contains("<print-accel>") }) {
+                "no heading with punctuation in it - the title runs to the last colon, not the first"
+            }
+        }
+
+        @Test
         fun `the firmware block and its capabilities are in it`() {
             assertTrue(census.any { typeOf(it) == "FirmwareInfoRs" }) { "no M115 identity line in the corpus" }
             assertTrue(census.count { typeOf(it) == "CapabilityRs" } > 20) {

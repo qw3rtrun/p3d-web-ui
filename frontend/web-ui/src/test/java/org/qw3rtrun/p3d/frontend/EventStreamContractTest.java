@@ -9,6 +9,7 @@ import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
 import org.qw3rtrun.p3d.api.msg.SdUploadProgressed;
 import org.qw3rtrun.p3d.api.msg.SdUploadState;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.OkTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
@@ -16,6 +17,10 @@ import org.qw3rtrun.p3d.g.marlin.event.SdCardOk;
 import org.qw3rtrun.p3d.g.marlin.event.SdFile;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileOpened;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsSection;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsValue;
+import org.qw3rtrun.p3d.g.marlin.event.UnknownCommand;
+import org.qw3rtrun.p3d.g.protocol.ActionRs;
 import org.qw3rtrun.p3d.g.protocol.ErrorPrefix;
 import org.qw3rtrun.p3d.g.protocol.ErrorRs;
 import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs;
@@ -347,5 +352,129 @@ class EventStreamContractTest {
         assertEquals("PositionRs", payload.get("type").asString());
         assertEquals(0.0, payload.get("event").get("axes").get("X").asDouble());
         assertEquals(10.5, payload.get("event").get("axes").get("Y").asDouble());
+    }
+
+    // ---------------------------------------------------------------- the settings report
+
+    /**
+     * {@code M503}'s report, as the two type strings the Settings tab switches on.
+     *
+     * <p><strong>Sections and values are separate events and arrive interleaved</strong>, in the
+     * order the firmware wrote them, with nothing on the wire that nests one inside the other. So a
+     * value belongs to the most recent section ahead of it and the browser has to track that as the
+     * stream arrives - which is why both names are pinned here rather than only the one carrying
+     * numbers.
+     *
+     * <p>{@code command} is <strong>the firmware's own line</strong>, asserted as a string. The
+     * report <em>is</em> G-code and there is deliberately no parsed model of it anywhere: a second
+     * number model would be a second place for the scale rules to drift, so the tab tokenises this
+     * text to put editable fields on the page.
+     */
+    @Test
+    void theSettingsReportCarriesItsSectionsAndItsCommandText() {
+        var section = mapper.readTree(streamed(new SettingsSection("Steps per unit")));
+        assertEquals("SettingsSection", section.get("type").asString());
+        assertEquals("Steps per unit", section.get("event").get("title").asString());
+
+        var value = mapper.readTree(streamed(
+                new SettingsValue("M92", "M92 X80.00 Y80.00 Z400.00 E500.00")));
+        assertEquals("SettingsValue", value.get("type").asString());
+        assertEquals("M92", value.get("event").get("code").asString());
+        assertEquals("M92 X80.00 Y80.00 Z400.00 E500.00", value.get("event").get("command").asString());
+    }
+
+    /**
+     * A section title carries its own punctuation, and the browser must render it as text.
+     *
+     * <p>This is a real heading off the measured build. Angle brackets in a title that a template
+     * interpolated unescaped would be markup; they reach the browser verbatim, so the tab puts them
+     * through text interpolation rather than anything that could treat them as HTML.
+     */
+    @Test
+    void aSectionTitleKeepsTheBracketsTheFirmwareWrote() {
+        var payload = mapper.readTree(streamed(new SettingsSection(
+                "Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>)")));
+
+        assertEquals("Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>)",
+                payload.get("event").get("title").asString());
+    }
+
+    /**
+     * {@code code} is not a key, and a page that used it as one would lose a line.
+     *
+     * <p>The "Material heatup parameters" section holds <strong>two</strong> {@code M145} lines on
+     * the measured build - one preset each - so two events arrive carrying the same code and
+     * different commands. Both must show.
+     */
+    @Test
+    void twoValuesCanShareACode() {
+        var first = mapper.readTree(streamed(
+                new SettingsValue("M145", "M145 S0 H180 B60 F0")));
+        var second = mapper.readTree(streamed(
+                new SettingsValue("M145", "M145 S1 H240 B110 F0")));
+
+        assertEquals("M145", first.get("event").get("code").asString());
+        assertEquals("M145", second.get("event").get("code").asString());
+        assertTrue(!first.get("event").get("command").asString()
+                        .equals(second.get("event").get("command").asString()),
+                "two presets under one code, which is why the code is not a key");
+    }
+
+    /**
+     * {@code M504}'s verdict is a <strong>message</strong>, and that is on purpose.
+     *
+     * <p>{@code echo:EEPROM OK} is the only answer anybody has measured - the simulator has no way
+     * to be asked for a corrupt EEPROM - so there is no boolean on this event for a page to colour
+     * a tick or a cross from. The tab renders the string. A field called {@code ok} appearing here
+     * later would be somebody's guess at the failure text, and this assertion is where it should
+     * fail.
+     */
+    @Test
+    void theEepromVerdictIsTheFirmwaresOwnMessage() {
+        var payload = mapper.readTree(streamed(new EepromReport("OK")));
+
+        assertEquals("EepromReport", payload.get("type").asString());
+        assertEquals("OK", payload.get("event").get("message").asString());
+    }
+
+    /**
+     * The refusal that tells the browser this firmware has no settings report.
+     *
+     * <p><strong>{@code DISABLE_M503} is not a capability</strong> - {@code M115} says nothing about
+     * {@code M503} under any spelling, checked against the simulator's 38 {@code Cap:} lines and
+     * against Marlin's own {@code M115.cpp}. So where the Settings tab's existence is decided by the
+     * server from {@code Cap:EEPROM}, whether there is a report to show can only be learned by
+     * asking and being refused, and what the browser gets is the firmware's own
+     * {@code UnknownCommand} naming the command it did not know.
+     *
+     * <p>Pinned here because the tab switches on the type <em>and</em> on the payload's value: a
+     * refusal of anything else must not be read as "no settings report".
+     */
+    @Test
+    void aRefusedCommandNamesWhatTheFirmwareDidNotKnow() {
+        var payload = mapper.readTree(streamed(new UnknownCommand("M503")));
+
+        assertEquals("UnknownCommand", payload.get("type").asString());
+        assertEquals("M503", payload.get("event").get("command").asString());
+    }
+
+    /**
+     * {@code M500}'s confirmation, which is an {@code //action:} line and not a reply of its own.
+     *
+     * <p>The firmware says nothing else about having stored anything, so this is the whole of the
+     * acknowledgement an operator gets for the one command whose effect outlives the connection.
+     * {@code argument} is nullable in general - plenty of actions carry no payload - which is why
+     * the browser's type declares it so.
+     */
+    @Test
+    void theStoredSettingsNotificationReachesTheBrowserAsAnAction() {
+        var payload = mapper.readTree(streamed(new ActionRs("notification", "Settings Stored")));
+
+        assertEquals("ActionRs", payload.get("type").asString());
+        assertEquals("notification", payload.get("event").get("action").asString());
+        assertEquals("Settings Stored", payload.get("event").get("argument").asString());
+
+        var bare = mapper.readTree(streamed(new ActionRs("pause", null)));
+        assertTrue(bare.get("event").get("argument").isNull());
     }
 }

@@ -149,24 +149,12 @@ const setFan = (speed: number) => guarded(async () => {
     fanSpeed.value = speed
 })
 
-/**
- * Writing the settings to EEPROM, behind a confirmation.
- *
- * It is the one control on this page whose effect outlives the connection: a wrong value stored is
- * one the machine keeps after a power cycle, and undoing it means `M502` and re-entering whatever
- * was right. A click that cannot be taken back deserves to be asked about.
+/*
+ * The settings moved. `M500` and the rest of the EEPROM operations are the Settings tab's now -
+ * `SettingsTab.vue`, gated on `Cap:EEPROM` by `monitor.html` - because storing, reverting,
+ * resetting and reading belong together and only one of the five fitted on this page. The button
+ * was moved rather than copied; an integration test asserts the string is absent from here.
  */
-const STORE_WARNING = [
-    'Write this machine\'s current settings to its EEPROM?',
-    'They survive a power cycle, and undoing it means resetting the firmware to defaults.',
-].join('\n\n')
-
-const storeSettings = () => {
-    if (!window.confirm(STORE_WARNING)) {
-        return
-    }
-    return guarded(() => api.storeSettings())
-}
 
 let subscription: Subscription | null = null
 
@@ -263,20 +251,5 @@ onUnmounted(() => {
         @jog="jog"
         @read-position="readPosition"
     />
-
-    <div class="row pt-4 border-top mt-3">
-      <div class="col">
-        <h4 class="card-title">Settings</h4>
-        <p class="card-subtitle">
-          Write what the firmware currently holds to its EEPROM, so it survives a power cycle.
-        </p>
-      </div>
-      <div class="col-auto align-self-center">
-        <button type="button" class="btn btn-sm btn-outline-warning"
-                :disabled="!controlsEnabled" @click="storeSettings()">
-          Store settings (M500)
-        </button>
-      </div>
-    </div>
   </div>
 </template>

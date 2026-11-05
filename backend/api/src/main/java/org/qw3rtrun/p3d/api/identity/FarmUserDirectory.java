@@ -6,16 +6,14 @@ import java.util.Optional;
 /**
  * Who may use this farm - the roster of people, as opposed to the roster of machines.
  *
- * <p><strong>Blocking, and deliberately so.</strong> Every other query contract in {@code api}
- * that is backed by JPA is written this way, and the rule that keeps it safe lives at the call
- * site: whatever reaches a method here from a web thread is responsible for
- * {@code subscribeOn(Schedulers.boundedElastic())}. The alternative - returning publishers from an
- * interface whose only implementation is blocking JDBC - would hide that obligation rather than
- * remove it.
+ * <p>Blocking, deliberately: every other JPA-backed query contract in {@code api} is written this
+ * way, and the obligation to move off the event loop lives at the call site
+ * ({@code subscribeOn(Schedulers.boundedElastic())}) rather than being hidden behind publishers
+ * whose only implementation is blocking JDBC.
  *
- * <p><strong>{@link #add} takes a raw password and no method ever returns one.</strong> Hashing
- * belongs to whoever owns the store, so a caller cannot choose a weak scheme, forget to hash, or
- * write a plaintext into the column. It is the one place in this application a cleartext password
+ * <p>{@link #add} takes a raw password and no method ever returns one - hashing belongs to
+ * whoever owns the store, so a caller cannot choose a weak scheme, forget to hash, or write a
+ * plaintext into the column. It is the one place in this application a cleartext password
  * legitimately exists.
  */
 public interface FarmUserDirectory {

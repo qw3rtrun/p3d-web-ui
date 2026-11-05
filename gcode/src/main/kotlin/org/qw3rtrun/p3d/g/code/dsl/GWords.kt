@@ -27,7 +27,18 @@
  *
  * **The generic builders** - [word], [flag], [text], [bareString], [expr], [tailComment],
  * [inlineComment] and [number] - are for the letters section 4.2 does not list and for values built
- * elsewhere. Every per-letter helper is one of them with the letter fixed.
+ * elsewhere. Every per-letter helper below is one of them with the letter fixed, and carries no
+ * documentation of its own for exactly that reason - read the shapes above.
+ *
+ * As elsewhere in this package, and unlike `code/core`, a bad call site throws
+ * `IllegalArgumentException` rather than returning a value that carries the error: this input is
+ * source code written by a programmer, not bytes off a wire.
+ *
+ * **`D` is the one letter with a real quirk.** It is a parameter here (`D(3)` -> `D3`, spec 4.2's
+ * diameter and PID `D`), while the Marlin debug *command* of the same letter is `command('D', n)` in
+ * `G.kt`. The parser reads both the same way, so this is the spec's own ambiguity, not a choice made
+ * here - see `G.kt`'s `command(letter, number)` for the full letter-collision rule, which also covers
+ * `T`.
  */
 package org.qw3rtrun.p3d.g.code.dsl
 
@@ -41,1074 +52,212 @@ import java.math.BigDecimal
 
 val X: GWord = GFlagWord(GLetter('X'))
 
-/**
- * `X<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, X(10)))   // "G1 X10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun X(value: Int): GWord = word('X', value)
 
-/**
- * `X<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, X("10.50")))   // "G1 X10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun X(lexeme: String): GWord = word('X', lexeme)
 
-/**
- * `X<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, X(BigDecimal("10.5"))))   // "G1 X10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun X(value: BigDecimal): GWord = word('X', value)
 
-/**
- * `X` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, X(expr("x0"))))   // "G1 X{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun X(value: GValue): GWord = word('X', value)
 
 val Y: GWord = GFlagWord(GLetter('Y'))
 
-/**
- * `Y<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, Y(10)))   // "G1 Y10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun Y(value: Int): GWord = word('Y', value)
 
-/**
- * `Y<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, Y("10.50")))   // "G1 Y10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun Y(lexeme: String): GWord = word('Y', lexeme)
 
-/**
- * `Y<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, Y(BigDecimal("10.5"))))   // "G1 Y10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun Y(value: BigDecimal): GWord = word('Y', value)
 
-/**
- * `Y` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, Y(expr("x0"))))   // "G1 Y{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun Y(value: GValue): GWord = word('Y', value)
 
 val Z: GWord = GFlagWord(GLetter('Z'))
 
-/**
- * `Z<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, Z(10)))   // "G1 Z10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun Z(value: Int): GWord = word('Z', value)
 
-/**
- * `Z<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, Z("10.50")))   // "G1 Z10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun Z(lexeme: String): GWord = word('Z', lexeme)
 
-/**
- * `Z<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, Z(BigDecimal("10.5"))))   // "G1 Z10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun Z(value: BigDecimal): GWord = word('Z', value)
 
-/**
- * `Z` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, Z(expr("x0"))))   // "G1 Z{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun Z(value: GValue): GWord = word('Z', value)
 
 val U: GWord = GFlagWord(GLetter('U'))
 
-/**
- * `U<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, U(10)))   // "G1 U10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun U(value: Int): GWord = word('U', value)
 
-/**
- * `U<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, U("10.50")))   // "G1 U10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun U(lexeme: String): GWord = word('U', lexeme)
 
-/**
- * `U<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, U(BigDecimal("10.5"))))   // "G1 U10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun U(value: BigDecimal): GWord = word('U', value)
 
-/**
- * `U` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, U(expr("x0"))))   // "G1 U{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun U(value: GValue): GWord = word('U', value)
 
 val V: GWord = GFlagWord(GLetter('V'))
 
-/**
- * `V<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, V(10)))   // "G1 V10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun V(value: Int): GWord = word('V', value)
 
-/**
- * `V<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, V("10.50")))   // "G1 V10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun V(lexeme: String): GWord = word('V', lexeme)
 
-/**
- * `V<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, V(BigDecimal("10.5"))))   // "G1 V10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun V(value: BigDecimal): GWord = word('V', value)
 
-/**
- * `V` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, V(expr("x0"))))   // "G1 V{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun V(value: GValue): GWord = word('V', value)
 
 val W: GWord = GFlagWord(GLetter('W'))
 
-/**
- * `W<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, W(10)))   // "G1 W10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun W(value: Int): GWord = word('W', value)
 
-/**
- * `W<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, W("10.50")))   // "G1 W10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun W(lexeme: String): GWord = word('W', lexeme)
 
-/**
- * `W<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, W(BigDecimal("10.5"))))   // "G1 W10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun W(value: BigDecimal): GWord = word('W', value)
 
-/**
- * `W` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, W(expr("x0"))))   // "G1 W{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun W(value: GValue): GWord = word('W', value)
 
 val A: GWord = GFlagWord(GLetter('A'))
 
-/**
- * `A<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, A(10)))   // "G1 A10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun A(value: Int): GWord = word('A', value)
 
-/**
- * `A<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, A("10.50")))   // "G1 A10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun A(lexeme: String): GWord = word('A', lexeme)
 
-/**
- * `A<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, A(BigDecimal("10.5"))))   // "G1 A10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun A(value: BigDecimal): GWord = word('A', value)
 
-/**
- * `A` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, A(expr("x0"))))   // "G1 A{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun A(value: GValue): GWord = word('A', value)
 
 val B: GWord = GFlagWord(GLetter('B'))
 
-/**
- * `B<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, B(10)))   // "G1 B10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun B(value: Int): GWord = word('B', value)
 
-/**
- * `B<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, B("10.50")))   // "G1 B10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun B(lexeme: String): GWord = word('B', lexeme)
 
-/**
- * `B<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, B(BigDecimal("10.5"))))   // "G1 B10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun B(value: BigDecimal): GWord = word('B', value)
 
-/**
- * `B` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, B(expr("x0"))))   // "G1 B{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun B(value: GValue): GWord = word('B', value)
 
 val C: GWord = GFlagWord(GLetter('C'))
 
-/**
- * `C<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, C(10)))   // "G1 C10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun C(value: Int): GWord = word('C', value)
 
-/**
- * `C<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, C("10.50")))   // "G1 C10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun C(lexeme: String): GWord = word('C', lexeme)
 
-/**
- * `C<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, C(BigDecimal("10.5"))))   // "G1 C10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun C(value: BigDecimal): GWord = word('C', value)
 
-/**
- * `C` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, C(expr("x0"))))   // "G1 C{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun C(value: GValue): GWord = word('C', value)
 
 val E: GWord = GFlagWord(GLetter('E'))
 
-/**
- * `E<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, E(10)))   // "G1 E10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun E(value: Int): GWord = word('E', value)
 
-/**
- * `E<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, E("10.50")))   // "G1 E10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun E(lexeme: String): GWord = word('E', lexeme)
 
-/**
- * `E<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, E(BigDecimal("10.5"))))   // "G1 E10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun E(value: BigDecimal): GWord = word('E', value)
 
-/**
- * `E` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, E(expr("x0"))))   // "G1 E{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun E(value: GValue): GWord = word('E', value)
 
 val F: GWord = GFlagWord(GLetter('F'))
 
-/**
- * `F<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, F(10)))   // "G1 F10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun F(value: Int): GWord = word('F', value)
 
-/**
- * `F<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, F("10.50")))   // "G1 F10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun F(lexeme: String): GWord = word('F', lexeme)
 
-/**
- * `F<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, F(BigDecimal("10.5"))))   // "G1 F10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun F(value: BigDecimal): GWord = word('F', value)
 
-/**
- * `F` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, F(expr("x0"))))   // "G1 F{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun F(value: GValue): GWord = word('F', value)
 
 val S: GWord = GFlagWord(GLetter('S'))
 
-/**
- * `S<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, S(10)))   // "G1 S10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun S(value: Int): GWord = word('S', value)
 
-/**
- * `S<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, S("10.50")))   // "G1 S10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun S(lexeme: String): GWord = word('S', lexeme)
 
-/**
- * `S<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, S(BigDecimal("10.5"))))   // "G1 S10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun S(value: BigDecimal): GWord = word('S', value)
 
-/**
- * `S` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, S(expr("x0"))))   // "G1 S{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun S(value: GValue): GWord = word('S', value)
 
 val P: GWord = GFlagWord(GLetter('P'))
 
-/**
- * `P<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, P(10)))   // "G1 P10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun P(value: Int): GWord = word('P', value)
 
-/**
- * `P<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, P("10.50")))   // "G1 P10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun P(lexeme: String): GWord = word('P', lexeme)
 
-/**
- * `P<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, P(BigDecimal("10.5"))))   // "G1 P10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun P(value: BigDecimal): GWord = word('P', value)
 
-/**
- * `P` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, P(expr("x0"))))   // "G1 P{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun P(value: GValue): GWord = word('P', value)
 
 val I: GWord = GFlagWord(GLetter('I'))
 
-/**
- * `I<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, I(10)))   // "G1 I10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun I(value: Int): GWord = word('I', value)
 
-/**
- * `I<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, I("10.50")))   // "G1 I10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun I(lexeme: String): GWord = word('I', lexeme)
 
-/**
- * `I<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, I(BigDecimal("10.5"))))   // "G1 I10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun I(value: BigDecimal): GWord = word('I', value)
 
-/**
- * `I` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, I(expr("x0"))))   // "G1 I{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun I(value: GValue): GWord = word('I', value)
 
 val J: GWord = GFlagWord(GLetter('J'))
 
-/**
- * `J<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, J(10)))   // "G1 J10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun J(value: Int): GWord = word('J', value)
 
-/**
- * `J<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, J("10.50")))   // "G1 J10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun J(lexeme: String): GWord = word('J', lexeme)
 
-/**
- * `J<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, J(BigDecimal("10.5"))))   // "G1 J10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun J(value: BigDecimal): GWord = word('J', value)
 
-/**
- * `J` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, J(expr("x0"))))   // "G1 J{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun J(value: GValue): GWord = word('J', value)
 
 val K: GWord = GFlagWord(GLetter('K'))
 
-/**
- * `K<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, K(10)))   // "G1 K10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun K(value: Int): GWord = word('K', value)
 
-/**
- * `K<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, K("10.50")))   // "G1 K10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun K(lexeme: String): GWord = word('K', lexeme)
 
-/**
- * `K<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, K(BigDecimal("10.5"))))   // "G1 K10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun K(value: BigDecimal): GWord = word('K', value)
 
-/**
- * `K` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, K(expr("x0"))))   // "G1 K{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun K(value: GValue): GWord = word('K', value)
 
 val D: GWord = GFlagWord(GLetter('D'))
 
-/**
- * `D<value>` - the letter with an integer value. `D` is a parameter here; the Marlin debug
- * command is `command('D', n)`.
- *
- * ```
- * GEncoder.encode(G(1, D(10)))   // "G1 D10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun D(value: Int): GWord = word('D', value)
 
-/**
- * `D<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, D("10.50")))   // "G1 D10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun D(lexeme: String): GWord = word('D', lexeme)
 
-/**
- * `D<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, D(BigDecimal("10.5"))))   // "G1 D10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun D(value: BigDecimal): GWord = word('D', value)
 
-/**
- * `D` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, D(expr("x0"))))   // "G1 D{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun D(value: GValue): GWord = word('D', value)
 
 val H: GWord = GFlagWord(GLetter('H'))
 
-/**
- * `H<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, H(10)))   // "G1 H10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun H(value: Int): GWord = word('H', value)
 
-/**
- * `H<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, H("10.50")))   // "G1 H10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun H(lexeme: String): GWord = word('H', lexeme)
 
-/**
- * `H<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, H(BigDecimal("10.5"))))   // "G1 H10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun H(value: BigDecimal): GWord = word('H', value)
 
-/**
- * `H` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, H(expr("x0"))))   // "G1 H{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun H(value: GValue): GWord = word('H', value)
 
 val L: GWord = GFlagWord(GLetter('L'))
 
-/**
- * `L<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, L(10)))   // "G1 L10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun L(value: Int): GWord = word('L', value)
 
-/**
- * `L<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, L("10.50")))   // "G1 L10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun L(lexeme: String): GWord = word('L', lexeme)
 
-/**
- * `L<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, L(BigDecimal("10.5"))))   // "G1 L10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun L(value: BigDecimal): GWord = word('L', value)
 
-/**
- * `L` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, L(expr("x0"))))   // "G1 L{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun L(value: GValue): GWord = word('L', value)
 
 val R: GWord = GFlagWord(GLetter('R'))
 
-/**
- * `R<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, R(10)))   // "G1 R10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun R(value: Int): GWord = word('R', value)
 
-/**
- * `R<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, R("10.50")))   // "G1 R10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun R(lexeme: String): GWord = word('R', lexeme)
 
-/**
- * `R<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, R(BigDecimal("10.5"))))   // "G1 R10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun R(value: BigDecimal): GWord = word('R', value)
 
-/**
- * `R` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, R(expr("x0"))))   // "G1 R{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun R(value: GValue): GWord = word('R', value)
 
 val Q: GWord = GFlagWord(GLetter('Q'))
 
-/**
- * `Q<value>` - the letter with an integer value.
- *
- * ```
- * GEncoder.encode(G(1, Q(10)))   // "G1 Q10"
- * ```
- *
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
- */
 fun Q(value: Int): GWord = word('Q', value)
 
-/**
- * `Q<lexeme>` - the number written exactly as given, see the file KDoc. Throws
- * `IllegalArgumentException` when [lexeme] is not a number (spec 3.1).
- *
- * ```
- * GEncoder.encode(G(1, Q("10.50")))   // "G1 Q10.50"
- * ```
- *
- * @param lexeme the number's exact characters
- * @return the parameter word
- */
 fun Q(lexeme: String): GWord = word('Q', lexeme)
 
-/**
- * `Q<value>` - the letter with a decimal already in hand, rendered through `BigDecimal.toString()`.
- *
- * ```
- * GEncoder.encode(G(1, Q(BigDecimal("10.5"))))   // "G1 Q10.5"
- * ```
- *
- * @param value the decimal
- * @return the parameter word
- */
 fun Q(value: BigDecimal): GWord = word('Q', value)
 
-/**
- * `Q` carrying any value the model can hold - a string, an expression, a prebuilt token.
- *
- * ```
- * GEncoder.encode(G(1, Q(expr("x0"))))   // "G1 Q{x0}"
- * ```
- *
- * @param value the value token
- * @return the parameter word
- */
 fun Q(value: GValue): GWord = word('Q', value)
 
 /**
@@ -1119,10 +268,6 @@ fun Q(value: GValue): GWord = word('Q', value)
  * GEncoder.encode(G(1, word('Q', 5)))    // "G1 Q5"
  * GEncoder.encode(M(105, word('T', 1)))  // "M105 T1" - T as a parameter
  * ```
- *
- * @param letter the parameter letter
- * @param value the integer, rendered in canonical decimal
- * @return the parameter word
  */
 fun word(letter: Char, value: Int): GWord = word(letter, GInt(value))
 
@@ -1136,10 +281,6 @@ fun word(letter: Char, value: Int): GWord = word(letter, GInt(value))
  * ```
  * GEncoder.encode(G(1, word('Q', "05")))   // "G1 Q05"
  * ```
- *
- * @param letter the parameter letter, A-Z in either case
- * @param lexeme the number's exact characters
- * @return the parameter word
  */
 fun word(letter: Char, lexeme: String): GWord = word(letter, number(lexeme))
 
@@ -1149,10 +290,6 @@ fun word(letter: Char, lexeme: String): GWord = word(letter, number(lexeme))
  * ```
  * GEncoder.encode(G(1, word('Q', BigDecimal("0.5"))))   // "G1 Q0.5"
  * ```
- *
- * @param letter the parameter letter, A-Z in either case
- * @param value the decimal
- * @return the parameter word
  */
 fun word(letter: Char, value: BigDecimal): GWord = word(letter, GFloat(value))
 
@@ -1163,10 +300,6 @@ fun word(letter: Char, value: BigDecimal): GWord = word(letter, GFloat(value))
  * GEncoder.encode(G(1, word('Q', expr("x"))))   // "G1 Q{x}"
  * GEncoder.encode(G(1, word('x', 10)))          // "G1 x10" - the case is kept
  * ```
- *
- * @param letter the parameter letter, A-Z in either case
- * @param value the value token
- * @return the parameter word
  */
 fun word(letter: Char, value: GValue): GWord = GParameterWord(identifier(letter), value)
 
@@ -1177,9 +310,6 @@ fun word(letter: Char, value: GValue): GWord = GParameterWord(identifier(letter)
  * ```
  * GEncoder.encode(G(29, flag('T')))   // "G29 T"
  * ```
- *
- * @param letter the parameter letter, A-Z in either case
- * @return the flag word
  */
 fun flag(letter: Char): GWord = GFlagWord(identifier(letter))
 
@@ -1190,9 +320,6 @@ fun flag(letter: Char): GWord = GFlagWord(identifier(letter))
  * text("Hi").rawText()             // "\"Hi\""
  * text("say \"hi\"").rawText()     // "\"say \"\"hi\"\"\""
  * ```
- *
- * @param value the text, unescaped
- * @return the quoted string value
  */
 fun text(value: String): GValue = GQuotedString(value)
 
@@ -1230,11 +357,6 @@ fun text(value: String): GValue = GQuotedString(value)
  * GEncoder.encode(M(23, bareString("A LONG NAME.GCO")))   // "M23 A LONG NAME.GCO" - spaces are fine
  * bareString("a.gco;M112")                             // throws IllegalArgumentException
  * ```
- *
- * @param value the text, to the end of the line
- * @return the letterless word carrying it
- * @throws IllegalArgumentException when [value] holds a character that would change what the block
- *   means, naming the character and its position
  */
 fun bareString(value: String): GWord {
     for (i in value.indices) {
@@ -1267,9 +389,6 @@ fun bareString(value: String): GWord {
  * ```
  * expr("bed[0]").rawText()   // "{bed[0]}"
  * ```
- *
- * @param inner the expression, without its braces
- * @return the expression value
  */
 fun expr(inner: String): GValue = GRawExpression("{" + inner + "}")
 
@@ -1283,9 +402,6 @@ fun expr(inner: String): GValue = GRawExpression("{" + inner + "}")
  * ```
  * GEncoder.encode(block(tailComment(" x")))   // "; x"
  * ```
- *
- * @param text the comment's text, after the `;`
- * @return the comment, ready to stand in a block
  */
 fun tailComment(text: String): GCommentPart = GCommentPart(GTailComment(text))
 
@@ -1298,9 +414,6 @@ fun tailComment(text: String): GCommentPart = GCommentPart(GTailComment(text))
  * ```
  * GEncoder.encode(block(G(28), inlineComment("x"), G(90)))   // "G28 (x) G90"
  * ```
- *
- * @param text the comment's text, between the parentheses
- * @return the comment, ready to stand in a block
  */
 fun inlineComment(text: String): GCommentPart = GCommentPart(GInlineComment(text))
 
@@ -1317,9 +430,6 @@ fun inlineComment(text: String): GCommentPart = GCommentPart(GInlineComment(text
  * number("1.")    // GFloat(BigDecimal("1."), "1.")
  * number("abc")   // throws IllegalArgumentException
  * ```
- *
- * @param lexeme the number's exact characters
- * @return the number token, carrying [lexeme] verbatim
  */
 fun number(lexeme: String): GNumber {
     require(lexeme.isNotEmpty()) { "a number cannot be empty" }
@@ -1348,9 +458,6 @@ fun number(lexeme: String): GNumber {
  * identifier('x')   // GLetter('x')
  * identifier('1')   // throws IllegalArgumentException
  * ```
- *
- * @param letter the candidate letter
- * @return the letter identifier, in the case given
  */
 internal fun identifier(letter: Char): GLetter {
     require((letter >= 'A' && letter <= 'Z') || (letter >= 'a' && letter <= 'z')) {

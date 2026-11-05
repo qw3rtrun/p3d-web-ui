@@ -45,13 +45,7 @@ final class Outcomes {
     private Outcomes() {
     }
 
-    /**
-     * A command on a machine: accepted, or refused with a reason.
-     *
-     * <p>{@code Accepted} is 200 with an empty body rather than 202, because that is the contract
-     * the browser already holds - see {@code PrinterController.uploadToCard}, which records why
-     * changing it is a separate decision.
-     */
+    // Accepted is 200 with an empty body, not 202 - the contract PrinterController already holds.
     static ResponseEntity<?> of(ControlOutcome outcome) {
         return switch (outcome) {
             case ControlOutcome.Accepted ignored -> ResponseEntity.ok().build();
@@ -62,12 +56,8 @@ final class Outcomes {
         };
     }
 
-    /**
-     * A move on a job: the job, or a refusal.
-     *
-     * <p>404 when the job or the file does not exist at all, which {@code Refused} distinguishes by
-     * having no state to report - a job that is somewhere cannot also be nowhere.
-     */
+    // 404 when the job or file does not exist at all: Refused then carries no state, since a job
+    // that is somewhere cannot also be nowhere.
     static ResponseEntity<?> of(JobOutcome outcome) {
         return switch (outcome) {
             case JobOutcome.Done done -> ResponseEntity.ok(done.job());
@@ -77,15 +67,9 @@ final class Outcomes {
         };
     }
 
-    /**
-     * A GET-by-id: the record, or 404 with no body.
-     *
-     * <p>The idiom every roster, file-store and job-queue lookup in this package shares, written
-     * once. An empty {@code Mono} returned straight from a handler would be <strong>200 with a
-     * zero-length body</strong>, which the browser cannot act on: {@code getJson} calls
-     * {@code response.json()} on whatever arrives and throws a syntax error on nothing at all, so a
-     * missing id surfaced as a parse failure rather than as a status.
-     */
+    // Shared by every roster/file-store/job-queue lookup. An empty Mono returned straight from a
+    // handler would be 200 with a zero-length body, and client.ts's getJson calls response.json()
+    // on whatever arrives - a missing id would surface as a parse failure, not a status.
     static <T> ResponseEntity<T> found(Optional<T> value) {
         return value.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
     }

@@ -49,13 +49,8 @@ class PrinterStateSnapshotTest {
         assertInstanceOf(ConnectionStateChanged.class, snapshot.get(0));
     }
 
-    /**
-     * Connection first, then the profile - firmware, capabilities by name - then the card, then the
-     * settings, then the temperature.
-     *
-     * <p>The order is the contract. A subscriber waits for the connection state to know it is
-     * attached, and two snapshots of the same machine are the same sequence.
-     */
+    // the order is the contract: a subscriber waits for the connection state to know it is attached,
+    // and two snapshots of the same machine are the same sequence.
     @Test
     void everythingHeldArrivesInAFixedOrder() {
         var printer = new PrinterState(UUID.randomUUID());
@@ -81,14 +76,8 @@ class PrinterStateSnapshotTest {
                 WARM), snapshot.subList(1, snapshot.size()));
     }
 
-    /**
-     * The settings sit between the card and the temperature, and keep the firmware's own order
-     * inside that slot.
-     *
-     * <p>Asserted as its own test as well as inside the fixed-order one because the settings are a
-     * <em>sequence</em> rather than a single value: everything else in the snapshot is one fact per
-     * slot, and this slot is a 25-line report whose internal order is what a tab groups by.
-     */
+    // asserted separately too because settings are a sequence, not a single value like every other
+    // slot - a 25-line report whose internal order is what a tab groups by.
     @Test
     void theSettingsSitBetweenTheCardAndTheTemperature() {
         var printer = new PrinterState(UUID.randomUUID());

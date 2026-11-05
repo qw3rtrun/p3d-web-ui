@@ -6,23 +6,16 @@ import java.util.UUID;
 /**
  * One print job: a file, a machine that may be printing it, and where it has got to.
  *
- * <p><strong>{@code fileName} is denormalised on purpose, and it is safe because a stored file is
- * immutable.</strong> A file's name is fixed when it is first stored - a re-upload of the same
- * bytes returns the existing record rather than renaming it - so the copy can never go stale. What
- * it buys is a job listing that does not query the file store once per row, which is the shape a
- * farm page actually asks for.
+ * <p>{@code fileName} is denormalised on purpose, and safe because a stored file is immutable -
+ * its name is fixed when first stored, so the copy can never go stale. That buys a job listing
+ * that does not query the file store once per row.
  *
- * @param id         the job's identity
- * @param fileId     what it prints, in the file store
- * @param fileName   what that file is called, as of when the job was created
- * @param machineId  the machine working on it, or null while it is still queued
- * @param state      where it is - see {@link JobState}
- * @param reason     why it failed or was cancelled, in whatever words the cause gave. Null otherwise
- * @param createdAt  when it was queued
+ * @param machineId  the machine working on it, or null while still queued
+ * @param reason     why it failed or was cancelled, or null
  * @param startedAt  when a machine first began printing it, or null
  * @param finishedAt when it reached a terminal state, or null
- * @param progress   the last checkpoint, never null. Approximate by design - see {@link JobProgress}
- * @param requires   what it needs of a machine, never null - see {@link JobRequirements}
+ * @param progress   the last checkpoint, never null, approximate by design - see {@link JobProgress}
+ * @param requires   never null - see {@link JobRequirements}
  */
 public record Job(UUID id,
                   UUID fileId,

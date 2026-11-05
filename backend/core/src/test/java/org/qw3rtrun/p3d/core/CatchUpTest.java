@@ -17,13 +17,8 @@ class CatchUpTest {
 
     private final Sinks.Many<String> live = Sinks.many().multicast().directBestEffort();
 
-    /**
-     * The case the obvious {@code Flux.concat(snapshot, live)} gets wrong.
-     *
-     * <p>The event is emitted while the snapshot is being built - after it was read, before the
-     * live stream would have been subscribed. Concatenated, nobody is listening at that moment and
-     * the subscriber never learns the change happened. Here it is listening already.
-     */
+    // the case the obvious Flux.concat(snapshot, live) gets wrong: the event fires while the
+    // snapshot builds, before concat would have subscribed live; here it is listening already.
     @Test
     void anEventDuringTheSnapshotArrivesAfterIt() {
         var stream = CatchUp.snapshotThenLive("test", () -> {
@@ -68,16 +63,9 @@ class CatchUpTest {
         assertEquals(0, live.currentSubscriberCount());
     }
 
-    /**
-     * A subscriber that stops reading loses messages, and the stream feeding it is not held up.
-     *
-     * <p>Nothing is requested past the snapshot, so the buffer fills; the emitter is never refused
-     * and never waits, which is the property that matters - a printer must not wait on a page.
-     *
-     * <p>How many survive is the queue's business, not this test's: Reactor sizes a bounded queue
-     * to at least what was asked for. What is pinned is that some were dropped, and that the oldest
-     * ones were the ones kept.
-     */
+    // nothing is requested past the snapshot, so the buffer fills; the emitter is never refused and
+    // never waits - a printer must not wait on a page. How many survive is Reactor's business; what
+    // is pinned is that some were dropped and the oldest kept.
     @Test
     void aSubscriberThatStopsReadingLosesMessagesAndHoldsNothingUp() {
         var stream = CatchUp.snapshotThenLive("test", () -> Flux.just("a"), live.asFlux(), 4);

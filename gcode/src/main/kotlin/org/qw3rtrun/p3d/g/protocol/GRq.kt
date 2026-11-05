@@ -39,13 +39,12 @@ interface GRq<T : GRq<T>> {
 /**
  * The reading half of a command: tokens in, one typed request out.
  *
- * **Decoding takes tokens, not words.** Splitting a line into [org.qw3rtrun.p3d.g.code.core.command.GWord]s
- * - and so into a [GCommand] - is already an interpretation, and it is one the token layer is not
- * entitled to make: whether `M117 Hello World` carries two flag words or one unquoted string
- * depends on the command number alone (see `GUnquotedString`), and nothing below this interface
- * knows the command number. A decoder does. So it is handed the tokens as lexed and decides for
- * itself what they mean - which is also what lets a command with a rest-of-line argument be read at
- * all, rather than being mis-split before it ever reaches its decoder.
+ * Decoding takes tokens, not words: splitting a line into [org.qw3rtrun.p3d.g.code.core.command.GWord]s
+ * - and so into a [GCommand] - is already an interpretation the token layer is not entitled to make,
+ * since whether `M117 Hello World` carries two flag words or one unquoted string depends on the
+ * command number alone (see `GUnquotedString`), and nothing below this interface knows it. A decoder
+ * is handed the tokens as lexed and decides for itself what they mean, which is also what lets a
+ * command with a rest-of-line argument be read at all.
  *
  * Every Marlin command class's companion object implements it, so the class name is the decoder.
  *
@@ -58,14 +57,11 @@ interface GRqDecoder<out T : GRq<out T>> {
     /**
      * Every parameter letter this command has a property for, upper case.
      *
-     * The honest measure of what the class models, and the one a coverage check can be run
-     * against: `MarlinDocExamplesTest` reads it to find letters Marlin's own documentation uses
-     * and no class accepts. It is declared rather than derived because nothing below reflection
-     * can see a data class's properties, and reflection is not in this module's language.
-     *
-     * It lives here, next to [decodeParams], because the two have to agree: a letter in this set
-     * that `decodeParams` ignores is a coverage claim the class does not honour. It used to live
-     * in a third list in `MarlinCommands`, index-aligned with the decoders by hand.
+     * The honest measure of what the class models, and the one a coverage check runs against:
+     * `MarlinDocExamplesTest` reads it to find letters Marlin's own documentation uses and no class
+     * accepts. Declared rather than derived, since nothing below reflection can see a data class's
+     * properties. Lives here, next to [decodeParams], because the two must agree: a letter in this
+     * set that `decodeParams` ignores is a coverage claim the class does not honour.
      *
      * ```
      * ReportHotendTemperature.letters   // [R, T]
@@ -87,8 +83,8 @@ interface GRqDecoder<out T : GRq<out T>> {
      * The command code as written: `G28`, `M104`, `G38.2`.
      *
      * [head]'s own text, so it cannot disagree with what the decoder answers to - the string it
-     * replaced was typed out beside each entry of a hand-kept table and survived a class rename
-     * without complaint.
+     * replaced was typed out by hand beside each table entry and survived a class rename without
+     * complaint.
      *
      * ```
      * AutoHome.code   // "G28"
@@ -120,12 +116,11 @@ interface GRqDecoder<out T : GRq<out T>> {
      * comments included, since for some commands those are part of the argument. The head is not
      * among them; [decode] is what strips it.
      *
-     * **A `List`, and that is the contract rather than a convenience.** Every parameter is its own
-     * scan of these tokens - one per letter - so what a decoder needs is something it may walk
-     * repeatedly. This took a `Sequence` and documented that a single-use one would throw halfway
-     * through a command, which is an API describing its own hazard instead of ruling it out. Every
-     * implementation opened with `toList()` anyway, and what a line hands over (`GBlock.body`) is a
-     * `List` to begin with, so the sequence only ever bought two copies per decode.
+     * A `List`, and that is the contract rather than a convenience: every parameter is its own scan
+     * of these tokens - one per letter - so what a decoder needs is something it may walk repeatedly.
+     * This took a `Sequence` once, but every implementation opened with `toList()` anyway, and what a
+     * line hands over (`GBlock.body`) is a `List` to begin with, so the sequence only bought two
+     * copies per decode and the risk of a single-use source throwing halfway through.
      *
      * ```
      * ReportHotendTemperature.decodeParams(GTokenizer.parse(" T0").toList())   // ReportHotendTemperature(M105 T0)
@@ -140,10 +135,10 @@ interface GRqDecoder<out T : GRq<out T>> {
      * The command [tokens] spell, head included, or null when the head is not this decoder's.
      *
      * What a command word is, is `headWord`'s rule rather than a second copy here, so a head this
-     * accepts is one a line can actually carry. Matching is on the head's **number as written** -
-     * the lexeme is part of a number's identity in this model, so a non-canonical `M0105` does not
-     * resolve - but not on its spacing (`G 1` and `G1` are one head) and not on its case
-     * (spec 2.2: `m104` is `M104`, which is `headKey`'s job).
+     * accepts is one a line can actually carry. Matching is on the head's number as written - the
+     * lexeme is part of a number's identity in this model, so a non-canonical `M0105` does not
+     * resolve - but not on its spacing (`G 1` and `G1` are one head) and not on its case (spec 2.2:
+     * `m104` is `M104`, which is `headKey`'s job).
      *
      * The head is stripped with `subList`, not `drop`: a view onto the tokens already in hand, the
      * same way a framed line's body is a slice of its raw. Nothing is copied to strip a head.

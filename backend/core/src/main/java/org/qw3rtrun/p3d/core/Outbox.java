@@ -6,44 +6,32 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
- * Hands items to one consumer, one thread at a time, without blocking any of the threads that
- * offer them.
+ * Hands items to one consumer, one thread at a time, without blocking any thread that offers one.
  *
- * <p><strong>What it exists for: a safe {@code Sinks.Many} does not serialise for its caller, it
- * refuses.</strong> Two threads emitting at once leaves one of them holding a
- * {@code FAIL_NON_SERIALIZED} and an event nobody will ever see - measured at <em>26,640 of 40,000
- * emissions refused</em> with two threads on one safe sink, which makes a collision a question of
- * load rather than of correctness: it reproduces on a loaded CI runner and, as plan item #55 found,
- * on a laptop running one simulator for two minutes.
+ * <p>Exists because a safe {@code Sinks.Many} does not serialise for its caller, it refuses: two
+ * threads emitting at once leaves one holding {@code FAIL_NON_SERIALIZED} and an event nobody will
+ * see - measured at 26,640 of 40,000 emissions refused with two threads on one safe sink, a question
+ * of load rather than correctness, reproducing on a loaded CI runner and (#55) on a laptop running
+ * one simulator for two minutes. A thread that finds another already draining parks its item and
+ * leaves; the thread inside picks it up on its next pass, so the sink never sees two threads and
+ * {@code FAIL_NON_SERIALIZED} becomes unreachable - a failure that still surfaces means a terminated
+ * or cancelled stream, which says something real.
  *
- * <p>A thread that finds another one already draining parks its item here and leaves; the thread
- * inside goes round again and picks it up. So the sink never sees two threads at all and
- * {@code FAIL_NON_SERIALIZED} becomes unreachable - a failure that still reaches a caller's log
- * means a terminated or cancelled stream, which says something real.
+ * <p>Not {@code EmitFailureHandler.busyLooping}, which spins on whichever thread emitted (as readily
+ * a netty event loop) and throws once the spin runs out, skipping every statement after the
+ * emission; a {@link ConcurrentLinkedQueue} add throws nothing, blocks nothing, spins nothing.
  *
- * <p><strong>Not {@code EmitFailureHandler.busyLooping}, which is the wrong remedy twice over.</strong>
- * It spins on whichever thread emitted - as readily a netty event loop, which is this layer's
- * cardinal rule broken outright - and when the spin runs out it <em>throws</em>, skipping every
- * statement after the emission. Adding to a {@link ConcurrentLinkedQueue} throws nothing, blocks
- * nothing and spins nothing.
+ * <p>The consumer is called by exactly one thread at a time, so it may keep plain fields -
+ * {@code PrinterReactor} relies on this for its {@code streamEnded} flag, the {@link AtomicInteger}
+ * hand-off supplying the happens-before a volatile would otherwise need. It must not assume it runs
+ * on the offering thread. Ordering holds only between offers that do not overlap - two racing
+ * {@link #emit} calls order by which reaches the queue first - which is why the durable half of a
+ * caller like {@code PrinterReactor.onEvent} must run before the volatile half: the drain loop can
+ * hand a later event to a subscriber before the earlier one's own durable half has finished.
  *
- * <p><strong>The consumer is called by exactly one thread at a time, so it may keep plain
- * fields.</strong> {@code PrinterReactor} relies on that for its {@code streamEnded} flag: the
- * {@link AtomicInteger} hand-off from one draining thread to the next carries the happens-before a
- * volatile would otherwise be needed for. What the consumer must <em>not</em> do is assume it runs
- * on the thread that offered the item - a message parked by one thread is published by another.
- *
- * <p><strong>Ordering is preserved between two offers that do not overlap, and only then.</strong>
- * Two threads racing into {@link #emit} order themselves by which reaches the queue first, which is
- * the most any lock-free structure can say. It is also why the volatile work goes last in a caller
- * like {@code PrinterReactor.onEvent}: the drain loop can hand a later event to a subscriber before
- * the thread carrying the earlier one has finished its own durable half.
- *
- * <p>The third copy of this loop is {@code HostTerminal.drainBus} in {@code :backend:terminal},
- * which is deliberately left where it is: that module may not depend on this one, the only home
- * both could see is the transport itself, and a shared home for twenty lines is a module-boundary
- * decision for whoever owns the transport to make rather than a side effect of fixing a farm
- * stream.
+ * <p>A third copy of this loop, {@code HostTerminal.drainBus} in {@code :backend:terminal}, is left
+ * where it is: that module may not depend on this one, and sharing a home for twenty lines is a
+ * module-boundary decision for whoever owns the transport, not a side effect of fixing a farm stream.
  *
  * @param <T> what is parked - a message, or a caller's marker for the end of its stream
  */

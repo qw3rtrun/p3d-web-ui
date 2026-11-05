@@ -9,10 +9,9 @@ import java.util.List;
  * Have the machine report its temperatures every {@code period} seconds, or stop with zero -
  * {@code M155}.
  *
- * <p>The field is {@code period} because that is what the browser has always sent, while the
- * generated command's property is {@code seconds}. Binding the generated class directly is what
- * made this endpoint silently ask for the firmware's default instead of the period the user chose,
- * and it is the reason these records exist.
+ * <p>Named {@code period} because that is what the browser sends, while the generated command's
+ * property is {@code seconds} - binding the generated class directly once made this endpoint
+ * silently ask for the firmware's default instead, which is why these records exist at all.
  *
  * @param period seconds between reports; 0 stops them, null leaves it to the firmware
  */

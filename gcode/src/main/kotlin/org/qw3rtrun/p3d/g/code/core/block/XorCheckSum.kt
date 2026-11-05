@@ -20,17 +20,10 @@ import org.qw3rtrun.p3d.g.code.core.token.GInt
 interface CheckSumCalculator {
 
     /**
-     * Adds one character to the running checksum. It takes a `Char`, not a byte, and outside 7-bit
-     * ASCII a character is not the byte a transport sends: [XorCheckSum] folds in the whole UTF-16
-     * code unit and [Crc16CheckSum] its low eight bits, so for `é` neither agrees with a checksum
-     * computed over its UTF-8 bytes `C3 A9`.
-     *
-     * ```
-     * val sum = XorCheckSum()
-     * sum.add('N')
-     * sum.add('1')
-     * sum.get()   // GInt(78 xor 49)
-     * ```
+     * Adds one character to the running checksum. Takes a `Char`, not a byte, and outside 7-bit ASCII
+     * a character is not the byte a transport sends: [XorCheckSum] folds in the whole UTF-16 code
+     * unit and [Crc16CheckSum] its low eight bits, so for `é` neither agrees with a checksum computed
+     * over its UTF-8 bytes `C3 A9`.
      *
      * @param ch the next character of the covered range
      */
@@ -39,28 +32,15 @@ interface CheckSumCalculator {
     /**
      * The checksum of every character added so far, with the lexeme the algorithm writes it as.
      *
-     * ```
-     * val sum = XorCheckSum()
-     * sum.add("N1 G28")
-     * sum.get()   // GInt(18)
-     * ```
-     *
      * @return the current value as a number token
      */
     fun get(): GInt
 
     /**
-     * Every character of [str], in order - spec 8.3 covers the bytes as transmitted, so this is how
-     * a caller that has built the block as text feeds it in.
-     *
-     * An index loop rather than `forEach`: this runs for every byte of every block, and a stdlib
-     * inline extension is one more thing a port has to recognise for no gain.
-     *
-     * ```
-     * val sum = XorCheckSum()
-     * sum.add("N1 G28")
-     * sum.get()   // GInt(18)
-     * ```
+     * Every character of [str], in order - spec 8.3 covers the bytes as transmitted, so this is how a
+     * caller that has built the block as text feeds it in. An index loop rather than `forEach`: this
+     * runs for every byte of every block, and a stdlib inline extension is one more thing a port has
+     * to recognise for no gain.
      *
      * @param str the covered text
      */

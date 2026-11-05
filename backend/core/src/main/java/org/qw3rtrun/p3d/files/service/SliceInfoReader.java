@@ -10,23 +10,18 @@ import java.nio.charset.StandardCharsets;
 /**
  * What the slicer said, read out of the file's comments.
  *
- * <p><strong>The comments are found by {@code :gcode}'s tokenizer and not by a pattern of this
- * module's own.</strong> That is plan item C1's third done-when condition, and the reason for it is
- * that "a comment" is a surprisingly deep question: a {@code ;} inside a parenthesised comment does
- * not open a new one, a {@code (} inside a tail comment is text, and the tokenizer already answers
- * both against a corpus and a written spec. A second reader of G-code text in this repository is
- * exactly what {@code :backend:terminal} spent a change getting rid of.
+ * <p>Comments are found by {@code :gcode}'s tokenizer, not a pattern of this module's own (plan item
+ * C1's third done-when condition) - "a comment" is a surprisingly deep question (a {@code ;} inside
+ * a parenthesised comment does not open a new one, a {@code (} inside a tail comment is text), and a
+ * second reader of G-code text is exactly what {@code :backend:terminal} spent a change removing.
+ * What happens here is the other half, and it is not parsing G-code: once the tokenizer hands over a
+ * comment's text, reading {@code TIME:3661} out of it is one slicer's convention with no standard
+ * behind it - Cura writes {@code ;TIME:3661}, PrusaSlicer
+ * {@code ; estimated printing time (normal mode) = 1h 2m 3s} - so the two programs' habits are a
+ * table here, nowhere near {@code :gcode}.
  *
- * <p><strong>What is done here is the other half, and it is not parsing G-code.</strong> Once the
- * tokenizer has handed over the text of a comment, reading {@code TIME:3661} out of it is reading
- * one slicer's convention - and there is no standard for any of it. Cura writes
- * {@code ;TIME:3661}; PrusaSlicer writes {@code ; estimated printing time (normal mode) = 1h 2m 3s}.
- * Those are two programs' habits rather than anything the format says, so they are recorded as a
- * table here and nowhere near {@code :gcode}.
- *
- * <p>Everything is optional and a value that does not parse is simply not taken. A file from a
- * slicer nothing here has heard of yields {@link SliceInfo#unknown()}, which is a fact rather than
- * a failure: it is still a perfectly printable file.
+ * <p>Everything is optional; a value that does not parse is simply not taken, and a slicer nothing
+ * here has heard of yields {@link SliceInfo#unknown()} - a fact, not a failure.
  */
 final class SliceInfoReader {
 

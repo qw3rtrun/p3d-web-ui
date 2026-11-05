@@ -6,33 +6,24 @@ import java.util.Set;
 /**
  * What a human declared about a machine, as opposed to what the machine said about itself.
  *
- * <p><strong>This is the other half of {@link MachineProfile}, and keeping them apart is plan item
- * B4's "what was discovered is distinguishable from what was typed".</strong> The distinction is
- * structural rather than a flag beside each field: a profile is only ever written from a firmware
- * report, a spec is only ever written from the management API, and neither can overwrite the other.
- * A reader that wants a single answer asks {@link Descriptor}, which is the one place the two meet.
+ * <p>The other half of {@link MachineProfile} - B4's "what was discovered is distinguishable
+ * from what was typed". Structural, not a flag per field: a profile is only ever written from a
+ * firmware report, a spec only from the management API, neither can overwrite the other, and
+ * {@link Descriptor} is where the two meet. A flag per field would lose the discovered value the
+ * moment someone overrides it and could not show both, which an edit page wants to.
  *
- * <p>A flag per field was the alternative and it is worse. It makes every writer responsible for
- * setting it correctly, it loses the discovered value the moment someone overrides it - so a
- * reflashed machine cannot be told that its typed-in value is now wrong - and it gives a reader no
- * way to show both, which is exactly what an edit page wants to show.
+ * <p>Most fields are declared-only because nothing asks the firmware yet - only
+ * {@link #extruderCount()} has a discovered counterpart, from {@code M115}'s
+ * {@code EXTRUDER_COUNT}; bed volume and nozzle diameters sit in an unread {@code M503} dump and
+ * become overrides the same way once something asks.
  *
- * <p><strong>Most of this is declared because nothing asks for it yet.</strong> Only
- * {@link #extruderCount()} has a discovered counterpart today, from {@code M115}'s
- * {@code EXTRUDER_COUNT}. Bed volume and nozzle diameters are both in an {@code M503} dump that B2
- * did not ask for; when something does, they become overrides like the extruder count rather than
- * the only source, and nothing here has to change shape.
+ * <p>Groups are tags: cheaper than a group id and lets a machine belong to two.
  *
- * <p><strong>Groups are tags.</strong> B4 offered "free-form tags or a group id" and this takes
- * tags, because a group is a tag that a reader filters on and the two cost the same to store. A
- * farm that wants "the Prusa shelf" declares a {@code prusa-shelf} tag on each machine; a farm that
- * wants a machine in two groups can have it, which a single group id cannot express.
- *
- * @param bedVolume      how much room it has, or null when nobody said
- * @param extruderCount  how many tools it has, or null to believe the firmware
- * @param nozzleDiameters one per extruder in tool order, in millimetres. Empty when nobody said
- * @param materials      what it is set up to print - "PLA", "PETG". Empty when nobody said
- * @param tags           free-form labels, which is also how a farm expresses groups
+ * @param bedVolume       null when nobody said
+ * @param extruderCount   null to believe the firmware
+ * @param nozzleDiameters one per extruder in tool order, in millimetres; empty when nobody said
+ * @param materials       what it is set up to print - "PLA", "PETG"; empty when nobody said
+ * @param tags            free-form labels, also how a farm expresses groups
  */
 public record MachineSpec(
         BedVolume bedVolume,
@@ -43,12 +34,10 @@ public record MachineSpec(
 ) {
 
     /**
-     * Normalises the collections, because this record is built from a web form.
-     *
-     * <p>An absent JSON field and an empty form input both arrive as null, and a caller that has to
-     * null-check five accessors will eventually miss one. The two that stay nullable do so because
-     * for them "not declared" is a real third state that an empty value cannot express: a bed of
-     * zero is not a bed, and an extruder count of zero is not "ask the firmware".
+     * Normalises the collections, since this record is built from a web form: an absent JSON
+     * field and an empty form input both arrive as null, and a caller null-checking five accessors
+     * would eventually miss one. {@code bedVolume}/{@code extruderCount} stay nullable because
+     * "not declared" is a real third state an empty value cannot express.
      */
     public MachineSpec {
         nozzleDiameters = nozzleDiameters == null ? List.of() : List.copyOf(nozzleDiameters);
@@ -76,13 +65,10 @@ public record MachineSpec(
     /**
      * The tool count to believe: what was declared, or failing that what {@code reported} said.
      *
-     * <p><strong>The rule lives here, once.</strong> Two holders need it - {@link Descriptor} for
-     * anything reading the roster, and {@code PrinterState} for the tool-index check that decides
-     * whether a command is refused - and a one-line rule copied into both is a one-line rule that
-     * drifts. Taking the profile as a parameter rather than holding one keeps the two records
-     * independent: a spec still knows nothing about any particular machine's firmware.
-     *
-     * <p>Declared wins because the operator is looking at the machine and the firmware is not.
+     * <p>The rule lives here once, shared by {@link Descriptor} and {@code PrinterState}'s
+     * tool-index check rather than copied; taking the profile as a parameter keeps the two
+     * records independent. Declared wins because the operator is looking at the machine and the
+     * firmware is not.
      */
     public int extruderCountOr(MachineProfile reported) {
         if (extruderCount != null) {

@@ -1,13 +1,9 @@
 <!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
 
-<!--
-  Two empty fragments, like every other page. This used to pass `~{:: //script}` - "the script
-  elements of this document" - to hand its own module script up to the layout. That page-local
-  script is gone (the islands are mounted by the bundle, and Bootstrap comes with it), and a
-  selector that matches nothing does not resolve to an empty fragment: Thymeleaf fails the whole
-  render with "Error resolving fragment: ${scripts}".
--->
+<!-- Two empty fragments, like every other page - a selector matching nothing does not resolve to
+     an empty fragment, so passing one that used to select a since-removed page-local script failed
+     the whole render with "Error resolving fragment: ${scripts}". -->
 <head th:replace="container::common_headers(~{}, ~{})">
     <title></title>
 </head>
@@ -23,24 +19,13 @@
                             <a class="nav-link active ps-0" id="home-tab" data-bs-toggle="tab" href="#overview"
                                role="tab" aria-controls="overview" aria-selected="true">Monitor</a>
                         </li>
-                        <!--
-                          Storage, in one of three states - and which one is decided here rather
-                          than in the island.
-
-                          A capability is true at request time and does not keep changing, which is
-                          the same test the Firmware panel below is on the server side for. So a
-                          machine with no card reader gets a dead tab with a tooltip, and the island
-                          is never mounted at all: no fetch, no flash of an enabled control, and
-                          nothing for an operator to click that could not work.
-
-                          A tab that opens onto an explanation of why it is useless is worse than
-                          one that says so before it is clicked. The tooltip hangs on a wrapper
-                          because a `.disabled` element fires no events of its own.
-
-                          The third state inherits the Firmware panel's own limitation and its
-                          wording: the profile is learned when a machine first connects, so
-                          connecting while this page is open leaves it stale until a reload.
-                        -->
+                        <!-- Storage/Settings below are gated server-side on a capability, true at request
+                             time like the Firmware panel further down: no reader/EEPROM means a dead tab
+                             and no mounted island at all, so nothing opens a stream the operator could
+                             not use. The tooltip hangs on a wrapper since a `.disabled` anchor fires no
+                             events; its two messages distinguish "firmware says no" from "not reported
+                             yet" (stale, like the Firmware panel, until the machine reconnects and the
+                             page reloads). -->
                         <li class="nav-item" th:with="sd=${printer.profile.hasSdCard()}">
                             <a th:if="${sd}" class="nav-link" id="storage-tab" data-bs-toggle="tab"
                                href="#storage" role="tab" aria-controls="storage"
@@ -52,23 +37,12 @@
                                 <a class="nav-link disabled" aria-disabled="true" tabindex="-1">Storage</a>
                             </span>
                         </li>
-                        <!--
-                          Settings, gated the same two-sided way Storage is, and for the same
-                          reason: `Cap:EEPROM` is true at request time, so the server is the one
-                          that decides whether the tab is live and whether the island exists.
-
-                          The capability is spelled `EEPROM` on the wire. Issue #88 calls it
-                          `EEPROM_SETTINGS`, which is Marlin's build macro - a `#define` that never
-                          leaves the compiler - and a gate written against that name would be false
-                          on every machine there is. Measured against MarlinSim and cross-checked
-                          against Marlin's own `M115.cpp`; `MachineProfile.hasEeprom()` carries the
-                          whole note.
-
-                          Whether `M503` exists is a *third* question and no capability answers it:
-                          `DISABLE_M503` strips the report out of a firmware that still stores
-                          settings. The island learns that from the machine refusing the command,
-                          which is why it is not part of this gate.
-                        -->
+                        <!-- Gated the same way as Storage above. The wire capability is `EEPROM`; issue
+                             #88's `EEPROM_SETTINGS` is Marlin's build macro and never appears on the wire
+                             (measured against MarlinSim, cross-checked against Marlin's own M115.cpp) -
+                             see MachineProfile.hasEeprom(). Whether M503 itself exists (DISABLE_M503) is
+                             a separate question this gate does not answer; the island learns that from
+                             the machine refusing the command. -->
                         <li class="nav-item" th:with="eeprom=${printer.profile.hasEeprom()}">
                             <a th:if="${eeprom}" class="nav-link" id="settings-tab" data-bs-toggle="tab"
                                href="#settings" role="tab" aria-controls="settings"
@@ -92,14 +66,7 @@
                     <!-- The connection badge and buttons are part of PrinterMonitor now. -->
                 </div>
                 <div class="tab-content tab-content-basic">
-                    <!--
-                      The card - a Vue island, because everything in it changes while you watch it.
-
-                      Rendered only when the firmware reports a reader, which is the other half of
-                      the disabled tab above: an island that mounted behind a dead tab would be
-                      invisible until it misbehaved, and it would open a stream to a machine the
-                      operator cannot use from here.
-                    -->
+                    <!-- An island, since everything in it changes while you watch it; gated as above. -->
                     <div class="tab-pane fade" id="storage" role="tabpanel" aria-labelledby="storage-tab"
                          th:if="${printer.profile.hasSdCard()}">
                         <div data-p3d="storage-tab"
@@ -107,15 +74,8 @@
                                       data-role=${currentRole}"></div>
                     </div>
 
-                    <!--
-                      The settings - an island, because the report arrives on the event stream one
-                      line at a time and changes whenever anybody reads, reverts or resets.
-
-                      Rendered only when the firmware reports an EEPROM, which is the other half of
-                      the gate on the tab above. An island behind a dead tab would open a stream to
-                      a machine whose M500 and M501 cannot work, and nothing on the page would show
-                      that it had.
-                    -->
+                    <!-- An island: the settings report arrives on the event stream one line at a time
+                         and changes on every read/revert/reset. Gated as above. -->
                     <div class="tab-pane fade" id="settings" role="tabpanel" aria-labelledby="settings-tab"
                          th:if="${printer.profile.hasEeprom()}">
                         <div data-p3d="settings-tab"
@@ -123,18 +83,9 @@
                                       data-role=${currentRole}"></div>
                     </div>
 
-                    <!--
-                      What the machine is - rendered by Thymeleaf and not by a Vue island.
-
-                      Firmware, capabilities and the declared spec are true at request time and do
-                      not keep changing, which is the whole test for which side of this
-                      architecture a thing belongs on. An island here would open a fetch to
-                      re-learn what the server already knew when it rendered the page.
-
-                      The cost is that it goes stale: the profile is learned when a machine first
-                      connects, so connecting while this page is open leaves the panel empty until
-                      a reload. Recorded as debt rather than solved with a poll.
-                    -->
+                    <!-- Thymeleaf, not a Vue island: firmware, capabilities and the declared spec are
+                         true at request time and do not keep changing. Cost: the panel goes stale if a
+                         machine connects while this page is open, until reload - debt, not a poll. -->
                     <div class="tab-pane fade" id="demographics" role="tabpanel"
                          aria-labelledby="contact-tab">
                         <div class="row pt-3">

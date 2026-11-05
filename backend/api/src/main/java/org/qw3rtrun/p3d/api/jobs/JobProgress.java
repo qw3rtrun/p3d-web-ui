@@ -6,20 +6,15 @@ import java.time.LocalDateTime;
 /**
  * How far a print has got - plan item C4.
  *
- * <p><strong>The fraction is bytes and the count is blocks, and that pairing is deliberate.</strong>
- * Bytes are exact and free: the file's size is known before anything starts, and the feed knows how
- * much of it it has consumed. Blocks are what actually went to the machine, and there is no cheap
- * way to know in advance how many a file holds - a tenth of a sliced file is comments and blank
- * lines, which are dropped rather than sent, so the file's line count is an upper bound and not a
- * denominator. Counting them up front would mean tokenizing the whole file at upload.
+ * <p>The fraction is bytes and the count is blocks, deliberately paired: bytes are exact and
+ * free (the file's size is known up front), while blocks are what actually went to the machine
+ * and cannot be counted in advance without tokenizing the whole file - a sliced file is up to a
+ * tenth comments and blank lines, dropped rather than sent, so line count is an upper bound and
+ * not a denominator.
  *
- * @param blocksSent  blocks handed to the machine, which is monotone - see {@link #blocksSent()}
- * @param inFlight    of those, how many the firmware has not acknowledged yet
- * @param bytesSent   how much of the file has been read
- * @param bytesTotal  how large the file is
- * @param layer       the layer the file last said it was on, or null when it never says
- * @param startedAt   when the feed began
- * @param at          when this measurement was taken
+ * @param blocksSent blocks handed to the machine, monotone - see {@link #blocksSent()}
+ * @param inFlight   of those, how many the firmware has not acknowledged yet
+ * @param layer      the layer the file last said it was on, or null when it never says
  */
 public record JobProgress(long blocksSent,
                           int inFlight,
@@ -35,12 +30,11 @@ public record JobProgress(long blocksSent,
     }
 
     /**
-     * How many blocks the firmware has taken, which is the honest number and not the headline one.
+     * How many blocks the firmware has taken - the honest number, not the headline one.
      *
-     * <p>{@link #blocksSent} runs ahead of it by whatever is in the send window - at most four
-     * blocks, because the window will not pull another until one is acknowledged. On a job of a
-     * hundred thousand blocks that gap is invisible; on a job that <em>failed</em> it is the
-     * difference between what was sent and what was printed, which is why both numbers are kept.
+     * <p>{@link #blocksSent} runs ahead by whatever is in the send window (at most four blocks,
+     * since it will not pull another until one is acknowledged); on a failed job that gap is the
+     * difference between what was sent and what was printed, which is why both are kept.
      */
     public long blocksAccepted() {
         return Math.max(0, blocksSent - inFlight);
@@ -56,13 +50,11 @@ public record JobProgress(long blocksSent,
     }
 
     /**
-     * How much longer, extrapolated from how long it has taken so far.
-     *
-     * <p>Null before anything has been sent, and null at the end. <strong>It is a straight
-     * extrapolation and says so</strong>: a print does not proceed at a constant rate - infill is
-     * faster than perimeters and the first layer is slower than everything - so this is worth
-     * showing and not worth believing to the minute. The slicer's own estimate, which is on the
-     * file, is the better number for a total and a worse one for "how much is left".
+     * How much longer, extrapolated from how long it has taken so far. Null before anything has
+     * been sent and null at the end - a straight extrapolation, since a print does not proceed at
+     * a constant rate (infill is faster than perimeters, the first layer slower than everything).
+     * The slicer's own estimate is the better number for a total; this is the better one for "how
+     * much is left".
      */
     public Duration remaining() {
         double done = fraction();

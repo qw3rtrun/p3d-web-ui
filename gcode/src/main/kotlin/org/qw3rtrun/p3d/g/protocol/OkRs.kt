@@ -34,17 +34,15 @@ object SimpleOkRs : OkRs<SimpleOkRs>, GRsDecoder<SimpleOkRs> {
  * `ok [N<line>] P<planner> B<block>` - an `ok` carrying the line number it acknowledges (`N`, when
  * the host numbered the line) and the planner (`P`) and block-queue (`B`) counts.
  *
- * **The line number comes first**, which is what Marlin writes: `ok_to_send()` echoes the `N` field
- * off the command it is acknowledging before appending ` P` and ` B`. This read it last for a
- * while, and `encode()` wrote it last to match, so the type round-tripped with itself and matched
- * nothing a printer sends - every acknowledgement of a numbered line fell through every decoder,
- * which a live probe against MarlinSim found and the test suite could not.
+ * The line number comes first, which is what Marlin writes: `ok_to_send()` echoes the `N` field off
+ * the command it is acknowledging before appending ` P` and ` B`. This read it last for a while, so
+ * the type round-tripped with itself and matched nothing a printer sends - every acknowledgement of a
+ * numbered line fell through every decoder, which a live probe against MarlinSim found and the test
+ * suite could not.
  *
- * `P` and `B` are read in either order, and exactly one of each; [encode] normalises to `P` then
- * `B`. An absent line number stays absent: it decodes to `null` and not to `-1`, because the property
- * is nullable and [encode] writes out any non-null line number, so a `-1` re-encoded to
- * `ok N-1 P15 B3` - a line nothing sends and this decoder rejects. Absent on the wire has to stay
- * absent in the value.
+ * `P` and `B` are read in either order, and exactly one of each; [encode] normalises to `P` then `B`.
+ * An absent line number stays absent: it decodes to `null` and not to `-1`, since a `-1` would
+ * re-encode to `ok N-1 P15 B3` - a line nothing sends and this decoder rejects.
  *
  * ```
  * AdvancedOkRs.decode("ok B3 P15")         // AdvancedOkRs(planner = 15, blockQueue = 3)
@@ -71,18 +69,13 @@ data class AdvancedOkRs(
         /**
          * `ok [N<n>] <P|B><n> <P|B><n>`, in one pass, or null when the line is not one.
          *
-         * Four rules the pattern stated and this states in order:
+         * Four rules: the separator is a space, not a blank - a tab between these fields is not
+         * something a firmware writes, so [spaces] stays narrow rather than widening to spec 2.1's
+         * pair by accident. `N` comes first or not at all (`ok B3 N100 P15` is not this reply). The
+         * two counts must name different fields (`ok P15 P3` says nothing: one number has no home).
+         * Nothing follows the second count.
          *
-         * - **the separator is a space, not a blank.** ` +` admitted no tab, and a tab between
-         *   these fields is not something a firmware writes - [spaces] keeps that narrow rather
-         *   than widening it to spec 2.1's pair by accident.
-         * - **`N` comes first or not at all.** `ok B3 N100 P15` is not this reply.
-         * - **the two counts name different fields.** `ok P15 P3` says nothing: one of the two
-         *   numbers would have no home, and the record cannot represent it.
-         * - **nothing follows the second count.** The pattern was read with `matches()`, so the
-         *   line ends there.
-         *
-         * spec 9 throughout: a digit run too wide for an `Int` is malformed input off the wire, so
+         * Spec 9 throughout: a digit run too wide for an `Int` is malformed input off the wire, so
          * every conversion is `toIntOrNull` and a line this decoder declines rather than throws on.
          */
         override fun decode(line: String): AdvancedOkRs? {

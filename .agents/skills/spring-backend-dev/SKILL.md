@@ -1263,6 +1263,25 @@ assembles. A test now runs against the schema the application actually has rathe
 module's slice of it, which is strictly better: a constraint between two of those tables would
 have been invisible before.
 
+### Documentation duty
+
+Agents wrote this layer's comments and over-wrote them - 47% of `:backend:core`'s main lines before
+issue #86. Four rules:
+
+- **The class block is where a thread/lifecycle contract and a measured fact live** - which thread
+  mutates `PrinterReactor.attempts`, why `stop()` disposes a scheduler by scheduling the disposal onto
+  it, the 26,640-of-40,000 refusal rate behind `Outbox`. A class block over ~25 lines needs a reason;
+  over ~40 it is almost certainly still prose that should be three lines.
+- **A `handle(<Command>)`/`on(<Event>)` method named after its message carries no javadoc of its
+  own** - the name is the contract; the *why* belongs in the class block once, not under every arm
+  that delegates to `passThrough` or `republish`.
+- **`@param`/`@return` earn their line only when they add a unit, a nullability or a bound** the
+  signature does not already say.
+- **A one-line `//` is for one tricky statement, not a paragraph.**
+
+Losing a measured fact while compressing - a byte count, a firmware transcript, a "why not X" - is a
+regression, not a cleanup: move it into the class block before deleting the paragraph that carried it.
+
 ## Review checklist
 
 - [ ] no blocking call on an event loop - every JPA/JDBC touch from a reactive path has

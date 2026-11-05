@@ -62,50 +62,63 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
 
+/**
+ * The printer aggregate: one machine's connection, firmware/capability profile, declared spec,
+ * EEPROM settings, SD card state and last temperature, plus the dispatch that routes every command
+ * and reply through it. One instance per printer, touched by that printer's own single thread (see
+ * {@link PrinterReactor}); this class itself holds no scheduler.
+ *
+ * <h3>Profile vs spec</h3>
+ * {@link #profile} is what the machine <em>reported</em> (seeded from a {@link MachineProfile},
+ * replaced wholesale by each firmware report); {@link #spec} is what a person <em>declared</em>
+ * ({@link #declared}, the only thing that changes it). The two are never merged - a firmware
+ * reconnect must not erase an override - and resolved only where a caller needs one answer
+ * ({@link #extruderCount()}).
+ *
+ * <h3>Dispatch: a switch, not reflection</h3>
+ * {@link #onEvent} and {@link #onCommand} replaced a reflective invoker that resolved a handler by
+ * walking the message's supertype graph: renaming a handler below silently unregistered it, with no
+ * symptom beyond a {@code No invoker for} at WARN - which is how a real regression (a temperature
+ * that simply stopped moving) once reached production. Neither switch is exhaustive in the
+ * compiler's sense ({@code GRq} has 295 implementations, and a reply may be any {@code :gcode} type
+ * or one of the farm's own events) but every arm is still type-checked, so a renamed or removed
+ * handler now fails the build instead.
+ *
+ * <h3>Both directions default to "pass it on", never "drop it"</h3>
+ * An unnamed reply is republished ({@link #republish}) and an unnamed command is sent as given
+ * ({@link #passThrough}). Both used to default to a silently dropped, WARN-logged no-op, and that
+ * shipped three complete features dead: a position report, then both halves of the Storage tab,
+ * each tested and returning 200 with nothing reaching the machine. What this trades away: a command
+ * that needed a decision and has no handler is now sent raw rather than dropped.
+ *
+ * <h3>Every reply moves the connection lifecycle, except two that say something more specific</h3>
+ * {@link BusyRs} and {@link ErrorRs} drive their own transition; every other reply calls
+ * {@link #heard()}, which is what clears a recoverable {@code ERROR} and leaves {@code BUSY}. This
+ * used to fire on any traffic at all, and a live run showed why that is wrong: a previous session's
+ * {@code M155 S1} auto-reports and a backlog queued while nothing was listening both arrive at a
+ * host whose outbound half is dead - so {@code ONLINE -> IDLE} now waits specifically for
+ * {@link #on(BlockAcknowledged)}, the one reply that proves this session's own output is received.
+ *
+ * <h3>A command with no link is refused outright</h3>
+ * Used to be a {@code NullPointerException} ({@link GSender} is held only while linked), surfacing
+ * as a 500 that pointed at this aggregate rather than at the unreachable machine.
+ */
 @Slf4j
 public class PrinterState implements PrinterAggregate {
 
     @Getter
     private final UUID id;
 
-    /** What this machine is, as far as anyone knows - see {@link ProfileControl}. */
     private final ProfileControl profile;
 
-    /** The last temperature report - see {@link TemperatureControl}. */
     private final TemperatureControl temperature = new TemperatureControl();
 
-    /** What the card is, as far as its replies have said - see {@link SdCardControl}. */
     private final SdCardControl card = new SdCardControl();
 
-    /** What the machine says its settings are - see {@link EEPROMSettingsControl}. */
     private final EEPROMSettingsControl settings = new EEPROMSettingsControl();
 
-    /**
-     * Where this machine is in its connection lifecycle - one enum, and the only answer.
-     *
-     * <p><strong>It replaced two booleans on this class and one column on the entity.</strong>
-     * {@code connected} was set by the connect command and {@code online} by the socket coming up,
-     * and the two could say different things: a machine whose link had dropped while nobody asked
-     * it to was {@code connected && !online}, which no reader of this class could have interpreted
-     * and no event announced. See {@link ConnectionLifecycle} for the transitions and
-     * {@code MachineConnectionState} for what each one means.
-     */
     private final ConnectionLifecycle connection;
 
-    /**
-     * What a human declared about this machine, which the roster keeps and announces.
-     *
-     * <p><strong>Held beside the profile rather than merged into it</strong>, because a firmware
-     * report replaces the profile wholesale and would otherwise erase an override every time a
-     * machine reconnected. Plan item B4 draws that line in the schema and it has to hold here too:
-     * nothing in this class writes the spec, and nothing a machine says can.
-     *
-     * <p>It is here for one live reason - the tool-index check below honours a declared extruder
-     * count - and one that is coming, which is plan item D1 matching a job against it.
-     * -- GETTER --
-     * What a human declared about this machine, never null.
-
-     */
     @Getter
     private MachineSpec spec;
 
@@ -133,28 +146,11 @@ public class PrinterState implements PrinterAggregate {
         return profile.get();
     }
 
-    /**
-     * How many blocks the machine has taken and not acknowledged, as of the last one it did.
-     *
-     * <p>Kept here because this is where every reply lands, and read by plan item C4 so a job can
-     * report what is still in flight rather than claiming that everything sent has been printed.
-     * It is a snapshot of the transport's send window and nothing derives from it - the aggregate
-     * makes no decision on this number.
-     * -- GETTER --
-     * See
-     * .
-
-     */
+    /** A snapshot of the send window: blocks taken and not yet acknowledged - see plan item C4. */
     @Getter
     private volatile int blocksInFlight;
 
-    /**
-     * Records an edit, which is the one thing that may change the spec.
-     *
-     * <p>Reached from {@code PrinterReactorManager} when the roster re-announces a machine, so an
-     * edit takes effect on a running printer rather than waiting for a restart. It deliberately
-     * does not touch the profile: an edit is not something the machine said.
-     */
+    /** Records an edit - the only way {@link #spec} changes; never touches the profile. */
     public void declared(MachineSpec declared) {
         this.spec = declared == null ? MachineSpec.undeclared() : declared;
     }
@@ -179,62 +175,12 @@ public class PrinterState implements PrinterAggregate {
         return connection.wanted();
     }
 
-    /**
-     * Where state changes go, once anything is listening.
-     *
-     * <p>A no-op until {@link #setEmitter} replaces it, because an aggregate can now be built and
-     * seeded before its reactor exists - and one that cannot announce itself yet should not throw.
-     */
+    // no-op until setEmitter() replaces it, so an aggregate can be built and seeded before its
+    // reactor exists without throwing.
     private Consumer<Object> emitter = event -> {
     };
     private GSender g;
 
-    /**
-     * One decoded reply from the machine, routed to whatever this aggregate does about it.
-     *
-     * <p><strong>A switch, and not reflection.</strong> {@code PrinterReactor} used to do this by
-     * reflecting over this class's declared methods at construction, keying them by parameter type
-     * and resolving a message with a breadth-first walk of its supertype graph. Nothing about that
-     * was checked: renaming a handler below unregistered it, and a reply type that gained an
-     * interface changed which handler won. The only symptom was a {@code No invoker for} at WARN -
-     * nothing threw, the temperature simply stopped moving, which is how a real regression reached
-     * production once already.
-     *
-     * <p>It also put the decision in the wrong class. What this aggregate reacts to is this
-     * aggregate's business; the reactor's job is to carry messages, not to work out who wants them.
-     *
-     * <p><strong>Every reply moves the connection lifecycle, including the ones no arm claims.</strong>
-     * A reply after a fault is what clears a recoverable {@code ERROR}, and a reply after the busy
-     * notices have stopped is what leaves {@code BUSY}. Two kinds say something more specific and
-     * have arms of their own: a busy notice and an error report. Before B3 both of those fell
-     * through to the debug line.
-     *
-     * <p><strong>What a reply does not do is prove the machine is there.</strong> B3 put
-     * {@code ONLINE} to {@code IDLE} on "any reply" and a live run showed what that was worth: a
-     * previous session's {@code M155 S1} auto-reports, and a backlog queued while nothing was
-     * listening, both arrive at a host whose outbound half is dead. That arrow belongs to
-     * {@link BlockAcknowledged}, which names a block this session put on the wire and got back.
-     *
-     * <p><strong>Matched on {@code :gcode}'s own reply types.</strong> A reply arrives here as the
-     * {@code GRs} the protocol decoded - there is no longer an {@code api.msg} record standing in
-     * for each one - and the family interfaces are what the arms name: {@link TemperatureRs} covers
-     * the unsolicited auto-report and the one carried on an {@code ok}, {@link BusyRs} covers the
-     * bare {@code busy:} and Marlin's {@code echo:busy:}.
-     *
-     * <p>Not exhaustive in the compiler's sense: a reply may be anything {@code :gcode} can decode,
-     * and the farm's own events are not {@code GRs} at all. What the switch does buy is that every
-     * arm is type-checked and a handler that is renamed or removed breaks the build instead of
-     * going quiet.
-     *
-     * <p><strong>Republishing is the default, and every known reply has a named {@code on}
-     * handler.</strong> This arm used to drop what it did not recognise, and that dropped three
-     * finished features before anybody noticed: a position report decoded all the way through the
-     * transport and never reached a browser, and then both halves of the Storage tab, whose
-     * {@code SdCardOk} and {@code SdFileList} arrived here correctly parsed and stopped. The rule
-     * that replaces it is in {@link #onCommand}'s javadoc and holds in both directions - the
-     * aggregate is the seam every operating message crosses, so a message it has nothing to say
-     * about is passed on rather than discarded.
-     */
     public void onEvent(Object event) {
         switch (event) {
             case BlockAcknowledged e -> on(e);
@@ -276,89 +222,26 @@ public class PrinterState implements PrinterAggregate {
         }
     }
 
-    /**
-     * Passes on a reply the aggregate has no named handler for.
-     *
-     * <p>The counterpart of {@link #passThrough} on the command side, and it exists for the same
-     * reason: a list that has to be extended by hand every time {@code :gcode} learns a new reply
-     * is a list that will be forgotten, and what it used to cost when it was forgotten was the
-     * whole feature. Now it costs whatever the aggregate would have decided about the reply, which
-     * for most of them is nothing at all.
-     *
-     * <p>Logged at debug rather than warn, unlike a refused command: most replies genuinely are not
-     * this aggregate's business, and a machine saying something nobody modelled is not a defect.
-     */
+    /** Passes on a reply with no named handler - the inbound counterpart of {@link #passThrough}. */
     private void republish(Object event) {
         log.debug("nothing for the aggregate to decide about {}, passing it on", event);
         emitter.accept(event);
     }
 
-    /**
-     * One command from a caller, routed to the handler that knows how to send it.
-     *
-     * <p><strong>Refused outright when there is no connection.</strong> This used to be a 500 and a
-     * {@code NullPointerException}: the {@code GSender} below is held only while a link is up, and
-     * every arm dereferences it. The request had bound and routed correctly, so the stack trace
-     * pointed at the aggregate rather than at the machine being unreachable, which is the least
-     * useful place it could have pointed.
-     *
-     * <p><strong>Every operating command and event passes through this aggregate, in both
-     * directions, and every known one has a named handler: {@code handle(<Command>)} going out and
-     * {@code on(<Event>)} coming back.</strong> That is the CQRS seam of this application - the
-     * write side leaves through {@code handle}, the read side arrives through {@link #onEvent}'s
-     * {@code on}, and nothing crosses between the farm and a machine unaccounted for. A handler may
-     * be one line today; it is where the domain rule lands when there is one, and it is what makes
-     * the set of things this farm can do readable in one place.
-     *
-     * <p><strong>Sending is the default, and the list is what is special.</strong> This used to be
-     * the other way round - an allow-list of the commands the aggregate would send, and a
-     * {@code default} that logged a warning and dropped - on the argument that forgetting to add an
-     * arm would then be visible. It was visible only to whoever was reading the log of a running
-     * farm, and twice it was not read: motion once, and every command on the Storage tab after
-     * that, each shipped with its translation tested, its route returning 200 and no byte leaving
-     * the host. A list that has to be extended in lockstep with another module's is a list that
-     * will be forgotten, and the test that guards it is written by the same act of remembering, so
-     * it fails in exactly the cases the code does.
-     *
-     * <p>So the default is the safety net rather than the gate: forgetting a handler now costs
-     * whatever the aggregate would have decided, not the whole feature.
-     *
-     * <p>The arms below are therefore three kinds, and anything not among them is written as it was
-     * given:
-     *
-     * <ul>
-     *   <li><strong>Decided</strong> - the temperature commands, which this layer refuses when
-     *       incomplete, checks against the machine's extruder count, and fixes the scale of.</li>
-     *   <li><strong>Named</strong> - motion, the fan, settings and the card, which this layer adds
-     *       nothing to today. They are listed because the rule above says a known command has a
-     *       handler, and because a handler is where a rule lands when one arrives.</li>
-     *   <li><strong>Refused</strong> - commands that change what the connection <em>is</em> rather
-     *       than telling the machine to do something, and so cannot be correct as one block among
-     *       others. There are four, and each has been measured rather than guessed at.</li>
-     * </ul>
-     *
-     * <p>What this trades away is real and worth stating: a command that needed a decision and did
-     * not get a handler is now sent raw instead of dropped. That has never happened; the other
-     * failure has happened three times. The refusals below are where the cost is paid back, because
-     * the commands that are genuinely unsafe to pass through are few, known, and now named.
-     */
     public void onCommand(GRq<?> command) {
         if (!connection.linked()) {
             log.warn("{} is {}, so {} was not sent", id, connection.state(), command);
             return;
         }
         switch (command) {
-            // Decided. A missing target is refused, a hotend index is checked against the machine's
-            // extruder count, and a scale is imposed on the wire - see the handlers below.
+            // decided: refused if incomplete, checked against extruderCount(), scaled for the wire.
             case SetHotendTemperature c -> handle(c);
             case SetBedTemperature c -> handle(c);
             case ReportHotendTemperature c -> handle(c);
             case TemperatureAutoReport c -> handle(c);
 
-            // Motion, the fan and settings, which this layer adds nothing to - named because the
-            // set of things the farm can tell a machine to do should be readable here, and because
-            // a handler is where a rule lands when one arrives. The bed-volume check a move wants
-            // is the obvious candidate; see handle(LinearMoveG1).
+            // motion, fan, position: no decision yet (see handle(LinearMoveG1) for the bed-volume
+            // check that is missing).
             case AutoHome c -> handle(c);
             case LinearMoveG1 c -> handle(c);
             case RelativePositioning c -> handle(c);
@@ -367,14 +250,9 @@ public class PrinterState implements PrinterAggregate {
             case FanOff c -> handle(c);
             case GetCurrentPosition c -> handle(c);
 
-            // The EEPROM, issue #88. M503 is the only one of these the aggregate can refuse and the
-            // only one that needs a decision at all; the rest are named because the set of things
-            // the farm can tell a machine to do should be readable here. The six setters are the
-            // settings this feature may change - and only those six: M301 (hotend PID) is a
-            // thermal-safety change with its own issue, M200 is reported disabled on this build,
-            // M145 is indexed, and M149/G21 reinterpret every command in flight. Those four still
-            // reach the machine through the pass-through default, which is correct, and
-            // deliberately have no handler.
+            // EEPROM (#88): only M503 needs a decision (see handle(ReportSettings)). M301/M200/
+            // M145/M149/G21 are deliberately not named here and reach the machine through the
+            // default pass-through.
             case SaveSettings c -> handle(c);
             case RestoreSettings c -> handle(c);
             case FactoryReset c -> handle(c);
@@ -387,10 +265,8 @@ public class PrinterState implements PrinterAggregate {
             case SetAdvancedSettings c -> handle(c);
             case SetHomeOffsets c -> handle(c);
 
-            // The card. Writing to one is absent and must stay absent: an upload is a stream
-            // between M28 and M29 that holds the connection for its whole length, so it goes to
-            // PublisherQueue as an exclusive source rather than arriving here one command at a
-            // time - see the refusal below.
+            // the card; writing one is a stream (M28..M29) that holds the connection, so it goes
+            // through PublisherQueue, not here - see the refusal below.
             case InitSDCard c -> handle(c);
             case ReleaseSDCard c -> handle(c);
             case ListSDCard c -> handle(c);
@@ -398,9 +274,7 @@ public class PrinterState implements PrinterAggregate {
             case SelectSDFile c -> handle(c);
             case StartOrResumeSDPrint c -> handle(c);
 
-            // Refused. Not because they are dangerous commands - they are all legitimate - but
-            // because this route cannot carry them correctly, and sending them anyway would be
-            // worse than saying so.
+            // refused: not dangerous, just commands this route cannot carry correctly.
             case StartSDWrite c -> refuse(c, "M28 turns the wire into a file sink until M29, so "
                     + "every command queued behind it would be written into the file instead of "
                     + "run - use PrinterControl.uploadToCard, which holds the connection");
@@ -415,14 +289,7 @@ public class PrinterState implements PrinterAggregate {
         }
     }
 
-    /**
-     * Declines a command this route cannot carry, loudly and with the reason.
-     *
-     * <p>Distinct from the old {@code default} arm, which looked identical in the log and meant
-     * something else entirely - "nobody has got round to this yet" rather than "this is the wrong
-     * way to ask". The first was a bug every time it fired; this is a decision, and it names the
-     * right route where there is one.
-     */
+    /** Declines a command this route cannot carry, loudly and with the reason - distinct from a silently dropped one. */
     private void refuse(GRq<?> command, String why) {
         log.warn("{} was not sent to {}: {}", command, id, why);
     }
@@ -433,25 +300,11 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * Everything this aggregate holds, as the events that would have announced it.
-     *
-     * <p>What a subscriber arriving late is handed before anything live - see
-     * {@code PrinterReactor.updates()}. In a fixed order: where the connection is, what the machine
-     * is (firmware, then each capability), what its card is, what it says its settings are, and its
-     * last temperature. A part that is not known yet is absent rather than null or zero, the same
-     * rule {@link TemperatureControl} keeps for a sensor: no report is not a report of nothing.
-     *
-     * <p>The settings are the one slot that is a <em>sequence</em> rather than a single fact: a
-     * 25-line report in the order the firmware wrote it, because the section headings inside it are
-     * what a tab groups by - see {@link EEPROMSettingsControl}.
-     *
-     * <p><strong>Facts, not history.</strong> Only what the aggregate keeps is here. A position, a
-     * card listing, an acknowledged block or a batch of abandoned blocks is something that
-     * <em>happened</em>, and handing one to a subscriber that arrived later would tell it that it
-     * had just happened again.
-     *
-     * <p>Built from immutable values behind volatile references, so it can be called from any
-     * thread; it is a moment's view and may already be one event behind by the time it is read.
+     * Everything this aggregate holds, as the events that would have announced it - handed to a
+     * late subscriber before anything live (see {@code PrinterReactor.updates()}). Facts only, in a
+     * fixed order (connection, profile, card, settings, last temperature); nothing that merely
+     * <em>happened</em> - a position, a card listing, an acknowledged or abandoned block - is here,
+     * or a late subscriber would see it as having just happened.
      */
     public List<Object> snapshot() {
         var facts = new ArrayList<Object>();
@@ -464,26 +317,15 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * Two decimals.
-     *
-     * <p>The {@code String.format("%.2f", …)} in the encoder this replaces used the default locale,
-     * so under a comma-decimal locale it put {@code M140 S60,00} on the wire — not a number at all
-     * by the spec's §3.1, and a command the firmware would reject. The value now arrives as a
-     * {@code BigDecimal} and never passes through a locale, so only the scale is left to set; it is
-     * set here rather than in the DSL because the wire format of a temperature is this layer's
-     * business.
+     * Two decimals, via {@code BigDecimal} rather than {@code String.format}'s locale-sensitive
+     * default - which once put {@code M140 S60,00} on the wire under a comma-decimal locale, not a
+     * number at all by the spec's sect. 3.1.
      */
     private static BigDecimal wireTemp(BigDecimal celsius) {
         return celsius.setScale(2, RoundingMode.HALF_UP);
     }
 
-    /**
-     * {@code M104} — set a hotend's target.
-     *
-     * <p>The tool is read from {@code T} and not from {@code I}: Marlin's M104 documents both, with
-     * {@code I} a material-preset index, and {@code T} is the one {@code GSender.m104} sends. An
-     * absent tool means the active one, which is tool 0 here as it was before.
-     */
+    /** {@code M104} - set a hotend's target. Read from {@code T}, not {@code I} (a material-preset index). */
     public void handle(SetHotendTemperature temperature) {
         log.info("{}", temperature);
         if (temperature.getTemp() == null) {
@@ -525,26 +367,12 @@ public class PrinterState implements PrinterAggregate {
         passThrough(home);
     }
 
-    /**
-     * {@code G1} - a linear move.
-     *
-     * <p><strong>Not validated against the bed, and that is the known gap this handler exists to
-     * hold.</strong> An absolute move could be checked against {@code MachineSpec.bedVolume}; a
-     * relative one could not without tracking position, and the declared volume is often absent.
-     * Left undone rather than half-done - but when it is done, it is done here.
-     */
+    /** {@code G1}. Not validated against the bed - see the skill's known-debt list. */
     public void handle(LinearMoveG1 move) {
         passThrough(move);
     }
 
-    /**
-     * {@code G91} - relative mode, which is <strong>modal</strong>.
-     *
-     * <p>The machine stays relative until something says otherwise, which is why
-     * {@code MoveAxes.toMarlin()} returns the mode switch, the move and the switch back as one
-     * list: a lost {@code G90} leaves every later absolute move - including a print's - landing
-     * somewhere else entirely.
-     */
+    /** {@code G91} - relative mode, modal; returned together with the move and the {@code G90} back. */
     public void handle(RelativePositioning relative) {
         passThrough(relative);
     }
@@ -566,43 +394,23 @@ public class PrinterState implements PrinterAggregate {
 
     // ----------------------------------------------------------------------------- the EEPROM
 
-    /**
-     * {@code M500} - write the live settings into the EEPROM.
-     *
-     * <p>Answered by {@code //action:notification Settings Stored} and nothing else. It is the only
-     * one of the five that writes the stored contents, so it is also the only one that can make
-     * {@code M504}'s last verdict stale - and it does not invalidate the held report, because what
-     * is now stored is exactly what the report already says.
-     */
+    /** {@code M500} - writes the live settings; does not invalidate the held report, since it now matches. */
     public void handle(SaveSettings save) {
         passThrough(save);
     }
 
     /**
-     * {@code M501} - load the stored settings back into live memory.
-     *
-     * <p><strong>It answers a bare {@code ok} and announces nothing at all.</strong> That is the
-     * central design fact of this feature, and it was measured with {@code M503} as the control:
-     *
+     * {@code M501} - reload stored settings. Answered by a bare {@code ok} with no announcement, so
+     * the held report is silently stale until re-asked - measured against {@code M503} on MarlinSim:
      * <pre>
-     * &gt;&gt; M503   &lt;&lt; echo:  M104 S0 B250 F0.00      (from the EEPROM)
-     * &gt;&gt; M502   &lt;&lt; ok P15 B3
-     * &gt;&gt; M503   &lt;&lt; echo:  M104 S210 B250 F0.10    (the defaults - changed, and unannounced)
-     * &gt;&gt; M501   &lt;&lt; ok P15 B3
-     * &gt;&gt; M503   &lt;&lt; echo:  M104 S0 B250 F0.00      (back)
+     * M503 -&gt; M104 S0 B250 F0.00    (stored)
+     * M502 -&gt; ok
+     * M503 -&gt; M104 S210 B250 F0.10  (defaults, unannounced)
+     * M501 -&gt; ok
+     * M503 -&gt; M104 S0 B250 F0.00    (back)
      * </pre>
-     *
-     * <p>So every live setting can change and the firmware will never say which, or that anything
-     * did. Anything still holding the previous report is silently wrong from this moment on, and no
-     * later reply corrects it.
-     *
-     * <p><strong>Two ways out were considered, and this is the second.</strong> (a) Forget the held
-     * report and let the UI notice - which needs an "it is stale now" event the farm would have to
-     * invent, and UI logic to act on it. (b) Forget it and immediately re-ask. The cost of (b) is
-     * one extra command and about 25 reply lines, once, when somebody presses a button; what it
-     * buys is a tab that is never silently wrong, and no new event type. So this handler sends the
-     * command, calls {@link EEPROMSettingsControl#invalidated()}, and sends an {@code M503} of its
-     * own - see {@link #reread()}.
+     * So this handler forgets the held report and re-asks - see {@link #reread()} - rather than
+     * inventing a "stale" event.
      */
     public void handle(RestoreSettings restore) {
         passThrough(restore);
@@ -610,36 +418,18 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * {@code M502} - load the firmware's compiled-in defaults into live memory.
-     *
-     * <p><strong>Not the same operation as {@code M501}, and the transcript in
-     * {@link #handle(RestoreSettings)} is why.</strong> On MarlinSim the stored settings and the
-     * firmware defaults genuinely differ - {@code M104 S0 B250 F0.00} against
-     * {@code M104 S210 B250 F0.10} - so a reset and a restore leave the machine in two different
-     * states, and a farm that offered one button for both would be wrong about one of them. The
-     * distinction is: {@code M501} is "what I saved", {@code M502} is "what the firmware was built
-     * with".
-     *
-     * <p><strong>Neither writes the EEPROM.</strong> The stored contents survive both, which is how
-     * {@code M501} can undo an {@code M502} at all - and why {@link EEPROMSettingsControl} keeps
-     * {@code M504}'s verdict across an invalidation. Making a reset permanent takes an {@code M500}
-     * afterwards, which is an operator's decision and not this handler's.
-     *
-     * <p>Otherwise identical to a restore: a bare {@code ok}, so forget and re-ask.
+     * {@code M502} - load the firmware's compiled-in defaults into live memory; not the same
+     * operation as {@code M501} - on MarlinSim the stored settings and the defaults genuinely
+     * differ (see {@link #handle(RestoreSettings)}). Neither writes the EEPROM, which is why
+     * {@code M501} can undo this and why {@link EEPROMSettingsControl} keeps {@code M504}'s verdict
+     * across an invalidation.
      */
     public void handle(FactoryReset reset) {
         passThrough(reset);
         reread();
     }
 
-    /**
-     * Forgets the held report and asks for it again - what a bare {@code ok} leaves to be done.
-     *
-     * <p>In that order: the report is wrong the instant the command is written, and the re-ask is
-     * what makes it right again. Skipped entirely when the firmware has no {@code M503}, in which
-     * case forgetting is all a host can do and the tab says so from
-     * {@link EEPROMSettingsControl#reportSupported()}.
-     */
+    /** Forgets the held report and re-asks, in that order; skipped if this firmware has no {@code M503}. */
     private void reread() {
         settings.invalidated();
         if (settings.reportSupported()) {
@@ -648,21 +438,12 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * {@code M503} - what are your settings.
-     *
-     * <p><strong>Refused when this firmware has already said it has no {@code M503}.</strong>
-     * {@code DISABLE_M503} is a build option that removes the report from a firmware which stores
-     * settings perfectly well, so {@code Cap:EEPROM:1} is true and the report is still absent -
-     * {@code MachineProfile.hasEeprom()} cannot answer this, and nothing else can either. The one
-     * thing that can is the machine refusing the command, which reaches
-     * {@link EEPROMSettingsControl#on(UnknownCommand)}; after that, sending it again would put a
-     * command on the wire that is known to be refused, once per button press and once per reset for
-     * the rest of the session.
-     *
-     * <p>Sent bare. {@code M503}, {@code M503 S1}, {@code M503 S} and {@code M503 C} were measured
-     * to produce byte-identical output, and {@code M503 S0} produces a second shape with no section
-     * headings at all - which is the shape a tab can group least well, so the plain form is the one
-     * to send.
+     * {@code M503} - what are your settings. Refused once this firmware has answered
+     * {@code Unknown command} to it: a {@code DISABLE_M503} build stores settings but does not
+     * report them, and {@code MachineProfile.hasEeprom()} cannot tell the difference - only the
+     * refusal, reaching {@link EEPROMSettingsControl#on(UnknownCommand)}, can. Sent bare:
+     * {@code M503}, {@code M503 S1}, {@code M503 S} and {@code M503 C} were measured
+     * byte-identical, and {@code M503 S0} drops the section headings a tab groups by.
      */
     public void handle(ReportSettings report) {
         if (!settings.reportSupported()) {
@@ -674,14 +455,7 @@ public class PrinterState implements PrinterAggregate {
         passThrough(report);
     }
 
-    /**
-     * {@code M504} - is what is in the EEPROM intact.
-     *
-     * <p>Answered by {@code echo:EEPROM OK} on a healthy machine. The failure text is
-     * <strong>unmeasured</strong> - the simulator has no way to be asked for a corrupt EEPROM -
-     * which is why {@code :gcode}'s {@code EepromReport} carries the message verbatim rather than a
-     * boolean somebody would have had to invent the wording for.
-     */
+    /** {@code M504} - is the EEPROM intact. The failure text is unmeasured; the simulator cannot be asked for a corrupt one. */
     public void handle(ValidateEEPROMContents validate) {
         passThrough(validate);
     }
@@ -728,39 +502,23 @@ public class PrinterState implements PrinterAggregate {
 
     // ------------------------------------------------------------------------------- the card
 
-    /**
-     * {@code M21} - mount the card.
-     *
-     * <p>Answered by {@code echo:SD card ok}, and by nothing at all when there is no card in the
-     * slot: the protocol has no "is a card present" question, so the browser infers absence from
-     * silence. That is why the reply has to reach it - see {@link #on(SdCardRs)}.
-     */
+    /** {@code M21} - mount the card. Answered by {@code echo:SD card ok}, or silence if there is none - see {@link #on(SdCardRs)}. */
     public void handle(InitSDCard mount) {
         passThrough(mount);
     }
 
     /**
-     * {@code M22} - release the card.
-     *
-     * <p><strong>Should be refused while a print is running from that card, and is not.</strong>
-     * Releasing mid-print stops the print. {@link SdCardControl} now holds the last
-     * {@code SdPrinting}/{@code SdNotPrinting}, so the state this needs is there; the rule itself is
-     * a behaviour change on the wire and is left for its own issue.
-     *
-     * <p>Sending it forgets the card - see {@link SdCardControl#released()} for why a command and
-     * not a reply.
+     * {@code M22} - release the card. Should refuse while a print is running from it and does not;
+     * {@link SdCardControl} now holds the state ({@code SdPrinting}/{@code SdNotPrinting}) that rule
+     * would need, left for its own issue. Forgets the card as a command, not a reply - see
+     * {@link SdCardControl#released()}.
      */
     public void handle(ReleaseSDCard release) {
         passThrough(release);
         card.released();
     }
 
-    /**
-     * {@code M20} - list the card.
-     *
-     * <p>Sent bare. The long form ({@code F}, {@code L}, {@code T}) changes what the firmware
-     * writes back, and {@code SdFileListReader} in the transport is built for the plain form.
-     */
+    /** {@code M20} - list the card, sent bare; the long form changes what {@code SdFileListReader} expects. */
     public void handle(ListSDCard list) {
         passThrough(list);
     }
@@ -770,14 +528,7 @@ public class PrinterState implements PrinterAggregate {
         passThrough(delete);
     }
 
-    /**
-     * {@code M23 <name>} - select a file to print.
-     *
-     * <p>Half of a pair: {@code PrintFile.toMarlin()} returns this and {@code M24} together,
-     * because {@code :gcode}'s generated {@code SelectAndStart} carries no filename (#37). A pair
-     * is exactly the shape that half-works if one arm goes missing, which is what the dispatch
-     * test asserts about.
-     */
+    /** {@code M23 <name>} - select a file, half of a pair with {@code M24} ({@code SelectAndStart} carries no filename, #37). */
     public void handle(SelectSDFile select) {
         passThrough(select);
     }
@@ -787,30 +538,13 @@ public class PrinterState implements PrinterAggregate {
         passThrough(start);
     }
 
-    /**
-     * Writes a command as it was given, which is what most handlers above do.
-     *
-     * <p>The request was already translated into exactly the Marlin command the machine should
-     * receive, so this layer has nothing left to decide. The temperature handlers are the ones that
-     * <em>do</em> decide something and so have bodies of their own; the rest delegate here, which
-     * keeps one implementation of "put this on the wire" while still giving every known command a
-     * name - see {@link #onCommand}'s javadoc for why the name matters even when the body does not.
-     *
-     * <p>It is also the {@code default} arm, which is the half that stops a command nobody has
-     * named yet from vanishing. {@link #republish} is its counterpart inbound.
-     */
+    /** Sends a command as given - the default arm; the inbound counterpart is {@link #republish}. */
     private void passThrough(GRq<?> command) {
         log.info("{}", command);
         g.send(command);
     }
 
-    /**
-     * The socket is open: take the sender, and ask the machine what it is.
-     *
-     * <p>The handshake runs only on the transition into {@code ONLINE}, which is what keeps a
-     * reconnect from asking twice. It is also why {@link ConnectionLifecycle#linkEstablished()}
-     * returns null when nothing moved rather than a no-change event.
-     */
+    /** The socket is up: take the sender and ask what the machine is. Runs once per link, not per reconnect. */
     public void onOnline(GSender g) {
         this.g = g;
         card.sessionStarted();
@@ -826,15 +560,9 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * Connect or disconnect, as the user asked.
-     *
-     * <p>Only the intent and the announcement live here. Whether that intent means opening a socket,
-     * scheduling a retry or cancelling one in flight is {@link PrinterReactor}'s - this is the
-     * aggregate, and it holds no scheduler.
-     *
-     * <p>Turning auto-reporting off before letting go is deliberate: a printer left auto-reporting
-     * at one-second intervals goes on writing temperatures into a socket nobody is reading, and a
-     * reconnect would then find a backlog rather than a conversation.
+     * Connect/disconnect intent - the socket work is {@link PrinterReactor}'s. Turns
+     * auto-reporting off before releasing, so a reconnect does not find a backlog instead of a
+     * conversation.
      */
     public void handle(ConnectCmd cmd) {
         if (cmd.connect()) {
@@ -847,14 +575,7 @@ public class PrinterState implements PrinterAggregate {
         transition(connection.disconnectRequested());
     }
 
-    /**
-     * The link went away, for whatever reason.
-     *
-     * <p>Where it goes next depends on whether a connection is still wanted: a drop nobody asked
-     * for means {@code CONNECTING} and another attempt, and a drop right after Disconnect means
-     * {@code OFFLINE}. That is the one distinction the pair of booleans this replaced could not
-     * express.
-     */
+    /** The link went away; retried or not depending on whether a connection is still wanted. */
     public void onOffline(String why) {
         this.g = null;
         transition(connection.linkFailed(why));
@@ -866,40 +587,20 @@ public class PrinterState implements PrinterAggregate {
         transition(connection.gaveUp(why));
     }
 
-    /**
-     * A block this session put on the wire came back, which is the one thing that proves the
-     * outbound half is alive - see {@link ConnectionLifecycle#blockAcknowledged()}.
-     */
+    /** A block this session put on the wire came back - the one proof the outbound half is alive. */
     public void on(BlockAcknowledged ack) {
         blocksInFlight = ack.inFlight();
         transition(connection.blockAcknowledged());
     }
 
     /**
-     * The send window restarted its numbering and the blocks it was holding went with it - passed
-     * on, and nothing else.
-     *
-     * <p><strong>The aggregate has nothing to decide about this, and this handler exists to say
-     * so.</strong> Like {@link BlockAcknowledged} it is a fact about the <em>host</em> rather than
-     * something the machine said, and what acts on it is {@code JobFeeder}, which fails the job -
-     * see {@link BlocksAbandoned} for why a job that gets one cannot be resumed from its
-     * checkpoint. So this republishes, the same shape as {@link #on(PositionRs)}.
-     *
-     * <p><strong>It deliberately moves no connection state, in either direction.</strong> A
-     * resynchronisation never arrives alone: the firmware answers a block with
-     * {@code Error:Line Number is not Last Line Number+1}, then {@code Resend:}, and the
-     * {@code Error:} has already reached {@link #on(ErrorRs)} and driven
-     * {@link ConnectionLifecycle#faulted}. Faulting again here would put one fault on the stream
-     * twice, which is the mistake {@code on(ErrorRs)} already guards from the other side.
-     *
-     * <p><strong>And not {@link #heard()} either</strong>, which is the subtler half: a reply after
-     * a fault is what <em>clears</em> a recoverable {@code ERROR}, and this is not a reply. Before
-     * this handler existed the {@code default} arm called {@code heard()} and moved the machine
-     * from {@code ERROR} straight back to {@code IDLE} on the strength of the host's own conclusion
-     * that it had lost blocks. {@code PrinterStateDispatchTest} pins that.
-     *
-     * <p>Logged at WARN rather than at the debug level {@link #republish} uses, because unlike a
-     * position this one means a print was damaged.
+     * The send window renumbered and the blocks it held went with it - republished, nothing else.
+     * Deliberately moves no connection state either way: the {@code Error:}/{@code Resend:} that
+     * always precedes this has already reached {@link #on(ErrorRs)} and faulted the connection, so
+     * faulting again would put the same fault on the stream twice; and this is not a reply, so it
+     * must not call {@link #heard()} either - that used to read "lost some blocks" as "all clear"
+     * and jump straight to {@code IDLE} ({@code PrinterStateDispatchTest} pins the fix). See
+     * {@link BlocksAbandoned} for why the job built on this cannot resume from its checkpoint.
      */
     public void on(BlocksAbandoned abandoned) {
         log.warn("{}: {} block(s) this host had framed were abandoned when the session was"
@@ -913,12 +614,7 @@ public class PrinterState implements PrinterAggregate {
         transition(connection.busyReported(busy.getReason()));
     }
 
-    /**
-     * {@code Error:} - routine traffic on a Marlin, so a state rather than a lost connection.
-     *
-     * <p>Not republished. The lifecycle transition it causes <em>is</em> the announcement, and
-     * emitting the reply as well would put the same fault on the stream twice in two shapes.
-     */
+    /** {@code Error:} - routine Marlin traffic, a state rather than a lost connection; not republished, since the transition is the announcement. */
     public void on(ErrorRs error) {
         transition(connection.faulted(error.getMessage()));
     }
@@ -929,33 +625,16 @@ public class PrinterState implements PrinterAggregate {
         }
     }
 
-    /**
-     * Where the toolhead is - republished, not kept.
-     *
-     * <p>The aggregate has nothing to decide about a position: no rule it enforces and no other
-     * handler that reads one. Storing it anyway would be the write-only field this module already
-     * removed once - {@code PrinterEntity.connected}, written by nothing and read by nothing - so
-     * it goes to whoever is watching and no further.
-     */
+    /** Where the toolhead is - republished and not kept; nothing here reads a position. */
     public void on(PositionRs position) {
         emitter.accept(position);
     }
 
     /**
-     * Anything the card said: mounted, listed, opened, selected, written, deleted, finished.
-     *
-     * <p><strong>One arm for the whole family, which is what the family interface is for.</strong>
-     * {@code SdCardOk}, {@code SdFileList}, {@code SdFileOpened}, {@code SdFileSelected},
-     * {@code SdWritingToFile}, {@code SdDoneSaving}, {@code SdDonePrinting}, {@code SdFreshFile}
-     * and the three {@code SdStatusRs} all implement {@link SdCardRs}, so a reply added to that
-     * family in {@code :gcode} arrives here already routed rather than needing an arm of its own.
-     * Routing on the family rather than on concrete classes is the same rule the transport follows
-     * for {@code OkRs} and {@code BusyRs}.
-     *
-     * <p><strong>Kept, and republished every time.</strong> {@link SdCardControl} holds what the
-     * card is, so a page opened later is handed it in {@link #snapshot()}. Unlike a temperature,
-     * a repeat is not suppressed: these are answers to a question someone just asked - a mount, a
-     * listing - and the page that asked is waiting for one, whether or not it says anything new.
+     * Anything the card said - one arm for the whole {@link SdCardRs} family, so a reply added to
+     * it in {@code :gcode} arrives already routed. Kept in {@link SdCardControl} for
+     * {@link #snapshot()} and always republished, unlike a temperature: these answer a question
+     * someone just asked.
      */
     public void on(SdCardRs<?> reply) {
         card.on(reply);
@@ -963,19 +642,9 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * One line of a settings report, or {@code M504}'s verdict - kept, and republished every time.
-     *
-     * <p><strong>One arm for the whole family</strong>, like {@link #on(SdCardRs)}:
-     * {@code SettingsSection}, {@code SettingsValue} and {@code EepromReport} all implement
-     * {@link SettingsRs}, so a reply added to it in {@code :gcode} arrives here already routed.
-     *
-     * <p><strong>Always republished, unlike a temperature.</strong> These are answers to a question
-     * somebody just asked - an {@code M503} a page pressed a button for - so the page that asked is
-     * waiting for one whether or not it says anything new. A re-read of a setting that did not move
-     * is still news to whoever asked for it.
-     *
-     * <p>Kept as well, so a tab opened later is handed the settings in {@link #snapshot()} instead
-     * of an empty table.
+     * One settings line or an {@code M504} verdict - one arm for the whole {@link SettingsRs}
+     * family, kept in {@link EEPROMSettingsControl} and always republished: an unmoved value is
+     * still news to whoever just asked for it.
      */
     public void on(SettingsRs<?> reply) {
         settings.on(reply);
@@ -983,19 +652,9 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * {@code echo:Unknown command: "…"} - offered to the settings control, and republished whatever
-     * it names.
-     *
-     * <p><strong>The republication is unconditional, and that is half the point of the
-     * handler.</strong> Before this feature an {@code UnknownCommand} reached {@link #republish}
-     * through the {@code default} arm and a browser saw every one. Giving it a named arm is exactly
-     * the shape of change that quietly ends that - the handler consumes the reply and the page
-     * loses the refusal of every command it ever sends - so the fact goes to the control and then
-     * on to the stream regardless of whether the control wanted it.
-     *
-     * <p>What the control does with it is narrow: an {@code M503} refusal is the only thing that
-     * can prove this firmware has no settings report (see {@link #handle(ReportSettings)}), and a
-     * refusal of anything else changes nothing here.
+     * {@code echo:Unknown command: "…"} - always republished; a named arm that swallowed it would
+     * mean a page loses the refusal of every command it sends. Only an {@code M503} refusal means
+     * anything to {@link EEPROMSettingsControl} - see {@link #handle(ReportSettings)}.
      */
     public void on(UnknownCommand refusal) {
         settings.on(refusal);

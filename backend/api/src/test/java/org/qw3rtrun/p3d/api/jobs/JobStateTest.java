@@ -48,11 +48,8 @@ class JobStateTest {
     }
 
     /**
-     * A terminal state has no way out, including to another terminal state.
-     *
-     * <p>Re-running a file is a new job. That is what keeps a finished job a record of what
-     * happened: plan item C5 writes the last acknowledged line onto a failed job so that a better
-     * recovery can be built later, and a job that could be revived in place would overwrite it.
+     * A terminal state has no way out, including to another terminal state - re-running a file is
+     * a new job, which is what keeps a finished job a record C5's recovery can rely on.
      */
     @Test
     void nothingLeavesATerminalState() {
@@ -92,11 +89,8 @@ class JobStateTest {
     }
 
     /**
-     * A job can only go back to the queue before it has started.
-     *
-     * <p>Once a machine has consumed part of the file, putting the job back in the queue would mean
-     * a second machine starting it from line one while the first is still hot and half printed.
-     * What happens to a running job whose machine went away is {@code FAILED} and C5's recovery.
+     * A job can only go back to the queue before it has started - once a machine has consumed
+     * part of the file, a running job whose machine went away is {@code FAILED} and C5's recovery.
      */
     @Test
     void onlyAnUnstartedJobCanGoBackToTheQueue() {

@@ -64,7 +64,12 @@ explicit condition that it only does work that needs one.
 
 Each layer skill is the **only written authority** for its layer — only `:gcode` has a spec document
 — so a behaviour that callers come to depend on is recorded in the skill, in the change that
-establishes it. Each also carries a *known debt* list, which doubles as that layer's backlog.
+establishes it. Each also carries a *known debt* list, which doubles as that layer's backlog, and a
+*Documentation duty* section, which since [#86](https://github.com/qw3rtrun/p3d-web-ui/issues/86) is
+where that layer states how much comment a file may carry. The rule everywhere is the same — the code
+documents itself, one javadoc block before the class, full javadoc only on a surface another module
+calls — and what differs is the example that makes it land. Agents wrote the comments this
+repository had to cut, so the rules live where the agents read them.
 
 ## What the agents are built from
 

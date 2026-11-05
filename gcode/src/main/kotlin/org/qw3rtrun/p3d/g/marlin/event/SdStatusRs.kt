@@ -32,9 +32,6 @@ interface SdStatusRs<D : SdStatusRs<D>> : SdCardRs<D>
  * ```
  * SdPrinting.decode("SD printing byte 1234/56789")   // SdPrinting(1234, 56789)
  * ```
- *
- * @property position the byte offset read so far
- * @property size the file's size in bytes
  */
 data class SdPrinting(val position: Long, val size: Long) : SdStatusRs<SdPrinting> {
 
@@ -45,12 +42,9 @@ data class SdPrinting(val position: Long, val size: Long) : SdStatusRs<SdPrintin
         private const val PREFIX = "SD printing byte"
 
         /**
-         * `SD printing byte <position>/<size>`, or null when the line is not one.
-         *
-         * Some builds write no space after `byte` and some write one, so the blanks are optional
-         * in all three positions - which is what the pattern this replaced said with `[ 	]*`. A
-         * count too wide for a `Long` is *absence*, not a throw: a host reads what the printer
-         * sent and does not get to crash over it.
+         * `SD printing byte <position>/<size>`, or null when the line is not one. Some builds write
+         * no space after `byte` and some write one, so the blanks are optional in all three
+         * positions. A count too wide for a `Long` is *absence*, not a throw.
          */
         override fun decode(line: String): SdPrinting? {
             val text = line.asciiTrim()
@@ -104,8 +98,6 @@ object SdNotPrinting : SdStatusRs<SdNotPrinting>, GRsDecoder<SdNotPrinting> {
  * SdCurrentFile.decode("Current file: jingle.gco")     // SdCurrentFile("jingle.gco")
  * SdCurrentFile(null).encode()                         // "Current file: (no file)"
  * ```
- *
- * @property file the file the card is positioned on, or null when there is none
  */
 data class SdCurrentFile(val file: String?) : SdStatusRs<SdCurrentFile> {
 

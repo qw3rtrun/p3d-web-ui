@@ -26,14 +26,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 /**
  * The JSON the management API carries, in both directions (plan item B4).
  *
- * <p>Pinned here for the reason {@code PrinterCommandBindingTest} exists: the browser is not
- * compiled by this build, so a field that stops binding fails nowhere. This is also the surface a
- * farm is set up through, which makes a silently-dropped bed size a worse failure than most - the
- * machine would simply never be matched to a job it could print.
+ * <p>Pinned for the reason {@code PrinterCommandBindingTest} exists: the browser is not compiled by
+ * this build, so a field that stops binding fails nowhere - and a silently-dropped bed size here
+ * means a machine never gets matched to a job it could print.
  *
- * <p><strong>The assertion that matters most is the last one.</strong> B4's "what was discovered is
- * distinguishable from what was typed" has to hold at the edge as well as in the schema: there must
- * be no request that makes the farm claim a firmware said something it did not.
+ * <p>The assertion that matters most is the last one: B4's "what was discovered is distinguishable
+ * from what was typed" has to hold at the edge, not just in the schema.
  */
 class MachineSpecBindingTest {
 
@@ -146,13 +144,9 @@ class MachineSpecBindingTest {
                 .jsonPath("$.profile.firmware.FIRMWARE_NAME").isEqualTo("Marlin 2.1.2");
     }
 
-    /**
-     * There is no request that writes the profile.
-     *
-     * <p>A {@code profile} in the body is ignored rather than honoured: the payload has no such
-     * field, so Jackson drops it. If this ever starts failing, somebody has added a way for a
-     * browser to claim the firmware said something, and B4's whole distinction goes with it.
-     */
+    // A `profile` in the body is ignored, not honoured - the payload has no such field, so Jackson
+    // drops it. Failing here means somebody added a way to claim the firmware said something it
+    // did not, taking B4's whole distinction with it.
     @Test
     void aRequestCannotDeclareWhatTheMachineReported() {
         client().put().uri("/api-manager/" + id)

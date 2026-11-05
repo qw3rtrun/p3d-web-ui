@@ -19,11 +19,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The bytes: hashed, counted and written without ever being held.
- *
- * <p>No Spring and no database. The store is the half of plan item C1 that has to be right about
- * memory, and the memory question is answerable deterministically - by counting what is in flight -
- * rather than by measuring a heap and hoping.
+ * The bytes: hashed, counted and written without ever being held. No Spring and no database. The
+ * memory question is answered deterministically - by counting what is in flight - rather than by
+ * measuring a heap and hoping.
  */
 class GcodeBlobStoreTest {
 
@@ -75,13 +73,8 @@ class GcodeBlobStoreTest {
                 .verifyComplete();
     }
 
-    /**
-     * A file that does not end in a newline still has a last line.
-     *
-     * <p>Counting newlines alone would report one fewer, and slicers that omit the final terminator
-     * are common enough that the number would be wrong for a good share of real files - which
-     * matters because plan item C4 measures progress against it.
-     */
+    // counting newlines alone would report one fewer, and slicers omitting the final terminator are
+    // common - plan item C4 measures progress against this number.
     @Test
     void aFileWithNoTrailingNewlineStillCountsItsLastLine() {
         StepVerifier.create(store().write(Flux.just(chunk("G28\nG1 X10"))))
@@ -100,17 +93,11 @@ class GcodeBlobStoreTest {
     }
 
     /**
-     * <strong>The memory proof, and it is a count rather than a measurement.</strong>
-     *
-     * <p>Plan item C1 says upload must be "provably bounded in memory". A test that watches the
-     * heap proves nothing - a garbage collector can make any implementation look fine or look bad -
-     * so what is asserted instead is the thing that would cause the unboundedness: how many chunks
-     * the store has asked for and not yet finished with. One, throughout, however many are offered.
-     *
-     * <p>It bites. {@code reduce} and {@code doOnNext} both request {@code Long.MAX_VALUE} and
-     * would show 2048 here; {@code toIterable} would show up to its queue size. Only demand of one
-     * at a time keeps this at one, and only that propagates back to the socket and actually slows
-     * an upload down rather than buffering it.
+     * The memory proof, a count rather than a measurement: a heap-watching test proves nothing,
+     * since a garbage collector can make any implementation look fine, so what is asserted is how
+     * many chunks the store has asked for and not finished with - one, throughout. It bites:
+     * {@code reduce}/{@code doOnNext} both request {@code Long.MAX_VALUE} and would show 2048 here;
+     * {@code toIterable} would show up to its queue size.
      */
     @Test
     void theUploadNeverAsksForMoreThanOneChunk() {
@@ -135,13 +122,7 @@ class GcodeBlobStoreTest {
                         + totalRequested.get() + " times for 2048 chunks");
     }
 
-    /**
-     * The same bytes twice are stored once - plan item C1's second done-when condition.
-     *
-     * <p>Asserted on the filesystem rather than on the return value, because the return value would
-     * look identical either way: the hash of the same bytes is the same hash whether or not they
-     * were written twice. What is checked is that the directory holds one file.
-     */
+    // asserted on the filesystem, not the return value, since the hash looks identical either way.
     @Test
     void theSameBytesAreNotStoredTwice() throws Exception {
         var content = "G28\nG1 X10\n";

@@ -12,29 +12,21 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * What the farm is made of - issue #43's {@code PrinterManagement} feature.
- *
- * <p>It replaces {@code PrinterProfileFlowTest} and {@code MachineSpecFlowTest}, which asserted the
- * same facts by autowiring the roster, publishing {@code MFirmwareReportedEvent} by hand and
- * reading {@code core}'s replica directly. Everything they covered is here, and two things are
- * better for the move:
- *
- * <ul>
- *   <li><strong>the firmware report is real.</strong> It is not published by a test - the machine
- *       is dialled, {@code M115} goes out, and what comes back is what the roster keeps. The old
- *       test could not have caught an {@code M115} that was never sent;</li>
- *   <li><strong>the override is asserted where it bites.</strong> "Declared wins" used to mean a
- *       field in a replica. Here it means a command for tool 1 reaching the wire on a machine whose
- *       firmware reports one extruder - which is the reason the override exists.</li>
- * </ul>
+ * What the farm is made of - issue #43's {@code PrinterManagement} feature. Replaces
+ * {@code PrinterProfileFlowTest} and {@code MachineSpecFlowTest}, which asserted the same facts by
+ * autowiring the roster and publishing {@code MFirmwareReportedEvent} by hand; two things are
+ * better for the move: the firmware report is real (a dialled machine's own {@code M115}, where
+ * the old test could not have caught one that was never sent), and the override is asserted where
+ * it bites - a command for tool 1 reaching the wire on a machine whose firmware reports one
+ * extruder.
  *
  * <p>It also holds the roster's half of issue #65: asking for a machine the farm does not have is a
- * <strong>404</strong> and not a 500. That one is a status and nothing else, so it is the one
- * feature here with no second observable - there is no machine to have been touched.
+ * <strong>404</strong>, not 500 - a status with no second observable, since there is no machine to
+ * have been touched.
  *
- * <p>The one thing not carried over is the assertion that {@code announceTheFarm()} re-announces a
- * spec at startup. It has no endpoint, and a test here cannot restart a context. It stays covered
- * below this level, in {@code :backend:core}.
+ * <p>Not carried over: the assertion that {@code announceTheFarm()} re-announces a spec at
+ * startup. It has no endpoint and a test here cannot restart a context; it stays covered in
+ * {@code :backend:core}.
  */
 class PrinterManagementIntegrationTest extends FarmIntegrationTest {
 
@@ -42,7 +34,6 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
             {"bedVolume":{"x":220,"y":220,"z":250},"extruderCount":2,
              "nozzleDiameters":[0.4,0.6],"materials":["PETG"],"tags":["prusa-shelf"]}""";
 
-    /** A machine can be registered, read back on its own, and found in the roster. */
     @Test
     void aMachineIsRegisteredAndReadableAfterwards() {
         var printer = machine(MockPrinter.marlin());
@@ -72,12 +63,10 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * What the machine says about itself is kept, and it is a real {@code M115} that says it.
-     *
-     * <p>Only {@code core} can learn this, because learning it means talking to the printer; only
-     * the roster can keep it. The fact crosses the boundary twice - out as
-     * {@code MFirmwareReportedEvent}, back inside the announcement - and this is the far side of
-     * that round trip, read through the endpoint a page uses.
+     * Only {@code core} can learn this (it means talking to the printer); only the roster can keep
+     * it. The fact crosses the boundary twice - out as {@code MFirmwareReportedEvent}, back inside
+     * the announcement - and this is the far side of that round trip, read through the endpoint a
+     * page uses.
      */
     @Test
     void whatTheMachineReportsIsKeptByTheRoster() {
@@ -100,7 +89,6 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
         assertEquals(Boolean.TRUE, capabilities(describe(id)).get("SDCARD"));
     }
 
-    /** A machine with no card reader says so, and the roster keeps that too. */
     @Test
     void aMachineWithoutACardReaderSaysSo() {
         var printer = machine(MockPrinter.withoutCard());
@@ -114,7 +102,6 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
                 "the page gates its Storage tab on this");
     }
 
-    /** What a person declared and what the machine reported are kept apart, and both readable. */
     @Test
     void theDeclaredHalfAndTheReportedHalfAreBothKept() {
         var printer = machine(MockPrinter.marlin());
@@ -133,10 +120,8 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * An edit cannot make the farm claim the firmware said something it did not.
-     *
-     * <p>There is no request that reaches the profile columns. That is what keeps "discovered is
-     * distinguishable from typed" true at the edge rather than only in the schema.
+     * There is no request that reaches the profile columns, which keeps "discovered distinguishable
+     * from typed" true at the edge, not only in the schema.
      */
     @Test
     void anEditCannotTouchWhatTheMachineReported() {
@@ -155,22 +140,18 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A declared extruder count overrides the firmware's, <strong>on the wire</strong>.
+     * A dual-extruder machine flashed with single-extruder firmware reports one tool regardless, so
+     * without the override every command for tool 1 is refused with no way to say otherwise.
      *
-     * <p>This is the test the old one could not be. A dual-extruder machine flashed with a
-     * single-extruder configuration reports one tool whatever is bolted to it; without the
-     * override, every command for tool 1 is refused and the operator has no way to say otherwise.
-     *
-     * <p>It also covers the half that is easiest to leave out: the edit has to reach the
-     * <em>running</em> aggregate, not just the database and the replica. Without
-     * {@code PrinterReactorManager.redeclare}, this would pass every check on the roster and the
-     * command would still be dropped until the farm was restarted.
+     * <p>Also covers the half easiest to leave out: the edit must reach the <em>running</em>
+     * aggregate, not just the database - without {@code PrinterReactorManager.redeclare} this would
+     * pass every roster check and still drop the command until a restart.
      */
     @Test
     void aDeclaredExtruderCountLetsACommandForTheSecondToolThrough() {
         var printer = machine(MockPrinter.marlin());
         var id = register("under-reports", printer);
-        // connectAndLearn, because what is under test is the aggregate's own extruder count - the
+        // connectAndSettle, because what is under test is the aggregate's own extruder count - the
         // roster's copy is not consulted by the refusal below.
         connectAndSettle(id, printer);
 
@@ -207,12 +188,10 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Deleting a machine takes its runtime with it, which is visible from the machine's end.
-     *
-     * <p>A reactor is a resource - a socket, a send window, a command queue and a replay sink that
-     * keeps every SSE subscriber referenced. The map this lives in used to only ever grow, so a
-     * deleted printer left all of that behind, still connected to a machine the farm no longer knew
-     * about. The socket closing here is that fix, asserted from the only side that can see it.
+     * A reactor is a resource - a socket, a send window, a command queue and a replay sink keeping
+     * every SSE subscriber referenced. The map this lives in used to only ever grow, so a deleted
+     * printer left all of that behind, still connected; the socket closing here is the fix,
+     * asserted from the only side that can see it.
      */
     @Test
     void deletingAMachineClosesItsConnection() {
@@ -230,20 +209,14 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Asking for a machine the farm does not have is a 404 - issue #65.
+     * #65: this was a <strong>500</strong>, from the signature rather than the handler -
+     * {@code MachineManagementService.fetch} answered a {@code Descriptor} via {@code orElseThrow},
+     * so "no such machine" had no value to arrive as. The three other GET-by-id endpoints already
+     * answered 404; this was the outlier, known debt that bit four times before being fixed.
      *
-     * <p>It was a <strong>500</strong>, and the cause was in the signature rather than in the
-     * handler: {@code MachineManagementService.fetch} answered with a {@code Descriptor} and ended
-     * in {@code orElseThrow}, so there was no value for "no such machine" to arrive as and the
-     * {@code NoSuchElementException} reached the default handler. The three GET-by-id endpoints
-     * beside it - a job, a file, a file's content - all answered 404 already; this was the outlier,
-     * and it was written down as known debt in {@code spring-backend-dev} for long enough to bite
-     * four times.
-     *
-     * <p>The empty body is part of the claim. A query's absence is said entirely by the status, and
-     * the browser reaches this through {@code getJson}, which calls {@code response.json()} on
-     * whatever arrives - so 200 with nothing in it surfaces as a parse error rather than as
-     * something a caller can branch on.
+     * <p>The empty body is part of the claim: a query's absence is said entirely by the status, and
+     * the browser's {@code getJson} calls {@code response.json()} on whatever arrives, so 200 with
+     * nothing in it is a parse error rather than something a caller can branch on.
      */
     @Test
     void askingForAMachineTheFarmDoesNotHaveIsNotFound() {
@@ -253,12 +226,9 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * And a machine that <em>was</em> there answers 404 once it has been deleted.
-     *
-     * <p>The realistic version of the test above: nobody types a random UUID, but a page left open
-     * on a printer somebody has since removed asks for exactly this, and used to be told the server
-     * was broken. It also pins the before-and-after in one test, so a regression that made every
-     * id a 404 would fail on the first line.
+     * The realistic version of the test above: nobody types a random UUID, but a page left open on
+     * a removed printer asks for exactly this. Pins the before-and-after in one test, so a
+     * regression that made every id 404 would fail on the first line.
      */
     @Test
     void aMachineThatHasBeenDeletedIsNotFoundAfterwards() {
@@ -274,19 +244,15 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- helpers
 
     /**
-     * Waits for the roster to catch up with something the aggregate has already taken.
+     * Only ever called after {@link #connectAndLearn}, so the report has demonstrably reached
+     * {@code core} - a timeout here names the one hop left, {@code PrinterReactor.report}
+     * publishing {@code MFirmwareReportedEvent} or {@code MachineManagementImpl} storing it.
      *
-     * <p>Only ever called after {@link #connectAndLearn}, so the report has demonstrably reached
-     * {@code core}. That is what makes the failure message worth writing out: everything before the
-     * {@code core -> management} hop is excluded by construction, and a timeout here names the one
-     * hop left - {@code PrinterReactor.report} publishing {@code MFirmwareReportedEvent}, or
-     * {@code MachineManagementImpl} storing it.
-     *
-     * <p>That hop is <strong>at-most-once and unretried</strong>, and it is worth knowing why a loss
-     * there would be permanent rather than late: {@code PrinterState.on(FirmwareInfoRs)} sets its own
-     * {@code profile} <em>before</em> emitting, and guards on
-     * {@code updated.firmware().equals(profile.firmware())}. So a second identical {@code M115} -
-     * from a redial, say - is suppressed, and the roster never gets another chance.
+     * <p>That hop is <strong>at-most-once and unretried</strong>: {@code PrinterState.on(FirmwareInfoRs)}
+     * sets its own {@code profile} before emitting and guards on
+     * {@code updated.firmware().equals(profile.firmware())}, so a second identical {@code M115}
+     * (from a redial) is suppressed and the roster never gets another chance - a loss here is
+     * permanent, not late.
      */
     private void awaitRoster(java.util.UUID id, Events events,
                              java.util.function.BooleanSupplier condition, String what) {

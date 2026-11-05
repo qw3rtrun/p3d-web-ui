@@ -30,13 +30,12 @@ enum class ErrorPrefix(val lexeme: String) {
  * !! hardware fault
  * ```
  *
- * **The message is kept as text and is not classified here.** The spec sorts errors into
- * recoverable communication errors (followed immediately by a [ResendRs]), non-fatal errors such
- * as `Unknown command` and the SD card family, and everything else - which it says to treat as a
- * hardware fault that shuts the machine down. That is a decision with real consequences either
- * way, it is made on prose the spec only gives as examples, and it belongs to the host and not to
- * a decoder. What this class does promise is [lastLine], because the resend protocol of spec 8.5
- * is addressed by line number and the number is right there in the text.
+ * The message is kept as text and is not classified here: the spec sorts errors into recoverable
+ * communication errors (followed immediately by a [ResendRs]), non-fatal errors such as
+ * `Unknown command` and the SD card family, and everything else, which it says to treat as a
+ * hardware fault that shuts the machine down. That decision is made on prose the spec only gives as
+ * examples, and belongs to the host, not a decoder. What this class does promise is [lastLine],
+ * since the resend protocol of spec 8.5 is addressed by line number and the number is in the text.
  *
  * On the way out, `!!` is a two-character prefix and takes a space before the message, the way `//`
  * does; `Error:` and `fatal:` end in their own separator, and the spec's example has nothing after

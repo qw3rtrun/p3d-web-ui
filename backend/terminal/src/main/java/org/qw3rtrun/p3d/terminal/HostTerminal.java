@@ -43,6 +43,24 @@ import java.util.function.Supplier;
 import static java.lang.Math.min;
 import static java.lang.String.format;
 
+/**
+ * One terminal session, two coupled pipelines. {@link CommandProcessor} pulls G-code from a source,
+ * numbers and frames it through {@code :gcode}'s {@link GSendWindow}, and writes it bounded by the
+ * printer's own buffer; {@link ReplyFlux} frames reply lines and decodes each once via
+ * {@code MarlinRsDecoder}, and {@link ReplaySubscriber} routes the result back into the send window
+ * or onto {@link #messageFlux()}. The coupling is real: an {@code ok} or {@code busy:} arriving on
+ * the inbound side is half of outbound flow control.
+ *
+ * <p>Three threads matter - the producer pushing G-code, the netty inbound loop delivering replies,
+ * and whichever of those two first enters a drain loop and so does the writing or emitting for both.
+ * Every counter either side shares is a {@link Requested} or guarded by an
+ * {@link AtomicInteger}-driven drain loop (see {@link CommandProcessor} and {@link #drainBus()}),
+ * never a plain field touched from two threads.
+ *
+ * <p>{@link #messageFlux()} ends only when the connection does; a firmware error is a value on it
+ * (see {@link ReplaySubscriber#onNext}). {@link #stop()} cancels both halves and disposes the
+ * connection, because cancelling alone does not close the socket.
+ */
 @Slf4j
 public class HostTerminal {
 
@@ -52,18 +70,12 @@ public class HostTerminal {
     private final Function<Publisher<String>, Mono<Void>> outbound;
 
     /**
-     * How to close the socket, because cancelling the two halves does not.
-     *
-     * <p><strong>This had to exist the moment {@code cancel()} stopped faking a completion.</strong>
-     * Completing the outbound was what ended {@code reactor-netty}'s send and let the connection go;
-     * with that gone - it was a Reactive Streams violation and it cost a debugging session every
-     * time a test expectation failed - {@link #stop()} cancelled both halves and left the TCP
-     * connection {@code Established}. Observed, not reasoned about: a disconnect through the REST
-     * surface reported {@code OFFLINE}, sent its {@code M155 S0}, and left the socket open on the
-     * printer.
-     *
-     * <p>The constructor without it defaults to doing nothing, which is right for the tests that
-     * build a terminal over a {@code Sinks} rather than a socket - there is nothing to close.
+     * How to close the socket, since cancelling the two halves does not. Needed once {@code cancel()}
+     * stopped faking a completion to end the connection (completing the outbound used to be what
+     * ended {@code reactor-netty}'s send) - observed on a live disconnect: it reported
+     * {@code OFFLINE}, sent its {@code M155 S0}, and left the socket {@code Established} on the
+     * printer. The no-arg constructor defaults to doing nothing, which is right for a terminal built
+     * over a {@code Sinks} in tests - there is nothing to close.
      */
     private final Runnable disposeConnection;
 
@@ -82,75 +94,45 @@ public class HostTerminal {
     }
 
     /**
-     * How many replies the bus holds for a subscriber that has not attached yet.
-     *
-     * <p>It used to hold <strong>one</strong> - the sink was {@code replay().latest()} - and the
-     * opening exchange of a session is seven lines: {@code M115} answers with {@code FIRMWARE_NAME:},
-     * five {@code Cap:} lines and then its {@code ok}. A caller that subscribes
-     * {@link #messageFlux()} a moment after calling {@link #start} therefore saw the <em>last</em>
-     * of them and nothing else, because {@link #start} begins reading the socket as a side effect of
-     * being called. Measured, not reasoned about: six replies emitted with nothing attached arrive
-     * as one.
-     *
-     * <p>256 is {@code publishOn}'s own prefetch and twenty-five times the opening exchange, so the
-     * number is not load-bearing - what is load-bearing is that it is not one. A subscriber that
-     * attaches after more than this many replies does miss the oldest, which is why the figure is
-     * stated in the contract rather than hidden.
+     * How many replies the bus holds for a subscriber that has not attached yet. Was 1
+     * ({@code replay().latest()}): the opening exchange of a session is 7 lines
+     * ({@code M115}'s {@code FIRMWARE_NAME:}, five {@code Cap:} lines, {@code ok}), and
+     * {@link #start} begins reading the socket before a caller can possibly subscribe
+     * {@link #messageFlux()} - measured, six replies emitted with nothing attached arrived as one.
+     * 256 is {@code publishOn}'s own prefetch and 25x the opening exchange; what matters is that it
+     * is not 1, and a subscriber arriving later than that still misses the oldest.
      */
     static final int BACKLOG = 256;
 
     /**
-     * The reply bus: a backlog deep enough to survive the moment a caller attaches to it.
-     *
-     * <p>It was {@code Sinks.unsafe()}, which opts out of the serialisation the safe variant does
-     * and leaves the caller promising it. That promise held while every emission came from the
-     * netty inbound thread - {@link ReplaySubscriber#onNext} and the {@link #onOk} it calls.
-     * {@link BlockAcknowledged} broke it: a block is released inside the drain loop, which runs on
-     * whichever thread got there first, and that is as readily the producer thread pushing a
-     * command as the inbound thread delivering an {@code ok}.
-     *
-     * <p><strong>The safe sink was half the answer and dropped the other half on the floor.</strong>
-     * It reports a concurrent emission as {@code FAIL_NON_SERIALIZED} rather than corrupting the
-     * subscriber list - and {@link #emit} logged that and lost the reply. Two threads hammering a
-     * safe sink measured <em>26,640 of 40,000 emissions refused</em>; one collision is one
-     * temperature reading, one {@code FIRMWARE_NAME:} or one acknowledgement that never reaches the
-     * layer above, and it can only happen when two threads genuinely run at once - which is a loaded
-     * CI runner and not a single-threaded unit test. So the serialisation is {@link #drainBus()}
-     * now, and the sink never sees two threads at all.
+     * The reply bus. Was {@code Sinks.unsafe()}, which promises its own serialisation - true while
+     * every emission came from the netty inbound thread, until {@link BlockAcknowledged} started
+     * emitting from inside the send window's drain loop, on whichever thread got there first. The
+     * safe sink that replaced it only reports the collision as {@code FAIL_NON_SERIALIZED} rather
+     * than corrupting state, and {@link #emit} used to log that and drop the reply - measured, two
+     * threads hammering a safe sink: <strong>26,640 of 40,000 emissions refused</strong>. The actual
+     * fix is {@link #drainBus()}: it serialises the emitters so the sink never sees two threads.
      */
     private final Sinks.Many<Object> replays = Sinks.many().replay().limit(BACKLOG);
 
-    /**
-     * Replies decided on but not yet put on the bus, oldest first.
-     *
-     * <p>The outbox is what makes {@link #drainBus()} possible: a thread that finds another one
-     * already emitting parks its reply here and leaves, instead of being refused by the sink.
-     */
+    /** Replies decided on but not yet on the bus, oldest first - what makes {@link #drainBus()}
+     * possible: a thread that finds another one already emitting parks here and leaves. */
     private final Queue<Object> outbox = new ConcurrentLinkedQueue<>();
 
-    /**
-     * The emission guard: zero when no thread is in {@link #drainBus()}, otherwise the number of
-     * calls still to be accounted for.
-     */
+    /** The emission guard: zero when no thread is in {@link #drainBus()}, otherwise the number of
+     * calls still to be accounted for. */
     private final AtomicInteger emitting = new AtomicInteger();
 
-    /**
-     * Set once a terminal signal has gone out, and read only inside {@link #drainBus()}.
-     *
-     * <p>A plain field and not a volatile one, for the same reason {@code GSendWindow}'s plain
-     * fields are safe inside the send window's drain loop: {@link #emitting} is an
-     * {@link AtomicInteger}, so the hand-off from one draining thread to the next carries the
-     * happens-before this needs.
-     */
+    /** Set once a terminal signal has gone out; read only inside {@link #drainBus()}, so a plain
+     * field is safe - {@link #emitting}'s hand-off between draining threads carries the
+     * happens-before this needs, the same way {@code GSendWindow}'s plain fields are safe. */
     private boolean busEnded;
 
     /**
-     * The end of the bus, parked in the outbox so that it cannot overtake a reply in front of it.
-     *
-     * <p>{@code onComplete} used to go straight to the sink from the inbound thread while the drain
-     * loop might still have had an acknowledgement to publish - which terminates the sink under it,
-     * and the acknowledgement is then refused with {@code FAIL_TERMINATED}. A terminal signal is the
-     * last thing on this bus, so it queues like everything else.
+     * The end of the bus, parked in the outbox so it cannot overtake a reply queued in front of it -
+     * emitting it straight to the sink from the inbound thread could terminate the sink under a
+     * still-pending acknowledgement, which the drain loop would then see refused with
+     * {@code FAIL_TERMINATED}.
      *
      * @param error what killed the inbound side, or null when it merely ended
      */
@@ -161,13 +143,11 @@ public class HostTerminal {
     private ReplaySubscriber inSide;
 
     /**
-     * Opens the session: the socket is read from this call, the writing waits for a subscriber.
-     *
-     * <p>The asymmetry is deliberate and it is worth knowing about. Subscribing the inbound side
-     * here rather than inside the returned {@code Mono} means a reply can arrive before the caller
-     * has got as far as subscribing {@link #messageFlux()} - it cannot subscribe earlier, because
-     * this is the call that creates the two halves. Nothing is lost by that: see
-     * {@link #messageFlux()} for the backlog that covers it.
+     * Opens the session: the socket is read from this call, the writing waits for a subscriber. The
+     * asymmetry is deliberate - subscribing the inbound side here, not inside the returned
+     * {@code Mono}, means a reply can arrive before the caller subscribes {@link #messageFlux()} (it
+     * cannot subscribe any earlier, since this call is what creates both halves); the backlog that
+     * covers the gap is described there.
      */
     public Mono<Void> start(Publisher<String> gcodes) {
         this.inSide = new ReplaySubscriber();
@@ -178,11 +158,8 @@ public class HostTerminal {
         return outbound.apply(outSide);
     }
 
-    /**
-     * Ends the session: both halves cancelled, and the socket actually closed.
-     *
-     * <p>The third line is the one that is easy to leave out - see {@link #disposeConnection}.
-     */
+    /** Ends the session: both halves cancelled, and the socket actually closed - the third step is
+     * the one that is easy to leave out; see {@link #disposeConnection}. */
     public void stop() {
         outSide.cancel();
         inSide.handleCancel();
@@ -190,66 +167,33 @@ public class HostTerminal {
     }
 
     /**
-     * The replies worth telling a subscriber about, already decoded.
+     * The replies worth telling a subscriber about, already decoded - typed {@code GRs} values, not
+     * text, decoded once by {@code :gcode}'s {@code MarlinRsDecoder} and propagated as-is. (A second
+     * model used to sit on this boundary, {@code ReplyEvents} turning each {@code GRs} into an
+     * {@code api.msg} record - nullable {@code BigDecimal} into zero-filled {@code double} - and it
+     * is gone: this farm drives Marlin, so what Marlin said is what a subscriber gets.)
      *
-     * <p>Typed values and not text, because the line was decoded once on the way in - by
-     * {@code :gcode}'s {@code MarlinRsDecoder}, the one reply model in this repository. The copy
-     * that used to live in {@code terminal.msg.Replay} is gone: it had drifted from the real wire
-     * format in three places, and {@code PrinterReactor} was decoding the text a second time
-     * anyway, so every line was being read by two parsers that disagreed.
+     * <p>What drives the protocol is consumed rather than published: a bare/advanced {@code ok},
+     * {@code wait}, {@code Resend}. A line no decoder claims is dropped with a {@code #traffic}
+     * debug line. {@code M20}'s multi-line answer arrives as one {@link SdFileList}, assembled by
+     * {@link ReplyFlux#listing}.
      *
-     * <p><strong>Propagated, not translated.</strong> A reply leaves here as the {@code GRs} the
-     * decoder produced. There used to be a {@code ReplyEvents} on this boundary turning each one
-     * into an {@code api.msg} record of its own - {@code TemperatureRs} into
-     * {@code TemperatureReported}, nullable {@code BigDecimal} into zero-filled {@code double} -
-     * which is a second model of one machine's replies, kept in step by hand and lossy on purpose.
-     * This farm drives Marlin, so what a Marlin said is what a subscriber gets.
+     * <p>Two values on this flux are not replies at all, both facts about the send window a
+     * subscriber cannot otherwise see: {@link BlockAcknowledged} for an {@code ok} that released a
+     * block (the only honest progress signal there is), and {@link BlocksAbandoned} for a
+     * {@code Resend:} the window could not answer (see
+     * {@link CommandProcessor#resynchronise}) - emitted only when a block really was dropped.
      *
-     * <p>Not every received line reaches here as itself. The ones that drive the protocol are
-     * consumed by the send window: a bare and an advanced {@code ok}, {@code wait}, and
-     * {@code Resend}. Everything else is published - except a line no decoder claimed, which is
-     * dropped with a {@code #traffic} debug line, because {@code GRs} has no value for "unread"
-     * and the raw text has no consumer.
+     * <p>This flux terminates when the connection does, and at no other time - a printer fault is an
+     * {@code ErrorRs} value like any other reply (see {@link ReplaySubscriber#onNext}), not an
+     * {@code onError} here.
      *
-     * <p><strong>One reply on this flux was never a single line.</strong> {@code M20}'s answer is
-     * three lines or more, and it arrives as one {@link SdFileList} assembled by
-     * {@link ReplyFlux#listing} - the markers and the entries are consumed there. A listing nothing
-     * interrupted is the only thing that produces one; see that field for why.
-     *
-     * <p><strong>Two things on this flux are not replies at all</strong>, and both are facts about
-     * the send window, which is the one thing here a subscriber cannot see into. An {@code ok} that
-     * releases a block is republished as a {@link BlockAcknowledged} carrying the line number the
-     * window held against it; the justification for swallowing an {@code ok} was that it said
-     * nothing a subscriber had not already learned from the send window, and no subscriber can see
-     * a send window, so what it actually said was nothing to anybody. It is the only honest measure
-     * of progress and the only proof that this session can send.
-     *
-     * <p>The other is {@link BlocksAbandoned}: a {@code Resend:} the window cannot answer restarts
-     * the numbering and drops everything it was holding - see
-     * {@link CommandProcessor#resynchronise} - and those are lines of a job that will never reach
-     * the machine. That too was known only inside the window, and only to a WARN, so a print whose
-     * blocks had just been thrown away still ran to the end of its file and reported
-     * {@code COMPLETED}. It is emitted only when a block really was dropped.
-     *
-     * <p><strong>This flux terminates when the connection does, and at no other time.</strong> An
-     * {@code onError} here means the inbound side died - the socket, or the decoder - and not that
-     * the printer reported a fault. A printer fault is an {@code ErrorRs} value like any other
-     * reply; see {@link ReplaySubscriber#onNext}.
-     *
-     * <p><strong>It does not matter when this is subscribed, and it does not matter which thread a
-     * reply was decided on.</strong> {@link #start} begins reading the socket as a side effect of
-     * being called, so a caller that subscribes afterwards - which is what every caller does, since
-     * it needs the terminal before it can ask for its flux - would otherwise race the opening
-     * exchange. So the bus holds a {@link #BACKLOG} of replies for a subscriber that is not there
-     * yet, and every emission goes through one drain loop rather than straight at the sink. Both
-     * halves were a real loss: with a one-element history the six lines of an {@code M115} answer
-     * arrived as one, and a safe sink refuses a concurrent emission outright.
-     *
-     * <p>What that buys a caller: <em>every</em> reply the transport decided to publish reaches the
-     * first subscriber, in order, whenever it attaches - up to {@link #BACKLOG} replies, which is
-     * twenty-five times the opening exchange. A second subscriber gets the same backlog and then the
-     * live stream. Nothing here asks a caller to subscribe before anything else, because a contract
-     * that is kept by the order calls happen to be made in is a contract that is not kept.
+     * <p><strong>It does not matter when this is subscribed, or which thread decided a reply.</strong>
+     * {@link #start} begins reading the socket before any caller can possibly subscribe, so the bus
+     * holds a backlog of {@link #BACKLOG} replies for a subscriber not yet attached, and every
+     * emission goes through one drain loop rather than straight at the sink - every reply reaches the
+     * first subscriber, in order, whenever it attaches, and a second subscriber gets the same backlog
+     * then the live stream.
      */
     public Flux<Object> messageFlux() {
         return replays.asFlux();
@@ -261,23 +205,13 @@ public class HostTerminal {
     }
 
     /**
-     * An {@code ok} is an acknowledgement, and it is sometimes also a reply.
-     *
-     * <p>{@code M105}, {@code M109} and {@code M190} all answer on the {@code ok} itself -
-     * {@code ok T:45.26 /45.00 B:25.00 /0.00} - so an {@code ok} that is taken only as a window
-     * credit and then dropped takes the answer with it. That is what happened before: every
-     * temperature the host ever saw came from an {@code M155} auto-report, which arrives on a line
-     * of its own, and an {@code M105} asked on demand was answered into the void.
-     *
-     * <p>Two kinds of {@code ok} are held back. {@link SimpleOkRs} carries nothing to decode, and
-     * {@link AdvancedOkRs} - {@code ok N2 P15 B3} - carries only the window credit this method was
-     * already given. Publishing either would put a reply on the bus that says nothing a subscriber
-     * did not already know.
-     *
-     * <p>Everything else answering to {@link OkRs} goes out whole, and the {@code ok} survives as a
-     * <em>type</em> rather than as a prefix on a string: {@code OkTemperatureRs} is the answer to
-     * an {@code M105} and {@code BareTemperatureRs} is an unsolicited auto-report, and those two
-     * classes exist to keep exactly that distinction.
+     * An {@code ok} is an acknowledgement, and sometimes also a reply - {@code M105}/{@code M109}/
+     * {@code M190} answer on the {@code ok} itself (e.g. {@code ok T:45.26 /45.00 B:25.00 /0.00}), so
+     * dropping every {@code ok} as pure window credit used to answer an on-demand {@code M105} into
+     * the void. Only {@link SimpleOkRs} (nothing to decode) and {@link AdvancedOkRs} (window credit
+     * only, e.g. {@code ok N2 P15 B3}) are held back; everything else goes out whole, with the
+     * {@code ok} surviving as a type rather than a string prefix - {@code OkTemperatureRs} vs.
+     * {@code BareTemperatureRs} is exactly that distinction.
      */
     private void publishPayload(OkRs<?> ok) {
         if (ok instanceof SimpleOkRs || ok instanceof AdvancedOkRs) {
@@ -287,14 +221,11 @@ public class HostTerminal {
     }
 
     /**
-     * The machine cannot take commands right now, so nothing is in flight that it will acknowledge.
-     *
-     * <p>Both spellings arrive here. The RepRap protocol's bare {@code busy: processing} is
-     * {@code SimpleBusyRs}; Marlin writes the identical notice through its echo channel as
-     * {@code echo:busy: processing}, which is {@code BusyNotice}, and both answer to
-     * {@link BusyRs}. Matching the interface is the whole point of it being one: the parser this
-     * replaced claimed the bare form only, so on a real Marlin this never fired and the send window
-     * was never told the printer had stalled.
+     * The machine cannot take commands, so nothing in flight will be acknowledged. Matches
+     * {@link BusyRs} rather than a concrete class so both spellings fire: the RepRap bare
+     * {@code busy: processing} ({@code SimpleBusyRs}) and Marlin's echoed
+     * {@code echo:busy: processing} ({@code BusyNotice}) - the parser this replaced claimed only the
+     * bare form, so on a real Marlin the send window was never told the printer had stalled.
      */
     void onBusy(BusyRs<?> busy) {
         outSide.clearInFlight();
@@ -302,17 +233,11 @@ public class HostTerminal {
     }
 
     /**
-     * The printer wants a line back, and this host has it.
-     *
-     * <p>{@code Resend: n} is spec 8.5 step 5: the firmware rejected a numbered block - a bad
-     * checksum, or a gap in the sequence - and discards everything that follows until it sees
-     * {@code n} again. Answering it means replaying the exact bytes of block {@code n} and of every
-     * block sent after it, which is what {@link CommandProcessor#rewind} does through
-     * {@code :gcode}'s {@code GSendWindow}.
-     *
-     * <p>Not published. A {@code Resend:} is protocol traffic the transport owns and answers, and
-     * it says nothing a subscriber needs - exactly like an advanced {@code ok}. What a subscriber
-     * does see is the {@code Error:} that precedes it, which carries the firmware's own words.
+     * {@code Resend: n} (spec 8.5 step 5): the firmware rejected a numbered block and discards
+     * everything after it until it sees {@code n} again. {@link CommandProcessor#rewind} replays
+     * block {@code n} and everything sent after it, byte for byte. Not published - like an advanced
+     * {@code ok}, it is protocol traffic the transport owns; a subscriber sees the {@code Error:}
+     * that precedes it instead.
      */
     void onResend(int lineNumber) {
         outSide.rewind(lineNumber);
@@ -323,14 +248,11 @@ public class HostTerminal {
     }
 
     /**
-     * Puts a reply on the bus - parked first, so that two threads never emit at once.
-     *
-     * <p>Two threads reach here and they are not the same thread: a decoded reply comes off the
-     * netty inbound loop, and a {@link BlockAcknowledged} is released inside the send window's drain
-     * loop, which runs on whoever got there first. This used to call {@code tryEmitNext} from
-     * whichever one it was and log the {@code FAIL_NON_SERIALIZED} the safe sink answered a
-     * collision with - a reply refused by the sink is a reply nobody ever sees, and the log line
-     * said so after the fact rather than preventing it.
+     * Puts a reply on the bus - parked first, so two threads never emit at once. The two that reach
+     * here are the netty inbound loop (a decoded reply) and whichever thread's send-window drain
+     * loop released a {@link BlockAcknowledged}; calling {@code tryEmitNext} directly from either and
+     * logging a {@code FAIL_NON_SERIALIZED} collision, as before, drops the reply after the fact
+     * instead of preventing the collision.
      */
     private void emit(Object reply) {
         outbox.add(reply);
@@ -338,12 +260,10 @@ public class HostTerminal {
     }
 
     /**
-     * Ends the bus, which is reserved for the transport dying.
-     *
-     * <p>Two callers: {@link ReplaySubscriber#onError} and {@link ReplaySubscriber#onComplete}. A
-     * fault the <em>printer</em> reported is a value and goes through {@link #emit} - putting it
-     * here terminated the sink and every subscriber of {@link #messageFlux()} with it, over a
-     * checksum the printer itself recovered from on the next line.
+     * Ends the bus - reserved for the transport dying. A fault the <em>printer</em> reported is a
+     * value through {@link #emit} instead; routing it here used to terminate the sink (and every
+     * subscriber of {@link #messageFlux()}) over a checksum the printer itself recovered from on the
+     * next line.
      */
     private void endBus(Throwable error) {
         outbox.add(new BusEnd(error));
@@ -351,19 +271,12 @@ public class HostTerminal {
     }
 
     /**
-     * Publishes what is parked, one thread at a time.
-     *
-     * <p>The module's one mechanism - atomics plus a drain loop, the same shape as
-     * {@link CommandProcessor#processRequest()} and {@link PublisherQueue}'s. The first caller in
-     * runs the loop, a caller that arrives while it is running leaves a mark and returns with its
-     * reply safely in the outbox, and the thread inside goes round again to pick it up. Nothing
-     * blocks and nothing spins: the alternative that was considered first,
-     * {@code emitNext(reply, EmitFailureHandler.busyLooping(...))}, busy-waits on the netty inbound
-     * loop and throws when the wait runs out, which is a worse answer on both counts.
-     *
-     * <p>Because this is the only path to the sink, {@code FAIL_NON_SERIALIZED} is now unreachable:
-     * a failure reaching the log below means a full backlog or a bus that has already ended, both of
-     * which say something real.
+     * Publishes what is parked, one thread at a time - atomics plus a drain loop, the same shape as
+     * {@link CommandProcessor#processRequest()} and {@link PublisherQueue}. The first caller in runs
+     * the loop; one that arrives while it is running leaves its reply in the outbox and returns, and
+     * the thread inside goes round again to pick it up - nothing blocks or busy-waits, unlike
+     * {@code emitNext(reply, EmitFailureHandler.busyLooping(...))}. Because this is the only path to
+     * the sink, {@code FAIL_NON_SERIALIZED} is now unreachable there.
      */
     private void drainBus() {
         if (emitting.getAndIncrement() != 0) {
@@ -408,24 +321,21 @@ public class HostTerminal {
         }
     }
 
+    /**
+     * Frames reply lines off the wire and decodes each once through {@code MarlinRsDecoder}. Built
+     * once per session, in {@link #start}, on the netty inbound loop, which is the only thread that
+     * ever touches it.
+     */
     public static class ReplyFlux extends FluxOperator<String, GRs<?>> {
 
         private final Flux<GRs<?>> flux;
 
         /**
-         * The one stateful thing on the inbound side: {@code M20}'s listing, being assembled.
-         *
-         * <p><strong>It has to live here, because this is the last place the raw line exists.</strong>
-         * A listing is {@code Begin file list}, some entries, {@code End file list}, and the entries
-         * are deliberately <em>not</em> claimable replies - {@code TEST.GCO 47} is
-         * {@code <word> <number>}, far too common a shape for a decoder to claim. So every entry
-         * reaches {@link #decode} as a line no decoder wants, and before this they were dropped with
-         * a debug line and nothing downstream could ever see a file list at all.
-         *
-         * <p>One per {@code ReplyFlux}, and a {@code ReplyFlux} is built per session in
-         * {@link #start}, which is exactly the ownership {@code SdFileListReader} asks for: one per
-         * connection, every call on the owner's thread. That thread is the netty inbound loop, and
-         * it is the only one that touches this.
+         * {@code M20}'s listing, being assembled - the one stateful thing on this side, and it has
+         * to live here: a listing's entries ({@code Begin file list}, entries, {@code End file list})
+         * are deliberately not claimable replies ({@code TEST.GCO 47} is too common a
+         * {@code <word> <number>} shape for a decoder to own), so they reach {@link #decode} as lines
+         * no decoder wants and have nowhere else to be collected.
          */
         private final SdFileListReader listing = new SdFileListReader();
 
@@ -440,26 +350,15 @@ public class HostTerminal {
         }
 
         /**
-         * One received line as the reply it says it is, or nothing when no decoder claims it.
+         * One received line as the reply it says it is, or nothing when no decoder claims it -
+         * {@code handle} rather than {@code map} because {@code MarlinRsDecoder} answers null for a
+         * line outside what it reads (boot banner, {@code M503} dump, calibration report), which a
+         * {@code Flux} may not carry; it goes to the traffic logger instead.
          *
-         * <p>{@code handle} and not {@code map}, because {@code MarlinRsDecoder} answers with null
-         * for a line outside the set it reads - the boot banner, an {@code M503} settings dump, a
-         * calibration report - and a {@code Flux} may not carry a null. Null is the normal case and
-         * not an error: the line goes to the traffic logger and is dropped, which is what the layer
-         * above did with it before.
-         *
-         * <p><strong>A file listing is the exception, and it is assembled rather than forwarded.</strong>
-         * Its three line kinds are consumed here and one {@code SdFileList} comes out in their place,
-         * on the terminator:
-         *
-         * <ul>
-         *   <li>the two markers are swallowed - they are scaffolding, like a {@code Resend:}, and a
-         *       subscriber told "a list is starting" can do nothing with that;
-         *   <li>an entry is swallowed because it was never a reply in the first place;
-         *   <li>a listing something interrupted produces <strong>nothing</strong>, because the
-         *       reader cannot vouch for it - see {@code SdFileListRs}. A short list reported as the
-         *       card's contents is the failure that matters, and silence is the honest alternative.
-         * </ul>
+         * <p>A file listing is assembled rather than forwarded: both markers are swallowed as
+         * scaffolding, an entry is swallowed because it was never a reply, and a listing something
+         * interrupted produces <strong>nothing</strong> rather than a short list reported as the
+         * card's contents - see {@code SdFileListRs}.
          */
         private void decode(String line, SynchronousSink<GRs<?>> sink) {
             SdFileList files = listing.read(line);
@@ -487,46 +386,34 @@ public class HostTerminal {
     }
 
     /**
-     * The outbound half: it pulls G-code text, numbers and checksums it, writes it, and replays it
-     * when the printer asks.
+     * The outbound half: pulls G-code text, numbers and checksums it, writes it, and replays it when
+     * the printer asks.
      *
-     * <p><strong>The drain loop owns the send window.</strong> {@link GSendWindow} is portable
-     * Kotlin with no atomics in it and is not thread-safe, and the three things that touch it come
-     * from different threads - a command is pulled on whichever thread the source produces on, an
-     * {@code ok} and a {@code Resend:} arrive on the netty inbound loop. So none of them touches it
-     * directly. {@link #onNext} parks the payload, {@link #handleBackpressure} and {@link #rewind}
-     * park an event, and all three then call {@link #processRequest()}, whose {@code wip} guard
-     * admits one thread at a time; that thread applies the parked work and is the only one that
-     * ever calls {@code send}, {@code acknowledge} or {@code resendFrom}. The guard is an
-     * {@link AtomicInteger}, so the hand-off also carries the happens-before the window's plain
-     * fields need.
+     * <p>The drain loop owns the send window. {@link GSendWindow} is portable Kotlin, not
+     * thread-safe, and touched from different threads - a command pulled on whichever thread the
+     * source produces on, an {@code ok}/{@code Resend:} off the netty inbound loop - so none of them
+     * touches it directly: {@link #onNext} parks the payload, {@link #handleBackpressure} and
+     * {@link #rewind} park an event, and all three call {@link #processRequest()}, whose {@code wip}
+     * guard admits one thread at a time to apply the parked work and call {@code send}/
+     * {@code acknowledge}/{@code resendFrom}. That also puts every write in one place, which a replay
+     * needs: its blocks must reach the wire in original order and before anything pulled since, which
+     * a write from the inbound thread could not promise.
      *
-     * <p>That also puts every write in one place, which the replay needs: the blocks a
-     * {@code Resend:} asks for have to reach the wire in their original order and <em>before</em>
-     * anything pulled since, and a write issued from the inbound thread could not promise either.
-     *
-     * <p><strong>What a caller may hand in.</strong> One bare command per item - no {@code N}
-     * field, no {@code *} checksum, no line terminator, and no comment left open: this is what
-     * {@code GEncoder.frame} is given verbatim, and it documents the rest. A pre-numbered block is
-     * framed <em>in front of</em> its own {@code N}, and an {@code M110} sent as text moves the
-     * firmware's counter without moving this window's, which desynchronises the session until the
-     * window is {@code reset} - so the counter is this layer's to set and not a caller's to send.
-     *
-     * <p><strong>And this layer does set it.</strong> The first block of every session is
-     * {@code M110 N0}, and the same block is what repairs a sequence that has drifted past the
-     * window - see {@link #opening} and {@link #resynchronise}. Until that was done, a host that
-     * reconnected to a printer which had not been power-cycled could not send anything at all.
+     * <p>What a caller may hand in: one bare command per item - no {@code N}, no {@code *} checksum,
+     * no terminator, no open comment - framed verbatim by {@code GEncoder.frame}. The line counter is
+     * this layer's to set, not a caller's to send: an {@code M110} sent as text would move the
+     * firmware's counter without moving this window's and desynchronise the session. This layer does
+     * set it - the first block of every session is {@code M110 N0}, and the same block repairs a
+     * sequence that has drifted past the window (see {@link #opening}, {@link #resynchronise}); before
+     * that, a host reconnecting to a printer that had not been power-cycled could not send anything.
      */
     public class CommandProcessor implements Processor<String, String>, Subscription {
 
         /**
-         * One thing the printer said about the send window, parked for the drain loop.
-         *
-         * <p>A record rather than the sentinel integer this replaced - {@code ACK = -1} in a
-         * {@code Queue<Integer>}, every other value being a resend request. That encoding had
-         * nowhere to put the line number an advanced {@code ok} carries: a positive value already
-         * meant "replay from here", so parking an acknowledged number would have been read as a
-         * request to retransmit from it.
+         * One thing the printer said about the send window, parked for the drain loop. A record
+         * rather than the sentinel integer this replaced ({@code ACK = -1} in a {@code Queue<Integer>}
+         * else a resend request), which had nowhere to put the line number an advanced {@code ok}
+         * carries without it being read as a retransmit request.
          *
          * @param kind   what the printer said
          * @param number the line it named, or null for a bare {@code ok}, which names none
@@ -550,136 +437,95 @@ public class HostTerminal {
         private final Requested subscriptionRequested = new Requested();
         private final Requested requestedFromGCode = new Requested();
         /**
-         * Commands written to the printer that it has not acknowledged yet.
-         *
-         * <p>A {@link Requested} and not a counter of its own. It is not demand, but it is the same
-         * discipline - a non-negative saturating count, incremented on one thread and decremented
-         * on another - and the rule this module works to is that the accounting is <em>one</em>
-         * mechanism rather than half of one. It was a {@code volatile int} with {@code += 1} in
-         * {@link #onNext}, {@code --} in {@link #handleBackpressure} and {@code = 0} in
-         * {@link HostTerminal#onBusy}: {@code volatile} publishes a write, it does not make a
-         * read-modify-write atomic, and the first two of those run on different threads.
+         * Commands written to the printer that it has not acknowledged yet - a {@link Requested}
+         * because it needs the same discipline demand does (non-negative, saturating, incremented and
+         * decremented from different threads), not because it is demand. It was a {@code volatile int}
+         * before: {@code volatile} publishes a write but does not make a read-modify-write atomic.
          */
         private final Requested sentWithoutAck = new Requested();
         /**
-         * The printer's own buffer counts, as the last advanced {@code ok} reported them.
-         *
-         * <p>An {@link AdvancedOkRs} and not a transport-local copy of the same three numbers. The
-         * record that used to hold them here read the {@code N} field in a position Marlin does not
-         * write it in, so on a numbered line it matched nothing and the window never widened.
-         *
-         * <p>Starts at one block, which is the window a printer that reports no counts at all gets:
-         * one command out, and nothing more until it is acknowledged.
-         *
-         * <p>{@code volatile} because it is written from the inbound thread and read by
-         * {@link #canProcess()} on whichever thread is draining. A reference write is atomic on its
-         * own, so a snapshot is all the window needs and no lock is involved.
+         * The printer's own buffer counts, as the last advanced {@code ok} reported them - kept as
+         * the {@link AdvancedOkRs} itself rather than a transport-local copy, after a copy here once
+         * read the {@code N} field at a position Marlin does not write it, so the window never
+         * widened. Starts at one block, the window a printer reporting no counts gets. {@code volatile}
+         * because it is written from the inbound thread and read by {@link #canProcess()} while
+         * draining - a reference write is atomic, so a snapshot is all this needs.
          */
         private volatile AdvancedOkRs backpressure = new AdvancedOkRs(1, 1, null);
-        /**
-         * The drain guard: zero when no thread is in {@link #processRequest()}, and otherwise the
-         * number of calls that still have to be accounted for.
-         */
+        /** The drain guard: zero when no thread is in {@link #processRequest()}, otherwise the
+         * number of calls still to be accounted for. */
         private final AtomicInteger wip = new AtomicInteger();
 
         /**
-         * Spec 8.5's host side, from {@code :gcode}: it numbers, frames and keeps what it framed.
-         *
-         * <p>Not rebuilt here, and not a second copy of {@link #sentWithoutAck}. The two counts
-         * answer different questions and are meant to diverge: {@code sentWithoutAck} is how much
-         * of the printer's command buffer this host believes it is occupying, which a {@code busy:}
-         * zeroes because nothing in flight will be acknowledged while the machine is stalled;
-         * {@link GSendWindow#getInFlight()} is what this host must still be able to <em>replay</em>,
-         * which a {@code busy:} must not touch, because those are exactly the bytes a later
-         * {@code Resend:} asks for.
+         * Spec 8.5's host side, from {@code :gcode}: numbers, frames and keeps what it framed. Not a
+         * second copy of {@link #sentWithoutAck} - the two counts are meant to diverge: this field is
+         * how much buffer this host believes it occupies, zeroed by a {@code busy:}; the window's
+         * {@code getInFlight()} is what this host must still be able to <em>replay</em>, which a
+         * {@code busy:} must not touch, since those are the exact bytes a later {@code Resend:} asks for.
          */
         private final GSendWindow window = new GSendWindow();
 
         /**
-         * Payloads pulled from the source and not framed yet, oldest first.
-         *
-         * <p>A deque rather than a queue so a payload can go back where it came from if the window
-         * ever refuses it. {@link #canProcess()} reserves the slot before the command is pulled, so
-         * that is unreachable - but the alternative on the day it is not would be dropping a
-         * command in silence, which is the failure this module exists to prevent.
+         * Payloads pulled from the source and not framed yet, oldest first. A deque, not a queue, so
+         * a payload could go back where it came from if the window ever refused it - unreachable
+         * today since {@link #canProcess()} reserves the slot before the pull, but the alternative is
+         * dropping a command in silence, which this module exists to prevent.
          */
         private final Deque<String> pending = new ConcurrentLinkedDeque<>();
 
         /** How many of those there are, so {@link #canProcess()} can hold room for them. */
         private final Requested awaitingFrame = new Requested();
 
-        /**
-         * Window events parked in the order the printer stated them: an acknowledgement, or the
-         * line number of a {@code Resend:}. One queue and not two, because the order is the
-         * protocol.
-         */
+        /** Window events parked in the order the printer stated them - an acknowledgement, or a
+         * {@code Resend:}'s line number - one queue because the order is the protocol. */
         private final Queue<WindowEvent> windowEvents = new ConcurrentLinkedQueue<>();
 
-        /**
-         * Blocks a {@code Resend:} asked for, framed already, waiting for downstream demand.
-         *
-         * <p>Touched only from inside the drain loop, so a plain {@link ArrayDeque} is enough.
-         */
+        /** Blocks a {@code Resend:} asked for, framed already, waiting for downstream demand.
+         * Touched only from the drain loop, so a plain {@link ArrayDeque} is enough. */
         private final Deque<String> replaying = new ArrayDeque<>();
 
         /**
          * The block that opens the session - {@code M110 N0}, framed - until it has been written.
+         * Spec 7.2 names it as how a host starts a session: the window numbers from {@code N1}, and a
+         * firmware still powered from a previous session remembers the line it last accepted, so
+         * without this every block of a reconnection is rejected with
+         * {@code Error:Line Number is not Last Line Number+1} and an unanswerable {@code Resend:} -
+         * dead in the outbound direction for good. Measured against the simulator: a plain reconnect
+         * reached exactly that state, meaning only the first session after a power-on had ever worked.
+         * {@code M110} is exempt from the continuity check for this reason.
          *
-         * <p><strong>Spec 7.2: {@code M110 N0} is how a host starts a session.</strong> The window
-         * numbers from {@code N1}, and a firmware that is still powered from a previous session
-         * remembers the line it last accepted - so without this the first block of every
-         * reconnection is rejected with {@code Error:Line Number is not Last Line Number+1} and a
-         * {@code Resend:} for a block this host has never held. The session is then dead in the
-         * outbound direction for good: the window has nothing to replay, and every block after it
-         * is rejected on the same grounds.
-         *
-         * <p>That was not a theory. Against the simulator, a plain reconnect - with or without a
-         * host restart - reached exactly that state, which means <em>only the first session after a
-         * printer powers on had ever worked</em>. An {@code M110} line is exempt from the
-         * continuity check precisely so that it can be sent when the sequence is not yet agreed.
-         *
-         * <p>It is also what {@link #resynchronise} parks when a session drifts past what the
-         * window can repair, so the two routes into a fresh sequence are one piece of code.
-         *
-         * <p>Written through the drain loop like any other block, which is what keeps the
-         * accounting honest: it takes a unit of the subscriber's demand and one slot of the
-         * printer's buffer until its {@code ok} comes back. Poking it straight at the socket would
-         * be an {@code onNext} nobody asked for and a block the window never counted.
+         * <p>Also what {@link #resynchronise} parks when a session drifts past repair, so both routes
+         * into a fresh sequence are one piece of code. Written through the drain loop like any other
+         * block - it costs a unit of demand and a buffer slot until its {@code ok} returns - rather
+         * than poked straight at the socket, which would be an unasked {@code onNext} the window never
+         * counted.
          */
         private String opening;
 
         /**
-         * Set by a {@code Resend:} and cleared by the {@code ok} that follows it.
-         *
-         * <p>Marlin answers a rejected block with {@code Error:}, {@code Resend: n}, then
-         * {@code ok}. That {@code ok} is the firmware saying it is ready again - it acknowledges no
-         * block, and letting it reach {@link GSendWindow#acknowledge()} would discard the very
-         * block the rewind just made outstanding again.
+         * Set by a {@code Resend:} and cleared by the {@code ok} that follows it. Marlin answers a
+         * rejected block with {@code Error:}, {@code Resend: n}, then {@code ok} - that {@code ok}
+         * acknowledges no block, and letting it reach {@link GSendWindow#acknowledge()} would discard
+         * the block the rewind just made outstanding again.
          */
         private final AtomicBoolean rewinding = new AtomicBoolean();
 
         /**
-         * Set once the subscriber has been told the stream is over, by either route.
-         *
-         * <p>{@code onComplete} and {@code onError} are final, and the drain loop can now be
-         * started by a reply - an {@code ok} or a {@code Resend:} that arrives after
-         * {@link HostTerminal#stop()} would otherwise find whatever was parked in {@link #pending}
-         * and write it behind the terminal signal. It also makes {@link #cancel()} idempotent,
-         * which a cancel has to be.
-         *
-         * <p>It is a flag and not serialisation: a cancel that lands between the check and the
-         * write still races, because cancellation does not go through the drain loop. Closing that
-         * properly means giving the loop the terminal signal to emit as well, which is a change to
-         * the shape of this class rather than to this field.
+         * Set once the subscriber has been told the stream is over, by either route - needed because
+         * the drain loop can be started by a reply, and an {@code ok}/{@code Resend:} arriving after
+         * {@link HostTerminal#stop()} would otherwise write what was parked in {@link #pending} behind
+         * the terminal signal. Also makes {@link #cancel()} idempotent. A flag, not serialisation: a
+         * cancel landing between the check and the write still races, since cancellation bypasses the
+         * drain loop - closing that needs the loop itself to own the terminal signal, a shape change
+         * rather than a field change.
          */
         private final AtomicBoolean terminated = new AtomicBoolean();
 
         /**
          * Set when the G-code source is exhausted; the drain loop turns it into a completion.
-         *
-         * <p>Separate from {@link #terminated} because they mean different things at different
-         * times: the source running out is not the end of the stream until what it already handed
-         * over has been written. See {@link #completeIfDrained()}.
+         * Separate from {@link #terminated} because the source running out is not the end of the
+         * stream until what it already handed over has been written - see
+         * {@link #completeIfDrained()}.
          */
         private final AtomicBoolean sourceComplete = new AtomicBoolean();
 
@@ -693,22 +539,14 @@ public class HostTerminal {
         }
 
         /**
-         * One {@code ok}: a free slot in the printer's buffer, and - usually - one block released
-         * from the send window.
-         *
-         * <p>Usually, because the {@code ok} that closes a resend handshake is neither. It frees
-         * nothing this host is still counting: the firmware discarded everything from the rejected
-         * block onwards without acknowledging it, and {@link #rewind} has already said so. Taking
-         * it as an acknowledgement would release a block the printer never accepted, and that block
-         * is the one it just asked for.
-         *
-         * <p><strong>The line number is carried through when the reply states one.</strong>
-         * Marlin's advanced form is {@code ok N5 P15 B3} and {@code AdvancedOkRs} already decodes
-         * the 5; it used to reach here and go no further than the buffer counts. Counting instead
-         * cannot self-correct: one {@code ok} lost in transit, or one for a block this host never
-         * sent, shifts the window's correspondence by one *permanently*, and every later replay is
-         * then the wrong bytes - silently, because an unknown number is answered with an empty
-         * list rather than a complaint.
+         * One {@code ok}: a free slot in the printer's buffer, and usually one block released from
+         * the send window - not the {@code ok} closing a resend handshake, which frees nothing this
+         * host is still counting, since {@link #rewind} already recorded that the firmware discarded
+         * the rejected block and everything after it unacknowledged. Marlin's advanced form,
+         * {@code ok N5 P15 B3}, carries its own line number through to the window rather than being
+         * counted: counting cannot self-correct - a lost or extra {@code ok} shifts the window's
+         * correspondence permanently, and an unknown number is answered with an empty list, not a
+         * complaint.
          */
         public void handleBackpressure(OkRs<?> ok) {
             Integer acknowledged = null;
@@ -727,34 +565,22 @@ public class HostTerminal {
             outSide.processRequest();
         }
 
-        /**
-         * Nothing is in flight that the printer will acknowledge, so its buffer is all of it.
-         *
-         * <p>The send window is deliberately left alone - see {@link #window}. A stalled machine
-         * has not accepted those blocks, and a {@code Resend:} for them is the likeliest thing to
-         * come next.
-         */
+        /** Nothing is in flight that the printer will acknowledge, so its buffer is all of it.
+         * {@link #window} is deliberately left alone - a stalled machine has not accepted those
+         * blocks, and a {@code Resend:} for them is the likeliest thing next. */
         void clearInFlight() {
             sentWithoutAck.reset();
         }
 
         /**
          * How many more commands may be pulled: the subscriber's demand, bounded by the printer's
-         * buffer and by the send window, whichever is tightest.
-         *
-         * <p>The third term is new with the window and is what makes a refused {@code send}
-         * impossible: a block stays in the window until it is acknowledged, so the host may not
-         * have more outstanding than it can replay. Both printer terms subtract the commands
-         * already spoken for - asked of the source ({@code requestedFromGCode}) and received but
-         * not framed yet ({@code awaitingFrame}) - because each of those is a block that will
-         * occupy a slot the moment it arrives.
-         *
-         * <p>Zero while a replay is waiting for demand. Those blocks carry numbers the firmware is
-         * sitting on, and nothing newer may be pulled, let alone written, in front of them.
-         *
-         * <p>Zero for the same reason while the session's {@code M110} is owed: until the firmware
-         * has been told where the numbering starts, there is no agreed sequence for a block to take
-         * a place in. See {@link #opening}.
+         * buffer and the send window, whichever is tightest - both bounds reduced by commands already
+         * spoken for ({@code requestedFromGCode}, {@code awaitingFrame}), since each will occupy a
+         * slot the moment it arrives. The window term is what makes a refused {@code send} impossible:
+         * a block stays in the window until acknowledged, so the host may never hold more outstanding
+         * than it can replay. Zero while a replay is waiting for demand (nothing newer may jump ahead
+         * of blocks the firmware is sitting on) or while the session's {@code M110} is owed (no agreed
+         * sequence yet for a block to take a place in - see {@link #opening}).
          */
         long canProcess() {
             if (!replaying.isEmpty() || opening != null) {
@@ -768,20 +594,13 @@ public class HostTerminal {
 
         /**
          * Moves as much of the subscriber's demand upstream as the printer currently has room for.
-         *
-         * <p>A drain loop, and the only place the three counters are moved against each other.
-         * Atomic counters make each one safe on its own; they do not make
-         * {@code canProcess() -> inc/dec -> request(n)} one step, and that sequence has to be one
-         * step or two threads - a {@code request(n)} from the subscriber and an {@code ok} off the
-         * netty loop - can each read the same room and each claim it, asking the source for twice
-         * what the printer can hold.
-         *
-         * <p>So {@code wip} serialises the section the Reactive Streams way rather than a lock: the
-         * first caller in runs the loop, a caller that arrives while it is running leaves a mark
-         * and returns, and the thread inside goes round again to pick the mark up. That also keeps
-         * re-entrancy honest - {@link #onNext} calls this from inside {@code subscription.request},
-         * and the nested call now defers to the loop already on the stack instead of interleaving
-         * with it.
+         * The only place the three counters move against each other, so it has to be one step: atomic
+         * counters make each one safe alone, but not {@code canProcess() -> inc/dec -> request(n)} as
+         * a sequence, and two threads - a {@code request(n)} and an {@code ok} off the netty loop -
+         * could each read the same room and claim it. {@code wip} serialises the section instead of a
+         * lock: the first caller in runs the loop, a later one leaves a mark and returns, and the
+         * thread inside goes round again - which also makes re-entrancy safe, since {@link #onNext}
+         * calls this from inside {@code subscription.request}.
          */
         void processRequest() {
             if (wip.getAndIncrement() != 0) {
@@ -809,17 +628,13 @@ public class HostTerminal {
         }
 
         /**
-         * Applies the acknowledgements and resend requests the inbound side parked, in order.
+         * Applies the acknowledgements and resend requests the inbound side parked, in order - drain
+         * loop only, and the order is the protocol's own: an {@code ok} ahead of a {@code Resend:}
+         * released a block the firmware really took, and applying them reversed would rewind over it.
          *
-         * <p>Drain loop only - see the class note. The order is the protocol's own: an {@code ok}
-         * that arrived before a {@code Resend:} released a block the firmware really had taken, and
-         * applying the two the other way round would rewind over it.
-         *
-         * <p><strong>The acknowledgement signal is emitted from here, and it has to be.</strong>
-         * The window is the only thing that knows which block an {@code ok} answered - the bare
-         * {@code ok} most builds send carries no number, so the correspondence is the window's FIFO
-         * order and nothing on the wire - and the window may only be touched from this loop. That
-         * puts the emission on whichever thread happens to be draining, which is why
+         * <p>The acknowledgement signal has to be emitted from here: the window is the only thing
+         * that knows which block an {@code ok} answered (a bare {@code ok} carries no number, only
+         * the window's FIFO order), and the window may only be touched from this loop - which is why
          * {@link HostTerminal#replays} could no longer be an unsafe sink.
          */
         private void applyWindowEvents() {
@@ -829,11 +644,9 @@ public class HostTerminal {
                     continue;
                 }
 
-                // A named `ok` releases that block and everything still held in front of it, which
-                // is what spec 8.5's in-order acknowledgement means: an `ok N5` while 3, 4 and 5
-                // are outstanding says all three were taken and two acknowledgements were lost. A
-                // bare one has only the window's FIFO order to go on, which is the older reading
-                // and still the common one.
+                // Spec 8.5's in-order acknowledgement: a named `ok` releases that block and
+                // everything still held in front of it (lost acknowledgements); a bare one has only
+                // the window's FIFO order to go on.
                 int before = window.getInFlight();
                 Integer released = event.number() == null
                         ? window.acknowledge()
@@ -854,18 +667,12 @@ public class HostTerminal {
         }
 
         /**
-         * Spec 8.5 step 5: put the blocks from {@code from} onwards back in hand, byte for byte.
-         *
-         * <p>The printer's buffer count is rebuilt rather than adjusted. A {@code Resend:} says the
-         * firmware threw away the rejected block and everything after it without acknowledging any
-         * of it, so whatever this host believed it was occupying is no longer true; what it will
-         * occupy is the replay, and nothing else.
-         *
-         * <p>An empty replay means the session has drifted further than a replay can repair - the
-         * firmware is asking for a block this host no longer holds, which in a well-behaved session
-         * cannot happen, since a block is only released by the {@code ok} that accepted it. There is
-         * no partial answer worth sending, so the sequence is started again rather than patched:
-         * see {@link #resynchronise}.
+         * Spec 8.5 step 5: put the blocks from {@code from} onwards back in hand, byte for byte. The
+         * printer's buffer count is rebuilt, not adjusted, since a {@code Resend:} means the firmware
+         * discarded the rejected block and everything after it unacknowledged - what it will occupy
+         * next is the replay and nothing else. An empty replay means the session has drifted further
+         * than a replay can repair (the firmware asked for a block this host no longer holds, which
+         * cannot happen in a well-behaved session); see {@link #resynchronise}.
          */
         private void rewind0(int from) {
             List<String> replay = window.resendFrom(from);
@@ -880,47 +687,24 @@ public class HostTerminal {
         }
 
         /**
-         * Starts the numbering again, because this session's is beyond repair.
+         * Starts the numbering again: reached when the firmware asks for a block the window no
+         * longer holds, so there is no sequence left both ends agree on and every later block would
+         * be rejected on the same grounds. The abandoned blocks are dropped, loudly - they cannot be
+         * replayed under a new number without re-framing, and the window holds the <em>bytes</em> it
+         * emitted rather than the commands behind them (spec 8.3 makes the checksum a property of the
+         * bytes); re-reading them to renumber would put a second parser back in the transport, and
+         * would be unsafe besides, since a relative move replayed under a new number is a move made
+         * twice.
          *
-         * <p>Reached when the firmware asks for a block the window no longer holds. Two decisions
-         * live here that {@code GSendWindow} cannot make for itself, and both are deliberate:
-         *
-         * <p><strong>When a session is deemed lost:</strong> at the first {@code Resend:} that
-         * cannot be answered. That is not a judgement call - the firmware has named a block this
-         * host cannot produce, so there is no sequence left that both ends agree on, and every
-         * block sent from here under the old numbering is rejected on the same grounds.
-         *
-         * <p><strong>What happens to the blocks abandoned by the reset:</strong> they are dropped,
-         * loudly. They cannot be replayed under the new numbering without re-framing them, and the
-         * window holds the <em>bytes</em> it emitted rather than the commands behind them - spec
-         * 8.3 makes the checksum a property of the bytes, which is the whole reason it keeps them
-         * that way. Re-reading bytes this module itself framed in order to renumber them would put
-         * a second parser back in the transport, which is the thing it most recently got rid of.
-         * It would also be unsafe: a relative move replayed under a new number is a move made
-         * twice, and nothing here knows which commands are safe to repeat.
-         *
-         * <p><strong>And the layer above is told, because the WARN told nobody.</strong> The blocks
-         * dropped here are lines of a job that will never reach the machine, so a print that lost
-         * them used to run to the end of its file and report {@code COMPLETED}. A
-         * {@link BlocksAbandoned} goes on the bus instead, and {@code JobFeeder} fails the job on
-         * it - it cannot be retried from its checkpoint, which records what was <em>sent</em> and
-         * not what was accepted, and that difference is exactly what was just lost.
-         *
-         * <p>Three things about that emission are the design:
-         *
-         * <ul>
-         *   <li><strong>The count is read before the reset and the event goes out after it</strong>,
-         *       so a subscriber never sees the record in front of the state it describes.</li>
-         *   <li><strong>It goes through {@link HostTerminal#emit} on this drain loop</strong>, like
-         *       a {@link BlockAcknowledged} and for the same reason: this is the thread that is
-         *       allowed to read the window, and the order the bus sees is then the protocol's own.</li>
-         *   <li><strong>Nothing abandoned, nothing announced.</strong> A resynchronisation that
-         *       dropped no block cost nothing, the name would be untrue, and a consumer that fails
-         *       a job on this would fail one that lost nothing. It is not a rare case either: the
-         *       firmware answers each of the next blocks with the same unanswerable
-         *       {@code Resend:}, and only the first of that pile-up is holding anything - without
-         *       the gate one lost print is announced three times.</li>
-         * </ul>
+         * <p>The layer above is told: these are lines of a job that will never reach the machine, and
+         * a print that lost them used to run to end of file and report {@code COMPLETED}. A
+         * {@link BlocksAbandoned} goes on the bus instead - {@code JobFeeder} fails the job on it,
+         * since it cannot be retried from a checkpoint that records what was sent and not what was
+         * accepted. The count is read before the reset and the event emitted after, through
+         * {@link HostTerminal#emit} on this drain loop (same reason as {@link BlockAcknowledged}: this
+         * is the thread allowed to read the window). Nothing abandoned, nothing announced - a
+         * resynchronisation that dropped nothing cost nothing, and without the gate the firmware's
+         * pile-up of identical unanswerable {@code Resend:}s would announce one lost print three times.
          */
         private void resynchronise(int from) {
             int abandoned = window.getInFlight();
@@ -935,22 +719,12 @@ public class HostTerminal {
         }
 
         /**
-         * Writes what is owed, replay first and then what was pulled since.
-         *
-         * <p>Replay first because its blocks carry numbers the firmware is waiting for, and a
-         * newer block written in front of one of them is the gap Marlin rejects outright.
-         *
-         * <p>A replayed block takes a unit of the subscriber's demand of its own. The unit the
-         * block consumed when it was first written is spent; this is a second write, and the
-         * Reactive Streams rule that no {@code onNext} goes out unasked does not have an exception
-         * for a retransmission. A pulled command spends its unit earlier, in
-         * {@link #processRequest()}, where the pull itself is accounted.
-         *
-         * <p>The session's {@code M110} goes before either, and nothing goes out in front of it:
-         * a block written before the firmware has been told where the numbering starts is a block
-         * the firmware rejects. It obeys the same demand rule - no unit, no write - which is why
-         * this returns rather than falling through when the subscriber has not asked for anything
-         * yet. See {@link #opening}.
+         * Writes what is owed: the session's {@code M110} first (nothing may go out ahead of it, or
+         * the firmware rejects the gap), then replay (its blocks carry numbers the firmware is
+         * waiting for), then what was pulled since. A replayed block spends a fresh unit of the
+         * subscriber's demand - the unit it spent when first written is gone, and no {@code onNext}
+         * goes out unasked even for a retransmission - which is why each of the three stages returns
+         * rather than falling through once demand runs out. See {@link #opening}.
          */
         private void write() {
             if (opening != null) {
@@ -1017,21 +791,13 @@ public class HostTerminal {
         }
 
         /**
-         * Idempotent, and the stream stays over: a second call and a late reply both do nothing.
-         *
-         * <p><strong>It no longer answers a cancel with {@code onComplete}.</strong> That is a
-         * terminal signal emitted from a cancel path, which Reactive Streams rule 2.4 forbids for
-         * the obvious reason: the subscriber asked to stop and is entitled to stop listening. It
-         * also cost a debugging session every time a send-window expectation failed -
-         * {@code StepVerifier} cancels from inside its own {@code onNext} when an expectation does
-         * not match, the {@code onComplete} re-entered its state machine, and the build spun at
-         * 100% CPU until somebody killed it instead of reporting the mismatch.
-         *
-         * <p><strong>What still closes the connection is {@code PrinterReactor.disconnect}</strong>,
-         * which disposes the retry subscription and so cancels the outbound {@code Mono} that
-         * {@code reactor-netty} is sending from. This method never held that job: {@code HostTerminal}
-         * is handed two lambdas and never the {@code Connection}, so it could only ever have ended
-         * a session by faking a completion - which is what it was doing.
+         * Idempotent, and the stream stays over: a second call and a late reply both do nothing. No
+         * longer answers a cancel with {@code onComplete} (rule 2.4 forbids a terminal signal on a
+         * cancel path) - that used to re-enter {@code StepVerifier}'s state machine on every
+         * expectation mismatch and spin the build at 100% CPU instead of reporting it. Closing the
+         * connection is {@code PrinterReactor.disconnect}'s job via {@link HostTerminal#disposeConnection};
+         * this class only ever had two lambdas, never the {@code Connection}, so faking a completion
+         * was the only way it could end a session before.
          */
         @Override
         public void cancel() {
@@ -1052,16 +818,11 @@ public class HostTerminal {
         }
 
         /**
-         * One command off the source: parked, not written.
-         *
-         * <p>This runs on whatever thread the source produces on - {@link PublisherQueue} pushes
-         * from {@code addPublisher} as readily as from {@code request} - so it may neither frame
-         * the command nor write it. It hands both to the drain loop, which is the only place the
-         * numbering, the window and the wire are touched.
-         *
-         * <p>The command is counted into {@link #awaitingFrame} <em>before</em>
-         * {@link #requestedFromGCode} is counted down, so that the room it is about to occupy is
-         * never momentarily unaccounted for in {@link #canProcess()}.
+         * One command off the source: parked, not written. Runs on whatever thread the source
+         * produces on ({@link PublisherQueue} pushes from {@code addPublisher} as readily as from
+         * {@code request}), so it may neither frame nor write - both go to the drain loop. Counted
+         * into {@link #awaitingFrame} before {@link #requestedFromGCode} is decremented, so the room
+         * it is about to occupy is never momentarily unaccounted for in {@link #canProcess()}.
          */
         @Override
         public void onNext(String gCode) {
@@ -1082,17 +843,11 @@ public class HostTerminal {
         }
 
         /**
-         * The source is exhausted - but not necessarily written out yet.
-         *
-         * <p>This used to be a log line and a commented-out {@code subscriber.onComplete()}, so an
-         * exhausted source signalled nothing downstream at all. A {@code Processor} that swallows a
-         * terminal signal is one its subscriber can never learn anything from.
-         *
-         * <p><strong>Completing here directly would drop commands.</strong> A payload sits in
-         * {@link #pending} until there is demand to write it, so a source that finishes while the
-         * subscriber is not asking leaves blocks unwritten - and {@link #write0} refuses to write
-         * once {@code terminated} is set. So this records that the source is done and lets the
-         * drain loop decide when that becomes a completion: see {@link #completeIfDrained()}.
+         * The source is exhausted, but not necessarily written out yet - completing directly here
+         * would drop commands, since a payload sits in {@link #pending} until there is demand to
+         * write it and {@link #write0} refuses once {@code terminated} is set. So this only records
+         * that the source is done; the drain loop decides when that becomes a completion, in
+         * {@link #completeIfDrained()}.
          */
         @Override
         public void onComplete() {
@@ -1102,17 +857,11 @@ public class HostTerminal {
         }
 
         /**
-         * Completes the subscriber once the source is done <em>and</em> everything is on the wire.
-         *
-         * <p>Drain loop only, so "is there anything left to write" is asked on the one thread that
-         * could be writing. The three things that can still be owed are the session's own
-         * {@code M110}, a replay the firmware asked for, and payloads pulled but not yet framed;
-         * none of them may be abandoned because the source ran out.
-         *
-         * <p><strong>It does not wait for acknowledgements.</strong> This stream carries blocks to
-         * the wire, and every one of them is on it; whether the firmware has taken them is a
-         * different question, answered block by block by {@code BlockAcknowledged}. A caller
-         * counting lines accepted - plan item C4 - reads those rather than this.
+         * Completes the subscriber once the source is done <em>and</em> everything owed - the
+         * session's {@code M110}, a requested replay, payloads pulled but not yet framed - is on the
+         * wire. Drain loop only, so "anything left to write" is asked on the one thread that could be
+         * writing. It does not wait for acknowledgements: whether the firmware has taken a block is a
+         * different question, answered block by block by {@code BlockAcknowledged}.
          */
         private void completeIfDrained() {
             if (!sourceComplete.get() || terminated.get()) {
@@ -1147,21 +896,15 @@ public class HostTerminal {
         }
 
         /**
-         * Routes one decoded reply: half of it into the send window, half onto the bus.
+         * Routes one decoded reply: half into the send window, half onto the bus. Matched on the
+         * family interfaces, not concrete classes, so a reply type added to {@code :gcode} under
+         * {@link OkRs} (bare, advanced or temperature-carrying - all acknowledgements) or
+         * {@link BusyRs} (bare {@code busy:} and Marlin's {@code echo:busy:}) arrives already routed;
+         * the arms are a sequence rather than a partition, since {@code OkTemperatureRs} is an
+         * {@link OkRs} first.
          *
-         * <p>Matched on the family interfaces rather than on concrete classes, because that is what
-         * they are for. {@link OkRs} covers the bare, the advanced and the temperature-carrying
-         * {@code ok} - all three are acknowledgements and all three free a slot. {@link BusyRs}
-         * covers the bare {@code busy:} and Marlin's {@code echo:busy:}. A reply type added to
-         * {@code :gcode} under either interface arrives here already routed.
-         *
-         * <p>The arms are not a partition and have to be read as a sequence: {@code OkTemperatureRs}
-         * is an {@link OkRs} first and a temperature report second, which is the acknowledgement
-         * the window is waiting for.
-         *
-         * <p><strong>{@code ErrorRs} has no arm, deliberately.</strong> It falls to the default and
-         * is published as a value, because on a Marlin an error is routine protocol traffic and the
-         * printer carries on afterwards:
+         * <p>{@code ErrorRs} has no arm, deliberately - it falls to the default and is published as a
+         * value, since on a Marlin an error is routine traffic the printer recovers from by itself:
          *
          * <pre>
          * &gt;&gt; N3 M105*1
@@ -1170,16 +913,11 @@ public class HostTerminal {
          * &lt;&lt; ok
          * </pre>
          *
-         * <p>This used to call {@code tryEmitError}, which terminates the {@code Sinks.Many}
-         * behind {@link HostTerminal#messageFlux()} - so one mistyped checksum killed the reply bus
-         * for the rest of the session, for every current and future subscriber, while the printer
-         * went on answering normally. A terminal signal on that flux now means one thing only: the
-         * inbound side is gone, which is {@link #onError} and {@link #onComplete} below.
-         *
-         * <p>Which errors are fatal is not decided here. {@code :gcode} keeps the machine's own
-         * words as text on purpose - the spec sorts errors into recoverable, non-fatal and
-         * shut-the-machine-down on prose it only gives as examples - and that is a decision for the
-         * host, which can now see every error it needs to make it.
+         * <p>Routing it to {@code tryEmitError} instead used to terminate {@link HostTerminal#messageFlux()}
+         * for the rest of the session over one mistyped checksum, while the printer answered normally.
+         * A terminal signal there now means only that the inbound side is gone - {@link #onError} and
+         * {@link #onComplete} below. Which errors are fatal is not decided here: {@code :gcode} keeps
+         * the machine's own words as text, and that judgement belongs to the host.
          */
         @Override
         public void onNext(GRs<?> reply) {

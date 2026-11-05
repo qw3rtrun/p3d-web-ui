@@ -189,6 +189,25 @@ Follow the `tdd` skill for the loop. On top of it, for this layer:
 
 ## Documentation duty
 
+**A family of builders is documented once, at the file level, not once per builder.** `GWords.kt`'s
+21 letters each come in five shapes, and that shape — the flag, the three number/decimal/value
+overloads, the lexeme rule — is one fact, said once in the file's top KDoc with one example per
+shape. A `fun X(value: Int)` whose body is `word('X', value)` needs no KDoc of its own: the file
+block already told the reader what it does. The same holds for `G`/`M`/`T` in `G.kt` — the shared
+shape (number vs. lexeme overload, spec 4.1) belongs in the class block, not repeated per letter.
+
+**A builder earns its own line only for a measured quirk**, not for existing. `D`'s collision with
+the Marlin debug command, `bareString`'s four refused characters, `command`'s letter-collision
+rule — these are real, non-obvious facts that survive, compressed, either in the file block (a
+quirk shared by the whole family, like `D`) or on the one builder that has it (like `bareString`).
+A neighbour that behaves exactly as the pattern predicts gets nothing.
+
+**Rule 1's "entry points" are the handful of functions a caller actually reaches for** — `G`, `M`,
+`T`, `command`, `block`, the generic `word`/`flag`/`text`/`bareString`/`expr` — and those may keep a
+compressed description and a wire-text example each. The ~100 per-letter overloads behind them are
+not entry points in that sense; they are the same five shapes with the letter fixed, and the file
+block is where that is said.
+
 - [`GCODE_spec.md`](../../../doc/specs/GCODE_spec.md) is the syntax authority. Cite section numbers
   where a rule is non-obvious; the DSL cites spec 3.1, 3.2, 3.4, 3.5, 4.1, 4.2, 4.3, 5, 6, 7.1, 7.2
   and 8 today.

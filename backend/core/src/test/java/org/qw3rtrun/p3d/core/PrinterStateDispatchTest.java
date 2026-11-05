@@ -48,24 +48,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The aggregate's own dispatch: which messages it acts on, and what happens to the rest.
- *
- * <p>This used to live in {@code PrinterReactor}, as reflection. The reactor read this class's
- * declared methods at construction, keyed them by parameter type, and resolved each message by a
- * breadth-first walk of its supertype graph. Nothing about it was checked by anything: renaming a
- * handler unregistered it, and a message type that gained an interface changed which handler won.
- * The only symptom was a {@code No invoker for} at WARN - nothing threw, the temperature simply
- * stopped moving, which is how a real regression shipped once.
- *
- * <p>It is a {@code switch} now, in the class that owns the decision, so a renamed or deleted
- * handler is a compile error. What is left for a test is the thing a compiler still cannot check:
- * that the arms route where they claim to, and that an unhandled message is survived rather than
- * thrown on.
- *
- * <p><strong>The replies here are {@code :gcode}'s own.</strong> They used to be {@code api.msg}
- * records that {@code ReplyEvents} built from them - a second model of a Marlin's replies - so what
- * these tests fed the aggregate was a translation rather than a reply. They are the decoded values
- * now, which is also what a live machine produces.
+ * The aggregate's own dispatch: which messages it acts on, and what happens to the rest. Used to be
+ * reflection in {@code PrinterReactor} - a renamed handler silently unregistered, with no symptom
+ * beyond a {@code No invoker for} at WARN, which is how a real regression once shipped. It is a
+ * {@code switch} now, so a renamed or deleted handler is a compile error; what is left for a test is
+ * what the compiler cannot check - that the arms route where they claim to, and that an unhandled
+ * message is survived rather than thrown on. The replies fed here are {@code :gcode}'s own decoded
+ * values, the same as a live machine produces - not the {@code api.msg} translation this suite used
+ * to feed instead.
  */
 class PrinterStateDispatchTest {
 
@@ -108,14 +98,8 @@ class PrinterStateDispatchTest {
         assertEquals(127, printer.getTemperature().getPower());
     }
 
-    /**
-     * A target the firmware did not state stays absent.
-     *
-     * <p>The record this replaced had no way to say "not reported" - an absent target arrived as
-     * {@code 0.0}, which is indistinguishable from a hotend that has been told to cool down. One of
-     * those is a machine nobody has asked for anything and the other is a machine on its way off,
-     * and a page drawing both the same way is wrong about one of them.
-     */
+    // the record this replaced had no way to say "not reported" - an absent target arrived as 0.0,
+    // indistinguishable from a hotend told to cool down.
     @Test
     void aReadingWithNoTargetKeepsSayingSo() {
         var printer = online();
@@ -127,13 +111,8 @@ class PrinterStateDispatchTest {
         assertEquals(null, printer.getTemperature().getPower());
     }
 
-    /**
-     * Firmware and capability reports are republished, and prove nothing about the link.
-     *
-     * <p>Two events and not three. An {@code M115} answer is the most convincing-looking reply
-     * there is - it names the firmware - and it is still only something the machine said. See
-     * {@link #aReplyWithNoArmSendsNothingAndProvesNothingEither}.
-     */
+    // an M115 answer is the most convincing-looking reply there is - it names the firmware - and is
+    // still only something the machine said, not proof of a link.
     @Test
     void firmwareAndCapabilityEventsReachItToo() {
         var printer = online();
@@ -150,23 +129,13 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * A reply nothing claims is <strong>passed on</strong>, sends nothing, and proves nothing.
-     *
-     * <p>Three claims, and the first is the inversion. This used to assert that a reply with no arm
-     * reached nobody, and that assertion is how three finished features came to ship dead: a
-     * position report decoded all the way through the transport and never appeared in a browser,
-     * and then both halves of the Storage tab. A suite that pins dropping as correct cannot also
-     * say that a particular reply must not be dropped. The default republishes now, so the cost of
-     * a missing arm is the aggregate's opinion rather than the whole feature.
-     *
-     * <p>The second is unchanged and is the point of the aggregate: it answers nothing on the wire.
-     * Passing a reply to a subscriber is not the same as acting on it.
-     *
-     * <p>The third is unchanged and was expensive to learn: a reply does <em>not</em> advance the
-     * connection. B3 put <em>any</em> reply on the {@code ONLINE} to {@code IDLE} arrow on the
-     * grounds that it proved a firmware was there, and a live run proved that it does not.
-     * Auto-report traffic an earlier session left running arrives at a host whose outbound half is
-     * dead, and reads exactly like this.
+     * A reply nothing claims is passed on, sends nothing, and proves nothing. The first claim is the
+     * inversion: this used to assert the opposite, and pinning "dropped" as correct is how three
+     * finished features shipped dead (a position report, then both halves of the Storage tab). The
+     * default republishes now, so a missing arm costs the aggregate's opinion rather than the whole
+     * feature. The third claim was expensive to learn: B3 put any reply on {@code ONLINE -> IDLE} on
+     * the grounds that it proved a firmware was there, and a live run proved it does not - auto-report
+     * traffic an earlier session left running reads exactly like this.
      */
     @Test
     void aReplyWithNoArmIsPassedOnAndStillProvesNothing() {
@@ -180,13 +149,8 @@ class PrinterStateDispatchTest {
         assertEquals(MachineConnectionState.ONLINE, printer.getConnection().state());
     }
 
-    /**
-     * An error is announced as a state change and not also as itself.
-     *
-     * <p>The one deliberate exception to republishing. {@code ErrorRs} moves the connection to
-     * {@code ERROR} carrying the firmware's own words, and emitting the reply beside the transition
-     * would put one fault on the stream twice in two shapes for a browser to reconcile.
-     */
+    // the one deliberate exception to republishing: emitting the reply beside the transition would
+    // put one fault on the stream twice, in two shapes, for a browser to reconcile.
     @Test
     void anErrorIsAnnouncedOnceAsAStateChange() {
         var printer = online();
@@ -198,14 +162,9 @@ class PrinterStateDispatchTest {
         assertEquals("checksum mismatch, Last Line: 2", printer.getConnection().reason());
     }
 
-    /**
-     * An acknowledged block is what takes a machine to {@code IDLE}, and it arrives unprompted.
-     *
-     * <p>Nothing has to ask for one. {@code onOnline} sends {@code M115} and {@code M155 S1} the
-     * moment the socket comes up, so a healthy printer acknowledges a block within a round trip of
-     * connecting and the stricter arrow costs nothing in the normal case - which is the only reason
-     * it can afford to be this strict.
-     */
+    // arrives unprompted: onOnline sends M115/M155 S1 the moment the socket comes up, so a healthy
+    // printer acknowledges within a round trip of connecting - the only reason the arrow can afford
+    // to be this strict.
     @Test
     void anAcknowledgedBlockIsWhatProvesTheMachineIsThere() {
         var printer = online();
@@ -219,21 +178,13 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * Blocks the transport threw away are passed on, and move nothing - issue #60.
-     *
-     * <p><strong>The aggregate has nothing to decide about this and the handler exists to say
-     * so.</strong> It is a host-side fact rather than a reply - like {@link BlockAcknowledged}, it
-     * is something only the send window can know - and what acts on it is {@code JobFeeder}, which
-     * fails the job. So the arm republishes and does nothing else, which is the same shape as
-     * {@code on(PositionRs)}.
-     *
-     * <p><strong>The machine is left in {@code ERROR} on purpose, and that is the claim.</strong>
-     * A resynchronisation never arrives alone: the firmware says
-     * {@code Error:Line Number is not Last Line Number+1}, then {@code Resend:}, and the host
-     * concludes it cannot answer. The {@code Error:} already drove {@code connection.faulted(...)},
-     * so anything this handler did to the connection would be the same fault counted twice - a
-     * {@code faulted()} re-announcing it, or a {@code heard()} <em>clearing</em> it, which is what
-     * the {@code default} arm did before this handler existed and is what this test caught.
+     * Blocks the transport threw away are passed on, and move nothing - issue #60. A host-side fact
+     * rather than a reply, like {@link BlockAcknowledged}, so the arm republishes and does nothing
+     * else (same shape as {@code on(PositionRs)}); {@code JobFeeder} is what fails the job. The
+     * machine is left in {@code ERROR} on purpose: the {@code Error:}/{@code Resend:} that always
+     * precedes this already drove {@code connection.faulted(...)}, so moving it again would count one
+     * fault twice - as a repeated {@code faulted()}, or as a {@code heard()} clearing it, which is
+     * what the {@code default} arm did before this handler existed and what this test caught.
      */
     @Test
     void abandonedBlocksArePassedOnAndMoveNoConnectionState() {
@@ -255,14 +206,8 @@ class PrinterStateDispatchTest {
                 printer.getConnection().reason());
     }
 
-    /**
-     * A busy notice and an error report are the aggregate's business now, and were not before.
-     *
-     * <p>Both used to fall through to the debug line, so the only thing the application ever did
-     * with {@code echo:busy: processing} was log it. They are states on the connection lifecycle -
-     * see {@link ConnectionLifecycle} - which is what lets a page show a machine as working rather
-     * than as idle-and-ignoring-you.
-     */
+    // both used to fall through to the debug line, so the only thing the application ever did with
+    // echo:busy: processing was log it.
     @Test
     void aBusyNoticeAndAnErrorAreStatesRatherThanNoise() {
         var printer = online();
@@ -277,14 +222,9 @@ class PrinterStateDispatchTest {
         assertEquals(List.of(), sent, "neither is answered on the wire by this layer");
     }
 
-    /**
-     * A command to a machine that is not connected is refused rather than crashing.
-     *
-     * <p>It was a 500 and a {@code NullPointerException}: the {@code GSender} is held only while a
-     * link is up and every arm below dereferences it, so a request that had bound and routed
-     * perfectly blew up pointing at the aggregate instead of at the machine being unreachable. The
-     * known-debt entry for this named B3 as its owner.
-     */
+    // used to be a 500 and a NullPointerException: GSender is held only while a link is up, so a
+    // request that bound and routed perfectly blew up pointing at the aggregate, not the unreachable
+    // machine.
     @Test
     void aCommandToAnUnconnectedMachineIsRefusedAndNotAnNpe() {
         var printer = new PrinterState(UUID.randomUUID());
@@ -296,13 +236,8 @@ class PrinterStateDispatchTest {
         assertEquals(MachineConnectionState.OFFLINE, printer.getConnection().state());
     }
 
-    /**
-     * The command direction, which the reflective version never had a test for.
-     *
-     * <p>Routed through {@code onCommand} rather than called directly, a command still reaches its
-     * handler and still reaches the wire - which is the half of the dispatch a caller actually
-     * depends on.
-     */
+    // the command direction, which the reflective version never had a test for: routed through
+    // onCommand rather than called directly, and still reaches the wire.
     @Test
     void aCommandRoutedThroughTheDispatchStillReachesTheWire() {
         var printer = online();
@@ -314,19 +249,11 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * A command with no arm is <strong>sent</strong>, which is the inversion of what this test
-     * used to assert.
-     *
-     * <p>It read {@code aCommandWithNoArmSendsNothingAndDoesNotThrow} and pinned the old default:
-     * an unlisted command was dropped with a warning, on the argument that nothing is honester
-     * than a command that does not half-happen. The trouble is that it made the suite agree with
-     * the bug - it asserted that silently dropping a command the user asked for was correct
-     * behaviour, so no test could also say that a <em>particular</em> command must not be dropped.
-     * Motion shipped dead once and the whole Storage tab shipped dead after it.
-     *
-     * <p>{@code M115} is the case in point: nothing about asking a machine what firmware it runs
-     * needs this layer's permission, and there was never a reason beyond an unwritten arm for it to
-     * be thrown away.
+     * A command with no arm is sent - the inversion of what this test used to assert (that an
+     * unlisted command was dropped with a warning). Pinning the drop as correct meant no test could
+     * also say a particular command must not be dropped, and motion shipped dead once, then the whole
+     * Storage tab. {@code M115} is the case in point: nothing about asking a machine its firmware
+     * needs this layer's permission.
      */
     @Test
     void aCommandWithNoArmIsSentAsItWasGiven() {
@@ -338,22 +265,12 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * The commands that are refused, which is the half of the bargain that makes the inversion
-     * safe.
-     *
-     * <p>Each of these would be accepted by the firmware and each would break something this host
-     * guarantees, so they are declined rather than written - and declined by name, with the reason
-     * in the log, which is a different thing from the old default's "nobody got round to it".
-     *
-     * <ul>
-     *   <li>{@code M28} makes the wire a file sink until {@code M29}, so everything behind it is
-     *       written into the file rather than run. #31 measured that. An upload goes through
-     *       {@code PrinterControl.uploadToCard}, which holds the connection.</li>
-     *   <li>{@code M29} ends a transfer this route never began.</li>
-     *   <li>{@code M110} moves the firmware's line counter and not the send window's, and every
-     *       block after it is rejected for the rest of the session.</li>
-     *   <li>{@code M112} is an emergency stop, and one queued behind a print is not one.</li>
-     * </ul>
+     * The commands that are refused - the half of the bargain that makes the inversion safe. Each
+     * would be accepted by the firmware and each would break something this host guarantees, so they
+     * are declined by name with a reason, unlike the old default's silent drop: {@code M28} makes the
+     * wire a file sink until {@code M29} (#31); {@code M29} ends a transfer this route never began;
+     * {@code M110} moves the firmware's line counter and not the send window's; {@code M112} queued
+     * behind a print is not an emergency stop.
      */
     @Test
     void theCommandsThisRouteCannotCarryAreRefusedRatherThanWritten() {
@@ -369,7 +286,7 @@ class PrinterStateDispatchTest {
 
     // ------------------------------------------------------------- the EEPROM settings, issue #88
 
-    /** What the aggregate wrote, given the commands {@code PrinterControl.send} handed it. */
+    // what the aggregate wrote, given the commands PrinterControl.send handed it.
     private List<String> wire(PrinterState printer, GRq<?>... commands) {
         for (var command : commands) {
             printer.onCommand(command);
@@ -378,15 +295,10 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * Each of the EEPROM operations as the exact bytes it puts on the wire.
-     *
-     * <p><strong>The string and not the class</strong>, because the class names are no guide to
-     * what they write. These three happen to be bare, but the six setters below are not, and the
-     * whole point of asserting at this level is that a generated parameter name has no vote.
-     *
-     * <p>{@code M500} is here although it had a handler before this feature: it is the one command
-     * of the five that writes the EEPROM, and this is the sequence an operator performs - read,
-     * validate, save.
+     * Each of the EEPROM operations as the exact bytes it puts on the wire - the string, not the
+     * class, since class names are no guide to what they write and a generated parameter name must
+     * have no vote. {@code M500} is included because it is the one of the five that writes the
+     * EEPROM, in the sequence an operator performs: read, validate, save.
      */
     @Test
     void theEepromOperationsReachTheWireAsThemselves() {
@@ -397,15 +309,11 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * {@code M501} puts <strong>two</strong> commands on the wire, in order: the restore, then an
-     * {@code M503} the aggregate asked for itself.
-     *
-     * <p><strong>This is the test that would have caught the stale-settings bug.</strong>
-     * {@code M501} answers a bare {@code ok} and announces nothing at all - measured - while
-     * genuinely replacing every live setting, so a host that merely forgets its held report shows
-     * an empty tab and a host that keeps it shows a wrong one. Neither is correctable by anything
-     * the firmware will ever say next. The re-ask puts the tab right within one round trip, and it
-     * costs one command and about 25 reply lines.
+     * {@code M501} puts two commands on the wire, in order: the restore, then an {@code M503} the
+     * aggregate asked for itself - the test that would have caught the stale-settings bug.
+     * {@code M501} answers a bare {@code ok} and announces nothing (measured) while genuinely
+     * replacing every live setting, so forgetting the held report shows an empty tab and keeping it
+     * shows a wrong one; the re-ask fixes it within one round trip.
      */
     @Test
     void aRestoreAsksForTheSettingsAgain() {
@@ -414,7 +322,7 @@ class PrinterStateDispatchTest {
         assertEquals(List.of("M501", "M503"), wire(printer, new RestoreSettings()));
     }
 
-    /** And so does {@code M502}, for the same reason and with the same measurement behind it. */
+    // and so does M502, for the same reason and with the same measurement behind it.
     @Test
     void aFactoryResetAsksForTheSettingsAgain() {
         var printer = online();
@@ -422,14 +330,8 @@ class PrinterStateDispatchTest {
         assertEquals(List.of("M502", "M503"), wire(printer, new FactoryReset()));
     }
 
-    /**
-     * On a firmware that has no {@code M503}, the request is refused and the re-ask is skipped.
-     *
-     * <p>{@code DISABLE_M503} removes the report from a build that stores settings perfectly well,
-     * and the only thing that says so is the refusal. Once one has arrived, asking again would put
-     * a command on the wire that is known to be refused - once per reset, for the rest of the
-     * session.
-     */
+    // DISABLE_M503 removes the report from a build that stores settings fine, and only the refusal
+    // says so; asking again once it has arrived would put a known-refused command on the wire.
     @Test
     void aFirmwareWithNoM503IsNotAskedForTheReport() {
         var printer = online();
@@ -445,17 +347,12 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * The six settings this feature may change, as the exact bytes each one writes.
-     *
-     * <p><strong>Every one of these would be wrong if it trusted the generated parameter
-     * name.</strong> {@code SetAxisStepsPerUnit.steps} writes {@code X},
-     * {@code PrintTravelMoveLimits.accel} writes {@code X},
-     * {@code SetStartingAcceleration.accel} writes {@code P}, {@code SetAdvancedSettings.jerk}
-     * writes {@code X} and its {@code deviation} writes {@code J}, and
-     * {@code SetHomeOffsets.offset} writes {@code P}. The generator names a parameter after the
-     * value {@code commands.json} documents rather than after its letter, so the field names record
-     * Marlin's documentation and not the wire. Asserting the string is the only way this test can
-     * disagree with the code.
+     * The six settings this feature may change, as the exact bytes each one writes. Every one would
+     * be wrong if it trusted the generated parameter name: {@code SetAxisStepsPerUnit.steps} and
+     * {@code PrintTravelMoveLimits.accel} write {@code X}, {@code SetStartingAcceleration.accel} and
+     * {@code SetHomeOffsets.offset} write {@code P}, {@code SetAdvancedSettings.jerk} writes
+     * {@code X} and its {@code deviation} writes {@code J} - the generator names fields after
+     * Marlin's documentation, not the wire letter.
      */
     @Test
     void theSixSettersReachTheWireAsTheBytesTheyActuallyWrite() {
@@ -482,15 +379,11 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * A settings line is republished <em>and</em> held, which is the pair of claims that matters.
-     *
-     * <p>Republished because somebody just asked: these are answers to an {@code M503} a page
-     * pressed a button for, so a repeat is still news to that page - the same reading
-     * {@code on(SdCardRs)} takes and the opposite of the temperature's. Held because a page opened
-     * a minute later has to see the settings without pressing the button again.
-     *
-     * <p>Asserting only the first half is how both halves of the Storage tab shipped dead: the
-     * replies arrived, decoded perfectly, and the aggregate dropped them.
+     * A settings line is republished and held - the pair of claims that matters. Republished since
+     * these answer an {@code M503} a page pressed a button for, so a repeat is still news (the same
+     * reading {@code on(SdCardRs)} takes, opposite the temperature's); held so a page opened later
+     * sees the settings without pressing the button again. Asserting only the first half is how both
+     * halves of the Storage tab shipped dead.
      */
     @Test
     void aSettingsLineIsRepublishedAndHeld() {
@@ -507,7 +400,7 @@ class PrinterStateDispatchTest {
                 "and a page opened later has to be handed it: " + printer.snapshot());
     }
 
-    /** {@code M504}'s verdict travels the same way, as the message the firmware wrote. */
+    // M504's verdict travels the same way, as the message the firmware wrote.
     @Test
     void theEepromVerdictIsRepublishedAndHeld() {
         var printer = online();
@@ -521,13 +414,9 @@ class PrinterStateDispatchTest {
 
     /**
      * An {@code Unknown command:} reply is republished whatever it names - the regression this
-     * feature could most easily have caused.
-     *
-     * <p>Before issue #88 {@code UnknownCommand} reached {@code republish} through the
-     * {@code default} arm and the browser saw it. Giving it a named arm so the settings control can
-     * learn from an {@code M503} refusal is exactly the shape of change that quietly stops that:
-     * the handler consumes the reply and the page loses every refusal of every other command. So
-     * the arm offers it to the control and republishes regardless.
+     * feature could most easily have caused: giving it a named arm so the settings control can learn
+     * from an {@code M503} refusal is exactly the shape of change that could quietly consume every
+     * other command's refusal too.
      */
     @Test
     void anUnknownCommandStillReachesTheBrowserWhateverItNames() {
@@ -543,13 +432,8 @@ class PrinterStateDispatchTest {
         assertEquals(List.of(), sent, "and the aggregate answers none of them on the wire");
     }
 
-    /**
-     * A new session forgets a refusal, so a reflashed machine is asked again.
-     *
-     * <p>{@code onOnline} is where every control is told the session changed, and this one has to
-     * be told for the same reason the card is: what comes back up on the same address can be a
-     * different firmware, or a different machine on a cable that was moved.
-     */
+    // onOnline is where every control is told the session changed - what comes back up on the same
+    // address can be a different firmware, or a different machine on a moved cable.
     @Test
     void aNewSessionAsksAFirmwareWithNoM503Again() {
         var printer = online();
@@ -567,18 +451,11 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * A position report reaches whoever is watching.
-     *
-     * <p><strong>This is a regression test for a silent drop, and it was the first of three.</strong>
-     * The transport decoded {@code M114}'s answer correctly and it still never appeared in a
-     * browser, because back then the aggregate republished only what it had an arm for and
-     * everything else reached a {@code default} that logged at debug and stopped. Every layer in
-     * between looked right, which is why it took a live run to find - and the same drop then took
-     * the Storage tab's commands and its replies in turn.
-     *
-     * <p>The default republishes now, so this arm is no longer what stands between a position and
-     * oblivion. It is still the named handler the aggregate rule asks for, and what it asserts -
-     * that the axes arrive intact and under their own letters - is worth pinning either way.
+     * A position report reaches whoever is watching - a regression test for a silent drop, the first
+     * of three: {@code M114}'s answer decoded correctly and still never appeared in a browser, back
+     * when the default logged at debug and stopped rather than republishing. Every layer in between
+     * looked right, which is why it took a live run to find. Still worth pinning that the axes arrive
+     * intact and under their own letters.
      */
     @Test
     void aPositionReportIsRepublishedToSubscribers() {

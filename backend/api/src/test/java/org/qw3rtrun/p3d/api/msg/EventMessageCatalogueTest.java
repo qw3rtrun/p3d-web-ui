@@ -21,29 +21,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Every type in this package is classified by whether it travels as an {@link EventMessage#event()},
  * and a new one that nobody classified fails the build.
  *
- * <p><strong>This exists because the hand-maintained list is a known failure mode, four times
- * over.</strong> {@link EventMessage}'s javadoc enumerates the farm's own facts and
- * {@code package-info} says the same set in prose; both went stale on {@link SdUploadProgressed}
- * (#69), {@code MockPrinter}'s census claim went stale (#61), and the TypeScript {@code GcodeFile}
- * type is still missing a field the server sends (#50). Each was found by a person reading a diff.
+ * <p>Exists because the hand-maintained list is a known failure mode: {@link EventMessage}'s
+ * javadoc and {@code package-info}'s prose both went stale on {@link SdUploadProgressed} (#69),
+ * {@code MockPrinter}'s census claim went stale (#61), and the TypeScript {@code GcodeFile} type
+ * is still missing a field the server sends (#50) - each found by a person reading a diff.
  *
- * <p><strong>What this guards is the moment of addition, not the prose.</strong> The question those
- * lists exist to answer is *does this new message need a {@code case} in the browser* - a
- * {@code type} string the TypeScript side switches on, pinned by {@code EventStreamContractTest} in
- * {@code :frontend:web-ui}, which this module cannot see. So the assertion that earns its place is
- * the two-way one below: a type added to this package is in neither table, and the build stops until
- * somebody says which it is. The table is still maintained by hand, but it is a hand-maintained list
- * whose staleness is loud, which is the whole difference from the two javadoc lists.
+ * <p>What this guards is the moment of addition, not the prose: whether a new message needs a
+ * {@code case} in the browser, a {@code type} string pinned by {@code EventStreamContractTest} in
+ * {@code :frontend:web-ui}, which this module cannot see. The table below is still hand-maintained,
+ * but its staleness is loud rather than silent, which is the whole difference from the two
+ * javadoc lists.
  *
- * <p><strong>What it deliberately does not check:</strong> the prose in {@code package-info}, which
- * names these things in words rather than by type and cannot be matched mechanically without
- * rewriting it into a list; and whether a type that does <em>not</em> travel has been wrongly linked
- * into {@link EventMessage}'s sentence. Both omissions are failures of documentation with nothing
- * downstream of them. The failure this one catches costs a browser a {@code case}.
+ * <p>Deliberately does not check {@code package-info}'s prose, which names things in words rather
+ * than by type, or whether a non-travelling type was wrongly linked into {@link EventMessage}'s
+ * sentence - both are documentation failures with nothing downstream; this one costs a browser a
+ * {@code case}.
  *
- * <p>It reads the compiled package rather than the source directory on purpose:
- * {@code ManagementEvents.kt} is one file holding four types, so a scan of {@code *.java} and
- * {@code *.kt} would let three of them through.
+ * <p>Reads the compiled package rather than the source directory, since
+ * {@code ManagementEvents.kt} is one file holding four types, which a scan of {@code *.java}/
+ * {@code *.kt} would let through.
  */
 class EventMessageCatalogueTest {
 

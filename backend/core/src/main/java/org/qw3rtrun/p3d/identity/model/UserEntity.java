@@ -14,20 +14,13 @@ import org.qw3rtrun.p3d.api.identity.FarmRole;
 import org.qw3rtrun.p3d.api.identity.FarmUser;
 
 /**
- * One person who may use this farm.
+ * One person who may use this farm. Internal to {@code identity} and must not leave it, the way
+ * {@code PrinterEntity} must not leave {@code printer-management}: what crosses is {@link FarmUser}.
  *
- * <p>Internal to {@code identity} and must not leave it, the way {@code PrinterEntity} must not
- * leave {@code printer-management}: what crosses a boundary is {@link FarmUser}.
- *
- * <p><strong>The username is the key, folded to lower case.</strong> A farm where {@code Alice} and
- * {@code alice} are two accounts is a farm where revoking one leaves the other working, and
- * somebody typing their own name with the wrong capitalisation is told their password is wrong.
- * Folding happens in the directory, on every write and every lookup, so the column holds one
- * spelling and nothing has to remember to normalise.
- *
- * <p><strong>The role is stored as its name, not its ordinal.</strong> {@code EnumType.ORDINAL}
- * would make inserting a role into the middle of {@link FarmRole} silently promote every existing
- * user - a VIEWER becoming an OPERATOR because somebody tidied an enum.
+ * <p>The username is the key, folded to lower case in the directory on every write and lookup, so
+ * {@code Alice} and {@code alice} cannot become two accounts where revoking one leaves the other
+ * working. The role is stored as its name, not {@code EnumType.ORDINAL}'s number, so inserting a
+ * role into the middle of {@link FarmRole} cannot silently promote every existing user.
  */
 @Entity
 @Table(name = "app_user")

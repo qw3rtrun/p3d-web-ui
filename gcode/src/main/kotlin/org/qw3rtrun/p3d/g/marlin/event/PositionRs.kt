@@ -40,8 +40,6 @@ import org.qw3rtrun.p3d.g.protocol.numberEnd
  * PositionRs.decode("T:93.2 B:22.9")                             // null
  * ```
  *
- * @property axes the logical position, per axis letter, with the digits the machine wrote
- * @property counts the stepper position in steps, per axis label; empty when the line has no `Count`
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 data class PositionRs(
@@ -71,13 +69,9 @@ data class PositionRs(
         private val AXIS_ORDER = "XYZIJKUVWEABC".toCharArray()
 
         /**
-         * The walk was already here - the pattern only ever read **one field at a time**, anchored
-         * at the cursor with `find(at)` and `matcher.start() != at`. So what comes out is the field
-         * reader, not the loop.
-         *
-         * Note there is no case folding anywhere in this decoder, and there was none in the
-         * pattern either: axis letters and `Count` are uppercase on every firmware that writes a
-         * position report, and folding would start claiming lines that merely look like fields.
+         * No case folding anywhere in this decoder: axis letters and `Count` are uppercase on every
+         * firmware that writes a position report, and folding would start claiming lines that merely
+         * look like fields.
          */
         override fun decode(line: String): PositionRs? {
             val rest = line.asciiTrim()

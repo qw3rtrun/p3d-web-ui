@@ -8,15 +8,12 @@ import java.util.List;
 /**
  * Throw away what is in live memory and load the EEPROM's copy back - {@code M501}.
  *
- * <p>The undo for every setting changed in this session, and the recoverable one of the two
- * discarding commands: whatever was stored is still stored, so this costs an operator only the
- * edits they have not saved.
+ * <p>The undo for this session's edits, and the recoverable one of the two discarding commands:
+ * whatever was stored is still stored, so this costs only the unsaved edits.
  *
- * <p><strong>The firmware announces nothing.</strong> Measured: {@code M501} answers a bare
- * {@code ok} and says not one word about which of a dozen values it just changed. So the aggregate
- * sends its own {@code M503} behind this one and the browser is told the reverted values - without
- * that, every open Settings tab would go on showing the edits that have just been discarded, and
- * the only way out would be an operator thinking to press Read.
+ * <p>Measured: the firmware announces nothing, a bare {@code ok} with no word on what changed. So
+ * the aggregate sends its own {@code M503} behind this one and the browser is told the reverted
+ * values - otherwise every open Settings tab would keep showing the discarded edits.
  */
 public record RevertSettings() implements PrinterCommand {
 

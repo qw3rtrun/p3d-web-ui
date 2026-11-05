@@ -10,31 +10,24 @@ import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 /**
  * Turns a token stream into a stream of classified blocks, per GCODE_spec.md section 5.
  *
- * Two steps, both here. Grouping: tokens are cut into blocks at each line break - the one point
- * where a line of text and a block coincide, and the reason the unit was called a line for so
- * long. Classification: a block's shape is read off **two token positions** - the first
- * identifier, which is its first field
+ * Two steps, both here. Grouping: tokens are cut into blocks at each line break. Classification: a
+ * block's shape is read off two token positions - the first identifier, which is its first field
  * (spec 5; whitespace per 2.1 and comments per 6 are not fields, so it is not necessarily token 0),
- * and the last `*`, which spec 5 puts last. A `*` the lexer put inside a comment or a string is part
- * of that token and is never an identifier, so it cannot be mistaken for the marker.
+ * and the last `*`, which spec 5 puts last. A `*` inside a comment or string is part of that token
+ * and never an identifier, so it cannot be mistaken for the marker.
  *
- * **It does not build words.** Everything the shape depends on is a token or a token index: the
- * line number is the integer behind the first `N`, the checksum field is the integer behind the last
- * `*`, and spec 8.3's covered range is the tokens between the two. That is also what makes the range
- * exact without a word to reason about - a space before the marker is a token inside the range, and
- * a space after it is a token outside it, with nothing to absorb either. Words are the command
- * layer's, and the DSL and `GRq.encode()` are what build them.
+ * It does not build words: the line number is the integer behind the first `N`, the checksum is the
+ * integer behind the last `*`, and spec 8.3's covered range is the tokens between the two - exact
+ * without a word to reason about, since a space before the marker is inside the range and a space
+ * after it is outside. Words are the command layer's.
  *
- * One instance consumes one token stream. Classification itself is independent of that state: a
- * caller holding one block's tokens hands them to a reader of their own and takes `next()`.
+ * One instance consumes one token stream; classification itself is stateless.
  *
- * **A [GFramedBlock] is only ever built for a block whose checksum has been verified** (spec section
- * 8). Verification happens here, ahead of the construction, so the type carries the invariant and
- * there is no `verify()` for a caller to forget: holding a `GFramedBlock` means the block is intact.
- * A well-formed checksum field that does not match its bytes yields [GCheckSumFailedBlock] instead.
+ * A [GFramedBlock] is only ever built for a block whose checksum has been verified here, ahead of
+ * construction, so holding one means the block is intact - there is no `verify()` to forget. A
+ * well-formed checksum field that does not match its bytes yields [GCheckSumFailedBlock] instead.
  *
- * [GBlockReader.blocks] is the usual way in; construct a reader directly to drive the blocks by
- * hand, or when the tokens are already in hand.
+ * [GBlockReader.blocks] is the usual way in; construct a reader directly to drive blocks by hand.
  *
  * ```
  * GBlockReader.blocks("N1 G28*18\n").first() is GFramedBlock   // true
@@ -43,33 +36,25 @@ import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
  * reader.next()   // GFramedBlock, number 1, checksum 18
  * ```
  *
- * **How a block is classified**, in the order the checks run:
+ * How a block is classified, in the order the checks run:
  *
- * - One pass over the tokens finds both positions the shape is read from. There is no `break` on the
- *   marker: spec 5 puts the field last, so the last `*` wins.
- * - Spec 5: a block of no field at all is a no-op, [GMeaninglessBlock]. It keeps its tokens so the
- *   block still reproduces its input.
- * - Spec 7.1: `N` is followed by an integer. A bare `N`, or one followed by anything else, is a
- *   malformed line number, and that is decided by the **first field alone** - reading a later `N` as
- *   the line number is what made `M110 N7` unreadable (todo 05).
- * - Spec 7.3: a line number and a checksum must both be present or both be absent. **Presence of the
- *   marker** is what pairs, not whether its value parsed - the pairing question is answered before the
- *   field-syntax one, so a `*` alone is unpaired rather than malformed.
- * - Spec 8.1: `*<unsigned-int>`. A marker with no integer after it - `N1*`, `*ABC`, `*10.5` - is a
- *   *malformed* checksum, never a missing one: a host tells spec 7.3 (unpaired, reframe) from spec 8.1
- *   (garbled, resend the block - spec 8.5) by exactly this distinction. The digit count selects the
- *   algorithm, and a width neither algorithm claims is still a syntax answer - there is nothing to
- *   compare `*1234` against.
- * - Spec 8.3: the covered bytes run from the `N`, inclusive, up to but not including the `*` - which
- *   over tokens is exactly that and nothing more. Indentation before the `N` is outside; a space
- *   before the marker is inside; the marker, its value and the terminator are outside.
- * - The recomputed and carried checksums are compared as `int`, **never as `GInt`**: `GInt` is a data
- *   class whose `equals` includes the lexeme, so a recomputed `GInt(57, "57")` is not equal to a
- *   carried `GInt(57, "057")`. That would fail every zero-padded block, and a CRC is zero-padded by
- *   definition (spec 8.4).
- * - A verified block's `body` runs from past the line number's *value* to the marker - not from just
- *   past the `N`, which would leave the number itself in the body - and it is a slice of the tokens
- *   already in hand rather than a copy, so `body` and `raw` cannot drift apart.
+ * - One pass finds both positions; there is no `break` on the marker, so the last `*` wins (spec 5).
+ * - Spec 5: no field at all is a no-op, [GMeaninglessBlock], keeping its tokens.
+ * - Spec 7.1: `N` must be followed by an integer, decided by the first field alone - reading a later
+ *   `N` as the line number is what made `M110 N7` unreadable (todo 05).
+ * - Spec 7.3: a line number and a checksum must both be present or both absent - presence of the
+ *   marker is what pairs, not whether its value parsed, so a `*` alone is unpaired rather than
+ *   malformed.
+ * - Spec 8.1: `*<unsigned-int>`. No integer after the marker (`N1*`, `*ABC`, `*10.5`) is malformed,
+ *   never missing - that distinction is how a host tells spec 7.3 (unpaired, reframe) from spec 8.1
+ *   (garbled, resend - spec 8.5). The digit count selects the algorithm; a width neither claims is
+ *   still a syntax answer, since there is nothing to compare `*1234` against.
+ * - Spec 8.3: the covered bytes run from the `N`, inclusive, to just before the `*`.
+ * - Recomputed and carried checksums compare as `int`, never as `GInt`: `GInt.equals` includes the
+ *   lexeme, so `GInt(57, "57")` would not equal a zero-padded `GInt(57, "057")`, failing every
+ *   zero-padded block (CRC is zero-padded by definition, spec 8.4).
+ * - A verified block's `body` runs from past the line number's value to the marker, as a slice of
+ *   the tokens already in hand, so `body` and `raw` cannot drift apart.
  */
 class GBlockReader(private val source: Iterator<GToken>) : Iterator<GBlock> {
 
@@ -77,15 +62,9 @@ class GBlockReader(private val source: Iterator<GToken>) : Iterator<GBlock> {
 
     /**
      * Reads the tokens up to and including the next line break, or to the end of the stream, and
-     * classifies them as one block.
-     *
-     * Past the end this throws `NoSuchElementException`, as `Iterator.next()` specifies; without that
-     * guard the tokenizer's own exception leaked out and its type depended on the character source
-     * (TODO 1.17). Malformed blocks never throw: they are the `GError` variants.
-     *
-     * ```
-     * GBlockReader(GTokenizer.parse("N1 G28*19\n").iterator()).next()   // GCheckSumFailedBlock, computed 18
-     * ```
+     * classifies them as one block. Throws `NoSuchElementException` past the end, per the iterator
+     * contract - without this the tokenizer's own exception leaked out, its type depending on the
+     * character source (TODO 1.17). Malformed blocks never throw; they are `GError` variants.
      *
      * @return the next block, carrying every token it was read from
      */
@@ -158,14 +137,12 @@ class GBlockReader(private val source: Iterator<GToken>) : Iterator<GBlock> {
     companion object {
 
         /**
-         * **The whole read pipeline: text in, classified blocks out** (spec sections 1 to 5, 7 and 8).
+         * The whole read pipeline: text in, classified blocks out (spec 1-5, 7-8).
          *
-         * It lives on the reader and not on the lexer because it is the reader's output: a lexer
-         * offering blocks would depend on the layer above it. Construct a [GBlockReader] directly to
-         * drive the blocks by hand, or when the tokens are already in hand.
-         *
-         * Re-iterable, like `GTokenizer.parse` over the same source: each pass builds its own
-         * tokenizer and reader, so the sequence is not `constrainOnce`.
+         * Lives on the reader and not the lexer because it is the reader's output: a lexer offering
+         * blocks would depend on the layer above it. Re-iterable, like `GTokenizer.parse` over the
+         * same source: each pass builds its own tokenizer and reader, so the sequence is not
+         * `constrainOnce`.
          *
          * ```
          * for (block in GBlockReader.blocks("G28\nN1 G28*18\n")) println(block::class.simpleName)

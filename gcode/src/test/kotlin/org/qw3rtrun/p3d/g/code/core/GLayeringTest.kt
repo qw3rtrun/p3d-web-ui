@@ -18,8 +18,8 @@ import java.io.File
  *   itself.
  *
  * All three may import `kotlin.*`, and `java.math.BigDecimal` is the one JVM type the core still
- * carries (see the `low-level-protocol-dev` skill's known debt). `core/` itself - `GEncoder` - and
- * `core/session` sit above all three and are not scanned: they are allowed to span.
+ * carries (see the `low-level-protocol-dev` skill's known debt). `core/` itself (`GEncoder`) and
+ * `core/session` sit above all three and are not scanned - they are allowed to span.
  *
  * The scan is textual on purpose. A fully-qualified name in a KDoc link is a dependency a reader
  * follows and a port author has to resolve, even though the compiler never sees it, and it is the
@@ -44,16 +44,14 @@ class GLayeringTest {
     /**
      * Every source line in the three layers that reaches outside what its layer may name.
      *
-     * The directories are asserted to exist and hold sources first, so a moved or renamed tree
-     * cannot make the scan pass by finding nothing.
+     * The directories are asserted to exist and hold sources first, so a moved or renamed tree cannot
+     * make the scan pass by finding nothing.
      *
-     * **The expected list is empty, and stays empty.** It started with three known violations,
-     * removed one change at a time: `GTokenizer`'s imports of `GBlock` and `GBlockReader` (the read
-     * pipeline moved to `GBlockReader.blocks`), and `GTokens`' import of `GBlockPart` (a comment goes
-     * into a block as `GCommentPart` rather than being a block part itself). The `command` layer was
-     * split out of `block` with none, because the dependency already ran one way: the block layer
-     * never asked what a block commands. A new entry is a new dependency pointing the wrong way; fix
-     * the dependency, do not pin the entry.
+     * The expected list is empty, and stays empty. It started with three known violations, removed
+     * one change at a time: `GTokenizer`'s imports of `GBlock` and `GBlockReader` (the read pipeline
+     * moved to `GBlockReader.blocks`), and `GTokens`' import of `GBlockPart` (a comment goes into a
+     * block as `GCommentPart` rather than being a block part itself). A new entry is a new dependency
+     * pointing the wrong way; fix the dependency, do not pin the entry.
      */
     @Test
     fun `each core layer names only itself and the layers below it`() {

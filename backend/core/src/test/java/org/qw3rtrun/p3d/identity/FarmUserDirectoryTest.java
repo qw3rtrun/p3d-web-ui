@@ -15,13 +15,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The people roster, against the <strong>real Liquibase schema</strong> - plan item D3.
- *
- * <p>Against the real changelog rather than {@code ddl-auto}, like every other persistence test
- * here: a column this module's entity disagrees with should fail in a test and not on the morning
- * somebody deploys it. For a table holding credentials that matters more than most - the
- * {@code password_hash} column is deliberately far wider than BCrypt needs, and nothing but a
- * migration run would catch it if it were not.
+ * The people roster, against the real Liquibase schema - plan item D3. The {@code password_hash}
+ * column is deliberately far wider than BCrypt needs, and only a migration run would catch it if it
+ * were not.
  */
 @SpringBootTest
 class FarmUserDirectoryTest {
@@ -36,12 +32,8 @@ class FarmUserDirectoryTest {
     @Autowired
     private PasswordEncoder encoder;
 
-    /**
-     * What goes in the column is a hash, and the farm can still recognise the password.
-     *
-     * <p>Both halves matter. "It is not the plaintext" alone would pass against a store that
-     * scrambled the password irrecoverably and could never log anybody in again.
-     */
+    // both halves matter - "not the plaintext" alone would pass a store that scrambled the password
+    // irrecoverably and could never log anybody in.
     @Test
     void aPasswordIsStoredHashedAndStillMatches() {
         var raw = "a long and unlikely passphrase";
@@ -55,12 +47,7 @@ class FarmUserDirectoryTest {
                 "and the hash must still recognise the password it was made from");
     }
 
-    /**
-     * {@code Alice} and {@code alice} are one account.
-     *
-     * <p>Two would be a farm where revoking one leaves the other working, and where somebody who
-     * capitalises their own name is told their password is wrong.
-     */
+    // two would be a farm where revoking one leaves the other working.
     @Test
     void usernamesAreOneAccountWhateverTheCapitalisation() {
         users.add("Folded", "pw", FarmRole.VIEWER);

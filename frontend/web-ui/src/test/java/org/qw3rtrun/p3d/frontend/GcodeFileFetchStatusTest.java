@@ -18,17 +18,14 @@ import java.util.stream.Stream;
 /**
  * Asking for a file the farm does not hold is a 404, and asking for one it does is still a 200.
  *
- * <p><strong>An empty {@code Mono} out of a {@code @RestController} handler is 200 with a
- * zero-length body</strong>, which is the bug this pins. The browser client reaches this endpoint
- * through {@code getJson}, which calls {@code response.json()} on whatever comes back - so "no such
- * file" arrived at the UI as a JSON syntax error rather than as a status it could act on. The two
- * neighbours of this handler, {@code download} and {@code JobController.fetch}, already answer 404;
- * this one was the odd one out of the three.
+ * <p>An empty {@code Mono} out of a {@code @RestController} handler is 200 with a zero-length body,
+ * which is the bug this pins: the browser's {@code getJson} calls {@code response.json()} on
+ * whatever comes back, so "no such file" arrived at the UI as a JSON syntax error rather than a
+ * status. This handler's neighbours, {@code download} and {@code JobController.fetch}, already
+ * answered 404 - this one was the odd one out.
  *
  * <p>Driven through {@link WebTestClient#bindToController} against a hand-written service, the way
- * {@code BlockingBoundaryTest} does: what is under test is the status and body this handler
- * produces, and booting a context would prove the same thing more slowly and with more that could
- * go wrong on the way.
+ * {@code BlockingBoundaryTest} does, since booting a context would prove the same thing more slowly.
  */
 class GcodeFileFetchStatusTest {
 
@@ -36,7 +33,7 @@ class GcodeFileFetchStatusTest {
             "a".repeat(64), 1024L, 42L,
             LocalDateTime.of(2026, 10, 31, 12, 0), SliceInfo.unknown());
 
-    /** A store that holds exactly one file and has never heard of any other id. */
+    // A store that holds exactly one file and has never heard of any other id.
     private final GcodeFileService files = new GcodeFileService() {
         @Override
         public Publisher<GcodeFile> store(String name, Publisher<ByteBuffer> content) {

@@ -8,14 +8,12 @@ import java.util.List;
 /**
  * Ask where the toolhead is - {@code M114}.
  *
- * <p>The answer arrives on the event stream as a {@code PositionRs}, not as this call's return:
- * every reply in this application is an event, because a reply can also arrive unasked and a
- * caller that waited for its own would miss those.
+ * <p>The answer arrives on the event stream as a {@code PositionRs}, not as this call's return,
+ * since a reply can also arrive unasked.
  *
  * <p>There is no auto-report for position the way {@code M155} auto-reports temperature, so a page
- * that wants a current reading has to ask. Asking in a loop is how a host floods a printer's
- * command queue with questions while a print is running - the planner is busy and every M114 takes
- * a slot - so a UI should ask on demand and after a move, not on a timer.
+ * must ask - on demand and after a move, not on a timer, since the planner is busy during a print
+ * and every {@code M114} takes a queue slot.
  */
 public record RequestPosition() implements PrinterCommand {
 

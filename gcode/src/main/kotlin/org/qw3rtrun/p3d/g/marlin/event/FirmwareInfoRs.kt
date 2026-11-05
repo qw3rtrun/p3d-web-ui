@@ -30,7 +30,6 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * FirmwareInfoRs.decode("MACHINE_TYPE:3D Printer")   // null - no FIRMWARE_NAME anchor
  * ```
  *
- * @property keyValues every field, keyed by its name, in the order the line wrote them
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<FirmwareInfoRs> {
@@ -47,8 +46,6 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
      * ```
      * FirmwareInfoRs.decode("FIRMWARE_NAME:M UUID:nope")?.uuid()   // null
      * ```
-     *
-     * @return the parsed `UUID` field, or null
      */
     fun uuid(): UUID? = keyValues["UUID"]?.let {
         try {
@@ -72,8 +69,6 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
      * ```
      * FirmwareInfoRs.decode("FIRMWARE_NAME:M EXTRUDER_COUNT:2")?.extruderCount()   // 2
      * ```
-     *
-     * @return the `EXTRUDER_COUNT` field as an integer, or 0
      */
     fun extruderCount(): Int = keyValues["EXTRUDER_COUNT"]?.asciiTrim()?.toIntOrNull() ?: 0
 
@@ -166,9 +161,6 @@ data class FirmwareInfoRs(val keyValues: Map<String, String>) : GEventRs<Firmwar
  * CapabilityRs.decode("Cap:EEPROM:1")    // CapabilityRs("EEPROM", enabled = true)
  * CapabilityRs.decode("Cap:X:true")      // CapabilityRs("X", enabled = true)
  * ```
- *
- * @property capability the feature's name, as the firmware wrote it
- * @property enabled whether the feature is compiled in and on
  */
 data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<CapabilityRs> {
 
@@ -181,15 +173,14 @@ data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<Capa
         /**
          * `Cap:<name>:<flag>`, or null when the line is not one.
          *
-         * Three fields and two colons, walked in order. The blanks are allowed **after** each
-         * colon and nowhere else, which is what the pattern this replaced said with two `[ \t]*`:
-         * some builds write `Cap: SDCARD:1`, and a blank before a colon would mean the name ran
-         * into something else.
+         * Three fields and two colons, walked in order. Blanks are allowed **after** each colon and
+         * nowhere else - some builds write `Cap: SDCARD:1`, and a blank before a colon would mean
+         * the name ran into something else.
          *
          * The name keeps the case the firmware wrote - it is data, and `Cap:eeprom:1` reports a
-         * capability called `eeprom`. Only the prefix and the `true`/`false` words fold, through
-         * `asciiFold` (spec 1.1: the wire is 7-bit, so a Unicode fold would be deciding something
-         * about bytes a printer cannot send).
+         * capability called `eeprom`. Only the prefix and the `true`/`false` words fold (spec 1.1:
+         * the wire is 7-bit, so a Unicode fold would be deciding something about bytes a printer
+         * cannot send).
          */
         override fun decode(line: String): CapabilityRs? {
             val text = line.asciiTrim()
@@ -218,16 +209,10 @@ data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<Capa
             isNameStart(c) || (c >= '0' && c <= '9') || c == '_'
 
         /**
-         * The flag, or null when what follows the second colon is not one.
-         *
-         * Marlin writes `0` or `1`; the RepRap ecosystem has sent `true` and `false`, and the
-         * decoder this file replaced accepted both, so both stay readable. Anything else - `yes`,
-         * `1.5`, a number with something after it - is a line this decoder declines rather than
-         * one it guesses at.
-         *
-         * **A digit run too wide for an `Int` reads as disabled** (spec 9: malformed input off the
-         * wire is a value, not a crash). Zero is the safe reading of a number nobody can
-         * interpret, and it is what the regex and `toIntOrNull` did between them before.
+         * The flag, or null when what follows the second colon is not one. Anything but `0`/`1` or
+         * `true`/`false` - `yes`, `1.5`, a number with something after it - is declined rather than
+         * guessed at. A digit run too wide for an `Int` reads as disabled (spec 9: malformed input
+         * off the wire is a value, not a crash).
          */
         private fun readEnabled(value: String): Boolean? {
             if (value.sameAscii("true")) return true

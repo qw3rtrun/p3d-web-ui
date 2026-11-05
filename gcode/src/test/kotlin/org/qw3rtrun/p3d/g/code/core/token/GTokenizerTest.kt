@@ -930,13 +930,8 @@ class GTokenizerTest {
             assertEquals(expected, GTokenizer.parse(source.asSequence()).toList())
         }
 
-        // Two overloads have been removed, both for the same reason - nothing called them - and
-        // the three above cover every caller:
-        //
-        // - `Stream<Char>`, which was the portable core's only java.util.stream dependency. A JVM
-        //   caller that wants one writes `parse(stream.asSequence()).asStream()` at its own edge.
-        // - `Iterable<Char>`, whose only callers were the two cases here that existed to cover it.
-        //   A caller holding a `List<Char>` writes `parse(chars.asSequence())`.
+        // `Stream<Char>` (the core's only java.util.stream dependency) and `Iterable<Char>` overloads
+        // were removed - nothing called them, and a caller writes `parse(x.asSequence())` instead.
     }
 
     @Nested

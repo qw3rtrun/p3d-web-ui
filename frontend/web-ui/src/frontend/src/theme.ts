@@ -1,24 +1,18 @@
 /**
  * The handful of theme behaviours the pages actually use, without jQuery.
  *
- * <strong>This replaces three scripts and a 1.6 MB vendor bundle.</strong> The theme shipped
- * `off-canvas.js`, `hoverable-collapse.js` and `template.js`, all jQuery, and `template.js` did
- * far more than this farm ever asked of it - a horizontal menu none of the pages have, a
- * PerfectScrollbar for panels none of them render, and a "buy the pro version" banner.
+ * Replaces three jQuery scripts (`off-canvas.js`, `hoverable-collapse.js`, `template.js`) and a
+ * 1.6 MB vendor bundle; `template.js` did far more than this farm asked - a horizontal menu, a
+ * PerfectScrollbar, a "buy the pro version" banner - and two of those jobs were already dead: active
+ * sidebar highlighting was done server-side in `sidebar.html`, and the banner code queried a
+ * `#proBanner` these templates do not contain, throwing a TypeError every load and silently skipping
+ * everything after it, including the navbar's fixed-top handling.
  *
- * <strong>Two of those jobs were already dead.</strong> `template.js` highlighted the active
- * sidebar link by matching `location.pathname`, which `sidebar.html` has done server-side for a
- * while - `th:classappend="${active == 'dashboard' ? 'active' : ''}"`. And its banner code ran
- * `document.querySelector('#proBanner').classList.add(...)` against a `#proBanner` these templates
- * do not contain, so it threw a TypeError every page load and everything after that line - the
- * navbar's fixed-top handling - had never run at all.
- *
- * So what is kept is what the markup still hooks into: the two `data-bs-toggle` controls in
- * `nav.html`, and the hover behaviour of a collapsed sidebar. Everything else is gone with the
- * library it needed.
+ * What survives is what the markup still hooks into: the two `data-bs-toggle` controls in `nav.html`
+ * and the hover behaviour of a collapsed sidebar.
  */
 
-/** Collapses the sidebar to icons, or hides it outright on a layout that wants that. */
+// Collapses the sidebar to icons, or hides it outright on a layout that wants that.
 function minimiseSidebar() {
     const body = document.body
     const hides = body.classList.contains('sidebar-toggle-display')
@@ -26,19 +20,15 @@ function minimiseSidebar() {
     body.classList.toggle(hides ? 'sidebar-hidden' : 'sidebar-icon-only')
 }
 
-/** The small-screen sidebar, slid in and out over the content. */
+// The small-screen sidebar, slid in and out over the content.
 function toggleOffCanvas() {
     document.querySelectorAll('.sidebar-offcanvas')
         .forEach(sidebar => sidebar.classList.toggle('active'))
 }
 
-/**
- * Opens a submenu on hover while the sidebar is collapsed to icons.
- *
- * Without it an icon-only sidebar is unusable: the labels are what say where a link goes, and
- * collapsing hides them. Skipped on touch devices, where there is no hover and a tap should
- * navigate rather than reveal.
- */
+// Opens a submenu on hover while the sidebar is collapsed to icons - without it the icon-only
+// sidebar is unusable, since the labels are what say where a link goes. Skipped on touch devices,
+// where a tap should navigate rather than reveal.
 function hoverToOpenWhenCollapsed() {
     if ('ontouchstart' in document.documentElement) {
         return
@@ -53,14 +43,10 @@ function hoverToOpenWhenCollapsed() {
     })
 }
 
-/**
- * Only one submenu open at a time, which is what the theme's CSS assumes.
- *
- * Bootstrap fires `show.bs.collapse` on the element being opened; everything else in the sidebar
- * that is currently open gets hidden. `bootstrap.Collapse.getInstance` rather than `new` - calling
- * the constructor on an element Bootstrap already manages gives a second instance that fights the
- * first.
- */
+// Only one submenu open at a time, what the theme's CSS assumes: Bootstrap fires show.bs.collapse
+// on the element being opened, so everything else open gets hidden. getInstance rather than new -
+// calling the constructor on an element Bootstrap already manages gives a second instance that
+// fights the first.
 function oneSubmenuAtATime(bootstrap: typeof import('bootstrap')) {
     const sidebar = document.querySelector('.sidebar')
     if (!sidebar) {
@@ -75,14 +61,9 @@ function oneSubmenuAtATime(bootstrap: typeof import('bootstrap')) {
     })
 }
 
-/**
- * Bootstrap tooltips are opt-in, and the theme ships only their CSS.
- *
- * Markup alone does nothing: `data-bs-toggle="tooltip"` is inert until something constructs a
- * `Tooltip` for the element. The monitor page needs one to explain a **disabled** tab - a
- * `.disabled` control fires no events of its own, so the tooltip hangs on a wrapper around it -
- * and "the tab is dead and the page cannot say why" is the worst of the available outcomes.
- */
+// Bootstrap tooltips are opt-in; the theme ships only their CSS. data-bs-toggle="tooltip" is inert
+// until something constructs a Tooltip - the monitor page needs one to explain a disabled tab, whose
+// .disabled control fires no events of its own, so the tooltip hangs on a wrapper around it.
 function enableTooltips(bootstrap: typeof import('bootstrap')) {
     document.querySelectorAll('[data-bs-toggle="tooltip"]')
         .forEach(element => new bootstrap.Tooltip(element))

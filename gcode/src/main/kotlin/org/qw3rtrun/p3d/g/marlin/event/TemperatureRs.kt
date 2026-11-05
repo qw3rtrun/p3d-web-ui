@@ -14,18 +14,14 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 /**
  * One sensor's line in a temperature report: where it is, where it is going, how hard it is driven.
  *
- * [target] is absent for a sensor that cannot be heated - the probe and the board report a reading
- * and nothing else. [power] is absent for every sensor Marlin does not write a `@` field for, which
- * is all of them except the active hotend, the bed, the chamber and the individual hotends.
+ * [target] is null for a sensor that cannot be heated - the probe and the board report a reading and
+ * nothing else. [power] is null for every sensor Marlin does not write a `@` field for, which is all
+ * of them except the active hotend, the bed, the chamber and the individual hotends.
  *
  * ```
  * BareTemperatureRs.decode("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0")?.bed
  * // HeaterReading(current = 23.87, target = 0.00, power = 0)
  * ```
- *
- * @property current the reading, with the digits the machine wrote
- * @property target the set point, or null for a sensor that cannot be heated
- * @property power how hard the heater is driven, from its `@` field, or null when none is written
  */
 data class HeaterReading(
     val current: BigDecimal,
@@ -45,33 +41,24 @@ data class HeaterReading(
  * **Two classes, because `ok` is a type and not a flag.** A report that arrives on an `ok` *is* an
  * acknowledgement and answers to [OkRs]; a bare `M155` auto-report is not one, and must never be
  * counted as one - a host that frees a slot in its send window per `OKReceivedEvent` would free a
- * slot the printer never granted, and run ahead of the queue. The payload is identical, so it is
- * declared once here and the two implementations differ only in what they answer to.
+ * slot the printer never granted, and run ahead of the queue. The payload is declared once here, and
+ * the two implementations differ only in what they answer to.
  *
- * Every sensor is optional and absent by default, because which ones exist is a compile-time
- * decision in the firmware: a printer with no heated bed sends no `B` field at all. The decoder
- * this replaces required both `T` and `B` and so read nothing at all from such a machine.
+ * Every sensor ([hotend] `T`, [bed] `B`, [chamber] `C`, [probe] `P`, [cooler] `L`, [board] `M`,
+ * [redundant] `R`, letters from `Temperature::print_heater_state`) is optional and absent by default,
+ * because which ones exist is a compile-time decision in the firmware: a printer with no heated bed
+ * sends no `B` field at all - the decoder this replaced required both `T` and `B` and so read nothing
+ * from such a machine. [hotends] carries the per-tool readings of a multi-hotend machine, `T0`..`T7`,
+ * reported *in addition to* the active one in [hotend].
  *
- * Marlin's letters, from `Temperature::print_heater_state`: `T` hotend, `B` bed, `C` chamber,
- * `P` probe, `L` cooler, `M` board, `R` redundant, and `T0`..`T7` for the individual hotends of a
- * multi-hotend machine, which are reported *in addition to* the active one in `T`.
+ * [ok] is true exactly when the report rode in on an `ok` - derived from the type (`this is OkRs<*>`)
+ * rather than stored, so it cannot disagree with what the value answers to.
  *
  * ```
  * TemperatureRsDecoder.decode("ok T:210.00 /210.00")?.ok   // true
  * TemperatureRsDecoder.decode("T:24.31 /0.00")?.bed        // null - no heated bed reported
  * ```
  *
- * @property hotend the active hotend, `T`
- * @property bed the bed, `B`
- * @property chamber the chamber, `C`
- * @property probe the probe, `P`
- * @property cooler the cooler, `L`
- * @property board the board, `M`
- * @property redundant the redundant sensor, `R`
- * @property hotends the per-hotend readings of a multi-hotend machine, keyed by tool index
- * @property ok true when the report rode in on an `ok`, which is how `M109` and `M190` end their
- *   wait. Derived from the type rather than stored, so it cannot disagree with what the value
- *   answers to: it is exactly `this is OkRs<*>`.
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
 interface TemperatureRs<D : TemperatureRs<D>> : GEventRs<D> {
@@ -169,14 +156,7 @@ data class OkTemperatureRs(
  */
 object TemperatureRsDecoder : GRsDecoder<TemperatureRs<*>> {
 
-    /**
-     * One scan for either kind - the `ok` prefix decides which class it becomes, and the scanner
-     * has already read it.
-     *
-     * This was the worst of the double reads: `TemperatureFields.scan` builds two maps, a `Pair`
-     * and a `BigDecimal` per field and runs a `Matcher` across the line, and a line reaching here
-     * through `match`-then-`decodeParams` paid for all of it twice.
-     */
+    /** One scan for either kind - the `ok` prefix decides which class it becomes. */
     override fun decode(line: String): TemperatureRs<*>? {
         val scanned = TemperatureFields.scan(line) ?: return null
         return if (scanned.ok) scanned.toOk() else scanned.toBare()
@@ -220,26 +200,8 @@ internal object TemperatureFields {
         val redundant: HeaterReading?,
         val hotends: Map<Int, HeaterReading>,
     ) {
-        /**
-         * These fields as a report on a line of its own.
-         *
-         * ```
-         * TemperatureFields.scan("T:24.31 /0.00")?.toBare()   // BareTemperatureRs(T:24.31 /0.00)
-         * ```
-         *
-         * @return a [BareTemperatureRs] with the same readings
-         */
         fun toBare() = BareTemperatureRs(hotend, bed, chamber, probe, cooler, board, redundant, hotends)
 
-        /**
-         * These fields as a report carried on an `ok`.
-         *
-         * ```
-         * TemperatureFields.scan("ok T:1.0")?.toOk()   // OkTemperatureRs(ok T:1.0)
-         * ```
-         *
-         * @return an [OkTemperatureRs] with the same readings
-         */
         fun toOk() = OkTemperatureRs(hotend, bed, chamber, probe, cooler, board, redundant, hotends)
     }
 
@@ -251,9 +213,6 @@ internal object TemperatureFields {
      * ```
      * TemperatureFields.encode(BareTemperatureRs(hotend = HeaterReading(BigDecimal("1.0"))))   // "T:1.0"
      * ```
-     *
-     * @param rs a report of either kind
-     * @return the report's text, led by `ok` when [rs] rode in on one
      */
     fun encode(rs: TemperatureRs<*>): String {
         val out = StringBuilder()
@@ -306,9 +265,6 @@ internal object TemperatureFields {
      * TemperatureFields.scan("ok T:1.0")?.ok                     // true
      * TemperatureFields.scan("//action:prompt_begin T:1")        // null
      * ```
-     *
-     * @param line one received line
-     * @return the scanned fields, or null when the line is not wholly a temperature report
      */
     fun scan(line: String): Fields? {
         var rest = line.asciiTrim()
@@ -353,11 +309,9 @@ internal object TemperatureFields {
     }
 
     /**
-     * Where the `@` of a power field at [at] sits, or -1 when a power field does not start there.
-     *
-     * `@:127` is the active hotend's, `B@:80` and `C@:30` name a sensor, and `@1:0` names a hotend
-     * by index. The letter in front of the `@` is what tells `B@:80` from the sensor field `B:60`,
-     * so the decision has to be made before either is read.
+     * Where the `@` of a power field at [at] sits, or -1 when none starts there. `@:127` is the
+     * active hotend's, `B@:80`/`C@:30` name a sensor, `@1:0` names a hotend by index - the letter in
+     * front of `@` is what tells `B@:80` from the sensor field `B:60`.
      */
     private fun powerMarker(text: String, at: Int): Int {
         if (text[at] == '@') return at
@@ -366,12 +320,9 @@ internal object TemperatureFields {
     }
 
     /**
-     * Reads `[B|C]@[index]:<digits>` into [powers], and answers the index past it - or -1 when the
-     * line does not hold one there.
-     *
-     * The value is **unsigned and whole**: `[0-9]+` is what the pattern said, and a PWM duty is
-     * what it describes. spec 9: a run too wide for an `Int` is malformed input off the wire, so
-     * the line does not scan rather than the decoder throwing.
+     * Reads `[B|C]@[index]:<digits>` into [powers], answering the index past it, or -1 when none is
+     * there. The value is unsigned and whole, a PWM duty; spec 9 makes a run too wide for an `Int`
+     * malformed input off the wire, so the line does not scan rather than the decoder throwing.
      */
     private fun readPower(text: String, at: Int, marker: Int, powers: HashMap<String, Int>): Int {
         val prefix = if (marker == at) "" else asciiFold(text[at]).toString()
@@ -394,12 +345,9 @@ internal object TemperatureFields {
     }
 
     /**
-     * Reads `<letter>[index]:<current>[ / <target>]` into [temps], and answers the index past it -
-     * or -1 when the line does not hold one there.
-     *
-     * The target is optional because the RepRap spec's own example omits it (`T:93.2 B:22.9`), and
-     * absent stays absent rather than becoming zero - the distinction [HeaterReading] exists to
-     * keep.
+     * Reads `<letter>[index]:<current>[ / <target>]` into [temps], answering the index past it, or
+     * -1 when none is there. The target is optional because the RepRap spec's own example omits it
+     * (`T:93.2 B:22.9`), and absent stays absent rather than becoming zero.
      */
     private fun readSensor(
         text: String,

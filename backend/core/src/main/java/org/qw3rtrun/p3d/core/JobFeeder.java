@@ -31,24 +31,38 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Feeds a running job's file to the machine it was assigned to - plan item C3.
+ * Feeds a running job's file to the machine it is assigned to - plan item C3. Driven by events in
+ * and out, and calls into no other module: {@code jobs} announces a job started, this reads the
+ * file through {@code GcodeFileService} and hands it to the machine at {@code BACKGROUND} (so an
+ * interactive {@code GSender} command, queued at {@code REGULAR}, preempts it and the job resumes
+ * where it left off), and on completion or failure this announces {@link JobFeedCompleted} or
+ * {@link JobFeedFailed} for {@code jobs} to act on - only {@code core} can know whether the lines
+ * reached the wire, only {@code jobs} may move a job.
  *
- * <p>This is the item everything below the application layer was built for. The priority queue, the
- * send window, the block framing and the resend loop all existed and nothing used them for the one
- * job they were written for.
+ * <h3>Nobody else would notice a feed dying, which is why two watchers exist (plan item C5, #60)</h3>
+ * A dropped link leaves {@code PrinterReactor} holding a fresh, undrained {@code PublisherQueue} and
+ * the feed's {@code Mono} subscribed to the abandoned one forever - so {@link #watchTheLink} fails
+ * the job itself rather than leaving it {@code RUNNING} on a cold printer. A desynchronised send
+ * window - the firmware asks to resend a line the host never framed, so the window renumbers with
+ * {@code M110 N0} and drops what it held - would otherwise let the feed finish {@code COMPLETED}
+ * having silently skipped real blocks (a dropped {@code G28} homes nowhere); {@link #watchForAbandonedBlocks}
+ * fails it instead, because what was lost cannot be replayed from a checkpoint that only records
+ * what was <em>sent</em>. Both watchers call {@link #stop} before publishing the failure, since
+ * {@code stop} takes the one exact reading a resume needs and {@code jobs} turns the failure event
+ * into the state change that would otherwise race it. Since #85 {@link PrinterReactor#updates()}
+ * opens with a snapshot rather than a replay, so a new feed's {@link #watchTheLink} can no longer be
+ * handed a previous feed's stale {@link BlocksAbandoned} as if it had just happened.
  *
- * <p><strong>It is driven by events in and events out, and calls into no other module.</strong>
- * {@code jobs} announces that a job started; this reads the file through {@code GcodeFileService}
- * and hands it to the machine; when the file runs out or the feed breaks, it announces
- * {@link JobFeedCompleted} or {@link JobFeedFailed} and {@code jobs} decides what that does to the
- * job's state. Only {@code core} can know whether the lines reached the wire - knowing it means
- * holding the socket - and only {@code jobs} may move a job, which is the same division the
- * firmware report crosses in plan item B2.
- *
- * <p><strong>The file is fed at {@code BACKGROUND} and nothing else is.</strong> That is what lets
- * an interactive command preempt a print: {@code GSender} queues at {@code REGULAR}, which the
- * queue drains first, and the job resumes where it left off because the queue hands its demand back
- * to the next source rather than discarding it.
+ * <h3>Every way a feed ends takes one exact checkpoint, before the event that moves the job (#62)</h3>
+ * {@link #checkpoint} is the only place {@code blocksSent}/{@code inFlight} are written, called by
+ * the progress timer, by {@link #stop} and by {@link #finished} - and only the first of those is
+ * approximate. Before this, a job's checkpoint on every terminal path was whatever the once-a-second
+ * timer last held, because {@link #finished} removed the feed before {@link #stop} got a chance to
+ * record one: a measured twelve-block job completed reading {@code blocksSent 4}, and a shorter one
+ * read {@code 0}. A completed job's {@code blocksSent} is now the file's block count exactly, and
+ * {@code inFlight} routinely stays non-zero on a {@code COMPLETED} job (measured {@code 12, inFlight 2}) -
+ * a feed ends when the file runs out, not when the firmware has caught up, and the field says so
+ * rather than hiding it.
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -59,7 +73,6 @@ public class JobFeeder {
     private final JobService jobs;
     private final ApplicationEventPublisher events;
 
-    /** What is being fed right now, so that a cancel has something to stop. */
     private final Map<UUID, Feed> feeding = new ConcurrentHashMap<>();
 
     /**
@@ -81,20 +94,6 @@ public class JobFeeder {
         }
     }
 
-    /**
-     * Fails the job if the machine's link goes away while it is printing - plan item C5.
-     *
-     * <p><strong>Nothing else would notice.</strong> When a connection drops, {@code PrinterReactor}
-     * builds a fresh {@code PublisherQueue} for the next attempt and abandons the old one - so the
-     * feed's {@code Mono} is left subscribed to a queue nobody drains, and never completes or
-     * errors. The job would read {@code RUNNING} for ever, on a printer that has been cold for
-     * hours. C3 left a method for this and never called it; this is the call.
-     *
-     * <p>The machine's own event stream is the signal, because that is where the lifecycle
-     * announces itself. What is recorded with the failure is how far the feed had got, which is
-     * the plan's "a killed connection leaves a job in FAILED with its last acknowledged line" -
-     * and the number a better recovery than this one would start from.
-     */
     private Disposable watchTheLink(JobStateChanged event, PrinterReactor reactor,
                                     AtomicLong sent, AtomicBoolean cancelled) {
         return reactor.updates()
@@ -115,40 +114,6 @@ public class JobFeeder {
                 });
     }
 
-    /**
-     * Fails the job when the transport throws away blocks it had already framed - issue #60.
-     *
-     * <p><strong>Nothing else would notice, and that is the whole bug.</strong> The firmware's line
-     * counter and the host's disagree, so the firmware answers with a {@code Resend:} for a number
-     * this host has never framed; the send window cannot answer it, restarts the numbering with
-     * {@code M110 N0} and drops what it was holding. The feed carries on perfectly from there, and
-     * this class counts the dropped blocks as sent - because they <em>were</em> sent - so the job
-     * reaches the end of its file and reports {@code COMPLETED}. A print that silently skipped its
-     * {@code G28} homed nowhere.
-     *
-     * <p><strong>What was lost cannot be replayed from the checkpoint</strong>, which is why this
-     * fails the job rather than retrying it: a checkpoint records what was <em>sent</em>, and what
-     * went missing is the difference between what was sent and what was accepted. Replaying from it
-     * would re-run blocks the machine already executed - a relative move sent twice is a move made
-     * twice - and skip the ones it did not. See {@link BlocksAbandoned}, whose count is a lower
-     * bound rather than an exact one.
-     *
-     * <p><strong>{@link #stop} goes before {@link #fail}, and the order is load-bearing.</strong>
-     * {@code stop} removes the feed <em>and</em> publishes one last exact {@link JobProgressed}
-     * reading; {@code fail} publishes {@link JobFeedFailed}, which {@code jobs} turns into a
-     * {@code FAILED} job, which comes back here as a {@link JobStateChanged} whose {@code stop} is
-     * then a no-op and whose {@code coolDown} turns the heaters off. Reversed, the exact reading is
-     * lost - the timer's checkpoints are up to a second stale - and a failed job's recorded
-     * position is the one thing plan item C5 has to work from.
-     *
-     * <p><strong>A previous feed's {@code BlocksAbandoned} cannot fail this one.</strong> Until #85
-     * {@code updates()} was a replay sink, so a new subscriber was handed the stream's latest
-     * message first - which could be the last feed's abandonment, presented as news. It now opens
-     * with the aggregate's snapshot, which holds facts rather than history: the connection state,
-     * the profile and the last temperature, never an event about blocks. {@link #watchTheLink}
-     * sees that snapshot's connection state, which is linked while a feed can run, and its filter
-     * drops it.
-     */
     private Disposable watchForAbandonedBlocks(JobStateChanged event, PrinterReactor reactor,
                                                AtomicLong sent, AtomicBoolean cancelled) {
         return reactor.updates()
@@ -173,12 +138,10 @@ public class JobFeeder {
     }
 
     /**
-     * A job moved, and some moves mean starting or stopping a feed.
-     *
-     * <p>A plain {@code @EventListener}, so this runs inside the transaction that moved the job and
-     * the feed is under way before the request that started it returns. That matters for the
-     * failure case above all: a start against a machine that is not connected is answered
-     * immediately rather than leaving a job that reads as {@code RUNNING} with nothing behind it.
+     * A plain {@code @EventListener}, so this runs inside the transaction that moved the job and the
+     * feed is under way before the request that started it returns - a start against a disconnected
+     * machine is answered immediately rather than leaving a job that reads {@code RUNNING} with
+     * nothing behind it.
      */
     @EventListener
     public void onJobStateChanged(JobStateChanged event) {
@@ -220,9 +183,8 @@ public class JobFeeder {
         var cancelled = new AtomicBoolean();
         var progress = new Progress(file.sizeBytes(), LocalDateTime.now());
 
-        // The skipped blocks are read and counted but not sent: the machine already has them, and
-        // the layer they left the file on is still the layer it is printing. Counting them is what
-        // keeps a resumed job's progress continuous rather than restarting at zero.
+        // skipped blocks are read and counted but not sent - the machine already has them - so a
+        // resumed job's progress stays continuous instead of restarting at zero.
         var lines = GcodeLines.feedOf(
                         Flux.from(files.read(event.fileId())).doOnNext(progress::read))
                 .doOnNext(fed -> progress.block(sent.incrementAndGet(), fed.layer()))
@@ -246,20 +208,12 @@ public class JobFeeder {
     }
 
     /**
-     * What has gone out, and how much of the file it came from.
-     *
-     * <p><strong>Counted from what the job's source emitted, which is monotone and immune to a
-     * resend.</strong> That is worth stating because plan decision 3 says the opposite - that
-     * counting what the feeder handed over "is wrong in exactly the case that matters: after a
-     * {@code Resend:} the transport replays blocks the job already counted". It does not: a replay
-     * is served from {@code GSendWindow} into {@code CommandProcessor}'s own {@code replaying}
-     * deque and written from there, and the source is never pulled a second time. The decision's
-     * conclusion - that the acknowledgement is the trustworthy signal - is right; its reason for
-     * distrusting this count is not.
-     *
-     * <p>What this number <em>does</em> run ahead of the firmware by is the send window: at most
-     * four blocks, because the window will not pull another until one is acknowledged. That bound
-     * is reported rather than hidden, as {@code JobProgress.inFlight}.
+     * What has gone out, and how much of the file it came from. Counted from what the job's own
+     * source emitted - monotone and immune to a resend, because a resend is served from
+     * {@code GSendWindow} into {@code CommandProcessor}'s own replay deque and never pulls this
+     * source a second time. {@code inFlight} is the one figure that can run ahead of the firmware,
+     * bounded by the send window (at most four), and is reported as {@code JobProgress.inFlight}
+     * rather than hidden.
      */
     private static final class Progress {
         private final long bytesTotal;
@@ -296,46 +250,18 @@ public class JobFeeder {
         }
     }
 
-    /**
-     * Publishes where every running job has got to.
-     *
-     * <p><strong>On a timer rather than per block, and that is the whole of the rate decision.</strong>
-     * A hundred-thousand-block job would otherwise be a hundred thousand events and, behind them, a
-     * hundred thousand writes - to answer a question a page asks about once a second and a restart
-     * asks once. A second is fast enough for a human and slow enough for a database.
-     */
+    /** On a timer rather than per block: a page asks about once a second, so that is fast enough and nothing finer is worth an event and a write per block. */
     @Scheduled(fixedDelayString = "${p3d.jobs.progress-interval:1000}")
     public void reportProgress() {
         feeding.values().forEach(this::checkpoint);
     }
 
     /**
-     * Writes down where a feed has got to, right now.
-     *
-     * <p><strong>Every way a feed can end goes through this, and that is the point</strong> - issue
-     * #62. It used to be the timer's body, plus a copy in {@link #stop} taking one exact reading
-     * because the timer's are up to a second stale, and <em>nothing at all</em> on the path a job
-     * takes when it ends normally: {@link #finished} removed the feed before {@code stop} could
-     * have published one. So the last number written down about a completed job was whatever the
-     * timer happened to be holding - {@code 4} on a measured twelve-block job, and {@code 0} on
-     * one that finished inside a single tick.
-     *
-     * <p><strong>The reading is exact in both halves.</strong> {@code blocksSent} comes from the
-     * counter the source increments, so it is the count at this instant rather than at the last
-     * tick; and {@code inFlight} is re-read from the aggregate here rather than left as the
-     * tick's, because {@link JobProgress#blocksAccepted()} is {@code blocksSent - inFlight} and
-     * pairing a fresh count with a stale gap is a third number that was never true.
-     *
-     * <p><strong>So a finished job routinely records a non-zero {@code inFlight}, and that is the
-     * field doing its job.</strong> A feed ends when the <em>file</em> runs out, not when the
-     * firmware has caught up - a live twelve-block print records {@code blocksSent 12, inFlight 2}
-     * - and plan item C4 reports that gap rather than hiding it precisely so that "sent" is never
-     * read as "printed".
-     *
-     * <p><strong>A feed is checkpointed once.</strong> Both callers that end a feed remove it from
-     * {@link #feeding} first and only checkpoint what they removed, so the abandonment path -
-     * {@code stop} from the watcher, then {@code finished} when the source runs out behind it -
-     * publishes one reading and not two.
+     * Writes down where a feed has got to, right now - see the class javadoc's checkpoint section.
+     * {@code inFlight} is re-read from the aggregate here, not left at the timer's value, because
+     * {@link JobProgress#blocksAccepted()} is {@code blocksSent - inFlight} and a fresh count paired
+     * with a stale gap would be a third number that was never true. Both callers that end a feed
+     * remove it from {@link #feeding} before checkpointing, so a feed is checkpointed exactly once.
      */
     private void checkpoint(Feed feed) {
         var reactor = reactors.runtimeOf(feed.machineId());
@@ -347,12 +273,11 @@ public class JobFeeder {
     }
 
     /**
-     * Stops feeding, because the job was cancelled, paused or failed from elsewhere.
-     *
-     * <p>{@code stop} rather than cancelling the subscription: completing the source lets the send
-     * window finish the blocks it has already framed and the queue hand its demand on, where a
-     * cancel would tear the stream out from under the drain loop. "Cancelling mid-stream stops the
-     * source and drains cleanly" is C3's own wording, and this is the half that makes it clean.
+     * Stops feeding because the job was cancelled, paused or failed elsewhere. Completes the source
+     * rather than cancelling the subscription, so the send window finishes blocks already framed and
+     * the queue hands its demand on instead of being torn out from under the drain loop - then takes
+     * one exact reading, since the timer's own checkpoints are up to a second stale and a resumed
+     * job starts from whatever was written down here.
      */
     private void stop(UUID jobId, JobState to) {
         var feed = feeding.remove(jobId);
@@ -364,32 +289,16 @@ public class JobFeeder {
         feed.stop().tryEmitEmpty();
         feed.watchingTheLink().dispose();
         feed.watchingForAbandonment().dispose();
-
-        // One last, exact reading. The timer's checkpoints are up to a second stale, and a resume
-        // starts from whatever was written down - so without this a paused job restarts thousands
-        // of blocks early and extrudes over what it already printed.
         checkpoint(feed);
     }
 
     /**
-     * Resumes a paused job from the block it stopped at - plan item C5.
-     *
-     * <p><strong>This is a seek, and it is safe here for one specific reason: the machine never
-     * lost its state.</strong> A pause stops the feed and nothing else - the printer stays
-     * connected, stays hot, and stays exactly where block N-1 left it, with the positioning mode,
-     * extruder mode, feedrate and fan speed the file had already set. So continuing at block N is
-     * continuing, not restarting.
-     *
-     * <p><strong>That is emphatically not true after a disconnect</strong>, which is the case the
-     * plan warns about: a machine that was power-cycled, or sat cooling for an hour, has none of
-     * that state, and resuming it would need the file's state-setting commands replayed up to the
-     * resume point rather than skipped. The honest answer there is to fail the job with its
-     * position recorded - see {@link #onConnectionLost} - and that is what happens.
-     *
-     * <p>The position is read from the job rather than remembered here, which is the one query this
-     * class makes of {@code jobs}. It has to be: a pause that outlives a restart has no in-memory
-     * anything, and the checkpoint is where the number survives. Everything else reaches this class
-     * as a fact on an event, because everything else is wanted on every transition rather than one.
+     * Resumes a paused job by seeking to the block it stopped at (plan item C5) - safe only because
+     * a pause leaves the machine connected, hot and positioned exactly where block N-1 left it, so
+     * continuing at block N is continuing rather than restarting. Not true after a disconnect, which
+     * has none of that state and instead fails with its position recorded (see
+     * {@link #watchTheLink}). The resume point is read from the job rather than remembered here,
+     * since a pause can outlive a restart and the checkpoint is where the number survives.
      */
     private void resume(JobStateChanged event) {
         long from = jobs.fetch(event.jobId())
@@ -400,16 +309,11 @@ public class JobFeeder {
     }
 
     /**
-     * Stops, cools and retracts - what a cancelled or failed print leaves behind.
-     *
-     * <p>Queued at {@code REGULAR} so it preempts whatever is left of the file rather than waiting
-     * for it. A cancellation that queued behind the rest of a six-hour print would cool the machine
-     * down six hours after it was asked for.
-     *
-     * <p><strong>It does not home, park or disable the steppers.</strong> Homing drags the nozzle
-     * across whatever was printed; disabling the steppers drops the Z axis on a machine without a
-     * brake. Both need to know something about the machine that the farm does not, and getting
-     * either wrong breaks a part or a printer. Recorded as debt rather than guessed at.
+     * Stops, cools and retracts - what a cancelled or failed print leaves behind. Queued at
+     * {@code REGULAR} so it preempts whatever is left of the file, rather than cooling the machine
+     * down hours after it was asked for. Does not home, park or disable the steppers - each needs a
+     * machine fact the farm does not have, and getting either wrong breaks a part or a printer; left
+     * as debt rather than guessed at.
      */
     private void coolDown(UUID machineId) {
         var reactor = machineId == null ? null : reactors.runtimeOf(machineId);
@@ -426,26 +330,13 @@ public class JobFeeder {
     }
 
     /**
-     * What the end of a feed means, reported as the fact {@code jobs} acts on.
-     *
-     * <p><strong>The exact reading goes first, exactly as it does in {@link #stop}</strong> - issue
-     * #62. This is the path a job takes when it ends <em>normally</em>, and it was the one path
-     * that wrote nothing down: the feed was removed here before {@code stop} could have taken a
-     * reading, so a {@code COMPLETED} job recorded whatever the once-a-second timer was holding.
-     * Measured live: twelve blocks fed, {@code blocksSent = 4}; a shorter job, {@code 0}.
-     *
-     * <p><strong>Before and not after, because what follows moves the job.</strong>
-     * {@link JobFeedCompleted} is what {@code jobs} turns into a {@code COMPLETED} job and
-     * {@link JobFeedFailed} into a {@code FAILED} one; the checkpoint has to be in the row by the
-     * time an operator can see the state that says the job is over. It is the same ordering
-     * argument {@link #watchForAbandonedBlocks} makes for putting {@code stop} before {@code fail},
-     * and the reason it holds without a lock is that both are published from this one thread, in
-     * this order, to a synchronous listener.
-     *
-     * <p>So a completed job's {@code blocksSent} is now the file's block count exactly - the same
-     * number {@link JobFeedCompleted#lines()} carries, because both are read from the counter the
-     * source increments. {@code JobFeederTest.aJobThatFinishesWritesDownEveryBlockItSent} asserts
-     * the two against each other rather than against a plausible figure.
+     * What the end of a feed means, reported as the fact {@code jobs} acts on. The checkpoint goes
+     * first, exactly as in {@link #stop} and for the same reason: {@link JobFeedCompleted}/
+     * {@link JobFeedFailed} is what moves the job, and the row must already show the right
+     * checkpoint by the time an operator can see the state that says it is over.
+     * {@code JobFeederTest.aJobThatFinishesWritesDownEveryBlockItSent} asserts {@code blocksSent}
+     * against {@link JobFeedCompleted#lines()} rather than a plausible figure, since both are read
+     * from the same counter.
      */
     private void finished(JobStateChanged event, long sent, boolean cancelled, Throwable error) {
         var feed = feeding.remove(event.jobId());

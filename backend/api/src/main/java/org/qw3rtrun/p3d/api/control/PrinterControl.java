@@ -13,23 +13,18 @@ import java.util.UUID;
 /**
  * Talking to one machine: what it is doing, and what it should do next.
  *
- * <p>The seam between the web surface and the runtime. {@code frontend} used to call
- * {@code PrinterReactorManager} in {@code core} directly, which is a submodel depending on another
- * submodel - rule 1 of {@code doc/sub_boundaries.txt} - and the boundary check could only report it,
- * not prevent it. Now the controllers name this, and {@code core} implements it.
+ * <p>The seam between the web surface and the runtime - {@code frontend} used to call
+ * {@code PrinterReactorManager} in {@code core} directly, a submodel depending on another
+ * (rule 1 of {@code doc/sub_boundaries.txt}); now the controllers name this instead.
  *
- * <p><strong>The vocabulary is {@code :gcode}'s.</strong> A command is a {@link GRq} and a reading
- * is a {@link HeaterReading}, because this farm drives Marlin machines and Marlin is G-code: an
- * abstraction over it would be a second set of names for one set of facts. What the browser posts
- * is a different question - that is an HTTP payload, it lives in {@code frontend}, and the
- * controller translates it before it gets here.
+ * <p>The vocabulary is {@code :gcode}'s: a command is a {@link GRq}, a reading is a
+ * {@link HeaterReading}. This farm drives Marlin machines and Marlin is G-code, so there is no
+ * second vocabulary to keep in step; what the browser posts is an HTTP payload translated in
+ * {@code frontend} before it reaches here.
  *
- * <p><strong>{@code Publisher} and not {@code Mono}/{@code Flux}.</strong> These methods are
- * inherently asynchronous - one of them is a stream that stays open for as long as a browser
- * watches a printer - so the type has to say so. Reactor's own types would put Reactor on the
- * compile path of every module that depends on this one. {@code org.reactivestreams} is the interop
- * SPI those types implement rather than a framework: a {@code Flux} already <em>is</em> a
- * {@code Publisher}, and WebFlux already accepts one, so neither side adapts anything.
+ * <p>Methods return {@code Publisher} rather than {@code Mono}/{@code Flux} so Reactor stays off
+ * the compile path of every module depending on this one - {@code org.reactivestreams} is the
+ * interop SPI those types already implement, not a framework of its own.
  */
 public interface PrinterControl {
 
@@ -37,70 +32,42 @@ public interface PrinterControl {
     Publisher<HeaterReading> state(UUID id);
 
     /**
-     * Everything the machine says, as it says it.
-     *
-     * <p>Stays open until the machine is released or the caller lets go, which is what the
-     * browser's {@code EventSource} is attached to.
+     * Everything the machine says, as it says it. Stays open until the machine is released or the
+     * caller lets go - what the browser's {@code EventSource} is attached to.
      */
     Publisher<EventMessage> updates(UUID id);
 
     /**
-     * Sends commands, and completes when they have been handed over - not when the machine is done.
+     * Sends commands, completing when they are handed over - not when the machine is done.
      *
-     * <p><strong>A list, because one thing a user asks for is not always one command.</strong> A
-     * relative jog is {@code G91}, the move, and {@code G90} back again; the runtime applies the
-     * whole list as one task on the aggregate's thread, so nothing can land between them and be
-     * read in the wrong mode.
+     * <p>A list because one user action is not always one command: a relative jog is
+     * {@code G91}, the move, then {@code G90} back, applied as one task on the aggregate's thread
+     * so nothing else can land between them and be read in the wrong mode.
      */
     Publisher<Void> send(UUID id, List<GRq<?>> commands);
 
     /**
-     * Writes a stored G-code file onto the machine's SD card, and answers whether it was taken on.
+     * Writes a stored G-code file onto the machine's SD card, answering whether it was taken on -
+     * not whether the transfer finished, which can take minutes. Progress and completion arrive as
+     * {@code SdUploadProgressed} on {@link #updates(UUID)}.
      *
-     * <p><strong>It does not complete when the transfer does</strong>, and it must not: every line
-     * of an upload is a round trip inside the send window, so a real file takes minutes. A request
-     * held open for that is a request that times out. What this answers is whether the transfer was
-     * <em>taken on</em>; what answers "it finished" is {@code SdUploadProgressed} on
-     * {@link #updates(UUID)}, which is where the progress goes too.
+     * <p>Refuses rather than throwing: {@link ControlOutcome.Refusal#ABSENT} for a file the store
+     * does not hold, {@link ControlOutcome.Refusal#WRONG_STATE} for a machine that is not
+     * connected. {@code fileId} names a file already uploaded to the server's store (a separate
+     * act from sending it to a card, so one file can go to several machines); {@code M28} turns
+     * the wire into a file sink until the transfer ends, holding the connection exclusively.
      *
-     * <p><strong>A {@link ControlOutcome} and not a {@code Publisher<Void>}, because the old shape
-     * had no way to say no.</strong> There are two ordinary reasons this cannot start - the store
-     * does not hold the file, the machine is not connected - and with nothing to return them in
-     * they became exceptions, and the browser was told 500 for both. They are
-     * {@link ControlOutcome.Refusal#ABSENT} and {@link ControlOutcome.Refusal#WRONG_STATE} now.
-     *
-     * <p><strong>The file is one already on the server</strong>, named by {@code fileId} - this
-     * takes no bytes. The browser uploads to {@code /api-files} first, which streams to a
-     * content-addressed store and records the size an upload needs for its denominator; sending it
-     * to a card is a second, separate act, and the same file can go to several machines without
-     * being uploaded again.
-     *
-     * <p><strong>The machine takes nothing else until it is over.</strong> {@code M28} turns the
-     * wire into a file sink - every line that follows is written into the file rather than executed
-     * - so the transfer holds the connection exclusively, and an emergency stop is the only thing
-     * that can take it away.
-     *
-     * @param id       the machine
-     * @param fileId   a file in the server's store
-     * @param cardName what to call it on the card, which is what will be listed, printed and
-     *                 deleted afterwards
+     * @param cardName what to call the file on the card - what will be listed, printed and deleted
      */
     Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName);
 
     /**
-     * Stops a transfer that is running, leaving a short but closed file on the card.
+     * Stops a running transfer, leaving a short but closed file on the card - a stop, not a
+     * cancel: the source stops producing and {@code M29} still goes out, closing the file rather
+     * than leaving it open for later commands to write into.
      *
-     * <p><strong>It is a stop and not a cancel</strong>, and the difference is the one thing that
-     * matters here: the source is asked to stop producing content, and {@code M29} still goes out
-     * behind it. Tearing the transfer out instead would leave the file <em>open</em>, and every
-     * command the machine was given next would be written into it.
-     *
-     * <p><strong>Nothing to stop stays {@link ControlOutcome.Accepted}.</strong> The page's button
-     * and the machine's state are different clocks, and a transfer that ended a moment before the
-     * click is not something to report at the operator. So the only refusal this can give is
-     * {@link ControlOutcome.Refusal#ABSENT}, for a machine the farm does not have - the outcome
-     * type is here to say that one thing, and to say it as a value rather than as an exception a
-     * web layer would have to classify.
+     * <p>Nothing to stop is {@link ControlOutcome.Accepted}, not a refusal; the only refusal is
+     * {@link ControlOutcome.Refusal#ABSENT}, for a machine the farm does not have.
      */
     Publisher<ControlOutcome> cancelCardUpload(UUID id);
 
@@ -108,13 +75,9 @@ public interface PrinterControl {
     Publisher<Void> connect(UUID id, ConnectCmd command);
 
     /**
-     * Where the machine's connection is right now - the health signal, answered once.
-     *
-     * <p>The same facts {@code ConnectionStateChanged} carries on {@link #updates(UUID)}, for a
-     * caller that wants the current answer rather than every change. A page rendering a printer
-     * needs this before it has seen a single event, and before B3 it had nothing to ask: the only
-     * way to learn whether a machine was connected was to open the stream and wait for something
-     * to happen on it.
+     * Where the machine's connection is right now, answered once - the same facts
+     * {@code ConnectionStateChanged} carries on {@link #updates(UUID)}, for a caller that wants
+     * the current answer rather than every change.
      */
     Publisher<ConnectionStatus> connection(UUID id);
 }

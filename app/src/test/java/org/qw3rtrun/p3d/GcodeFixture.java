@@ -7,60 +7,34 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * A G-code file for a test to upload - generated, not checked in.
+ * A G-code file for a test to upload - generated, not checked in. Issue #50 found no single
+ * test-sized file would do: #50 (the file store) wants comments at the top, at the bottom, absent,
+ * and a file larger than one network read; #51 (the job queue) wants a known
+ * {@code estimatedSeconds} and line count to divide progress by; #53 (the SD upload) wants one
+ * small enough to read every line back out of {@code MockPrinter.commands()}. One resource file
+ * cannot be all of that and six resource files are six things to keep in step, so the bytes are
+ * built here, with dialect and size as arguments.
  *
- * <p>Issue #50 framed this as "a decision about what a test-sized G-code file looks like", and the
- * decision is that there is no such single file. Three tests want three different things from one:
+ * <p>Not a resource file because of line endings: this is line-oriented content whose byte count
+ * and hash are asserted, and Git's checkout normalisation (e.g. Windows {@code core.autocrlf=true})
+ * would change both per developer. Bytes built in the JVM have the line endings this class says.
  *
- * <ul>
- *   <li><strong>#50, the file store</strong>, wants one file whose slicer comments are at the
- *       <em>top</em>, one whose summary is at the <em>bottom</em>, one with no comments at all, and
- *       one larger than a single network read;</li>
- *   <li><strong>#51, the print-job queue</strong>, wants a known {@code estimatedSeconds} and a
- *       known line count, because those are what a progress figure is divided by;</li>
- *   <li><strong>#53, the SD upload</strong>, wants one small enough that every line the farm writes
- *       to the card can be read back out of {@code MockPrinter.commands()} and compared.</li>
- * </ul>
+ * <p>Every fixture carries a <strong>mark</strong>, not optional: the store is content-addressed
+ * and the whole suite shares one database, so two tests building the same bytes would collide on
+ * each other's record. The mark is written in as a coordinate rather than a comment, so
+ * {@link #unsliced} stays genuinely comment-free, and {@code cura("x").named("a.gcode")} /
+ * {@code .named("b.gcode")} are deliberately the same bytes under two names, for the
+ * de-duplication test.
  *
- * One resource file cannot be all four and six resource files are six things to keep in step, so
- * the bytes are built here and the two axes that matter - the dialect and the size - are arguments.
- *
- * <p><strong>The decisive reason it is not a resource, though, is line endings.</strong> A G-code
- * file is line-oriented, the store counts its lines and hashes its bytes, and a checked-in
- * {@code .gcode} is subject to Git's end-of-line normalisation on checkout. On a Windows working
- * copy with {@code core.autocrlf=true} every {@code \n} becomes {@code \r\n}: the size changes, the
- * SHA-256 changes, and a test that pinned either would fail on one developer's machine and nobody
- * else's. Bytes built in the JVM have the line endings this class says they have.
- *
- * <h2>The mark</h2>
- *
- * Every fixture is constructed with a <strong>mark</strong>, and it is not optional on purpose.
- * The store is content-addressed - the same bytes stored twice are one file, under the first name -
- * and the whole suite shares one database. Two tests that happened to build the same fixture would
- * find each other's record, which is the store working correctly and the tests lying. The mark goes
- * into the file as a coordinate rather than a comment, so an {@link #unsliced} fixture stays
- * genuinely comment-free.
- *
- * <p>It follows that {@code cura("x").named("a.gcode")} and {@code cura("x").named("b.gcode")} are
- * the <em>same bytes under two names</em>, which is exactly what the de-duplication test needs to
- * say.
- *
- * <p>Everything here is ASCII, so a character is a byte and {@link #sizeBytes()} can be taken from
- * the text's length.
+ * <p>Everything here is ASCII, so {@link #sizeBytes()} can be taken from the text's length.
  */
 final class GcodeFixture {
 
     /**
-     * Larger than one buffer anywhere on the path, in both senses that matter.
-     *
-     * <p>Two numbers are being cleared. A socket read hands WebFlux at most 64 KiB at a time, so a
-     * file above that arrives as several {@code DataBuffer}s and a path that quietly accumulated
-     * them would have to say so; and the store reads slicer comments from bounded windows at each
-     * end of the file rather than from the whole of it, so a file above twice that window has a
-     * middle that is in neither. 192 KiB is comfortably past both.
-     *
-     * <p>It is also small enough for the test client to hold a download in memory, which the server
-     * never does - see {@code FarmIntegrationTest.signIn}.
+     * Past two buffer sizes at once: a WebFlux socket read hands over at most 64 KiB, and the
+     * store's slicer-comment windows are bounded at each end, so a file above twice that has a
+     * middle neither reads. 192 KiB clears both, and is small enough for the test client to hold in
+     * memory too (see {@code FarmIntegrationTest.signIn}).
      */
     static final int BIGGER_THAN_ONE_BUFFER = 192 * 1024;
 
@@ -89,23 +63,18 @@ final class GcodeFixture {
     }
 
     /**
-     * Cura's dialect, with everything worth knowing in the first few lines.
-     *
-     * <p>The values are the ones {@code SliceInfoReaderTest} in {@code :backend:core} measures
-     * against, so a test here asserting 3661 seconds is asserting that the same reading survived
-     * the trip through HTTP, and not re-deciding what the reading should be.
+     * The values are the ones {@code SliceInfoReaderTest} in {@code :backend:core} measures
+     * against, so asserting 3661 seconds here asserts the reading survived the trip through HTTP,
+     * not re-deciding it.
      */
     static GcodeFixture cura(String mark) {
         return new GcodeFixture(Dialect.CURA, mark, "cura.gcode", 8, 0);
     }
 
     /**
-     * PrusaSlicer's dialect, which names itself at the top and summarises at the bottom.
-     *
-     * <p>Only the slicer's name is in the header here - the time, the filament and the layer height
-     * are in the trailer. That split is what makes {@link #ofAtLeast} meaningful: on a file big
-     * enough, the two are read from two different windows, and a reader that only looked at the top
-     * would come back with the least useful subset.
+     * Only the slicer's name is in the header; time, filament and layer height are in the trailer -
+     * the split that makes {@link #ofAtLeast} meaningful, since on a big enough file the two come
+     * from different windows and a top-only reader gets the least useful subset.
      */
     static GcodeFixture prusaSlicer(String mark) {
         return new GcodeFixture(Dialect.PRUSA, mark, "prusa.gcode", 8, 0);
@@ -149,21 +118,14 @@ final class GcodeFixture {
     }
 
     /**
-     * The blocks a print job will put on the wire, in file order - #51's denominator.
+     * The blocks a print job puts on the wire, in file order - #51's denominator. Not
+     * {@link #lineCount()}: a feed drops blank and comment-only lines, so a sliced fixture sends
+     * fewer blocks than it has lines, and a test needs that number independently of the server.
      *
-     * <p>Not the same as {@link #lineCount()}, and the difference is the point: a feed drops blank
-     * and comment-only lines rather than spending a line number and a slot in the printer's buffer
-     * to say nothing, so a sliced fixture sends fewer blocks than it has lines. A test that asserts
-     * what reached the machine needs the smaller number, and needs it independently of the server -
-     * taking the list from the response would be comparing the server to itself.
-     *
-     * <p><strong>This is not a G-code reader and must not become one.</strong> {@code GcodeLines} in
-     * {@code :backend:core} is, and it tokenizes every line through {@code :gcode} because
-     * {@code G1 X10 ; wipe} and {@code (a note ; not a comment)} are both real. What is relied on
-     * here is a property of these fixtures alone: every comment they contain is a whole line of its
-     * own, and no line carries a trailing one. Adding a fixture that breaks that would make this
-     * quietly wrong, so do not - put the trailing comment in the test that wants to prove it is
-     * stripped, and assert that against {@code GcodeLinesTest}'s subject instead.
+     * <p>Not a G-code reader and must not become one - {@code GcodeLines} in {@code :backend:core}
+     * tokenizes through {@code :gcode} because {@code G1 X10 ; wipe} is real. This relies solely on
+     * every comment in these fixtures being a whole line, never trailing; a fixture that breaks
+     * that invariant belongs in a test against {@code GcodeLinesTest} instead.
      */
     List<String> blocks() {
         var blocks = new ArrayList<String>();
@@ -176,12 +138,7 @@ final class GcodeFixture {
         return List.copyOf(blocks);
     }
 
-    /**
-     * SHA-256 of the bytes, lower-case hex - computed here rather than asked of the server.
-     *
-     * <p>A test that took the hash from the response and compared it to itself would pass whatever
-     * the server stored. This is the independent answer the response has to match.
-     */
+    /** SHA-256 of the bytes, lower-case hex, computed here so a test is not comparing the server to itself. */
     String sha256() {
         try {
             var digest = MessageDigest.getInstance("SHA-256").digest(bytes());
@@ -205,11 +162,9 @@ final class GcodeFixture {
     }
 
     /**
-     * How long the slicer thinks it takes.
-     *
-     * <p>The two dialects deliberately do <em>not</em> agree: Cura's {@code ;TIME:3661} and
-     * PrusaSlicer's {@code 1h 2m 3s} are 3661 and 3723, sixty-two seconds apart. A test that read
-     * the wrong dialect's value would otherwise still pass.
+     * The dialects deliberately disagree: Cura's {@code ;TIME:3661} and PrusaSlicer's
+     * {@code 1h 2m 3s} are 3661 vs 3723, so a test reading the wrong dialect's value would
+     * otherwise still pass.
      */
     Long estimatedSeconds() {
         return switch (dialect) {
@@ -244,8 +199,7 @@ final class GcodeFixture {
 
         sb.append("G21\n").append("G90\n").append("G28\n");
 
-        // The mark, as a coordinate: it makes these bytes this fixture's own without being a
-        // comment, which an unsliced fixture must not have.
+        // The mark as a coordinate, not a comment - an unsliced fixture must stay comment-free.
         sb.append("G1 X").append(Integer.toUnsignedString(mark.hashCode())).append(" Y0 E0\n");
 
         // The body. Real motion, nothing a slicer-comment reader could mistake for a key-value.

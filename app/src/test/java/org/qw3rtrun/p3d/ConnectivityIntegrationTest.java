@@ -16,22 +16,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>Driven entirely through {@code POST /api-printer/{id}/connect},
  * {@code GET /api-printer/{id}/connection} and the SSE stream, against mocked printers that differ
- * in <em>how they answer</em>: one that behaves like MarlinSim, one that acknowledges with a bare
- * {@code ok} and reports no buffer counts, one that accepts the socket and says nothing, and an
- * address with nothing behind it at all.
+ * in <em>how they answer</em>: MarlinSim-like, a bare-{@code ok} acknowledger reporting no buffer
+ * counts, one that takes the socket and says nothing, and an address with nothing behind it.
  *
- * <p>That last pair is the point of running this over several configurations. {@code ONLINE} and
+ * <p>The last pair is the point of running over several configurations: {@code ONLINE} and
  * {@code IDLE} look the same from a page and mean different things - a socket, against a firmware
- * that has taken something this session sent - and the only way to tell the distinction is real is
- * to put a machine at each end of it.
+ * that has taken something this session sent - and only a machine at each end proves the
+ * distinction real.
  *
- * <p><strong>The acknowledgement dialect is the same axis one level down, and #61 added it.</strong>
- * A machine that answers a numbered block with its number - {@code ok N2 P15 B3}, which is what
- * every Marlin built with {@code ADVANCED_OK} does and what this farm therefore sees on every block
- * it sends - lets the host match an {@code ok} to the block it answers. One that answers a bare
- * {@code ok} leaves it counting. The difference is invisible while the wire behaves and decides the
- * session when it does not, so the last two tests here put the same stray {@code ok} to each
- * dialect and assert the two different things that then reach the machine.
+ * <p>#61 added the same axis one level down: the acknowledgement dialect. A numbered {@code ok}
+ * (what every {@code ADVANCED_OK} Marlin sends) lets the host match it to the block it answers; a
+ * bare {@code ok} leaves it counting. Invisible while the wire behaves, it decides the session when
+ * it does not - so the last two tests here put the same stray {@code ok} to each dialect and assert
+ * the two different things that then reach the machine.
  */
 class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
@@ -46,18 +43,10 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Connecting reaches {@code IDLE}, and the session's opening handshake is on the wire.
-     *
-     * <p>Three blocks, in this order, and each one is load-bearing:
-     *
-     * <ul>
-     *   <li>{@code M110 N0} - spec 7.2. Without it a reconnection to a printer that was never
-     *       power-cycled is rejected from its first block onwards, which meant only the first
-     *       session after a printer powered on had ever worked;</li>
-     *   <li>{@code M115} - what the machine is, which the roster then keeps;</li>
-     *   <li>{@code M155 S1} - start auto-reporting, which is what makes a healthy machine speak
-     *       within a round trip of connecting.</li>
-     * </ul>
+     * Three blocks, each load-bearing: {@code M110 N0} (spec 7.2 - without it a reconnection to a
+     * printer that was never power-cycled is rejected from its first block, so only the first
+     * session after power-on ever worked), {@code M115} (what the machine is, which the roster
+     * keeps), then {@code M155 S1} (auto-reporting, so a healthy machine speaks within a round trip).
      */
     @Test
     void connectingReachesIdleAndSendsTheOpeningHandshake() {
@@ -73,16 +62,11 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A machine that takes the socket and says nothing stops at {@code ONLINE}.
-     *
-     * <p>A terminal server with nothing plugged into it. The arrow out of {@code ONLINE} used to be
-     * "any reply arrived", and a live run disproved it - auto-report traffic left running by an
-     * earlier session reaches a host whose outbound half is dead. It is a {@code BlockAcknowledged}
-     * now, so a machine that never acknowledges never becomes usable, and this is what says so.
-     *
-     * <p><strong>It also pins the backpressure.</strong> Exactly one block reaches a machine that
-     * never answers: the window starts at one outstanding block and will not pull another until
-     * one comes back. {@code M115} and {@code M155} are queued behind it, not written.
+     * The arrow out of {@code ONLINE} used to be "any reply arrived", and a live run disproved it -
+     * auto-report traffic left running by an earlier session reaches a host whose outbound half is
+     * dead. It is a {@code BlockAcknowledged} now, so this machine never becomes usable; it also
+     * pins the backpressure, since exactly one block reaches it and {@code M115}/{@code M155} stay
+     * queued.
      */
     @Test
     void aMachineThatNeverAnswersStopsAtOnline() {
@@ -92,9 +76,8 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
         connect(id);
         await("the socket to open", () -> "ONLINE".equals(connectionState(id)));
 
-        // Bounded, because the claim is that something does NOT happen. A machine that was going
-        // to acknowledge would have done it in far less than this - the healthy case above takes
-        // one round trip on loopback.
+        // Bounded, because the claim is a negative: a machine that was going to acknowledge would
+        // have done it in far less than this - the healthy case above takes one round trip on loopback.
         quiet();
 
         assertEquals("ONLINE", connectionState(id),
@@ -104,12 +87,9 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A firmware that acknowledges with a bare {@code ok} gets there too.
-     *
-     * <p>{@code ok P15 B3} is Marlin reporting how much room it has; a plain {@code ok} is a
-     * firmware that reports none, and the host then holds itself to one outstanding block. Slower,
-     * and it must still work - which is the whole reason {@code AdvancedOkRs(1, 1, null)} is the
-     * starting assumption rather than something larger.
+     * {@code ok P15 B3} is Marlin reporting its room; a plain {@code ok} reports none, so the host
+     * holds itself to one outstanding block - slower, and the reason {@code AdvancedOkRs(1, 1, null)}
+     * is the starting assumption rather than something larger.
      */
     @Test
     void aFirmwareThatReportsNoBufferCountsStillConnects() {
@@ -125,55 +105,21 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     // ------------------------------------------------------- how an acknowledgement names a block
 
     /**
-     * A stray {@code ok} moves nothing, because the acknowledgement names the block it answers.
-     *
-     * <p><strong>This is the test issue #61 exists for, and it is the only one in this module that
-     * reaches {@code GSendWindow.acknowledge(number)}.</strong> Until the mock echoed the number it
-     * was sent, every {@code ok} in this suite was {@code ok P15 B3} - a shape no real session ever
-     * sees, since the farm numbers every block - so {@code CommandProcessor.applyWindowEvents} took
-     * the FIFO {@code acknowledge()} branch throughout and the named branch was exercised by
-     * nothing at all.
-     *
-     * <p><strong>Why the window has to be holding something.</strong> In a well-behaved exchange
-     * the two branches agree: the numbered {@code ok} names exactly the block FIFO order would have
-     * released, which is the whole reason this went unnoticed. They only part when something is out
-     * of step, so the test has to put the session out of step - a block outstanding, and then an
-     * {@code ok} that does not belong to it.
-     *
-     * <ul>
-     *   <li><strong>named</strong> - the window is not holding {@code N103}, so it releases nothing
-     *       and does not move. The {@code G28} is still outstanding, still has its bytes, and the
-     *       {@code Resend:} is answered with them;</li>
-     *   <li><strong>counted</strong> - {@code acknowledge()} releases whatever is at the front,
-     *       which is the {@code G28} the machine has not answered. The correspondence is off by one
-     *       from here on, the {@code Resend:} finds nothing held, and
-     *       {@code CommandProcessor.resynchronise} starts the numbering again with a second
-     *       {@code M110 N0} - abandoning the block the firmware just asked for.</li>
-     * </ul>
-     *
-     * <p>So the two branches diverge into two different command lists at the machine, which is why
-     * this can be asserted from out here at all - and the counted branch is not described but
-     * <em>run</em>, by {@link #aStrayAcknowledgementResynchronisesAnUnnumberedSession()} below. The
-     * two tests are the same stray against the two branches, and they are the mutation the issue
-     * asks for, kept in the suite rather than performed once by hand.
-     *
-     * <p><strong>What proves the mock's numbering is load-bearing is not this test.</strong> The
-     * stray below is pushed, so it would still be numbered even if {@link MockPrinter#ok()} went
-     * back to {@code ok P15 B3}. What that change buys is the other eighty-odd tests: every
-     * {@code ok} in this module now carries a number, so {@code applyWindowEvents} takes the named
-     * branch throughout and {@code connectAndWait} reaching {@code IDLE} depends on it. Measured by
-     * mutating the mock to answer {@code ok N<n+1000> P15 B3} - no block is ever released, no
-     * {@code BlockAcknowledged} is emitted, and
-     * {@link #connectingReachesIdleAndSendsTheOpeningHandshake()} fails with
-     * {@code timed out after PT30S waiting for machine … to reach IDLE}. Before #61 that mutation
-     * could not be written down, because there was no number to make wrong.
-     *
-     * <p><strong>The lines pushed are measured; the scenario is constructed.</strong>
-     * {@code ok N<n> P15 B3} and {@code Resend: n} are both census lines - §4.2 - and a stray
-     * acknowledgement is the hazard {@code acknowledge(number)} was added for by #30, after an
-     * {@code ACK = -1} sentinel in a {@code Queue<Integer>} let one shift the window permanently.
-     * Nothing waits on a clock: the machine is held silent, so the window cannot move under the
-     * test between the two pushes.
+     * The only test here reaching {@code GSendWindow.acknowledge(number)} (#61): until the mock
+     * echoed the block number, every {@code ok} was the unnumbered {@code ok P15 B3} shape, so
+     * {@code CommandProcessor.applyWindowEvents} always took the FIFO branch and the named one was
+     * never exercised. The two branches agree whenever the session is in step, so this holds a
+     * block (the {@code G28}) outstanding and pushes an {@code ok} naming a different, never-sent
+     * line: the named branch releases nothing, so the {@code G28} is still there to answer the
+     * {@code Resend:} that follows; the FIFO branch (run as the mirror test below) releases the
+     * {@code G28} anyway, finds nothing for the {@code Resend:}, and resynchronises with a second
+     * {@code M110 N0}, abandoning the block. That the mock's numbering is load-bearing is measured,
+     * not assumed: mutating it to answer {@code ok N<n+1000> P15 B3} releases no block anywhere and
+     * fails {@link #connectingReachesIdleAndSendsTheOpeningHandshake()} with a 30-second IDLE
+     * timeout. {@code ok N<n> P15 B3} and {@code Resend: n} are census lines, §4.2;
+     * {@code acknowledge(number)} itself is #30, replacing an {@code ACK = -1} sentinel that let a
+     * stray shift the window permanently. Nothing here waits on a clock - the machine is held
+     * silent between the two pushes.
      */
     @Test
     void aStrayAcknowledgementDoesNotShiftTheSendWindow() {
@@ -207,17 +153,11 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The same stray, against a firmware that reports no number - and it costs the session.
-     *
-     * <p>The mirror of the test above and the reason {@code legacyOk()} is kept rather than
-     * deleted. A bare {@code ok} carries nothing to match on, so the window has only its FIFO order
-     * to go on and <em>cannot</em> tell a stray from the real thing. One arrives, the {@code G28}
-     * is released although the machine never acknowledged it, and the {@code Resend:} that follows
-     * finds nothing held - so the host abandons the block and starts the numbering again.
-     *
-     * <p>That is not a defect being frozen. It is what the un-numbered dialect is worth, stated
-     * once rather than assumed, and it is the assertion that would fail if this profile ever
-     * quietly started numbering: the two profiles must differ here or the matrix row is decoration.
+     * The mirror of the test above, and the reason {@code legacyOk()} is kept: a bare {@code ok}
+     * carries nothing to match on, so FIFO order releases the {@code G28} regardless, the
+     * {@code Resend:} finds nothing held, and the numbering restarts - not a defect being frozen,
+     * but what the un-numbered dialect is worth, and the assertion that fails if this profile ever
+     * quietly started numbering.
      */
     @Test
     void aStrayAcknowledgementResynchronisesAnUnnumberedSession() {
@@ -255,11 +195,9 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The state change reaches a browser, in the shape it reads.
-     *
-     * <p>{@code type} is the event's simple class name, so this is the same contract
-     * {@code EventStreamContractTest} pins by serialising one - asserted here at the other end of
-     * the wire, on a message produced by an actual connection.
+     * {@code type} is the event's simple class name, so this is the same contract
+     * {@code EventStreamContractTest} pins by serialising one - asserted here on a message produced
+     * by an actual connection.
      */
     @Test
     void theStateChangeReachesTheEventStream() {
@@ -269,9 +207,8 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         connectAndWait(id);
 
-        // payloadOf is null until the first message of that type arrives, so the condition has to
-        // tolerate it rather than throw a NullPointerException out of the wait - which would report
-        // as an error instead of as the timeout it is, and hide what the stream actually carried.
+        // payloadOf is null until the first message of that type arrives; tolerating that avoids a
+        // NullPointerException reporting as an error instead of the timeout it actually is.
         await(() -> "IDLE to be announced on the stream (it carried " + events.types() + ")",
                 () -> {
                     var latest = events.payloadOf("ConnectionStateChanged");
@@ -282,9 +219,8 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
         assertEquals("ONLINE", announced.get("from"),
                 "a machine reaches IDLE from ONLINE - the socket first, then the acknowledgement");
 
-        // The walk, in order, as a browser saw it. Only the tail is asserted: the sink replays the
-        // machine's *current* state to a late subscriber, so the first element is wherever the
-        // machine happened to be when this test attached, and that is not part of the claim.
+        // Only the tail is asserted: the sink replays the machine's *current* state to a late
+        // subscriber, so the first element is wherever it happened to be when this test attached.
         var walk = events.all().stream()
                 .filter(m -> "ConnectionStateChanged".equals(m.get("type")))
                 .map(m -> (String) ((Map<?, ?>) m.get("event")).get("to"))
@@ -294,11 +230,9 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Disconnecting closes the socket, and that is asserted from the machine's end.
-     *
-     * <p>From the host, a disconnect that merely cancelled its two halves looked identical to one
-     * that closed the connection - and the difference is a socket left {@code Established} on every
-     * printer the farm has ever spoken to. Only the far end can tell them apart.
+     * From the host, a disconnect that merely cancelled its two halves looked identical to one that
+     * closed the connection - the difference being a socket left {@code Established} on every
+     * printer ever spoken to. Only the far end can tell them apart.
      */
     @Test
     void disconnectingClosesTheSocket() {
@@ -313,33 +247,18 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A machine told to disconnect stays disconnected, and the roster catching up does not dial it.
-     *
-     * <p><strong>This is the claim {@link #disconnectingClosesTheSocket()} above was making by
-     * accident, and it was making it as a timeout.</strong> That test awaited {@code OFFLINE} and
-     * spent thirty seconds not getting it, because the machine reached {@code OFFLINE} at once and
-     * was dialled straight back out of it - thirty "dialling it again" lines and eleven
-     * {@code -> CONNECTING} transitions in one test window. A timeout says the farm is slow; it
-     * took reading the log to find that the farm was redialling a printer nobody had asked it to.
-     *
-     * <p>So the fact is stated at the far boundary instead, where it cannot be mistaken for
-     * slowness: <strong>the machine counts the sessions opened to it, and there must still be
-     * exactly one</strong>. A redial is a second TCP connection and the mock sees every one -
-     * {@link #aMachineCanBeDialledAgainAfterADisconnect()} below is the same counter reading two,
-     * deliberately, which is what makes one here mean anything.
-     *
-     * <p><strong>Why a disconnect is the moment this breaks.</strong> {@code MRegisteredEvent} is a
-     * statement of current fact, and the roster republishes it about seven times per connect - once
-     * per firmware report, once per capability line - while {@code PrinterReactorManager} dials
-     * anything it sees announced as linked. Since issue #54 those republications are queued on the
-     * printer's own listener thread rather than running inline on the aggregate's, so copies of
-     * "it was linked" arrive <em>after</em> a disconnect asked for in between, each carrying a
-     * connection state that was true a moment ago and is not any more. The hole was always there;
-     * the hand-off changed the odds of falling into it from long to certain.
-     *
-     * <p>{@link #quiet()} rather than an await, per the integration-test spec's rule for a claim
-     * that something does <em>not</em> happen: the only honest way to make it is to give the thing
-     * long enough to have happened. The redial was immediate on every failing run.
+     * {@link #disconnectingClosesTheSocket()} was making this claim by accident, as a timeout: it
+     * awaited {@code OFFLINE} and took thirty seconds not getting it, because the machine reached
+     * {@code OFFLINE} and was redialled straight back out of it - thirty "dialling it again" lines
+     * and eleven {@code -> CONNECTING} transitions in one window. So the fact is stated at the far
+     * boundary instead - the machine's own session count must stay at one, where
+     * {@link #aMachineCanBeDialledAgainAfterADisconnect()} is the same counter reading two, on
+     * purpose. The cause is {@code MRegisteredEvent} being republished about seven times per
+     * connect while {@code PrinterReactorManager} dials anything announced as linked; since #54
+     * queued those republications on the printer's own listener thread, a stale "it was linked"
+     * copy can now arrive after a disconnect asked for in between. {@link #quiet()}, not an await,
+     * per the spec's rule for a negative claim: the only honest way to make it is to give the thing
+     * time to have happened.
      */
     @Test
     void aDisconnectedMachineIsNotRedialledWhenTheRosterCatchesUp() {
@@ -378,12 +297,10 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * What the runtime learned about the connection reaches the roster, and can be read back.
-     *
-     * <p>This is the fact that used to be write-only. {@code printer_entity.connection_state} is
-     * written from {@code core}, because knowing whether a machine is connected means holding the
-     * socket - and it is read at startup to decide what to dial again. A column with no reader was
-     * the defect; this asserts the reader through the endpoint that exposes it.
+     * Used to be write-only: {@code printer_entity.connection_state} is written from {@code core}
+     * (knowing a machine is connected means holding the socket) and read at startup to decide what
+     * to dial again - a column with no reader was the defect, and this asserts the reader through
+     * the endpoint that exposes it.
      */
     @Test
     void theRosterLearnsThatTheMachineIsConnected() {

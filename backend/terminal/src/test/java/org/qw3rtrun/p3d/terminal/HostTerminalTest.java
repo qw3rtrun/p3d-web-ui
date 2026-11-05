@@ -54,12 +54,8 @@ class HostTerminalTest {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
 
-    /**
-     * What MarlinSim answers {@code M115} with, verbatim from the captured census.
-     *
-     * <p>Kept whole rather than shortened: the point of the tests that use it is that six replies
-     * and an {@code ok} arrive as one burst, which is the shape the loss was found in.
-     */
+    /** What MarlinSim answers {@code M115} with, verbatim - kept whole because the tests that use it
+     * are about six replies and an {@code ok} arriving as one burst. */
     private static final String M115_FIRMWARE =
             "FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56) "
                     + "SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin PROTOCOL_VERSION:1.0 "
@@ -91,14 +87,9 @@ class HostTerminalTest {
                 () -> busEnd.set(Signal.complete()));
     }
 
-    /**
-     * The terminal's outbound side, with an endless G-code source behind it.
-     *
-     * <p>The outbound function keeps the {@link org.reactivestreams.Processor} instead of draining
-     * it, so the test subscribes it itself and owns the demand. {@code doOnRequest} records what the
-     * window asked the source for, which is the send window itself and not an effect of it:
-     * {@code canProcess()} is what decides that number.
-     */
+    /** The terminal's outbound side, with an endless G-code source behind it. The outbound function
+     * keeps the {@link org.reactivestreams.Processor} instead of draining it, so the test owns the
+     * demand itself; {@code doOnRequest} records what {@code canProcess()} asked the source for. */
     private Publisher<String> sendWindow() {
         var captured = new AtomicReference<Publisher<String>>();
         terminal = new HostTerminal(wire::asFlux, out -> {
@@ -111,13 +102,10 @@ class HostTerminalTest {
         return captured.get();
     }
 
-    /**
-     * The same outbound side, with the printer answering from inside the emission of {@code line}.
-     *
-     * <p>That is the ordering the send window actually lives in - the acknowledgement of one
-     * command arrives on the netty inbound thread while the producer thread is still writing the
-     * next - and the one a single-threaded test otherwise never reaches.
-     */
+    /** The same outbound side, with the printer answering from inside the emission of {@code line} -
+     * the ordering the send window actually lives in (an ack arrives on the netty inbound thread
+     * while the producer is still writing the next command), which a single-threaded test otherwise
+     * never reaches. */
     private Publisher<String> sendWindowAcking(String line, String reply) {
         var captured = new AtomicReference<Publisher<String>>();
         terminal = new HostTerminal(wire::asFlux, out -> {
@@ -160,13 +148,8 @@ class HostTerminalTest {
         return new HeaterReading(new BigDecimal(current), new BigDecimal(target), power);
     }
 
-    /**
-     * Just the acknowledgements on the bus, which is what a progress counter reads.
-     *
-     * <p>Filtered rather than asserted against the whole list, because the replies that happen to
-     * be on the bus beside them - an {@code Error:}, a temperature - are a different test's
-     * business and change the moment either of those does.
-     */
+    /** Just the acknowledgements on the bus - filtered rather than asserted against the whole list,
+     * since other replies beside them are a different test's business. */
     private List<BlockAcknowledged> acknowledged() {
         return published.stream()
                 .filter(BlockAcknowledged.class::isInstance)
@@ -174,12 +157,7 @@ class HostTerminalTest {
                 .toList();
     }
 
-    /**
-     * Just the abandonments, for the same reason {@link #acknowledged()} filters.
-     *
-     * <p>A resynchronisation puts an {@code Error:} on the bus beside this one in any realistic
-     * sequence, and the acknowledgements that preceded it are still there too.
-     */
+    /** Just the abandonments, for the same reason {@link #acknowledged()} filters. */
     private List<BlocksAbandoned> abandoned() {
         return published.stream()
                 .filter(BlocksAbandoned.class::isInstance)
@@ -187,11 +165,8 @@ class HostTerminalTest {
                 .toList();
     }
 
-    /**
-     * {@code M105}, {@code M109} and {@code M190} answer on the {@code ok}. Taking that line only
-     * as a window credit drops the answer, which is what happened before: an {@code M105} asked on
-     * demand was never seen by anything downstream.
-     */
+    /** {@code M105}/{@code M109}/{@code M190} answer on the {@code ok} itself; taking that line only
+     * as window credit used to drop the answer entirely. */
     @Test
     void anOkThatCarriesAReplyIsPublishedWholeLine() {
         listen();
@@ -212,15 +187,9 @@ class HostTerminalTest {
         assertEquals(List.of(), published);
     }
 
-    /**
-     * An advanced {@code ok} says only what the send window was already told.
-     *
-     * <p>Marlin's field order, not the one the deleted parser expected. {@code ok_to_send()} echoes
-     * the {@code N} of the line it is acknowledging <em>before</em> it appends {@code P} and
-     * {@code B}, so {@code ok N100 P15 B3} is what a printer writes; the copy this module used to
-     * carry read {@code N} last, matched nothing a printer sends, and so published every
-     * acknowledgement of a numbered line as if it were a reply.
-     */
+    /** Marlin's {@code ok_to_send()} writes {@code N} before {@code P}/{@code B} - {@code ok N100 P15 B3}
+     * - the opposite of what the deleted parser expected, which read {@code N} last, matched nothing
+     * a printer sends, and so published every acknowledgement of a numbered line as a reply. */
     @Test
     void anAdvancedOkIsWindowCreditAndNotAReply() {
         listen();
@@ -240,13 +209,8 @@ class HostTerminalTest {
         assertEquals(reading("23.87", "0.00", 0), firstTemperature().getBed());
     }
 
-    /**
-     * A line nothing in {@code :gcode} claims does not reach the bus.
-     *
-     * <p>{@code MarlinRsDecoder} answers null for it and {@code GRs} has no value for "unread", so
-     * it is logged on {@code #traffic} and dropped. The layer above did exactly this with it
-     * before, one decode later.
-     */
+    /** {@code MarlinRsDecoder} answers null and {@code GRs} has no "unread" value, so the line is
+     * logged on {@code #traffic} and dropped. */
     @Test
     void aLineNoDecoderClaimsIsDropped() {
         listen();
@@ -256,15 +220,9 @@ class HostTerminalTest {
         assertEquals(List.of(), published);
     }
 
-    /**
-     * {@code M20}'s answer reaches the bus as one assembled listing, not as four lines.
-     *
-     * <p><strong>Nothing downstream could see a file list at all before this.</strong> The entries
-     * are deliberately not claimable replies - {@code TEST.GCO 47} is {@code <word> <number>}, far
-     * too common a shape to claim - so every one of them arrived as a line no decoder wanted and was
-     * dropped. The markers decoded and said nothing useful on their own. A Storage tab asking for a
-     * listing would have waited forever.
-     */
+    /** {@code M20}'s answer reaches the bus as one assembled listing, not four lines. Entries are
+     * deliberately not claimable replies ({@code TEST.GCO 47} is too common a
+     * {@code <word> <number>} shape), so before this a Storage tab waited forever. */
     @Test
     void anSdListingArrivesAsOneAssembledReply() {
         listen();
@@ -280,12 +238,8 @@ class HostTerminalTest {
                 listing.getFiles());
     }
 
-    /**
-     * A card with nothing printable on it answers, and the answer is an empty list.
-     *
-     * <p>Which is a different fact from "no listing arrived", and the only reason a page can tell an
-     * empty card from a machine that never replied. This is the form the captured corpus holds.
-     */
+    /** An empty card answers with an empty list - a different fact from "no listing arrived", and
+     * the only way a page can tell the two apart. */
     @Test
     void anEmptySdListingIsStillAnAnswer() {
         listen();
@@ -297,16 +251,9 @@ class HostTerminalTest {
         assertEquals(List.of(), assertInstanceOf(SdFileList.class, published.getFirst()).getFiles());
     }
 
-    /**
-     * A listing something interrupted produces no listing at all - and the interruption still does.
-     *
-     * <p>The strict reading, and the right one: a host cannot tell a card holding one file from a
-     * card whose listing was cut off after one, so reporting the entries that did arrive would be
-     * reporting a short list as the card's contents. Silence is what a caller can act on.
-     *
-     * <p>The temperature report that interrupted it is published as itself, because it is a
-     * perfectly good reply that happened to land in the middle of something else.
-     */
+    /** A listing something interrupted produces no listing at all - the strict reading, since a
+     * short list reported as the card's contents is indistinguishable from the real thing. The
+     * interrupting reply is still published as itself. */
     @Test
     void aListingSomethingInterruptedProducesNothing() {
         listen();
@@ -321,13 +268,8 @@ class HostTerminalTest {
         assertInstanceOf(TemperatureRs.class, published.getFirst());
     }
 
-    /**
-     * The markers are scaffolding and are consumed, like a {@code Resend:}.
-     *
-     * <p>A subscriber told "a list is starting" can do nothing with that, and one told "a list has
-     * ended" has already been handed the list. Publishing them would put two events on the bus that
-     * only make sense beside a third.
-     */
+    /** The markers are scaffolding and are consumed, like a {@code Resend:} - a subscriber told "a
+     * list is starting" can do nothing with that. */
     @Test
     void theListingMarkersThemselvesDoNotReachTheBus() {
         listen();
@@ -340,13 +282,8 @@ class HostTerminalTest {
         assertInstanceOf(SdFileList.class, published.getFirst());
     }
 
-    /**
-     * A second listing on the same connection works, which is what Refresh does.
-     *
-     * <p>The reader is per-session rather than per-request, so this is the claim that it resets
-     * itself: a tab that lists, uploads and lists again must get two complete answers and not one
-     * followed by the first one repeated.
-     */
+    /** The reader is per-session, not per-request, so it must reset itself - a tab that lists,
+     * uploads and lists again needs two complete answers, not the first one repeated. */
     @Test
     void asecondListingOnTheSameConnectionIsItsOwnAnswer() {
         listen();
@@ -366,21 +303,11 @@ class HostTerminalTest {
                 assertInstanceOf(SdFileList.class, published.get(1)).getFiles());
     }
 
-    /**
-     * Marlin's spelling of the busy notice reaches the send window.
-     *
-     * <p>`host_keepalive()` goes out with `SERIAL_ECHO_MSG`, so what a real printer writes while it
-     * homes is {@code echo:busy: processing} and not the bare {@code busy:} the RepRap spec
-     * describes. The parser this replaced claimed the bare form only, so on a Marlin the notice fell
-     * through to an undifferentiated message, {@code onBusy} never fired, and a command sent before
-     * the stall sat in {@code sentWithoutAck} forever - the window closed and never reopened,
-     * because the acknowledgement that would have reopened it is the one the printer is too busy to
-     * send.
-     *
-     * <p>What that costs is visible only as demand: with the notice understood, the window has room
-     * again and pulls a second command; without it, {@code canProcess()} is
-     * {@code min(1, 1 - 1 - 0) = 0} and the second {@code thenRequest} moves nothing.
-     */
+    /** Marlin's {@code host_keepalive()} writes {@code echo:busy: processing}, not the RepRap bare
+     * {@code busy:}. The parser this replaced claimed the bare form only, so the notice fell through
+     * unrecognised, {@code onBusy} never fired, and the window stayed closed forever - visible here
+     * as demand: {@code canProcess()} would be {@code min(1, 1 - 1 - 0) = 0} and the second
+     * {@code thenRequest} would move nothing. */
     @Test
     void marlinsEchoBusyFreesTheSendWindow() {
         var out = sendWindow();
@@ -422,21 +349,10 @@ class HostTerminalTest {
         assertEquals("paused for user", assertInstanceOf(BusyRs.class, published.getFirst()).getReason());
     }
 
-    /**
-     * The window is the printer's room, not the subscriber's demand.
-     *
-     * <p>Ten asked for downstream, one pulled from the source: until a printer says otherwise it
-     * gets one command and nothing more until it acknowledges. An advanced {@code ok} reporting
-     * {@code B3} then widens it to three, and the next pull is for three - which only happens if
-     * {@code ok N1 P15 B3} decodes, so this is also where the {@code N}-first field order is pinned
-     * on the flow-control side.
-     *
-     * <p>The acknowledgement used to read {@code ok N2} while the block in flight was {@code N1} -
-     * a printer naming a block this host had never sent. It passed either way, because the two
-     * readings of it happen to leave {@code canProcess()} at three: released, the window frees a
-     * slot it was not using; unreleased, the block-queue term binds instead. Now that the number is
-     * acted on it says something, so it says the true thing.
-     */
+    /** Ten asked for downstream, one pulled from the source: until a printer says otherwise it gets
+     * one command and nothing more. An advanced {@code ok} reporting {@code B3} widens it to three -
+     * which only happens if {@code ok N1 P15 B3} decodes with {@code N} first, pinning the field
+     * order here on the flow-control side too. */
     @Test
     void theWindowIsTheBlockQueueAndNotTheSubscribersDemand() {
         var out = sendWindow();
@@ -455,18 +371,9 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * A numbered {@code ok} for a block this host never sent releases nothing.
-     *
-     * <p>The failure it prevents is not the lost block, it is everything after it. Counted, this
-     * acknowledgement releases the oldest block in the window and the correspondence between an
-     * {@code ok} and the block it answers is one out for the rest of the session - so a later
-     * {@code Resend:} replays the wrong bytes, and does it in silence, because a number the window
-     * does not hold is answered with an empty list rather than a complaint.
-     *
-     * <p>The credit is still applied: a reply arrived, so the printer has a slot free whatever it
-     * named. That half was never in doubt, and separating the two is the point.
-     */
+    /** A numbered {@code ok} for a block this host never sent releases nothing - counted instead, it
+     * would release the oldest block in the window and desynchronise every later {@code Resend:}'s
+     * correspondence, silently. The credit (a slot freed) is still applied regardless. */
     @Test
     void anOkNamingABlockTheWindowNeverSentReleasesNothing() {
         var out = sendWindow();
@@ -487,13 +394,8 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * The block a numbered {@code ok} names is the one announced, and the replay stays correct.
-     *
-     * <p>End to end, which is the only way this is worth asserting: the window is still holding the
-     * right bytes under the right numbers after a stray acknowledgement has been through it, so the
-     * {@code Resend:} that follows replays exactly what the firmware asked for.
-     */
+    /** End to end: the window still holds the right bytes under the right numbers after a stray
+     * acknowledgement, so the {@code Resend:} that follows replays exactly what was asked for. */
     @Test
     void aStrayAcknowledgementLeavesTheResendReplayingTheRightBlocks() {
         var out = sendWindow();
@@ -522,18 +424,10 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * An {@code ok} that names a later block releases the ones in front of it too.
-     *
-     * <p>Spec 8.5 has the firmware acknowledge in order, so an {@code ok N3} while 2 and 3 are
-     * outstanding says both were taken and the acknowledgement for 2 was lost on the way back -
-     * not that 2 is somehow still pending. Counted, the window would be left believing 3 is
-     * outstanding when the printer has already executed it.
-     *
-     * <p>One {@code BlockAcknowledged} is published, under the number the wire named. A consumer
-     * reading these as a high-water mark is right; one counting them as a tally would be short, and
-     * the log says so at INFO when it happens, because it only happens when a reply was lost.
-     */
+    /** Spec 8.5's in-order acknowledgement: an {@code ok N3} while 2 and 3 are outstanding says both
+     * were taken and 2's own acknowledgement was lost in transit, not that 2 is still pending. One
+     * {@code BlockAcknowledged} is published, under the wire's number - a high-water mark, not a
+     * tally. */
     @Test
     void anOkNamingALaterBlockReleasesTheOnesInFrontOfIt() {
         var out = sendWindow();
@@ -556,19 +450,10 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * More acknowledgements than sends must not buy room the printer does not have.
-     *
-     * <p>A {@code busy:} says nothing is in flight that will ever be acknowledged, so the in-flight
-     * count goes to zero - and then the {@code ok} for the command sent just before the stall
-     * arrives anyway. On a {@code volatile int} with a bare {@code --} that lands on {@code -1},
-     * and {@code blockQueue - (-1)} is a window one command wider than the printer's buffer, for
-     * the rest of the session. The counter clamps at zero instead, so what follows the stale
-     * acknowledgement is one command and not two.
-     *
-     * <p>Deterministic, and it fails on the old code: the assertion is the demand the window placed
-     * on the source, {@code [1, 1]} against the old {@code [1, 2]}.
-     */
+    /** A {@code busy:} zeroes in-flight, and then the {@code ok} for the command sent just before
+     * the stall arrives anyway. On the old {@code volatile int --} that lands on {@code -1}, widening
+     * the window by one command for the rest of the session; the clamp at zero keeps it at one
+     * command, not two - {@code [1, 1]} pulled against the old code's {@code [1, 2]}. */
     @Test
     void anAcknowledgementWithNothingInFlightDoesNotWidenTheWindow() {
         var out = sendWindow();
@@ -587,22 +472,11 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * An {@code ok} that lands mid-emission is credit for a command already counted, not a free
-     * slot on top of it.
-     *
-     * <p>The printer answers {@code ok N1 P15 B3} while the host is inside the emission of
-     * {@code G1 X1} - before {@link HostTerminal.CommandProcessor#onNext} has counted that command
-     * as in flight. The window it reports is three blocks, and three commands is what should go
-     * out. The old code decremented an in-flight count of zero to {@code -1} and then pulled
-     * {@code 3 - (-1) - 1 = 3} more on top of the one being written: four commands into a
-     * three-block buffer, which Marlin answers by dropping the overflow without saying so.
-     *
-     * <p>This is also the only deterministic reading of the drain loop's deferred work: the
-     * acknowledgement's own {@code processRequest} is re-entrant, so it leaves a mark and the pull
-     * it asked for happens on the next turn of the loop that was already running - {@code [1, 2]}
-     * rather than the old {@code [1, 3]}.
-     */
+    /** {@code ok N1 P15 B3} arrives while the host is still inside the emission of {@code G1 X1},
+     * before {@link HostTerminal.CommandProcessor#onNext} counted it as in flight. The old code
+     * decremented an in-flight count of zero to {@code -1} and pulled {@code 3 - (-1) - 1 = 3} more
+     * on top of the one being written - four commands into a three-block buffer, which Marlin drops
+     * silently. Pulled here: {@code [1, 2]} against the old {@code [1, 3]}. */
     @Test
     void anAcknowledgementArrivingMidEmissionIsCreditAndNotExtraRoom() {
         var out = sendWindowAcking("G1 X1", "ok N1 P15 B3");
@@ -619,10 +493,8 @@ class HostTerminalTest {
     }
 
     /**
-     * A printer error is a reply, not the end of the conversation.
-     *
-     * <p>Verbatim from a corpus sweep against the simulator - the printer recovers on its own and
-     * keeps answering:
+     * A printer error is a reply, not the end of the conversation - verbatim from a corpus sweep
+     * against the simulator, which recovers on its own and keeps answering:
      *
      * <pre>
      * &gt;&gt; N3 M105*1
@@ -631,10 +503,9 @@ class HostTerminalTest {
      * &lt;&lt; ok
      * </pre>
      *
-     * <p>This used to go to {@code tryEmitError}, which terminates the replay sink behind
-     * {@link HostTerminal#messageFlux()} - so the first mistyped checksum of a print killed the
-     * host's whole reply stream while the printer carried on, and the temperature report at the end
-     * of this sequence reached nobody.
+     * <p>Routing it to {@code tryEmitError} instead used to terminate {@link HostTerminal#messageFlux()}
+     * on the first mistyped checksum of a print, so the temperature report at the end of this
+     * sequence reached nobody.
      */
     @Test
     void aPrinterErrorIsPublishedAsAValueAndTheBusKeepsRunning() {
@@ -665,13 +536,9 @@ class HostTerminalTest {
         assertEquals(7, error.getLastLine().intValue());
     }
 
-    /**
-     * A subscriber that arrives after an error gets a live flux, not an immediate {@code onError}.
-     *
-     * <p>The damage of terminating the sink was not only to the subscriber that was there - the
-     * terminal state is permanent, so every later {@code messageFlux()} was dead on subscribe too,
-     * which is what a reconnecting UI does.
-     */
+    /** A subscriber arriving after an error gets a live flux, not an immediate {@code onError} -
+     * terminating the sink used to leave every later {@code messageFlux()} dead too, which is what a
+     * reconnecting UI does. */
     @Test
     void aSubscriberArrivingAfterAnErrorStillGetsReplies() {
         listen();
@@ -685,13 +552,9 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * The inbound side going away is still terminal, and is the only thing that is.
-     *
-     * <p>Reserving {@code onError} for transport death is the other half of publishing printer
-     * errors as values: a subscriber has to be able to tell "the printer complained" from "the
-     * socket is gone", and after this change the signal is what says which.
-     */
+    /** Reserving {@code onError} for transport death is the other half of publishing printer errors
+     * as values: a subscriber must be able to tell "the printer complained" from "the socket is
+     * gone". */
     @Test
     void theInboundFluxFailingIsStillTerminal() {
         listen();
@@ -713,23 +576,16 @@ class HostTerminalTest {
     // ------------------------------------------------------- a reply reaches the bus, or it is a bug
 
     /**
-     * The opening exchange, with the bus subscribed where a real caller can first subscribe it.
+     * The opening exchange, with the bus subscribed where a real caller can first subscribe it -
+     * every other test in this file subscribes before {@code start()}, which no caller can do, since
+     * {@code start()} is what builds the two halves and begins reading the socket.
+     * {@code PrinterReactor} lives in exactly that window: it calls {@code terminal.start(...)} and
+     * {@code Mono.zip} subscribes the reply flux afterwards.
      *
-     * <p><strong>Every other test in this file subscribes the bus before {@code start()}, and no
-     * caller can.</strong> {@code start()} is the call that builds the two halves, so a caller holds
-     * nothing to subscribe until it has returned - and {@code start()} begins reading the socket as
-     * a side effect of being called. The window between those two moments is where
-     * {@code PrinterReactor} lives: it calls {@code terminal.start(...)} while assembling the chain
-     * and {@code Mono.zip} subscribes the reply flux afterwards.
-     *
-     * <p>The shape is {@code M115}'s real answer off MarlinSim - six replies and then the {@code ok}
-     * that releases the next block. The {@code ok} went down a different road entirely
-     * ({@code onOk} drives the send window on the inbound thread and never touches the sink), which
-     * is why a session could look perfectly healthy - the next block goes out, the connection
-     * reaches {@code IDLE} - while the firmware report that came with it was never seen by anybody.
-     *
-     * <p>With a one-element history, what a subscriber got here was the <em>last</em> capability and
-     * nothing before it.
+     * <p>The shape is {@code M115}'s real MarlinSim answer - six replies then the {@code ok} that
+     * releases the next block, which goes down a different road entirely ({@code onOk} never touches
+     * the sink) - so a session could look healthy while the firmware report never reached anybody.
+     * With a one-element history, a subscriber here got only the <em>last</em> capability.
      */
     @Test
     void everyReplyOfABurstReachesASubscriberThatAttachedAfterTheSocketWasRead() {
@@ -758,24 +614,16 @@ class HostTerminalTest {
     }
 
     /**
-     * A reply published while another thread is publishing is not refused, it waits.
+     * A reply published while another thread is publishing is not refused, it waits. The decoded
+     * reply arrives on the netty inbound loop; a {@link BlockAcknowledged} is released inside the
+     * send window's drain loop, on whichever thread got there first - a real collision a safe
+     * {@code Sinks} answers with {@code FAIL_NON_SERIALIZED}, which this module used to log and drop.
+     * Measured: two threads into a safe sink, <strong>26,640 of 40,000</strong> emissions refused.
      *
-     * <p>Two threads reach the bus and they are genuinely different threads: a decoded reply arrives
-     * on the netty inbound loop, and a {@link BlockAcknowledged} is released inside the send
-     * window's drain loop, which runs on whichever thread got there first - as readily a producer
-     * pushing a command as the inbound loop delivering an {@code ok}. A {@code Sinks} built the safe
-     * way answers the second of two concurrent emitters with {@code FAIL_NON_SERIALIZED}, and this
-     * module's response to that was a log line and a lost reply. Measured on this machine: two
-     * threads emitting into a safe sink had <strong>26,640 of 40,000</strong> emissions refused.
-     *
-     * <p>It can only happen when two threads really do run at once, which is why it reproduces on a
-     * loaded two-core CI runner and never in a single-threaded unit test - and why this test makes
-     * the collision happen rather than hoping for it: the other thread is held <em>inside</em> the
-     * sink by a subscriber that will not return, and the burst is delivered while it is in there.
-     *
-     * <p>{@code onBusy} stands in for the acknowledgement route. It is the one path into the bus a
-     * test can drive from a thread of its own; the real second emitter is the drain loop, and the
-     * module's debt list already says why a two-instruction window cannot be scheduled on demand.
+     * <p>This test makes the collision happen rather than hoping for it: the other thread is held
+     * <em>inside</em> the sink by a subscriber that will not return, and the burst is delivered while
+     * it is in there - the real second emitter is the drain loop, and {@code onBusy} stands in for it
+     * as the one path a test can drive from a thread of its own.
      */
     @Test
     void aReplyIsNotLostBecauseAnotherThreadWasPublishingAtTheSameMoment() throws InterruptedException {
@@ -810,15 +658,9 @@ class HostTerminalTest {
                 published.subList(2, published.size()));
     }
 
-    /**
-     * The socket closing is the last thing on the bus, not the first thing to jump the queue.
-     *
-     * <p>Same arrangement, and the other half of the same rule. A terminal signal used to go
-     * straight at the sink from the inbound thread - so it could be refused by a collision like any
-     * other emission, leaving a bus that never ends, and when it was not refused it could terminate
-     * the sink in front of a reply that was still waiting to go out. Both are
-     * {@code FAIL_TERMINATED} in the log and silence on the wire.
-     */
+    /** The socket closing is the last thing on the bus, not the first to jump the queue - a terminal
+     * signal issued straight at the sink could be refused by a collision (leaving a bus that never
+     * ends) or terminate it ahead of a reply still waiting to go out. */
     @Test
     void whatWasParkedIsPublishedBeforeTheBusEnds() throws InterruptedException {
         var inTheSink = new CountDownLatch(1);
@@ -842,13 +684,9 @@ class HostTerminalTest {
         assertEquals(Signal.complete(), busEnd.get(), "the bus never ended");
     }
 
-    /**
-     * Subscribes the bus with a collector that holds the first value - and so holds the sink.
-     *
-     * <p>Blocking inside {@code onNext} is exactly what a pipeline must never do and exactly what
-     * this test needs: it is how a second thread is made to find the sink occupied at a moment of
-     * the test's choosing, rather than at one the scheduler picks once in every few runs.
-     */
+    /** Subscribes with a collector that holds the first value, and so the sink - blocking inside
+     * {@code onNext} is exactly what a pipeline must never do, and exactly what schedules the
+     * collision deterministically rather than hoping the scheduler reproduces it. */
     private void subscribeHolding(CountDownLatch inTheSink, CountDownLatch release) {
         terminal.messageFlux().subscribe(value -> {
             published.add(value);
@@ -863,14 +701,9 @@ class HostTerminalTest {
         }, t -> busEnd.set(Signal.error(t)), () -> busEnd.set(Signal.complete()));
     }
 
-    /**
-     * What leaves the host is a framed block, not the text that was handed in.
-     *
-     * <p>Spec 7 and 8 through {@code :gcode}'s {@code GSendWindow}: an {@code N} field, one space,
-     * the payload verbatim, and the XOR checksum of everything before the {@code *}. The literals
-     * are the spec's own arithmetic - {@code N1 G28} xors to 18 - and not what the encoder happens
-     * to produce, so this fails if the framing changes under it.
-     */
+    /** Spec 7 and 8 through {@code :gcode}'s {@code GSendWindow}: {@code N}, the payload verbatim,
+     * and the XOR checksum of everything before {@code *}. The literals are the spec's own
+     * arithmetic ({@code N1 G28} xors to 18), not whatever the encoder happens to produce. */
     @Test
     void whatLeavesTheHostIsNumberedAndChecksummed() {
         var out = sendWindowOf("G28", "M105");
@@ -888,18 +721,9 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * Spec 8.5 step 5, answered: the blocks from the requested number onwards go out again, byte
-     * for byte, before anything newer.
-     *
-     * <p>{@code Resend: 3} while 2, 3 and 4 are outstanding replays 3 and 4 - 2 was accepted and is
-     * dropped from the window - and numbering then carries on at 5 rather than rewinding to it,
-     * because the replayed blocks keep the numbers they were sent with.
-     *
-     * <p>Before the send window this was a log line and nothing else: the host did not number what
-     * it sent, so it had nothing to replay and the session stayed broken from the first bad
-     * checksum onwards.
-     */
+    /** Spec 8.5 step 5, answered: {@code Resend: 3} while 2, 3 and 4 are outstanding replays 3 and 4
+     * (2 was accepted and dropped from the window), and numbering carries on at 5 - replayed blocks
+     * keep the numbers they were first sent with. */
     @Test
     void aResendReplaysTheHeldBlocksByteForByteAndThenCarriesOn() {
         var out = sendWindow();
@@ -920,20 +744,10 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * <strong>A resend does not pull the source again</strong>, which is plan item C4's third
-     * done-when and the thing its progress count rests on.
-     *
-     * <p>A replay comes out of {@code GSendWindow} into {@code replaying} and is written from
-     * there; {@code pending}, which is what {@code onNext} fills from the source, is never
-     * revisited. So a counter driven by what the <em>source</em> emitted cannot double-count on a
-     * resend, and the plan's decision 3 is wrong to say it would - its conclusion that the
-     * acknowledgement is the trustworthy signal stands, its reason for distrusting the other count
-     * does not.
-     *
-     * <p>Measured as demand, because demand is what a source is asked for: five blocks are pulled
-     * for five blocks of G-code, across a resend that put two of them on the wire twice.
-     */
+    /** A resend does not pull the source again: a replay comes out of {@code GSendWindow} into
+     * {@code replaying} and is written from there, never through {@code pending}/{@code onNext}. So
+     * a counter driven by what the source emitted cannot double-count on a resend - five blocks
+     * pulled for five blocks of G-code, across a resend that put two of them on the wire twice. */
     @Test
     void aResendReplaysWithoutPullingTheSourceAgain() {
         var out = sendWindow();
@@ -956,14 +770,9 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * An exhausted source completes the stream - which it used not to do at all.
-     *
-     * <p>{@code CommandProcessor.onComplete} was a log line and a commented-out
-     * {@code subscriber.onComplete()}, so a {@code Processor} swallowed a terminal signal and its
-     * subscriber could never learn that the source had ended. Against a live terminal the source is
-     * a {@code PublisherQueue} that never completes, which is why nothing noticed.
-     */
+    /** An exhausted source completes the stream, which it used not to do at all -
+     * {@code CommandProcessor.onComplete} swallowed the signal, unnoticed because a live
+     * {@code PublisherQueue} source never completes. */
     @Test
     void anExhaustedSourceCompletesTheStream() {
         var out = sendWindowOf("G28", "M105");
@@ -980,19 +789,8 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * And it does not arrive before the last block is on the wire.
-     *
-     * <p>The source here runs out while the window is still waiting for an acknowledgement, so its
-     * final block is owed. Completing on {@code onComplete} directly would strand it:
-     * {@code write0} refuses to write once the stream is terminated, so it would be dropped in
-     * silence, which is the one failure this module exists to prevent.
-     *
-     * <p>The {@code pending} half of {@link HostTerminal.CommandProcessor#completeIfDrained} is a
-     * guard rather than something this can reach - a payload is only pulled when there is
-     * subscriber demand to write it, and the same drain writes it - so what is asserted is the
-     * reachable half: nothing completes while the window is waiting.
-     */
+    /** The source runs out while the window still owes its final block - completing directly on
+     * {@code onComplete} would strand it, since {@code write0} refuses to write once terminated. */
     @Test
     void completionWaitsForTheLastBlockToReachTheWire() {
         var out = sendWindowOf("G28", "M105");
@@ -1010,15 +808,9 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * A cancel is not a completion, which is Reactive Streams rule 2.4.
-     *
-     * <p>{@code cancel()} answered with {@code subscriber.onComplete()}, a terminal signal from a
-     * cancel path. Beyond being wrong it was expensive: {@code StepVerifier} cancels from inside
-     * its own {@code onNext} when an expectation does not match, the {@code onComplete} re-entered
-     * its state machine, and a failing send-window test span at 100% CPU until the build was
-     * killed rather than reporting the mismatch.
-     */
+    /** Rule 2.4: a cancel is not a completion. {@code cancel()} used to answer with
+     * {@code subscriber.onComplete()}, which re-entered {@code StepVerifier}'s state machine on a
+     * mismatch and spun a failing test at 100% CPU instead of reporting it. */
     @Test
     void aCancelIsNotACompletion() {
         var out = sendWindow();
@@ -1033,19 +825,10 @@ class HostTerminalTest {
         assertEquals(0, completions.get(), "a cancelled stream must not also be completed");
     }
 
-    /**
-     * The {@code ok} that closes a resend handshake is credit, and nothing more.
-     *
-     * <p>Marlin answers a rejected block with {@code Error:}, {@code Resend: n} and then
-     * {@code ok}. That last line says the firmware is ready again; it acknowledges no block,
-     * because the block it is about to be sent has not been accepted yet. Letting it reach
-     * {@code GSendWindow.acknowledge()} would release block {@code n} - the very one the rewind
-     * just made outstanding again - and the next {@code Resend:} for it would find nothing held.
-     *
-     * <p>Measured as demand, which is where it shows: the first {@code ok} after the replay moves
-     * nothing, and the second one - a real acknowledgement of the replayed block 3 - frees the slot
-     * that pulls block 6.
-     */
+    /** The {@code ok} that closes a {@code Resend:} handshake acknowledges no block - letting it
+     * reach {@code GSendWindow.acknowledge()} would release the very block the rewind just made
+     * outstanding again. Shows as demand: the first {@code ok} after the replay moves nothing, the
+     * second (a real ack of replayed block 3) frees the slot that pulls block 6. */
     @Test
     void theOkThatClosesAResendAcknowledgesNoBlock() {
         var out = sendWindow();
@@ -1075,25 +858,12 @@ class HostTerminalTest {
     }
 
     /**
-     * An acknowledged block is announced, with the number of the block the firmware accepted.
-     *
-     * <p><strong>This is the signal plan decision 3 said the transport did not expose.</strong>
-     * Both {@code ok} forms were consumed by the send window on the stated grounds that they said
-     * nothing a subscriber had not already learned from it - and no subscriber can see the send
-     * window, so what they actually said was nothing to anybody. Two things needed it: progress
-     * measured in lines the firmware accepted rather than lines the host handed over, and the
-     * answer to whether this session can send at all.
-     *
-     * <p><strong>Counting what was sent is wrong in exactly the case that matters.</strong> After a
-     * {@code Resend:} the transport replays blocks the layer above already counted, so a count of
-     * what went out overstates and then has to move backwards. The number here is the window's, so
-     * a replayed block is announced under the number it was first sent with - see
-     * {@link #theOkThatClosesAResendAcknowledgesNoBlock}, where the second real acknowledgement is
-     * block 3 and not block 6.
-     *
-     * <p>The second field is what is still outstanding after this one. Without it, acknowledgements
-     * stopping is ambiguous - nothing was sent, or nothing is coming back - and that distinction is
-     * the whole of what a dead outbound half looks like from above.
+     * An acknowledged block is announced, with the number the firmware accepted - both {@code ok}
+     * forms used to be pure window credit, saying nothing to a subscriber who cannot see the window.
+     * Counting what was <em>sent</em> is wrong after a {@code Resend:}, since a replay would
+     * double-count - see {@link #theOkThatClosesAResendAcknowledgesNoBlock}, where the second real
+     * acknowledgement is block 3, not 6. The second field (still outstanding) disambiguates
+     * acknowledgements stopping because nothing was sent from nothing coming back.
      */
     @Test
     void anAcknowledgedBlockIsAnnouncedWithItsLineNumber() {
@@ -1119,14 +889,8 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * The window is the second gate, and it binds when the printer's buffer is the wider of the two.
-     *
-     * <p>{@code B8} offers room for eight commands; the host holds four, because four is what it
-     * can still replay. A send the window would refuse is a command pulled off the source with
-     * nowhere to go, which is a silent drop - so the gate reserves the slot before the pull rather
-     * than discovering it afterwards.
-     */
+    /** The window is the second gate and binds when the printer's buffer is wider: {@code B8} offers
+     * eight, the host still holds only four, since four is what it can replay. */
     @Test
     void theSendWindowCapsWhatIsOutstandingEvenWhenThePrinterOffersMore() {
         var out = sendWindow();
@@ -1144,20 +908,9 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * A {@code Resend:} for a block the host no longer holds is repaired with a counter reset.
-     *
-     * <p>Block 1 was acknowledged, so it is gone - a well-behaved firmware cannot ask for it, since
-     * it is the {@code ok} for a block that releases it. A peer that asks anyway has drifted
-     * further than a replay can repair, and a partial answer would put a gap on the wire on top of
-     * the one already there.
-     *
-     * <p>So the session is restarted rather than patched: {@code M110} puts the firmware's counter
-     * back to zero, numbering resumes at {@code N1}, and the blocks the window was holding are
-     * abandoned because the numbers they carry no longer mean anything. This was a log line and
-     * nothing else until a live run against the simulator showed how a session reaches this state
-     * in the first place.
-     */
+    /** Block 1 was already acknowledged and is gone, so a {@code Resend: 1} is a drift a replay
+     * cannot repair - the session is restarted instead: {@code M110} zeroes the firmware's counter,
+     * numbering resumes at {@code N1}, and the blocks still held are abandoned. */
     @Test
     void aResendForABlockNoLongerHeldIsRepairedWithACounterReset() {
         var out = sendWindow();
@@ -1177,11 +930,9 @@ class HostTerminalTest {
     }
 
     /**
-     * And the blocks it threw away are announced, because nothing above can see that they went.
-     *
-     * <p><strong>The state this reports was measured, not imagined.</strong> Against MarlinSim
-     * (bugfix-2.1.x) on 2026-11-01, with {@code last_N} at 14, a block numbered as a fresh session
-     * numbers its first is answered:
+     * The blocks thrown away are announced, because nothing above can otherwise see that they went -
+     * measured, not imagined. Against MarlinSim (bugfix-2.1.x) on 2026-11-01, with {@code last_N} at
+     * 14, a block numbered as a fresh session numbers its first is answered:
      *
      * <pre>
      *   -&gt; N1 G21*27
@@ -1190,13 +941,11 @@ class HostTerminalTest {
      *      ok
      * </pre>
      *
-     * <p>The {@code Resend:} names {@code last_N + 1} - a number this host has never framed - so
-     * the window cannot answer it however much it is holding, and everything it is holding is
-     * dropped. Until this record existed that was a WARN and nothing else, so a print whose
-     * remaining blocks had just been thrown away still reported {@code COMPLETED}.
-     *
-     * <p>{@code Resend: 99} stands in for the real {@code last_N + 1} here: what makes a resend
-     * unanswerable is that the number is not in the window, and the window holds 2, 3 and 4.
+     * <p>The {@code Resend:} names {@code last_N + 1}, a number this host never framed, so the
+     * window cannot answer it and everything held is dropped - until this record existed that was a
+     * WARN and nothing else, so a print whose remaining blocks were just thrown away still reported
+     * {@code COMPLETED}. {@code Resend: 99} stands in for the real {@code last_N + 1}: what makes a
+     * resend unanswerable is that the number is not in the window, which holds 2, 3 and 4 here.
      */
     @Test
     void aResendForABlockNoLongerHeldAnnouncesTheBlocksItAbandoned() {
@@ -1221,17 +970,10 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * A {@code Resend:} the window <em>can</em> answer abandons nothing and announces nothing.
-     *
-     * <p>The control, and the reason it is worth its own test: without it,
-     * {@link #aResendForABlockNoLongerHeldAnnouncesTheBlocksItAbandoned} passes just as happily
-     * against a transport that fires on every resend - which would report a lost job every time a
-     * checksum was mistyped, the one failure the send window exists to make routine.
-     *
-     * <p>So the replay is asserted beside the silence: blocks 3 and 4 go out again byte for byte,
-     * numbering carries on at 5, and the bus hears nothing about it.
-     */
+    /** The control for {@link #aResendForABlockNoLongerHeldAnnouncesTheBlocksItAbandoned}: without
+     * it, that test would pass just as happily against a transport that fires on every resend,
+     * reporting a lost job on every mistyped checksum. Here the replay happens and the bus stays
+     * silent. */
     @Test
     void aResendTheWindowCanAnswerAbandonsNothing() {
         var out = sendWindow();
@@ -1253,21 +995,10 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * A resynchronisation that dropped nothing announces nothing, which is the gate and not a
-     * detail.
-     *
-     * <p>A bare {@code ok} releases the one block outstanding, so the window is empty when the
-     * {@code Resend:} for that very block arrives. It cannot be answered - the block is gone - and
-     * {@code resynchronise} runs in full: the counter goes back to zero and a second {@code M110}
-     * goes out. What did not happen is a loss, because the window was holding nothing to lose.
-     *
-     * <p>Without the {@code > 0} gate this is an event naming zero blocks, and a three-block
-     * pile-up - which is the normal shape, since the firmware answers each of the next two blocks
-     * with the same unanswerable {@code Resend:} - turns one lost print into three announcements of
-     * it. The name would also be a lie, and a consumer that fails a job on this record would fail
-     * one that lost nothing.
-     */
+    /** A bare {@code ok} releases the one block outstanding, so the window is empty when a
+     * {@code Resend:} for that very block arrives - {@code resynchronise} runs in full, but nothing
+     * was lost. Without the {@code > 0} gate this would announce zero blocks, and the normal
+     * three-{@code Resend:} pile-up would turn one lost print into three announcements of it. */
     @Test
     void aResynchronisationThatDroppedNothingAnnouncesNothing() {
         var out = sendWindow();
@@ -1292,19 +1023,10 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * A session opens by telling the firmware where the numbering starts.
-     *
-     * <p><strong>Spec 7.2: {@code M110 N0} is how a host starts a session</strong>, and an
-     * {@code M110} line is exempt from the continuity check precisely so that it can be sent when
-     * the sequence is not yet agreed.
-     *
-     * <p>Without it a reconnect is dead on arrival. The host's window starts at {@code N1} while
-     * the firmware - still powered, never reset - remembers the last line of the previous session,
-     * so the first block is rejected with {@code Error:Line Number is not Last Line Number+1} and a
-     * {@code Resend:} for a block this host has never held. Verified against the simulator: only
-     * the first session after a printer powers on had ever worked.
-     */
+    /** Spec 7.2: {@code M110 N0} is how a host starts a session, exempt from the continuity check so
+     * it can be sent before the sequence is agreed. Without it a reconnect is dead on arrival - the
+     * firmware remembers the previous session's last line and rejects the first block; verified
+     * against the simulator, only the first session after a power-on had ever worked. */
     @Test
     void aSessionOpensByResettingTheFirmwaresLineCounter() {
         var out = sendWindow();
@@ -1318,18 +1040,9 @@ class HostTerminalTest {
                 .verify(TIMEOUT);
     }
 
-    /**
-     * Nothing is written in front of the counter reset, and it costs a real buffer slot.
-     *
-     * <p>The {@code M110} is an {@code onNext} like any other: it takes a unit of the subscriber's
-     * demand and occupies one of the printer's command slots until its {@code ok} comes back. A
-     * printer that has reported nothing yet is credited with one block, so the first G-code block
-     * waits for that acknowledgement - the same arithmetic every other block obeys, and the reason
-     * the reset goes through the drain loop rather than straight at the socket.
-     *
-     * <p>Numbering then restarts at {@code N1}, which is what proves the reset moved this host's
-     * window and not only the firmware's counter.
-     */
+    /** The {@code M110} is an {@code onNext} like any other - it costs a unit of demand and a buffer
+     * slot until its {@code ok} returns, so the first G-code block waits. Numbering restarting at
+     * {@code N1} afterwards proves the reset moved this host's window, not just the firmware's. */
     @Test
     void theCounterResetTakesAUnitOfDemandAndABufferSlot() {
         var out = sendWindow();

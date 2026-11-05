@@ -89,6 +89,11 @@ from `:gcode`, which has none.
 - **No blocking on a pipeline thread.** No `block()`, `sleep`, or synchronous I/O outside the
   hand-run probes.
 - **Terminal signals are final.** Nothing after `onComplete`/`onError`, ever.
+- **One javadoc, before the class.** It carries the demand contract, the thread that signals and
+  what a probe measured; the methods carry almost nothing. A one-line `//` naming the Reactive
+  Streams rule a line satisfies is the sanctioned inline form. `reactive-transport-dev`'s
+  *Documentation duty* is the authority. A probe's header is its specification — compress its
+  wording, never its captured numbers.
 
 ## Working in this repo
 

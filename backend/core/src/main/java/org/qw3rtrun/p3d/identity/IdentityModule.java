@@ -25,13 +25,7 @@ import java.time.Duration;
 @EnableJpaRepositories
 public class IdentityModule {
 
-    /**
-     * BCrypt, and the one encoder the application has.
-     *
-     * <p>It is declared here rather than beside the security configuration because this module is
-     * what writes hashes - the web layer only compares them, and a second encoder bean configured
-     * differently from this one would produce a farm where new passwords cannot be verified.
-     */
+    /** BCrypt, the one encoder the application has - declared here, not beside the security configuration, because this module writes hashes and the web layer only compares them; a second, differently-configured encoder bean would make new passwords unverifiable. */
     @Bean
     public static PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
@@ -43,15 +37,11 @@ public class IdentityModule {
     }
 
     /**
-     * Where signed-in sessions are kept - the fix for "a restart signs everybody out".
-     *
-     * <p>Wired by hand rather than through Spring Session's own configuration class, because that
-     * one targets the servlet stack; the reactive side of Spring Session ships Redis and MongoDB
-     * only. See {@link ReactiveJdbcSessions} for why the blocking repository is wrapped instead of
-     * a JDBC one being written.
-     *
-     * <p>Wiring it by hand also means inheriting what that configuration class does for you -
-     * which is why {@link ExpiredSessionSweeper} exists below.
+     * Where signed-in sessions are kept - the fix for "a restart signs everybody out". Wired by hand
+     * because Spring Session's own configuration targets the servlet stack and its reactive side
+     * ships Redis/MongoDB only (see {@link ReactiveJdbcSessions} for why the blocking repository is
+     * wrapped rather than a JDBC one written). Wiring by hand means inheriting what that
+     * configuration would otherwise do for you, which is why {@link ExpiredSessionSweeper} exists.
      */
     @Bean
     public JdbcIndexedSessionRepository jdbcSessions(
@@ -63,14 +53,7 @@ public class IdentityModule {
         return sessions;
     }
 
-    /**
-     * The transaction template Spring Session's own configuration builds, including its propagation.
-     *
-     * <p>{@code REQUIRES_NEW} matters: a session is saved at the end of a request that may already
-     * be inside a transaction of its own, and joining it would tie writing the session to whether
-     * that unrelated work commits. A user staying signed in should not depend on whether the
-     * command they just sent succeeded.
-     */
+    /** Matches Spring Session's own propagation: {@code REQUIRES_NEW}, since a session is saved at the end of a request that may already be in its own transaction, and joining it would tie staying signed in to whether that unrelated work commits. */
     private static TransactionTemplate transactionsFor(
             PlatformTransactionManager manager) {
         var template = new TransactionTemplate(manager);
@@ -81,12 +64,11 @@ public class IdentityModule {
     }
 
     /**
-     * The reactive view of the above, which is what WebFlux resolves a session through.
-     *
-     * <p>Eight hours by default rather than Spring Session's thirty minutes: the thing looking at
-     * this farm all day is a wall display, and signing it out twice an hour would teach whoever
-     * walks past to leave a browser logged in permanently. A shift is the honest unit. Shorten it
-     * with {@code p3d.security.session-timeout} where that trade does not hold.
+     * The reactive view of the above, which is what WebFlux resolves a session through. Eight hours
+     * by default, not Spring Session's thirty minutes: the thing watching this farm all day is a
+     * wall display, and signing it out twice an hour would teach whoever walks past to leave a
+     * browser logged in permanently - shorten with {@code p3d.security.session-timeout} where that
+     * trade does not hold.
      */
     @Bean
     public ReactiveSessionRepository<?> sessions(JdbcIndexedSessionRepository jdbcSessions) {

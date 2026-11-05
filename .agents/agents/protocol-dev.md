@@ -117,6 +117,11 @@ check your own diff against before reporting done.
    same rule: a number keeps its lexeme, and `GDslCorpusTest`'s four counts are a contract.
 4. **Red first, and read the failures.** A compile error is not a red. If the tests you wrote do not
    fail for the reason you predicted, stop and find out why before writing the fix.
+5. **The code documents itself.** One block before the class or file — the portability contract, the
+   spec sections implemented, the deviation if there is one — and nothing per member but a
+   `// spec N.N: …` where a rule is non-obvious. A family of DSL builders is documented once, not
+   once each. Each layer skill's *Documentation duty* is the authority. A spec citation, a capture
+   and a measured number are facts: compress the prose around them, never them.
 
 ## IMPORTANT — house style in `code/core`: write C, not idiomatic Kotlin
 

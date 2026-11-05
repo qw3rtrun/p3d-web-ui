@@ -18,27 +18,24 @@ import static org.qw3rtrun.p3d.api.model.MachineConnectionState.ONLINE;
 /**
  * One machine's connection state machine: the whole of plan item B3's "one enum is the state".
  *
- * <p><strong>Plain, synchronous and with no Reactor in it.</strong> Every method is a transition
- * that returns the {@link ConnectionStateChanged} it caused, or {@code null} when nothing moved -
- * so this decides and the caller emits, and a test can drive every arrow in the diagram without a
- * socket, a scheduler or a clock tick. The timing half of B3 - backoff between attempts - belongs
- * to {@link PrinterReactor}, which is where the schedulers are.
+ * <p>Plain, synchronous, no Reactor: every method is a transition returning the
+ * {@link ConnectionStateChanged} it caused, or {@code null} when nothing moved, so this decides and
+ * the caller emits - a test can drive every arrow without a socket, a scheduler or a clock tick.
+ * Backoff timing lives in {@link PrinterReactor} instead, which is where the schedulers are.
  *
- * <p><strong>Intent is held separately from state, and that is the whole trick.</strong>
- * {@code wanted} is what the user asked for; the state is where the machine actually is. A link
- * that drops while a connection is still wanted goes back to {@code CONNECTING}; the identical
- * drop a moment after someone pressed Disconnect goes to {@code OFFLINE}. Without the distinction
- * the two are indistinguishable, which is why the code this replaces had no retry at all: there
- * was nothing to ask whether a reconnect would be welcome.
+ * <p>Intent is held apart from state: {@code wanted} is what the user asked for, the state is where
+ * the machine is. A link dropping while a connection is still wanted goes back to
+ * {@code CONNECTING}; the same drop just after Disconnect goes to {@code OFFLINE} - without that
+ * distinction the code this replaces had no retry at all, because nothing could ask whether a
+ * reconnect would be welcome.
  *
- * <p><strong>Leaving {@code BUSY} is driven by replies and a clock, not by a timer.</strong>
- * Marlin repeats {@code echo:busy: processing} every couple of seconds while it works, and
- * interleaves the {@code M155} temperature auto-reports the handshake asked for. So "busy until
- * something else arrives" would flicker between {@code BUSY} and {@code IDLE} once a second, and a
- * timer would put a scheduler in the aggregate. Instead a busy notice stamps the clock and any
- * later reply asks whether the machine has gone quiet for the busy timeout - the steady stream of
- * temperature reports being the tick. If the printer stops talking altogether the link drops, and
- * that leaves {@code BUSY} by another door.
+ * <p>Leaving {@code BUSY} is driven by replies and a clock, not a timer: Marlin repeats
+ * {@code echo:busy: processing} every couple of seconds while interleaving the {@code M155}
+ * auto-reports the handshake asked for, so "busy until something else arrives" would flicker once a
+ * second, and a timer would put a scheduler in the aggregate. A busy notice instead stamps the
+ * clock, and a later reply asks whether it has been quiet for the busy timeout - the temperature
+ * stream being the tick. If the printer stops talking altogether the link drops, leaving
+ * {@code BUSY} by another door.
  */
 public final class ConnectionLifecycle {
 
@@ -48,22 +45,13 @@ public final class ConnectionLifecycle {
     private final Duration busyTimeout;
     private final Clock clock;
 
-    /*
-     * Volatile, and the next four with it, because they are read from threads that do not write
-     * them: a snapshot for a subscriber, PrinterReactor.connection() and linked() all read from
-     * whichever thread asks. Volatile buys visibility, not a consistent set - a reader can pair a
-     * new state with the previous reason for an instant - which is enough for a value that the
-     * next event on the stream corrects. The transitions themselves still need one thread.
-     */
+    // volatile (and the next four with it): read from whichever thread asks (a snapshot,
+    // PrinterReactor.connection()/linked()) but written only by a transition. Visibility, not a
+    // consistent set - a reader can pair a new state with the previous reason for an instant, which
+    // the next event on the stream corrects.
     private volatile MachineConnectionState state = OFFLINE;
 
-    /**
-     * Whether a connection is wanted, which is not the same question as whether there is one.
-     *
-     * <p>Set by {@link #connectRequested()} and cleared by {@link #disconnectRequested()} or by
-     * running out of attempts. It is what {@link #linkFailed(String)} consults to decide between
-     * retrying and resting.
-     */
+    /** Not the same question as whether there is a connection - what {@link #linkFailed(String)} consults to decide between retrying and resting. */
     private volatile boolean wanted;
 
     private volatile int attempt;
@@ -209,24 +197,16 @@ public final class ConnectionLifecycle {
     }
 
     /**
-     * The firmware accepted a block this session sent, which is the proof {@link #replyReceived()}
-     * only looked like.
-     *
-     * <p><strong>This is the arrow from {@code ONLINE} to {@code IDLE}, and the only one.</strong>
-     * B3 shipped with "any reply" on it and recorded against itself why that was not good enough:
-     * {@code M155 S1} left running by an earlier session writes a temperature a second into
-     * whatever socket is open, and a printer that queued output while nothing was listening
-     * delivers the backlog the moment something is. Both are replies; neither says the host can
-     * send. The live run reached that state twice, from those two different causes, and a machine
-     * whose outbound half was dead read as {@code IDLE} both times.
-     *
-     * <p>An acknowledgement cannot be counterfeited by either, because it names a block this host
-     * put on the wire under this session's numbering. One arrives within a round trip of every
-     * connection without anything having to ask for it - {@code PrinterState.onOnline} sends
-     * {@code M115} and {@code M155 S1} the moment the socket comes up - so nothing waits on a user
-     * to press a button before a healthy machine reads as healthy.
-     *
-     * <p>Otherwise an acknowledgement is a reply like any other, and does what one does.
+     * The firmware accepted a block this session sent - the proof {@link #replyReceived()} only
+     * looked like, and the only arrow from {@code ONLINE} to {@code IDLE}. B3 shipped with "any
+     * reply" on that arrow: a live run showed a leftover {@code M155 S1} from an earlier session
+     * writing a temperature into whatever socket is open, and a backlog queued while nothing was
+     * listening delivering the moment something is - both replies, neither proof the host can send,
+     * and both read as {@code IDLE} with a dead outbound half. An acknowledgement cannot be
+     * counterfeited by either, since it names a block this host put on the wire under this session's
+     * numbering, and one arrives within a round trip of every connection unasked
+     * ({@code PrinterState.onOnline} sends {@code M115}/{@code M155 S1} as the socket comes up).
+     * Otherwise this is a reply like any other.
      */
     public ConnectionStateChanged blockAcknowledged() {
         if (state == ONLINE) {

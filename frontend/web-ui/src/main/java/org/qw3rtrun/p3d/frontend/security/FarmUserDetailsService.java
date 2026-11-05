@@ -40,13 +40,8 @@ public class FarmUserDetailsService implements ReactiveUserDetailsService {
                 .map(FarmUserDetailsService::describe);
     }
 
-    /**
-     * One role per user, handed to Spring Security as {@code ROLE_<name>}.
-     *
-     * <p>{@code roles(...)} adds the prefix; {@code authorities(...)} would not. Mixing the two up
-     * produces a user whose role silently matches nothing, which reads as a permissions bug rather
-     * than a wiring one.
-     */
+    // roles(...) adds the ROLE_ prefix; authorities(...) would not - mixing them up produces a user
+    // whose role silently matches nothing, reading as a permissions bug rather than a wiring one.
     private static UserDetails describe(FarmUser user) {
         return User.withUsername(user.username())
                 .password(user.passwordHash())

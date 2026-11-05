@@ -9,22 +9,14 @@ import java.util.UUID;
 /**
  * What a job needs of a machine - the question plan item D1 matches against B4's spec.
  *
- * <p><strong>Every field is optional and null means "do not care".</strong> A job queued with
- * nothing stated runs on the first idle printer, which is what a farm of identical machines wants
- * and is the common case. Each field that <em>is</em> stated narrows the set.
+ * <p>Every field is optional; null means "do not care", so a job queued with nothing stated runs
+ * on the first idle printer. {@code machineId} is the manual override the plan's "first-fit over
+ * capability and availability with manual override" calls for: a job that names a machine waits
+ * for that machine and no other, so an operator who knows something the farm does not - this
+ * printer has the right filament loaded right now - is not second-guessed.
  *
- * <p><strong>{@code machineId} is the manual override.</strong> The plan calls for first-fit over
- * capability and availability "with manual override", and this is it: a job that names a machine
- * waits for that machine and no other, however free the rest of the farm is. An operator who knows
- * something the farm does not - this printer has the right filament loaded right now - needs to be
- * able to say so without the scheduler second-guessing it.
- *
- * @param machineId      the only machine this may run on, or null for any eligible one
- * @param bedVolume      the smallest bed it fits on, or null
- * @param extruders      how many tools it needs, or null
- * @param nozzleDiameter the nozzle it was sliced for, or null
- * @param material       what it must be printed in, or null
- * @param tag            a label the machine must carry - how a farm expresses a group
+ * @param machineId the only machine this may run on, or null for any eligible one
+ * @param tag       a label the machine must carry - how a farm expresses a group
  */
 public record JobRequirements(UUID machineId,
                               BedVolume bedVolume,
@@ -52,15 +44,11 @@ public record JobRequirements(UUID machineId,
     /**
      * Whether a machine described this way can run this job.
      *
-     * <p><strong>A requirement the machine has not been described against is not satisfied.</strong>
-     * "Nobody said" is not "yes": a job that needs PETG must not land on a printer whose materials
-     * nobody has filled in, because the answer there is unknown and the cost of being wrong is a
-     * failed print on the wrong filament. The effect is that stating requirements forces B4's data
-     * to be filled in, which is the right pressure - and a job that states nothing is unaffected.
+     * <p>A requirement the machine has not been described against is not satisfied: "nobody said"
+     * is not "yes", since a job needing PETG must not land on a printer whose materials are blank.
      *
-     * <p>{@code machineId} is deliberately not checked here. Which machine a pinned job may use is
-     * a different question from whether a machine is capable, and conflating them would let a
-     * capability match quietly override an operator's explicit choice.
+     * <p>{@code machineId} is deliberately not checked here - which machine a pinned job may use
+     * is a different question from whether a machine is capable.
      */
     public boolean satisfiedBy(MachineSpec spec) {
         if (spec == null) {

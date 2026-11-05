@@ -22,14 +22,11 @@ import static org.qw3rtrun.p3d.api.model.MachineConnectionState.OFFLINE;
 import static org.qw3rtrun.p3d.api.model.MachineConnectionState.ONLINE;
 
 /**
- * Every arrow in the connection state machine, driven by hand.
- *
- * <p>No socket, no scheduler and no Reactor in any of it - which is the argument for the lifecycle
- * being a plain object rather than something woven into {@link PrinterReactor}. What B3 replaced
- * was two booleans on the aggregate and a column on the entity, and the reason nothing could be
- * asserted about them was that each was set in passing by code that was doing something else.
- *
- * <p>The timing half of the item is in {@code PrinterReactorRetryTest}, where the schedulers are.
+ * Every arrow in the connection state machine, driven by hand. No socket, scheduler or Reactor in
+ * any of it, which is the argument for a plain object rather than something woven into
+ * {@link PrinterReactor}: B3 replaced two booleans on the aggregate and a column on the entity, each
+ * set in passing by code doing something else, so nothing could be asserted about them. The timing
+ * half is in {@code PrinterReactorRetryTest}, where the schedulers are.
  */
 class ConnectionLifecycleTest {
 
@@ -88,14 +85,9 @@ class ConnectionLifecycleTest {
         moved(lifecycle.blockAcknowledged(), ONLINE, IDLE, 0);
     }
 
-    /**
-     * {@code ONLINE} and {@code IDLE} are not synonyms, and this is the difference.
-     *
-     * <p>A terminal server with nothing plugged into it accepts the TCP connection and then says
-     * nothing at all. That machine is {@code ONLINE} and never reaches {@code IDLE}, which is worth
-     * being able to see - the host had a socket and no printer, and the old pair of booleans called
-     * that "online" with no qualification.
-     */
+    // ONLINE and IDLE are not synonyms: a terminal server with nothing plugged in accepts the TCP
+    // connection and says nothing at all - ONLINE forever, never IDLE - which the old pair of
+    // booleans could not distinguish.
     @Test
     void aSocketThatNobodyAnswersStaysOnline() {
         lifecycle.connectRequested();
@@ -105,17 +97,11 @@ class ConnectionLifecycleTest {
     }
 
     /**
-     * A machine that talks but accepts nothing is {@code ONLINE}, not {@code IDLE}.
-     *
-     * <p>This is the hole B3 left open and recorded against itself. {@code M155 S1} left running by
-     * a previous session goes on writing a temperature every second into whatever socket is open,
-     * and a backlog the printer queued while nothing was listening arrives the moment one is - so
-     * "a reply arrived" is satisfied by traffic that proves only that the firmware is powered. The
-     * live run reached this state twice from two different causes, and both read as {@code IDLE}
-     * while the outbound half of the session was dead.
-     *
-     * <p>The proof that is worth something is an acknowledgement of a block <em>this</em> session
-     * sent, which is the one thing a dead outbound half cannot produce.
+     * A machine that talks but accepts nothing is {@code ONLINE}, not {@code IDLE} - the hole B3
+     * left open: a leftover {@code M155 S1} or a queued backlog arriving the moment something
+     * listens both prove only that the firmware is powered, and both read as {@code IDLE} with a
+     * dead outbound half. Only an acknowledgement of a block this session sent is proof, since a
+     * dead outbound half cannot produce one.
      */
     @Test
     void aMachineThatTalksButAcceptsNothingStaysOnline() {
@@ -145,13 +131,8 @@ class ConnectionLifecycleTest {
         assertEquals(ONLINE, lifecycle.state());
     }
 
-    /**
-     * A drop nobody asked for goes back to {@code CONNECTING}.
-     *
-     * <p>The intent is what makes the difference, and the two booleans this replaced could not hold
-     * it: a machine whose link had dropped was {@code connected && !online}, a combination with no
-     * meaning and no event.
-     */
+    // the intent makes the difference - the two booleans this replaced could not hold it: a dropped
+    // link was connected && !online, a combination with no meaning and no event.
     @Test
     void aDropWhileAConnectionIsWantedGoesBackToConnecting() {
         lifecycle.connectRequested();
@@ -218,14 +199,9 @@ class ConnectionLifecycleTest {
         assertNull(lifecycle.busyReported("processing"), "the firmware repeats this every two seconds");
     }
 
-    /**
-     * Busy survives the replies that arrive while the machine is working.
-     *
-     * <p>This is the whole reason leaving {@code BUSY} is timed rather than event-driven. The
-     * handshake asks for {@code M155 S1}, so a temperature report lands once a second <em>between</em>
-     * the busy notices; "busy until something else arrives" would flicker between the two states for
-     * as long as the machine was working.
-     */
+    // the whole reason leaving BUSY is timed rather than event-driven: M155 S1 lands a temperature
+    // report once a second between the busy notices, so "busy until something else arrives" would
+    // flicker.
     @Test
     void aTemperatureArrivingMidBusyDoesNotClearIt() {
         lifecycle.connectRequested();
@@ -249,13 +225,8 @@ class ConnectionLifecycleTest {
         moved(lifecycle.replyReceived(), BUSY, IDLE, 0);
     }
 
-    /**
-     * An error is a state the machine talks its way out of.
-     *
-     * <p>On a Marlin an {@code Error:} is routine traffic - a bad checksum is answered with
-     * {@code Error:}, {@code Resend:} and then {@code ok} - so this has to clear itself. A sticky
-     * {@code ERROR} would mean a farm where every printer eventually reads as faulted.
-     */
+    // on a Marlin an Error: is routine traffic - a bad checksum gets Error:/Resend:/ok - so it must
+    // clear itself, or every printer eventually reads as faulted.
     @Test
     void anErrorIsClearedByTheNextGoodReply() {
         lifecycle.connectRequested();

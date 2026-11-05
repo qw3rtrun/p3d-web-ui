@@ -28,32 +28,20 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * What the Storage tab's buttons put on the wire, and what the card's answers reach.
- *
- * <p><strong>Both halves of this file are regression tests for the same feature shipping dead
- * twice.</strong> The commands went first: each reached {@code onCommand}'s old allow-list, matched
- * no arm, and was logged and dropped, so the tab rendered, the requests bound, the routes returned
- * 200 and no byte left the host. With that fixed the tab still did nothing, because
- * {@code SdCardOk} and {@code SdFileList} came back, decoded correctly, and reached
- * {@code onEvent}'s default, which dropped them - so the island timed out and reported "not
- * mounted" about a card that had just mounted.
- *
- * <p>{@code PrinterCommandTranslationTest} passed throughout both. It asserts a request body
- * becomes the right {@link GRq} list, which says nothing about whether the aggregate sends it, and
- * nothing at all about the reply. <strong>Neither module can test the join</strong>: {@code :frontend:web-ui}
- * does not depend on {@code :backend:core} by design, so the two halves are asserted either side
- * of a seam no test spans.
- *
- * <p>Neither default drops any more, so none of this could regress the same way a third time. The
- * tests stay because what they assert is the thing that was always the point - the exact bytes, and
- * the exact event - and both are still worth pinning: {@code M20} must stay bare because the
- * listing reader is built for the plain form, printing must stay an ordered pair, and the listing
- * has to arrive whole or the page cannot tell an empty card from an unanswered question.
- *
- * <p><strong>Writing to a card is deliberately not here.</strong> An upload is a stream that has to
- * hold the connection from {@code M28} to {@code M29}, so it goes to {@code PublisherQueue} as an
- * exclusive source and never passes through {@code onCommand} at all. That is also why it was the
- * one SD operation that worked: it is the one that does not use this path.
+ * What the Storage tab's buttons put on the wire, and what the card's answers reach - regression
+ * tests for the same feature shipping dead twice: first the commands (each reached
+ * {@code onCommand}'s old allow-list, matched no arm, and was dropped, so the tab rendered and
+ * routes returned 200 with no byte leaving the host), then the replies ({@code SdCardOk}/
+ * {@code SdFileList} decoded correctly and reached {@code onEvent}'s default, which dropped them, so
+ * the island timed out reporting "not mounted" about a card that had just mounted).
+ * {@code PrinterCommandTranslationTest} passed throughout both, since it only asserts a request body
+ * becomes the right {@link GRq} list - neither module can test the join, as
+ * {@code :frontend:web-ui} does not depend on {@code :backend:core} by design. Neither default drops
+ * any more, so this could not regress the same way a third time; the tests stay because the exact
+ * bytes and the exact event were always the point. Writing to a card is deliberately not here: an
+ * upload holds the connection from {@code M28} to {@code M29} through {@code PublisherQueue} as an
+ * exclusive source and never passes through {@code onCommand} - which is also why it was the one SD
+ * operation that worked.
  */
 class PrinterStateStorageTest {
 
@@ -74,7 +62,7 @@ class PrinterStateStorageTest {
         return printer;
     }
 
-    /** What reached a subscriber, which for a browser means the per-printer SSE stream. */
+    // what reached a subscriber, which for a browser means the per-printer SSE stream.
     private List<Object> published(Object... replies) {
         var printer = online();
         for (var reply : replies) {
@@ -83,7 +71,7 @@ class PrinterStateStorageTest {
         return emitted.stream().filter(e -> !(e instanceof ConnectionStateChanged)).toList();
     }
 
-    /** What the aggregate wrote, given the commands {@code PrinterControl.send} handed it. */
+    // what the aggregate wrote, given the commands PrinterControl.send handed it.
     private List<String> wire(GRq<?>... commands) {
         var printer = online();
         for (var command : commands) {
@@ -105,13 +93,8 @@ class PrinterStateStorageTest {
         assertEquals(List.of("M22"), wire(new ReleaseSDCard()));
     }
 
-    /**
-     * A bare {@code M20}, with none of the flags the command can carry.
-     *
-     * <p>The long form ({@code M20 F}, {@code L}, {@code T}) changes what the firmware writes back,
-     * and the reader this host assembles a listing with is built for the plain form. Asserted as
-     * the exact string for that reason rather than as a prefix.
-     */
+    // bare, with no flags: the long form (M20 F, L, T) changes what the firmware writes back, and
+    // the listing reader is built for the plain form.
     @Test
     void listingACardSendsABareM20() {
         assertEquals(List.of("M20"), wire(new ListSDCard()));
@@ -125,27 +108,17 @@ class PrinterStateStorageTest {
         assertEquals(List.of("M30 BENCHY.GCO"), wire(new DeleteSDFile("BENCHY.GCO")));
     }
 
-    /**
-     * Printing is two commands, and both have to arrive.
-     *
-     * <p>{@code M32} would do it in one and is what #32 asked for, but {@code :gcode}'s generated
-     * {@code SelectAndStart} carries no filename - see #37. Until it does, select and start are
-     * sent as a pair, and a pair is exactly the shape that half-works if one arm is missing from
-     * the dispatch: a file selected and never started looks like a machine ignoring the button.
-     */
+    // two commands, both must arrive: M32 would do it in one but :gcode's generated SelectAndStart
+    // carries no filename (#37), so select and start are sent as a pair - exactly the shape that
+    // half-works if one arm is missing.
     @Test
     void printingAFileSelectsItAndThenStarts() {
         assertEquals(List.of("M23 BENCHY.GCO", "M24"),
                 wire(new SelectSDFile("BENCHY.GCO"), new StartOrResumeSDPrint()));
     }
 
-    /**
-     * The whole tab in the order a session uses it, as one sequence.
-     *
-     * <p>Six commands through one aggregate, because the per-command tests above would all still
-     * pass if the switch handled each in isolation and something between them cleared the sender.
-     * This is the sequence {@code SdUploadProbe} runs by hand, minus the write.
-     */
+    // six commands through one aggregate - the per-command tests above would still pass if
+    // something between them cleared the sender.
     @Test
     void aWholeSessionAtTheCardReachesTheWireInOrder() {
         assertEquals(
@@ -161,31 +134,21 @@ class PrinterStateStorageTest {
     // ------------------------------------------------------ and what the card says, coming back
 
     /**
-     * The answer to Mount reaches a subscriber.
-     *
-     * <p><strong>This is the half that was still broken after the commands were fixed.</strong>
-     * {@code M21} went out, {@code echo:SD card ok} came back, {@code :gcode} decoded it, and the
-     * aggregate dropped it - so the browser saw nothing, timed out after four seconds and reported
-     * "not mounted" about a card that had just mounted successfully.
-     *
-     * <p>It matters more here than for most replies because <strong>the protocol has no way to ask
-     * whether a card is present</strong>. There is no query, so the island infers presence from
-     * this reply and absence from silence; a dropped {@code SdCardOk} is indistinguishable from an
-     * empty slot.
+     * The answer to Mount reaches a subscriber - the half still broken after the commands were
+     * fixed: {@code M21} went out, {@code echo:SD card ok} came back decoded, and the aggregate
+     * dropped it, so the browser timed out reporting "not mounted" about a card that had just
+     * mounted. Matters more here than most replies, since the protocol has no query for card
+     * presence - the island infers it from this reply and absence from silence, so a dropped
+     * {@code SdCardOk} is indistinguishable from an empty slot.
      */
     @Test
     void theAnswerToMountReachesTheBrowser() {
         assertEquals(List.of(SdCardOk.INSTANCE), published(SdCardOk.INSTANCE));
     }
 
-    /**
-     * So does the listing, whole.
-     *
-     * <p>The transport assembles {@code Begin file list} / entries / {@code End file list} into one
-     * {@code SdFileList} - an interrupted listing produces no event at all rather than a short one -
-     * so this is the single event the table is drawn from. Dropping it left the island unable to
-     * tell "the card is empty" from "nobody answered", which are different sentences on the page.
-     */
+    // the transport assembles Begin/entries/End into one SdFileList - an interrupted listing
+    // produces no event rather than a short one - so dropping it left the island unable to tell
+    // "the card is empty" from "nobody answered".
     @Test
     void theListingReachesTheBrowserWithItsFilesIntact() {
         var listing = new SdFileList(List.of(
@@ -199,14 +162,8 @@ class PrinterStateStorageTest {
         assertEquals(2847561L, delivered.getFiles().get(1).getSize());
     }
 
-    /**
-     * One arm covers the family, which is why a new SD reply needs no change here.
-     *
-     * <p>Every one of these implements {@code SdCardRs}, so {@code case SdCardRs<?>} routes them
-     * all - the same rule the transport follows for {@code OkRs} and {@code BusyRs}. Asserted as a
-     * set rather than one at a time because the claim is about the family, not about six replies
-     * that happen to work.
-     */
+    // one arm covers the whole SdCardRs family, so a new SD reply needs no change here - asserted as
+    // a set, since the claim is about the family and not six replies that happen to work.
     @Test
     void everySdReplyInTheFamilyReachesTheBrowser() {
         var replies = new Object[]{

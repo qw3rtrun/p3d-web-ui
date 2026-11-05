@@ -51,11 +51,8 @@
                             Activity</a>
                         <a class="dropdown-item"><i
                                 class="dropdown-item-icon mdi mdi-help-circle-outline text-primary me-2"></i> FAQ</a>
-                        <!--
-                          A form and not a link - plan item D3. Spring Security only accepts a
-                          POST for /logout, because a GET would let any page on the internet sign a
-                          user out by embedding an image tag pointing at it.
-                        -->
+                        <!-- A form, not a link: a GET would let any page on the internet sign a user out
+                             with an <img> tag. -->
                         <form method="post" th:action="@{/logout}" class="m-0">
                             <input type="hidden" th:if="${_csrf != null}"
                                    th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>

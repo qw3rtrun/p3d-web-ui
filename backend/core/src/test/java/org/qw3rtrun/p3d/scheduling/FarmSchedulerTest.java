@@ -282,12 +282,8 @@ class FarmSchedulerTest {
         assertTrue(actions.getFirst().contains(shortId(first.id())));
     }
 
-    /**
-     * Two jobs and two machines in one pass, without both landing on the same printer.
-     *
-     * <p>The queue's own view of a machine does not change until the transaction behind
-     * {@code assign} commits, so a pass has to remember what it has already given away.
-     */
+    // the queue's own view of a machine does not change until assign's transaction commits, so a
+    // pass has to remember what it has already given away.
     @Test
     void onePassDoesNotGiveOneMachineTwoJobs() {
         idle("alpha");
@@ -302,13 +298,8 @@ class FarmSchedulerTest {
         assertTrue(actions.stream().anyMatch(a -> a.endsWith("-> beta")));
     }
 
-    /**
-     * Only an {@code IDLE} machine is eligible - not merely a connected one.
-     *
-     * <p>{@code ONLINE} means a socket is open; {@code IDLE} means the firmware took something this
-     * host sent. Starting a print on a machine that has acknowledged nothing is plan item B3's dead
-     * outbound half, which read as healthy for exactly this reason.
-     */
+    // ONLINE is a socket; IDLE is the firmware having taken something this host sent - starting a
+    // print on an unacknowledging machine is B3's dead outbound half.
     @Test
     void aConnectedButUnacknowledgingMachineIsNotEligible() {
         machine("alpha", MachineConnectionState.ONLINE, MachineSpec.undeclared());

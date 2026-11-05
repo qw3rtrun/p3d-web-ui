@@ -17,12 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The first account - plan item D3.
- *
- * <p>What is asserted here is mostly what this class must <strong>not</strong> do. A farm that
- * shipped a default password would be worse than the unauthenticated farm this item replaces,
- * because it would look protected; and a farm that recreated its administrator on every restart
- * would make deleting that account impossible.
+ * The first account - plan item D3. Mostly asserts what this class must not do: a default password
+ * would look protected while being worse than no authentication, and recreating the administrator
+ * on every restart would make deleting the account impossible.
  */
 class InitialAdminTest {
 
@@ -79,13 +76,8 @@ class InitialAdminTest {
                 "a configured password should be used as given");
     }
 
-    /**
-     * A farm that already has users does not get another administrator.
-     *
-     * <p>Not "a farm that has no admin" - an administrator who deliberately deleted the default
-     * account must not find it back after the next restart, and any farm with a user at all has
-     * somebody who can create more.
-     */
+    // not "a farm that has no admin" - a deliberately deleted default account must not come back on
+    // restart, and any farm with a user has somebody who can create more.
     @Test
     void aFarmThatHasAnybodyAtAllIsLeftAlone() {
         var roster = new Roster();
@@ -98,12 +90,8 @@ class InitialAdminTest {
         assertEquals(List.of(), roster.rawPasswords);
     }
 
-    /**
-     * With nothing configured, the password is generated - and it is not a guessable default.
-     *
-     * <p>The assertions are deliberately about what it is <em>not</em>: the failure this guards
-     * against is somebody replacing the generator with a constant for convenience.
-     */
+    // assertions are deliberately about what it is not: the failure guarded against is somebody
+    // replacing the generator with a constant.
     @Test
     void anUnconfiguredPasswordIsGeneratedAndNotADefault() {
         var first = new Roster();

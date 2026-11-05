@@ -60,8 +60,6 @@ interface SdCardRs<D : SdCardRs<D>> : GEventRs<D>
  * ```
  * SdWritingToFile.decode("Writing to file: test.gco")   // SdWritingToFile("test.gco")
  * ```
- *
- * @property file the name the firmware echoed back, as it wrote it
  */
 data class SdWritingToFile(val file: String) : SdCardRs<SdWritingToFile> {
 
@@ -115,9 +113,6 @@ object SdDoneSaving : SdCardRs<SdDoneSaving>, GRsDecoder<SdDoneSaving> {
  * ```
  * SdFileOpened.decode("File opened: test.gco Size: 47")   // SdFileOpened("test.gco", 47)
  * ```
- *
- * @property file the file the firmware opened, as it spelled the name
- * @property size its size in bytes
  */
 data class SdFileOpened(val file: String, val size: Long) : SdCardRs<SdFileOpened> {
 
@@ -233,8 +228,6 @@ object SdCardOk : SdCardRs<SdCardOk>, EchoRs<SdCardOk>, GRsDecoder<SdCardOk> {
  * ```
  * SdFreshFile.decode("echo:Now fresh file: test.gco")   // SdFreshFile("test.gco")
  * ```
- *
- * @property file the file the firmware opened, as it spelled the name
  */
 data class SdFreshFile(val file: String) : SdCardRs<SdFreshFile>, EchoRs<SdFreshFile> {
 

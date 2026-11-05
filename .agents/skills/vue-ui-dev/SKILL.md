@@ -255,6 +255,25 @@ work.
   component that renders into one should use the same classes rather than bringing its own styling,
   or the page ends up half in one design and half in another.
 
+## Documentation duty
+
+The code should document itself; the comment block must not be the obstacle to reading it.
+
+- **One block, at the top of `<script setup>`.** A component's rationale - why it exists, what it
+  gates on, what it got wrong in the POC - belongs in a single doc comment before the imports settle,
+  not spread one paragraph per ref and handler. A `const open = ref(false)` earns no comment; a
+  `watch` that exists only to stop a reading fighting an operator's drag (`TemperatureControl.vue`)
+  earns one line saying why, not a paragraph.
+- **A prop's type annotation is its documentation.** `canControl?: boolean` says what it is; it does
+  not need a sentence repeating that. Comment a prop only when the type cannot carry the fact -
+  `target: number | null` where null and zero mean different things to the firmware.
+- **The facts worth writing down, in this layer, are the ones nothing else checks:** the `type`
+  string an `EventMessage` carries (`types.ts`, pinned by `EventStreamContractTest`), the
+  `/api-printer/{id}` and `/api-manager` paths a client file documents, and the one-stream-per-farm
+  rule - say each once, where the contract lives, not again at every call site.
+- **A `//` one-liner for a single unusual line** - a unit conversion, a reason a field is sent as a
+  flag and not a value - is worth more than a paragraph above the function it sits in.
+
 ## Which side a thing belongs on
 
 The test is **does it keep changing**, not "is it data".

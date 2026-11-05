@@ -3,18 +3,14 @@ package org.qw3rtrun.p3d.api.model;
 /**
  * How much space a machine can print in, in millimetres.
  *
- * <p>Declared rather than discovered. Marlin will report it - {@code M211} gives the software
- * endstops and an {@code M503} dump carries the axis limits - but plan item B2 only asked
- * {@code M115}, so nothing in the farm knows a bed size unless a human says. That is the division
- * plan item B4 draws: discovered where possible, declared where not, and this is firmly the second
- * until something asks {@code M503}.
+ * <p>Declared rather than discovered: Marlin can report it ({@code M211}, an {@code M503} dump
+ * carries the axis limits), but plan item B2 only asked {@code M115}, so nothing knows a bed size
+ * unless a human says - firmly the "declared" half of B4's split until something asks {@code M503}.
  *
- * <p>Whole millimetres, because a bed is specified in them and a tenth of a millimetre of build
- * volume is not a distinction anybody makes. Contrast {@link MachineSpec#nozzleDiameters()}, which
- * is fractional because 0.4 against 0.6 is the whole point of it.
+ * <p>Whole millimetres, since a bed is specified that way and a tenth of a millimetre is not a
+ * distinction anybody makes - contrast {@link MachineSpec#nozzleDiameters()}, fractional because
+ * 0.4 against 0.6 is the whole point.
  *
- * @param x the bed's width
- * @param y its depth
  * @param z how high the gantry goes
  */
 public record BedVolume(int x, int y, int z) {

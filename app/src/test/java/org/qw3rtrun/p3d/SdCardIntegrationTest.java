@@ -16,60 +16,46 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The card in the machine - issue #43's {@code SdCard} feature, and the one with the worst history.
+ * The card in the machine - issue #43's {@code SdCard} feature, and the one with the worst
+ * history: the Storage tab shipped dead twice, once when its five buttons fell off a
+ * {@code default} arm in {@code PrinterState.onCommand} and once more, after that was fixed, when
+ * its replies reached the host and never the browser. Every layer looked right both times, every
+ * test passed, and both took a live run to find - so each test here asserts <em>both</em> ends of
+ * one round trip, the command and the event, because either alone would have passed throughout.
  *
- * <p>The Storage tab shipped dead twice. First its five buttons answered 200 and sent nothing,
- * because the commands reached {@code PrinterState.onCommand} and fell off a {@code default} arm
- * that dropped them. Then, after that was fixed, its replies reached the host and never reached the
- * browser, for the mirror-image reason. Every layer looked right both times, every test passed, and
- * both took a live run to find.
- *
- * <p>So each test here asserts <em>both</em> ends of one round trip: the command that reached the
- * machine, and the event that reached a browser. Either on its own would have passed throughout the
- * period when the feature did nothing.
- *
- * <p><strong>The configuration axis is whether there is a card.</strong> Marlin has no command that
- * asks; the farm infers it from the machine answering {@code echo:SD card ok} to an {@code M21}.
- * The no-card replies could not be measured - the simulator always has a card - so the no-card
- * tests here assert the <em>absence</em> of {@code SdCardOk} and {@code SdFileList}, which is what
- * the page keys on, and never the text of whatever else the machine says.
+ * <p>The configuration axis is whether there is a card: Marlin has no command that asks, so the
+ * farm infers it from {@code echo:SD card ok} answering an {@code M21}. The simulator always has a
+ * card, so the no-card replies could not be measured, and the no-card tests assert only the
+ * <em>absence</em> of {@code SdCardOk} and {@code SdFileList} - what the page keys on - never the
+ * text of whatever else the machine says.
  *
  * <h2>Writing a file to the card - issue #53</h2>
  *
- * <p>The second half of this class, and the only feature here that is not a round trip. An upload
- * is a whole file streamed through the send window a block at a time, and it is the one thing on
- * this machine that <strong>takes the wire away from everything else</strong>: between {@code M28}
- * and {@code M29} the firmware stores what it is sent instead of running it, and acknowledges each
- * line exactly as if it had run it. Nothing on either end reports the difference.
- *
- * <p>So these tests have a <em>third</em> observable, and it is at the same boundary as the other
- * two: {@link MockPrinter#written(String)}, the file on the card. The whole claim of the feature is
- * that it differs from {@link MockPrinter#commands()} - the traffic carried the transfer and one
- * interactive command, and only the transfer is in the file.
+ * <p>The only feature here that is not a round trip: an upload is a whole file streamed through
+ * the send window, and the one thing that <strong>takes the wire away from everything else</strong>
+ * - between {@code M28} and {@code M29} the firmware stores what it is sent instead of running it,
+ * acknowledging each line as if it had run, with nothing on either end reporting the difference. So
+ * these tests have a third observable at the same boundary, {@link MockPrinter#written(String)} -
+ * the card's file - and the claim is that it differs from {@link MockPrinter#commands()}: the wire
+ * carried the transfer plus one interactive command, and only the transfer is in the file.
  *
  * <h2>When a transfer is refused - issue #65</h2>
  *
- * <p>The last group of tests is about the answers that are <em>not</em> 200, and it exists because
- * all four of them used to be <strong>500</strong>: a file the store does not hold, a machine the
- * farm does not have, a machine nothing has dialled, and a second transfer onto a card that is
- * already being written. None of those is a server fault - each is an ordinary outcome of somebody
- * clicking a button - and a 500 is the one answer {@code client.ts} has no path for.
+ * <p>All four of these answers used to be <strong>500</strong> - a file the store lacks, a machine
+ * the farm lacks, a machine nothing has dialled, a second transfer onto a card already being
+ * written - none a server fault, and 500 is the one answer {@code client.ts} has no path for. Each
+ * test asserts the status, the refusal the body states, and that nothing happened to the machine -
+ * the third matters most for the disconnected case, which used to answer 200 and then announce a
+ * transfer that never started, drawing a progress bar that flipped to failed a moment later. The
+ * body's field names are the contract: {@code refusal} is {@code ABSENT} when what was named is not
+ * there and {@code WRONG_STATE} when it is there and cannot do this now, {@code reason} the
+ * sentence the browser shows - asserted as strings a browser reads, not bound to
+ * {@code ControlOutcome}.
  *
- * <p>Each asserts three things, and the third is what has teeth: the <strong>status</strong>, the
- * <strong>refusal the body states</strong>, and that <strong>nothing happened to the machine</strong>.
- * The third matters most for the disconnected case, which did not even 500 - it answered 200 and
- * then announced a transfer that had never started, so a page drew a progress bar and flipped it to
- * failed a moment later. A test that stopped at the status would have called that fixed.
- *
- * <p>The body's field names are the contract: {@code refusal} is {@code ABSENT} when what was named
- * is not there and {@code WRONG_STATE} when it is there and cannot do this now, and {@code reason}
- * is the sentence the browser shows. They are asserted as the strings a browser reads rather than
- * bound to {@code ControlOutcome}, which would be the server agreeing with itself.
- *
- * <p>Nothing here is timed. Every mid-transfer assertion stops the machine answering with
- * {@link MockPrinter#holdRepliesFrom(String)} and lets the send window stop the conversation, the
- * same mechanism {@code PrintJobIntegrationTest} uses and for the same reason: against a mock that
- * answers instantly a transfer is over before the test's next line runs.
+ * <p>Nothing here is timed: every mid-transfer assertion stops the machine answering with
+ * {@link MockPrinter#holdRepliesFrom(String)} and lets the send window stop the conversation - the
+ * same mechanism {@code PrintJobIntegrationTest} uses, since a mock that answers instantly finishes
+ * a transfer before the test's next line runs.
  */
 class SdCardIntegrationTest extends FarmIntegrationTest {
 
@@ -87,11 +73,9 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Mounting when there is no card announces no card, and that is the whole signal.
-     *
-     * <p>The machine still answers something and the host still publishes whatever it decoded -
-     * here an {@code EchoMessage} - but nothing claims to be a card. The page shows its empty state
-     * because {@code SdCardOk} did not arrive, not because anything said "no".
+     * The machine still answers (here an {@code EchoMessage}) and the host still publishes it, but
+     * nothing claims to be a card - the page shows its empty state because {@code SdCardOk} did not
+     * arrive, not because anything said "no".
      */
     @Test
     void mountingAnnouncesNoCardWhenThereIsNone() {
@@ -108,13 +92,11 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A listing arrives as <strong>one</strong> message, whatever it took on the wire.
-     *
-     * <p>{@code M20}'s answer is {@code Begin file list}, an entry per file, {@code End file list}.
-     * The entries are not claimable replies - {@code TEST.GCO 47} is {@code <word> <number>}, far
-     * too common a shape for a decoder to claim - so they reach the transport as lines nothing
-     * wanted, and before {@code SdFileListReader} existed they were dropped and no file list could
-     * ever reach a browser at all. This is that assembly, end to end.
+     * {@code M20}'s answer is {@code Begin file list}, an entry per file, {@code End file list};
+     * the entries are not claimable replies ({@code TEST.GCO 47} is {@code <word> <number>}, too
+     * common a shape to claim), so they reach the transport as lines nothing wanted - before
+     * {@code SdFileListReader} existed they were dropped and no listing ever reached a browser.
+     * This is that assembly, end to end.
      */
     @Test
     void theCardsContentsReachTheBrowserAsOneMessage() {
@@ -165,11 +147,8 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Printing a file is two commands sent as one unit, in order.
-     *
-     * <p>{@code M23} selects and {@code M24} starts, because {@code :gcode}'s {@code M32} cannot
-     * carry a filename. The order is the whole of it - an {@code M24} in front of its
-     * {@code M23} starts whatever was selected last, which is somebody else's print.
+     * {@code M23} selects and {@code M24} starts, because {@code :gcode}'s {@code M32} cannot carry
+     * a filename, and an {@code M24} before its {@code M23} starts somebody else's print.
      */
     @Test
     void printingAFileSelectsItAndThenStartsIt() {
@@ -190,11 +169,8 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Deleting a file reaches the machine, and the card's contents change.
-     *
-     * <p>Asserted by listing the card again rather than by trusting the delete: Marlin does not
-     * confirm an {@code M30} in a form anything decodes, so "it was deleted" can only honestly mean
-     * "it is no longer there".
+     * Asserted by listing the card again, not by trusting the delete: Marlin confirms no
+     * {@code M30} in a form anything decodes, so "deleted" can only honestly mean "no longer there".
      */
     @Test
     void deletingAFileTakesItOffTheCard() {
@@ -214,11 +190,9 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A filename that could break the wire is refused at the edge, with a 400.
-     *
-     * <p>A name reaches the printer verbatim, so a {@code ;} would comment out the rest of the
-     * block and a {@code *} would look like the start of a checksum. Refusing it here is cheaper
-     * than discovering it as a line of nonsense on a card.
+     * A name reaches the printer verbatim, so a {@code ;} would comment out the rest of the block
+     * and a {@code *} would look like the start of a checksum - cheaper to refuse here than
+     * discover as nonsense on a card.
      */
     @Test
     void aFilenameThatWouldCorruptTheBlockIsRefused() {
@@ -247,12 +221,9 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- a page opened later - #85
 
     /**
-     * A Storage tab opened after the card was listed shows the card at once.
-     *
-     * <p>The listing is asked for and answered on one stream; a second stream is opened afterwards
-     * and the machine says nothing more. So what it shows can only have come from what the
-     * aggregate holds, which is the point: before #85 a late page drew an empty table until
-     * somebody pressed "list" again.
+     * The listing is asked for and answered on one stream; a second stream opens afterwards and the
+     * machine says nothing more, so what it shows can only come from what the aggregate holds -
+     * before #85 a late page drew an empty table until somebody pressed "list" again.
      */
     @Test
     void aPageOpenedLaterIsHandedTheCard() {
@@ -291,13 +262,10 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- writing a file to the card
 
     /**
-     * A file the farm holds goes onto the card block for block, and the card ends up holding it.
-     *
-     * <p><strong>Two lists, and the whole feature is that they differ.</strong> What reached the
-     * machine is {@code M28}, the file, {@code M29} - asserted whole, per §3.3, because the unit is
-     * more than one command and a missing {@code M29} is a file left open rather than a visible
-     * failure. What is <em>on the card</em> is the file alone, because everything between the two
-     * was stored rather than run.
+     * The whole feature is that two lists differ: what reached the machine is {@code M28}, the
+     * file, {@code M29} - asserted whole, per §3.3, since a missing {@code M29} is a file left open
+     * rather than a visible failure - while what is on the card is the file alone, because
+     * everything between the two was stored rather than run.
      */
     @Test
     void writingAFileToTheCardPutsEveryBlockOfItInTheFile() {
@@ -305,19 +273,13 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The same, against a firmware that acknowledges with a bare {@code ok}.
-     *
-     * <p><strong>The acknowledgement dialect is the configuration axis a transfer has</strong>, for
-     * the reason a print job has it: every line is a round trip through the send window, and a
-     * machine reporting no buffer counts holds that window at one block where {@code ok P15 B3}
-     * opens it to three. "The file arrives either way" is a real claim, and the file that comes out
-     * has to be identical.
-     *
-     * <p><strong>{@link MockPrinter#withoutCard()} is deliberately not driven</strong>, and that is
-     * §4.2 being obeyed rather than a gap: the simulator always has a card, so what a machine
-     * without one answers an {@code M28} has never been measured. Inventing it and then asserting
-     * on it would be a test of the invention. {@code dualExtruder()} changes nothing - a transfer
-     * consults no extruder count.
+     * The acknowledgement dialect is the configuration axis a transfer has, for the reason a print
+     * job has it: every line is a round trip through the window, and a bare-{@code ok} machine
+     * holds it at one block where {@code ok P15 B3} opens it to three - "the file arrives either
+     * way" is a real claim. {@link MockPrinter#withoutCard()} is deliberately not driven, §4.2
+     * obeyed rather than a gap: the simulator always has a card, so what a cardless machine answers
+     * an {@code M28} has never been measured, and inventing it would be a test of the invention.
+     * {@code dualExtruder()} changes nothing - a transfer consults no extruder count.
      */
     @Test
     void aFileReachesTheCardIdenticallyOnAFirmwareThatReportsNoBufferCounts() {
@@ -350,23 +312,18 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
                 "the denominator a progress figure is divided by");
         assertEquals((long) file.blocks().size(), number(done.get("blocksSent")));
 
-        // The reply half. Both of these are decoded types that nothing in this suite had ever
-        // exercised end to end before - see the measurement quoted in MockPrinter's M28 arm.
+        // The reply half: both are decoded types nothing in this suite had exercised end to end
+        // before - see the measurement in MockPrinter's M28 arm.
         assertEquals("UPLOAD.GCO", events.await("SdWritingToFile").get("file"),
                 "the machine's own confirmation of which file it opened never reached the browser");
         events.await("SdDoneSaving");
     }
 
     /**
-     * The request is answered while the transfer is still going, and not when it has finished.
-     *
-     * <p>Every line of a transfer is a round trip inside the send window, so a real file takes
-     * minutes and a request held open for one is a request that times out.
-     *
-     * <p><strong>Proved by stopping the machine answering rather than by timing anything.</strong>
-     * From {@code holdRepliesFrom} onwards the transfer <em>cannot</em> finish - the send window
-     * will not pull another block until one comes back - so a 200 while the file is still open on
-     * the card is the claim, stated in a way no loaded runner can turn into a race.
+     * Every line of a transfer is a round trip inside the send window, so a real file takes minutes
+     * and a request held open for one would time out. Proved by stopping the machine answering
+     * rather than timing anything: once held, the transfer <em>cannot</em> finish, so a 200 while
+     * the file is still open is a claim no loaded runner can turn into a race.
      */
     @Test
     void theRequestIsAnsweredWhenTheTransferStartsAndNotWhenItEnds() {
@@ -397,37 +354,29 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Nothing else reaches the machine while a file is going onto the card.
-     *
-     * <p><strong>This is the one with teeth.</strong> {@code M28} turns the wire into a file sink,
-     * so a command from any other source that lands between it and {@code M29} is written into the
-     * G-code rather than executed - and it is <em>acknowledged exactly as if it had run</em>, so
-     * nothing on either end reports it. The fault surfaces hours later as a line of nonsense
-     * mid-print. {@code SdUploadProbe} measured it against MarlinSim as 675 bytes against 687, with
-     * exclusivity and without; this is the same claim at the level of the whole assembly.
+     * {@code M28} turns the wire into a file sink, so a command from any other source landing
+     * between it and {@code M29} is written into the G-code rather than executed, and acknowledged
+     * exactly as if it had run - nothing on either end reports it, and the fault surfaces hours
+     * later as nonsense mid-print. {@code SdUploadProbe} measured this against MarlinSim as 675
+     * bytes against 687, with exclusivity and without; this is the same claim at the level of the
+     * whole assembly.
      *
      * <p>The interactive command is posted while the machine is not answering, so it is in the
      * priority queue before anything can be released - a 200 from {@code /report-temp} means the
-     * {@code M105} has already been applied on the aggregate's executor (§4.4). What happens to it
-     * next is the assertion: it must wait for {@code M29} and must not appear in the file.
+     * {@code M105} is already applied on the aggregate's executor (§4.4). What it does next is the
+     * assertion: it must wait for {@code M29} and must not appear in the file.
      *
-     * <h2>What this proves, and what it does not</h2>
-     *
-     * <p><strong>It is the priority that is being proved here, not the exclusivity</strong>, and
-     * that was established by mutation rather than by reading: replacing
-     * {@code addExclusivePublisher} with {@code addPublisher} in {@code PrinterReactor.uploadToCard}
-     * leaves this test green, and demoting the transfer from {@code REALTIME} to {@code BACKGROUND}
-     * fails it. Both are what the two mechanisms are: priority decides who gets the <em>next</em>
-     * unit of demand, and exclusivity covers the case priority cannot - a source that was handed
-     * demand <em>before</em> the transfer was queued and is still holding it.
-     *
-     * <p>That case cannot be produced from out here, and the reason is a property of the
-     * application rather than a gap in this suite: every source this farm has is request-driven and
-     * spends what it is given at once, so no endpoint can make one sit on unspent demand. Producing
-     * it takes a deliberately slow publisher, which is what {@code SdUploadProbe}'s
-     * {@code SlowSource} is - 675 bytes against 687 - and what
-     * {@code PublisherQueueExclusivityTest} builds in {@code :backend:terminal}. Exclusivity is
-     * therefore belt over braces today, and this is the braces.
+     * <p>It is the priority being proved here, not the exclusivity - established by mutation rather
+     * than reading: replacing {@code addExclusivePublisher} with {@code addPublisher} in
+     * {@code PrinterReactor.uploadToCard} leaves this test green, and demoting the transfer from
+     * {@code REALTIME} to {@code BACKGROUND} fails it. Priority decides who gets the <em>next</em>
+     * unit of demand; exclusivity covers what priority cannot - a source handed demand before the
+     * transfer was queued and still holding it. That case cannot be produced from here, since every
+     * source this farm has is request-driven and spends what it is given at once; producing it
+     * needs a deliberately slow publisher, which is {@code SdUploadProbe}'s {@code SlowSource} (675
+     * bytes against 687) and what {@code PublisherQueueExclusivityTest} builds in
+     * {@code :backend:terminal}. Exclusivity is therefore belt over braces today, and this is the
+     * braces.
      */
     @Test
     void theMachineTakesNothingElseWhileAFileIsGoingOntoTheCard() {
@@ -459,14 +408,10 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Cancelling is a stop and not a cancel: {@code M29} still goes out, so the file is closed.
-     *
-     * <p><strong>The difference is the whole of why this is worth a test.</strong> Tearing the
-     * transfer out would end the exclusive hold with the file still open on the card, and the next
-     * command the machine was given would be written into it - the corruption the feature exists to
-     * prevent, caused by the button meant to stop it. So the claim has two halves and the second is
-     * the one with teeth: the card holds a short but <em>closed</em> file, and the very next
-     * interactive command is <em>run</em> rather than stored.
+     * Tearing the transfer out would end the exclusive hold with the file still open, so the next
+     * command given to the machine would be written into it - the corruption the feature exists to
+     * prevent, caused by the button meant to stop it. The claim with teeth: the card holds a short
+     * but <em>closed</em> file, and the very next interactive command is <em>run</em>, not stored.
      */
     @Test
     void cancellingATransferStopsItAndStillClosesTheFile() {
@@ -499,8 +444,8 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         assertEquals((long) onCard.size(), number(cancelled.get("blocksSent")),
                 "the page is told how much got there, and it has to be how much got there");
 
-        // The teeth. The file is closed, so the next command is executed; if the transfer had been
-        // torn out instead it would have been stored, acknowledged, and invisible from here.
+        // The teeth: the file is closed, so the next command is executed; torn out instead, it
+        // would have been stored, acknowledged, and invisible from here.
         command(id, "/report-temp").expectStatus().isOk();
         await(() -> "M105 to reach the machine. It received " + printer.commands(),
                 () -> printer.sent("M105"));
@@ -512,14 +457,11 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A name {@code M20} would not list gets an extension, so the file can be found again.
-     *
-     * <p>Measured rather than read: a probe wrote a file called {@code test}, got an empty listing
-     * back, and the first conclusion drawn was that the simulator was broken. It was not - Marlin
-     * lists only {@code .gcode}, {@code .gco} and {@code .g}, and everything else is on the card,
-     * prints by exact name, and is invisible to every listing and therefore undeletable from a page.
-     *
-     * <p>Asserted by listing the card, which is the only honest way to say "it can be found".
+     * Measured rather than read: a probe wrote a file called {@code test}, got an empty listing
+     * back, and the first conclusion was that the simulator was broken. It was not - Marlin lists
+     * only {@code .gcode}, {@code .gco} and {@code .g}; anything else is on the card, prints by
+     * exact name, and is invisible to every listing and therefore undeletable from a page. Asserted
+     * by listing the card, the only honest way to say "it can be found".
      */
     @Test
     void aNameTheCardWouldNotListGetsAnExtension() {
@@ -545,12 +487,9 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A card name that could break the wire is refused, and no file is opened.
-     *
-     * <p>The same validator as {@code /sd/delete}, over a different request shape - and a worse
-     * consequence if it let one through. A {@code ;} in the name of a file being <em>deleted</em>
-     * costs a rejected block; in an {@code M28} it opens a file whose name is half of what was
-     * typed, and every line of the transfer goes into it.
+     * The same validator as {@code /sd/delete}, with a worse consequence if it let one through: a
+     * {@code ;} in a deleted file's name costs a rejected block, but in an {@code M28} it opens a
+     * file named half of what was typed, and the whole transfer goes into it.
      */
     @Test
     void aCardNameThatWouldCorruptTheBlockIsRefusedBeforeAnyFileIsOpened() {
@@ -570,16 +509,11 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- refusals - issue #65
 
     /**
-     * A file the farm does not hold is a 404, and no file is opened on the card.
-     *
-     * <p>It used to be a 500: {@code SdUploader.start} threw {@code IllegalArgumentException}, no
-     * handler in {@code :frontend:web-ui} caught it, and the browser - which has no path for a 500
-     * at all - showed nothing useful. The store not holding a file is an ordinary outcome of a
-     * stale file picker, not a server fault.
-     *
-     * <p>The second half is what makes this more than a status assertion. A refusal that still sent
-     * an {@code M28} would leave a file open on the card with nothing to close it, and every
-     * command the machine was given next would be written into it.
+     * Used to be a 500: {@code SdUploader.start} threw {@code IllegalArgumentException}, uncaught
+     * in {@code :frontend:web-ui}, and the browser showed nothing useful - an ordinary
+     * stale-picker outcome, not a server fault. The second half makes this more than a status
+     * assertion: a refusal that still sent {@code M28} would leave a file open on the card with
+     * nothing to close it, and every next command would be written into it.
      */
     @Test
     void writingAFileTheFarmDoesNotHoldIsRefusedAsNotFound() {
@@ -600,12 +534,9 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * An upload addressed to a machine the farm does not have is a 404, and reaches no machine.
-     *
-     * <p>The witness is the registered printer beside it: the claim is not only that the request
-     * was refused but that the file went to <em>nobody</em>. An id that fell back to "whichever
-     * machine is around" would be the worst version of this bug, and it would be invisible from the
-     * status alone.
+     * The witness is the registered printer beside it: the claim is not only that the request was
+     * refused but that the file went to <em>nobody</em> - an id falling back to "whichever machine
+     * is around" would be the worst version of this bug, invisible from the status alone.
      */
     @Test
     void writingToTheCardOfAMachineTheFarmDoesNotHaveIsRefusedAsNotFound() {
@@ -625,17 +556,12 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A machine nothing has dialled refuses the transfer with a 409, and announces nothing.
-     *
-     * <p><strong>This one never was a 500, and that is what makes it the worst of the four.</strong>
-     * The request was answered 200, the transfer was registered, {@code UPLOADING} went out on the
-     * event stream, and the failure arrived a moment later as {@code SdUploadProgressed(FAILED)}
-     * from inside {@code PrinterReactor.uploadToCard} - so the page drew a progress panel for a
-     * transfer that had never begun and then flipped it to failed. The farm knew the machine was
-     * offline before it answered; it simply had no way to say so.
-     *
-     * <p>409 rather than 404 because the machine is <em>there</em>. Connecting it and asking again
-     * is the whole of what the operator has to do, and a 404 would say the printer does not exist.
+     * Never was a 500, which made it the worst of the four: the request answered 200, the transfer
+     * registered, {@code UPLOADING} went out, and the failure arrived a moment later as
+     * {@code SdUploadProgressed(FAILED)} from inside {@code PrinterReactor.uploadToCard} - a
+     * progress panel for a transfer that never began, flipped to failed. 409, not 404, because the
+     * machine is <em>there</em>: connecting it and asking again is the whole fix, and 404 would say
+     * it does not exist.
      */
     @Test
     void writingToTheCardOfAMachineThatIsNotConnectedIsRefusedAsAConflict() {
@@ -657,17 +583,12 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A second transfer onto a card that is already being written is a 409, and never opens.
-     *
-     * <p>One at a time per machine is not a policy of the endpoint, it is what {@code M28} does to
-     * the wire: a second {@code M28} arriving between the first one and its {@code M29} is
-     * <em>written into the first file</em> and acknowledged as if it had run. So the claim with
-     * teeth is the card's contents - the first file holds the first file, and the second name was
-     * never opened at all.
-     *
-     * <p>Stated by stopping the machine answering rather than by timing anything: from
-     * {@code holdRepliesFrom} the first transfer cannot finish, so the second request is
-     * demonstrably made while it is running.
+     * One at a time is not a policy, it is what {@code M28} does to the wire: a second {@code M28}
+     * between the first one and its {@code M29} is written into the first file and acknowledged as
+     * if it had run. So the claim with teeth is the card's contents - the first file holds the
+     * first file, the second name was never opened. Stated by stopping the machine answering, not
+     * by timing: the first transfer cannot finish, so the second request is demonstrably made while
+     * it runs.
      */
     @Test
     void aSecondTransferIsRefusedWhileTheFirstIsStillRunning() {
@@ -699,12 +620,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
                 "the refused transfer wrote a file anyway");
     }
 
-    /**
-     * Stopping a transfer on a machine the farm does not have is a 404.
-     *
-     * <p>The only refusal this endpoint has. Everything else about it is deliberately an
-     * acceptance - see below.
-     */
+    /** The only refusal this endpoint has - everything else about it is deliberately an acceptance, see below. */
     @Test
     void stoppingATransferOnAMachineTheFarmDoesNotHaveIsRefusedAsNotFound() {
         var nobody = UUID.randomUUID();
@@ -715,16 +631,11 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Stopping a transfer that is not running is <strong>200</strong>, and that is deliberate.
-     *
-     * <p>Pinned here because the obvious reading of issue #65 is that every "you cannot do that"
-     * becomes a 409, and this one must not. The page's Cancel button and the machine's state are
-     * different clocks: a transfer that finished while the click was in flight is not an error the
-     * operator caused, and answering 409 would put a warning in front of somebody whose file
-     * arrived.
-     *
-     * <p>The second assertion is the other half: accepting it must not put anything on the wire -
-     * no {@code M29} for a file nobody opened.
+     * Pinned because the obvious reading of #65 is that every "you cannot do that" becomes a 409,
+     * and this one must not: the page's Cancel button and the machine's state are different clocks,
+     * and a transfer that finished while the click was in flight is not an operator error - 409
+     * would warn somebody whose file arrived. The second assertion is the other half: accepting it
+     * must put nothing on the wire, no {@code M29} for a file nobody opened.
      */
     @Test
     void stoppingATransferThatIsNotRunningIsStillAccepted() {
@@ -742,11 +653,9 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     // ---------------------------------------------------------------- reading a refusal
 
     /**
-     * A 404 whose body says what was not there.
-     *
-     * <p>Both halves are asserted every time: the status is what a client branches on, and the
-     * {@code refusal} is what says <em>which</em> of the two kinds it was. A mapping that regressed
-     * to answering 404 for everything would pass on the status alone.
+     * Both halves asserted every time: the status is what a client branches on, {@code refusal}
+     * says <em>which</em> kind it was - a mapping regressed to answering 404 for everything would
+     * pass on the status alone.
      */
     private static Map<String, Object> absent(WebTestClient.ResponseSpec response) {
         return refusal(response.expectStatus().isNotFound(), "ABSENT");
@@ -778,13 +687,10 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Waits until the file is shut on the card.
-     *
-     * <p><strong>Not the same moment as the {@code SdUploadProgressed} that reports the end.</strong>
-     * That one is emitted when the <em>source</em> is exhausted - when {@code M29} has been handed to
-     * the queue - and the block still has to be written, read and stored at the far end. Waiting on
-     * the state alone was a race, and it would have been a race that passed on a developer's machine
-     * every time.
+     * Not the same moment as the {@code SdUploadProgressed} that reports the end: that one fires
+     * when the <em>source</em> is exhausted ({@code M29} handed to the queue), and the block still
+     * has to be written, read and stored at the far end - waiting on the state alone was a race
+     * that would have passed on a developer's machine every time.
      */
     private static void closed(MockPrinter printer, String cardName) {
         await(() -> "the file on the card to be closed. The machine received " + printer.commands()
@@ -804,11 +710,9 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * The first transfer report in this state, or null.
-     *
-     * <p>Not {@code Events.payloadOf}, which answers with the most recent of a type: a transfer
-     * emits several {@code SdUploadProgressed} and only the last of them is terminal, so "did it
-     * ever say UPLOADING" and "did it end DONE" are two different questions about the same type.
+     * Not {@code Events.payloadOf}, which answers with the most recent of a type: a transfer emits
+     * several {@code SdUploadProgressed} and only the last is terminal, so "did it ever say
+     * UPLOADING" and "did it end DONE" are different questions about the same type.
      */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> transferIn(Events events, String state) {

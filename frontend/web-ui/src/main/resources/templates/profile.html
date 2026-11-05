@@ -28,11 +28,8 @@
                         </tbody>
                     </table>
 
-                    <!--
-                      What each role may do. It is written here rather than inferred in the
-                      browser because the filter chain is the authority and this page is only
-                      describing it - if the two ever disagree, this text is the wrong one.
-                    -->
+                    <!-- Written here rather than inferred in the browser: the filter chain is the
+                         authority, this page only describes it. -->
                     <p class="text-muted small" th:switch="${currentRole}">
                         <span th:case="'ADMIN'">
                             You may register and remove machines, manage accounts and read the
@@ -55,12 +52,9 @@
                 <div class="card-body">
                     <h4 class="card-title">Change your password</h4>
 
-                    <!--
-                      `${param.x}` is an EMPTY LIST when the parameter is absent, not null, and
-                      Thymeleaf reads that as true - so a bare `th:if="${param.error}"` renders the
-                      block and `param.error[0]` then throws "The collection has '0' elements".
-                      The emptiness has to be checked explicitly.
-                    -->
+                    <!-- `${param.x}` is an empty list when absent, not null, and Thymeleaf reads that
+                         as true - a bare `th:if="${param.error}"` would render the block and
+                         `param.error[0]` would throw. Emptiness must be checked explicitly. -->
                     <div class="alert alert-success" role="alert"
                          th:if="${not #lists.isEmpty(param.changed)}">
                         Your password has been changed.
@@ -73,11 +67,7 @@
                     </div>
 
                     <form method="post" th:action="@{/profile/password}">
-                        <!--
-                          By hand, because WebFlux has no RequestDataValueProcessor and Thymeleaf
-                          will not add it for you. Without it this form is rejected 403 by the very
-                          filter that issued the token.
-                        -->
+                        <!-- By hand: WebFlux has no RequestDataValueProcessor to add this for you. -->
                         <input type="hidden" th:if="${_csrf != null}"
                                th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
 

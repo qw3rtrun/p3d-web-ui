@@ -12,39 +12,27 @@ import org.qw3rtrun.p3d.g.code.core.command.GUnnamedStr
 import org.qw3rtrun.p3d.g.code.core.command.GWord
 
 /**
- * Emits wire-ready text: a command (GCODE_spec.md section 4), and the `N`/`*` framing around it
- * (sections 7 and 8).
+ * Emits wire-ready text: a command (spec 4), and the `N`/`*` framing around it (spec 7-8).
  *
- * **It produces a `String`, not a `List<GToken>`, and that is the design.** The checksum covers the
- * bytes as transmitted (section 8.3), so whitespace is part of the output rather than something a
- * later stage inserts. The encoder this replaces - `GCommand.print()` - returned tokens and let its
- * caller join them, which is why it could emit a block whose bytes depended on the values happening
- * to be self-delimiting (finding 1.10). A byte-oriented encoder cannot have that bug, and it is also
- * the only shape a checksum can be computed over.
+ * Produces a `String`, not a `List<GToken>` - the checksum covers the bytes as transmitted (spec
+ * 8.3), so whitespace is part of the output rather than something a later stage inserts. The
+ * previous encoder returned tokens and let the caller join them, which let a block's bytes depend on
+ * whether its values happened to be self-delimiting (finding 1.10); a byte-oriented encoder cannot
+ * have that bug.
  *
- * **Not driven by a descriptor.** *Which* fields a command should carry, and what they default to,
- * is a validation question and belongs one layer above this. Emitting bytes is a separate job, and
- * keeping it separate is what lets the encoder write a command nothing has described. A `GDescriptor`
- * type was carried here for a while against a defaulting layer that was never built and a Java
- * consumer that no longer exists; it is deleted, and git history has it if that layer arrives.
+ * Not driven by a descriptor: which fields a command carries is a validation question for a layer
+ * above this one; emitting bytes is a separate job.
  *
- * **One framer, and its primitive takes text.** [frame] over a `String` payload is where sections 7
- * and 8 are implemented; the command and draft overloads render their bytes and hand them to it. The
- * text entry point exists because a sender that has already rendered a block - the transport assigns
- * the line number last, after its priority queue has reordered, and by then it holds only a
- * `String` - would otherwise have to re-parse those bytes to get a `GCommand` back, which is a
- * second parser of text this module already owns.
+ * One framer, and its primitive takes text: [frame] over a `String` payload implements spec 7-8
+ * once; the command and draft overloads render their bytes and hand them to it, because a sender
+ * holding only rendered text (the transport assigns the line number last, after reordering) would
+ * otherwise have to re-parse it.
  *
- * **The text payload is transmitted verbatim and is never inspected.** That is section 8.3 taken
- * literally: the covered range is the bytes as transmitted, nothing normalised first, so the framer's
- * whole job is to produce the bytes and checksum exactly those. Validating would mean parsing, and
- * reading text is `GBlockReader`'s job, not this one's. Two consequences the caller owns: a payload
- * must be **one line**, because a terminator inside it splits the block and leaves the `N` on one
- * side of the break and the `*` on the other; and it must not **open a comment it does not close**,
- * because a trailing `;` or an unterminated `(` swallows the checksum field that follows it. A
- * payload that already carries a `*` is fine - section 8.3's last-`*`-wins rule makes the framer's
- * own marker the one that counts. A caller who wants the check can run the result back through
- * `GBlockReader.blocks(...)` and ask whether it is a `GFramedBlock`.
+ * The text payload is transmitted verbatim and never inspected - validating it would mean parsing,
+ * which is `GBlockReader`'s job. Two things the caller owns: a payload must be one line, and must not
+ * open a comment it does not close, since either swallows the checksum field. A payload already
+ * carrying a `*` frames correctly regardless, since spec 8.3's last-`*`-wins rule makes the framer's
+ * own marker the one that counts.
  *
  * Stateless and allocation-light: one `StringBuilder` per block.
  *
@@ -60,20 +48,14 @@ object GEncoder {
     /**
      * One command as text: the command word, then each parameter, **separated by a single space**.
      *
-     * Canonical, not reproductive. A parsed word carries the exact bytes it was read from in its
-     * `raw` - `X  10` is one word holding two spaces - and this deliberately ignores that and
-     * renders the field instead. An encoder that reproduced input spacing would emit a different
-     * number of bytes for the same command depending on where it came from, and the checksum would
-     * follow. Use `GBlock.raw()` when the original bytes are what is wanted.
+     * Canonical, not reproductive - a parsed word's raw bytes (`X  10`, two spaces) are ignored in
+     * favor of rendering the field, since reproducing input spacing would make the checksum depend
+     * on where the command came from. Use `GBlock.raw()` for the original bytes. Within a word there
+     * is no separator: a value's lexeme reaches the wire immediately after its identifier (`X10.50`
+     * stays `X10.50`).
      *
-     * Within a word there is no separator: the identifier is followed immediately by its value, so
-     * a value's lexeme is what reaches the wire (`X10.50` stays `X10.50`, see `GNumber`).
-     *
-     * A [GUnnamedStr] has no identifier to write - it is not a `GNamedWord` - and its value is
-     * spec 3.4a's bare rest-of-line string, so it reaches the wire undelimited and, being the rest
-     * of the line, only ever last. Nothing here enforces that position: a command carrying one is
-     * built by the command that documents it, and the single space before each field is what
-     * separates it from the lettered parameters in front.
+     * A [GUnnamedStr] has no identifier - it is spec 3.4a's bare rest-of-line string - so it reaches
+     * the wire undelimited; nothing here enforces that it comes last, which is the command's job.
      *
      * ```
      * val x = GParameterWord(GLetter('X'), GFloat("10.50"))
@@ -93,14 +75,11 @@ object GEncoder {
      * A whole block: every part in order, **separated by a single space**, per spec section 5.
      *
      * A `GCommentPart` renders through its comment's own `rawText()`, so the caller's choice of `;`
-     * or `( )` and of whether to leave a space after the marker is preserved - `GTailComment(" move")`
-     * is `; move` and `GTailComment("move")` is `;move`. Both are legal (section 6) and the
-     * difference is the author's, not the encoder's.
+     * or `( )`, and of a space after the marker, is preserved.
      *
      * ```
      * val g1 = GCommand(GLetter('G'), GInt(1), listOf(GParameterWord(GLetter('X'), GFloat("10.50"))))
      * GEncoder.encode(GBlockDraft(g1, GCommentPart(GTailComment(" move"))))   // "G1 X10.50 ; move"
-     * GEncoder.encode(GBlockDraft(g1, GCommentPart(GTailComment("move"))))    // "G1 X10.50 ;move"
      * ```
      *
      * @param draft the block's parts, in order
@@ -118,15 +97,11 @@ object GEncoder {
     /**
      * A framed block built from a whole [draft]: `N<number> <payload>*<checksum> <trailing comment>`.
      *
-     * **A trailing comment goes after the checksum and is not covered by it** (section 5 puts the
-     * `*` field last before any comment, and section 8.3 excludes what follows it). A comment that
-     * is *not* trailing - one sitting between two commands - is part of the payload and **is**
-     * covered, because those are the bytes that get transmitted before the `*`.
-     *
-     * So the split is positional: everything up to and including the last non-comment part is
-     * payload, and only the run of comments after it is appended past the marker. A block that is
-     * nothing but comments has no payload and cannot be framed - there is nothing to acknowledge or
-     * resend - so it comes back as its own text, unnumbered.
+     * A trailing comment goes after the checksum and is not covered by it (spec 5 puts `*` last
+     * before any comment; spec 8.3 excludes what follows it). A comment that is not trailing -
+     * sitting between two commands - is part of the payload and is covered. The split is positional:
+     * everything up to and including the last non-comment part is payload; a block that is nothing
+     * but comments has no payload and comes back as its own text, unnumbered.
      *
      * ```
      * val g28 = GCommand(GLetter('G'), GInt(28))
@@ -163,18 +138,13 @@ object GEncoder {
 
     /**
      * The framer itself, over bytes a caller has already rendered: `N<number> <payload>*<checksum>`,
-     * sections 7 and 8.
+     * spec 7-8.
      *
-     * Three steps in the order section 8.3 fixes: prepend `N<number>` and one space, checksum
-     * **exactly** the bytes produced so far - the `N`, the digits and that space are all covered -
-     * then append `*` and the value. Nothing is added or removed after the value is computed, and the
-     * space before `*` the convention omits is omitted here too.
-     *
-     * [payload] is **not validated and not parsed**; it reaches the wire byte for byte. See this
-     * object's own documentation for what that makes the caller responsible for - one line, and no
-     * comment left open - and for why a payload that already carries a `*` is nonetheless framed
-     * correctly. An empty payload is framed like any other, as `N<number> *<checksum>`, which is a
-     * numbered block commanding nothing rather than an error.
+     * Three steps in spec 8.3's order: prepend `N<number> `, checksum exactly the bytes produced so
+     * far (the `N`, digits and space included), then append `*` and the value - nothing added or
+     * removed after. [payload] is not validated and not parsed; it reaches the wire byte for byte, so
+     * a payload must be one line and must not open a comment it does not close - see this object's
+     * class doc. An empty payload frames like any other, as `N<number> *<checksum>`.
      *
      * ```
      * GEncoder.frame(3, "T0")                    // "N3 T0*57"
@@ -212,16 +182,14 @@ object GEncoder {
     }
 
     /**
-     * A framed block around one command: `N<number> <command>*<checksum>`, sections 7 and 8.
+     * A framed block around one command: `N<number> <command>*<checksum>`, spec 7-8.
      *
-     * The common case, and **the same function** as [frame] over a payload string - the command is
-     * rendered by [encode] and framed there, where section 8.3's order of operations is stated and
-     * implemented once. It was implemented twice until this became a delegation, which is two copies
-     * of the most order-sensitive code in the encoder and a silent divergence waiting to happen.
+     * The same function as [frame] over a payload string - the command is rendered by [encode] and
+     * framed there, so spec 8.3's order of operations is implemented once.
      *
-     * The algorithm is the caller's to choose by passing the calculator: [XorCheckSum] (section 8.2,
-     * the default and what Marlin expects) or [org.qw3rtrun.p3d.g.code.core.block.Crc16CheckSum] (section 8.4, five digits, stronger).
-     * A calculator carries the state of one block, so a fresh one is needed per call.
+     * The algorithm is the caller's to choose: [XorCheckSum] (spec 8.2, Marlin's default) or
+     * `Crc16CheckSum` (spec 8.4, five digits, stronger). A calculator carries one block's state, so a
+     * fresh one is needed per call.
      *
      * ```
      * val g28 = GCommand(GLetter('G'), GInt(28))

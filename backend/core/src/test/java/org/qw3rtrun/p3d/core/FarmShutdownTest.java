@@ -17,12 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The bean that lets the farm go when the application is told to stop - issue #87.
- *
- * <p>No mocks: both collaborators are the real {@link PrinterReactorManager} and
- * {@link FarmEvents}, the same ones {@link PrinterReactorManagerTest} and {@link FarmEventsTest}
- * exercise directly - "reaches both collaborators" is proven by their own observable contracts
- * (a completed update stream, a closed farm stream) rather than by a recorded call.
+ * The bean that lets the farm go when the application is told to stop - issue #87. No mocks: both
+ * collaborators are the real {@link PrinterReactorManager} and {@link FarmEvents}, so "reaches both
+ * collaborators" is proven by their own observable contracts rather than a recorded call.
  */
 class FarmShutdownTest {
 
@@ -39,11 +36,7 @@ class FarmShutdownTest {
                 MachineConnectionState.OFFLINE, LocalDateTime.now()));
     }
 
-    /**
-     * {@code DefaultLifecycleProcessor} only calls {@code stop()} on a bean whose
-     * {@code isRunning()} currently answers {@code true} - so a {@link SmartLifecycle} that never
-     * says so is simply never stopped.
-     */
+    // DefaultLifecycleProcessor only calls stop() on a bean whose isRunning() answers true.
     @Test
     void isRunningIsTrueAfterStartAndFalseAfterStop() {
         assertFalse(shutdown.isRunning(), "nothing has started it yet");
@@ -55,13 +48,9 @@ class FarmShutdownTest {
         assertFalse(shutdown.isRunning());
     }
 
-    /**
-     * The one number in this change that silently breaks the fix if someone "tidies" it: lower
-     * than {@code Integer.MAX_VALUE - 1024}
-     * ({@code WebServerGracefulShutdownLifecycle.SMART_LIFECYCLE_PHASE}) and the thirty-second
-     * hang of #87 comes straight back, because {@code DefaultLifecycleProcessor} would then stop
-     * the web layer first and start waiting for requests this bean had not released yet.
-     */
+    // the one number that silently breaks the fix if "tidied": lower than
+    // Integer.MAX_VALUE - 1024 (WebServerGracefulShutdownLifecycle.SMART_LIFECYCLE_PHASE) and the
+    // thirty-second hang of #87 comes straight back.
     @Test
     void thePhaseIsTheSmartLifecycleDefaultAndNotSomethingSmaller() {
         assertEquals(SmartLifecycle.DEFAULT_PHASE, shutdown.getPhase());
@@ -71,10 +60,7 @@ class FarmShutdownTest {
                         + "or the 30s hang this bean exists to remove comes back silently");
     }
 
-    /**
-     * {@code stop()} reaches {@link PrinterReactorManager#releaseAll()}: a printer that was
-     * running has its update stream completed, not merely left alone.
-     */
+    // reaches releaseAll(): a running printer's update stream is completed, not merely left alone.
     @Test
     void stopReleasesEveryRunningPrinter() {
         var id = UUID.randomUUID();
@@ -88,12 +74,8 @@ class FarmShutdownTest {
                 .verifyComplete();
     }
 
-    /**
-     * {@code stop()} reaches {@link FarmEvents#close()} too, and not only
-     * {@link PrinterReactorManager#releaseAll()} - both collaborators, which is the whole of what
-     * this bean is for. An empty farm is enough to prove it: the farm stream completes once
-     * {@code close()} has run, which only {@code stop()} could have called.
-     */
+    // reaches close() too, not only releaseAll() - both collaborators, the whole of what this bean
+    // is for.
     @Test
     void stopEndsTheFarmStreamToo() {
         shutdown.start();

@@ -25,8 +25,6 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * ColdExtrusionRs(false, 170).encode()   // "echo:Cold extrudes are disabled (min temp 170C)"
  * ```
  *
- * @property enabled whether extruding below [minTempC] is allowed
- * @property minTempC the threshold in degrees Celsius, as the firmware wrote it
  * @see <a href="https://marlinfw.org/docs/gcode/M302.html">MarlinFirmware M302 doc</a>
  */
 data class ColdExtrusionRs(val enabled: Boolean, val minTempC: Int) : EchoRs<ColdExtrusionRs> {
@@ -57,9 +55,7 @@ data class ColdExtrusionRs(val enabled: Boolean, val minTempC: Int) : EchoRs<Col
             val text = line.asciiTrim()
             if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
 
-            // Marlin writes some of these with a blank after the colon and some without, since the
-            // message and the `echo:` come from separate calls: `echo: cold extrusion prevented`
-            // but `echo:Cold extrudes are ...`. Cross it either way.
+            // Marlin's two cold-extrusion messages differ in whether a blank follows `echo:` - cross it either way.
             var i = text.blanksEnd(EchoMessage.PREFIX.length)
             if (!text.startsWithAscii(BODY, i)) return null
             i += BODY.length
@@ -93,10 +89,9 @@ data class ColdExtrusionRs(val enabled: Boolean, val minTempC: Int) : EchoRs<Col
  * Carries nothing - the line says only that it happened. [ColdExtrusionRs] is the report with the
  * state and the threshold in it.
  *
- * Observed live from MarlinSim while replaying the corpus with checking enabled - and note the
- * blank after the colon, which [ColdExtrusionRs] does not have. The two messages reach the serial
- * line through different calls in the firmware, so the spacing differs; the first live sweep read
- * this one as prose because the decoder did not cross it.
+ * Observed live from MarlinSim while replaying the corpus with checking enabled. Note the blank
+ * after the colon, which [ColdExtrusionRs] does not have - the two messages reach the serial line
+ * through different calls in the firmware, so the spacing differs.
  *
  * ```
  * ColdExtrusionPrevented.decode("echo: cold extrusion prevented")   // ColdExtrusionPrevented
@@ -112,8 +107,7 @@ object ColdExtrusionPrevented : EchoRs<ColdExtrusionPrevented>, GRsDecoder<ColdE
     override fun decode(line: String): ColdExtrusionPrevented? {
         val text = line.asciiTrim()
         if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
-        // The firmware writes a blank after the colon here and none before `Cold extrudes are`;
-        // the live sweep read this one as prose until the blank was crossed.
+        // The firmware writes a blank after the colon here, unlike `Cold extrudes are` - cross it.
         val i = text.blanksEnd(EchoMessage.PREFIX.length)
         if (text.length - i != BODY.length || !text.startsWithAscii(BODY, i)) return null
         return this

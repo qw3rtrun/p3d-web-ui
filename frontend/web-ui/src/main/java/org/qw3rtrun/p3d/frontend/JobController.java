@@ -40,18 +40,13 @@ public class JobController {
 
     private final JobService jobs;
 
-    /** The blocking boundary, in one place. */
+    // The blocking boundary, in one place.
     private <T> Mono<T> offLoop(Supplier<T> blocking) {
         return Mono.fromSupplier(blocking).subscribeOn(Schedulers.boundedElastic());
     }
 
-    /**
-     * Runs the move off the event loop and lets {@link Outcomes} say what its answer is worth.
-     *
-     * <p>The 404/409 argument used to be written out here; it lives in {@code Outcomes} now,
-     * beside the identical decision the control surface makes, because one copy per controller is
-     * how a module ends up with three mappings and one endpoint with none.
-     */
+    // Runs the move off the event loop and lets Outcomes say what its answer is worth - the 404/409
+    // argument lives there now, beside the control surface's identical decision.
     private Mono<ResponseEntity<?>> respond(Supplier<JobOutcome> action) {
         return offLoop(action).map(Outcomes::of);
     }
@@ -92,27 +87,16 @@ public class JobController {
         return respond(() -> jobs.resume(id));
     }
 
-    /**
-     * Cancels a job.
-     *
-     * <p>{@code DELETE} rather than another {@code POST} verb, because from a user's side this is
-     * "take it off the queue" - and it deliberately does not remove the row. A cancelled job is a
-     * record of something somebody decided, and plan item C5 writes recovery information onto
-     * exactly these.
-     */
+    // DELETE because from a user's side this is "take it off the queue"; it does not remove the
+    // row - a cancelled job is a record, and plan item C5 writes recovery information onto it.
     @DeleteMapping("/{id}")
     public Mono<ResponseEntity<?>> cancel(@PathVariable UUID id,
                                           @RequestParam(required = false) String reason) {
         return respond(() -> jobs.cancel(id, reason == null ? "cancelled by the operator" : reason));
     }
 
-    /**
-     * A file to print and, optionally, what it needs of a machine.
-     *
-     * <p>An absent {@code requires} is {@link org.qw3rtrun.p3d.api.jobs.JobRequirements#any()} and
-     * not null, so a caller that just wants something printed sends {@code {"fileId": "..."}} and
-     * the scheduler puts it on the first idle printer.
-     */
+    // An absent `requires` is JobRequirements#any(), not null, so a caller wanting anything printed
+    // sends just {"fileId": "..."} and the scheduler puts it on the first idle printer.
     public record QueuePayload(UUID fileId, JobRequirements requires) {
         public QueuePayload {
             requires = requires == null ? JobRequirements.any() : requires;

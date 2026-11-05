@@ -10,17 +10,11 @@ import java.util.Optional;
 /**
  * The last temperature report this machine made, as the firmware stated it.
  *
- * <p><strong>{@code HeaterReading} and not a record of this module's own.</strong> The pair it
- * replaced was a zero-filled copy - an absent target read as {@code 0.0} and an absent power as
- * {@code 0} - which cannot be told from a firmware that really did say zero. A target of zero is
- * "cooling down" and no target at all is "this build does not report one", and a page that draws
- * them the same way is lying about one of them.
- *
- * <p><strong>The whole report is kept, not two of its sensors</strong>, so that it can be handed to
- * a late subscriber as the event that announced it - see {@link PrinterState#snapshot()}.
- *
- * <p>Written on the aggregate's thread and read from whichever thread builds a snapshot, hence
- * volatile. A report is an immutable value, so the reference is all there is to publish.
+ * <p>{@code HeaterReading}, not a record of this module's own: the pair it replaced zero-filled an
+ * absent target/power, indistinguishable from a firmware that really said zero - "cooling down" vs
+ * "this build does not report one". The whole report is kept, not two of its sensors, so it can be
+ * handed to a late subscriber as the event that announced it - see {@link PrinterState#snapshot()}.
+ * Volatile: written on the aggregate's thread, read from whichever thread builds a snapshot.
  */
 public class TemperatureControl {
 

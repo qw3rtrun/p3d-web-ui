@@ -42,10 +42,9 @@ object GTokenizer {
     /**
      * Tokenizes a character sequence.
      *
-     * Built with `Sequence { ... }` rather than `Iterator.asSequence()`: the latter is
-     * `constrainOnce()`, which made the result consumable exactly once even when the source could be
-     * walked again (TODO 1.11). Re-iterability is inherited from the source, so only the
-     * bare-`Iterator` overload is single-use.
+     * Built with `Sequence { ... }` rather than `Iterator.asSequence()`, which is `constrainOnce()`
+     * and made the result consumable exactly once even when the source could be walked again
+     * (TODO 1.11).
      *
      * ```
      * GTokenizer.parse("M105".asSequence()).toList()   // [GLetter('M'), GInt(105)]
@@ -57,8 +56,8 @@ object GTokenizer {
     fun parse(gcode: Sequence<Char>): Sequence<GToken> = Sequence { GTokenizerIterator(gcode.iterator()) }
 
     /**
-     * Tokenizes a text. Re-iterable: each pass builds its own tokenizer over the same text, so the
-     * sequence is not `constrainOnce` (TODO 1.11).
+     * Tokenizes a text. Re-iterable: each pass builds its own tokenizer over the same text (not
+     * `constrainOnce`, TODO 1.11).
      *
      * ```
      * GTokenizer.parse("G1 X.5").toList()   // [GLetter('G'), GInt(1), GSpace, GLetter('X'), GFloat(".5")]
@@ -92,14 +91,8 @@ object GTokenizer {
 
 /**
  * Concatenates already-split lines back into a character stream, putting [terminator] between
- * consecutive lines and never after the last one.
- *
- * It holds the current line with its terminator re-attached - or without one, for the final line -
- * and hands it out character by character, pulling the next line only once that one is spent.
- *
- * ```
- * GLineCharIterator(listOf("G1", "G2").iterator(), "\n")   // 'G', '1', '\n', 'G', '2'
- * ```
+ * consecutive lines and never after the last one. Holds the current line with its terminator
+ * re-attached - or without one, for the final line - and hands it out character by character.
  */
 private class GLineCharIterator(
     private val lines: Iterator<String>,
@@ -129,70 +122,54 @@ private class GLineCharIterator(
 }
 
 /**
- * The state machine itself. **Internal, and its scanners private**: which characters `number()` or
- * `string()` consumes is how this lexer is built, not what it promises, and a port re-deciding that
- * should not be breaking a contract. [GTokenizer] is the surface.
+ * The state machine itself. Internal, and its scanners private: which characters `number()` or
+ * `string()` consumes is how this lexer is built, not what it promises. [GTokenizer] is the surface.
  *
- * ```
- * GTokenizerIterator("X-5".iterator()).next()   // GLetter('X')
- * ```
+ * Character classes are ASCII, spelled out, not `Char.isLetter()`/`isDigit()`/`isWhitespace()`, which
+ * accept whole Unicode categories - the wire is 7-bit ASCII (spec 1.1), so anything else outside a
+ * comment or string is a lexical error (spec 9). The separator class is exactly spec 2.1's space/tab
+ * plus spec 1.2's LF/CR; `isWhitespace()` also accepted VT, FF, NBSP and LINE SEPARATOR, which used to
+ * fall through a dead `else` rather than becoming `GUnknown` like every other unrecognised character.
+ * The digit predicate is duplicated, deliberately, in `GFields.kt`, `GWords.kt` and `CheckSums.kt` - a
+ * shared one-liner would be a cross-file dependency between four layers to save three tokens each, and
+ * a port taking one file should take its predicate with it. Do not merge them.
  *
- * **Character classes are ASCII, spelled out** rather than taken from `Char.isLetter()` /
- * `isDigit()` / `isWhitespace()`, which accept whole Unicode categories. The wire format is 7-bit
- * ASCII (spec 1.1), so a non-ASCII character outside a comment or a quoted string is a lexical error
- * (spec 9), not a word - and the four predicates transliterate to C, Rust and JS unchanged. The
- * separator class is exactly spec 2.1's space and tab plus spec 1.2's LF and CR, and nothing else:
- * `Char.isWhitespace()` also accepted VT, FF, the file separators, NBSP and LINE SEPARATOR, all of
- * which fell through to a dead `else` inside the separator scanner; they now reach the top-level
- * `else` of [next] and become `GUnknown` along the same path as every other unrecognised character.
- * The digit predicate is written out again in `GFields.kt`, `GWords.kt` and `CheckSums.kt`, and that
- * is deliberate rather than an oversight waiting to be tidied: a shared one-line predicate would be a
- * cross-file dependency between four layers to save three tokens each, and a port that takes one
- * file takes its predicate with it. Do not merge them.
+ * One field of lookahead, written by each scanner exactly once, on the way out, with whatever
+ * character stopped it (`null` at end of input).
  *
- * **One field of lookahead**, written by each scanner exactly once, on the way out, with whatever
- * character stopped it - `null` at end of input - which is then the next token's first character.
+ * Separators: only the four separator characters reach the separator scanner, so CR is its
+ * fall-through. Spec 1.2: CR terminates a line only as the first half of CRLF, so `\r\n` is one
+ * `GLineBreak("\r\n")` with both characters consumed, while a lone CR is `GUnknown('\r')` with the
+ * next character kept as lookahead.
  *
- * **Separators.** Only the four separator characters reach the separator scanner, so the CR case is
- * its fall-through and there is no fifth possibility to guard against. Spec 1.2: CR terminates a line
- * only as the first half of CRLF, so `\r\n` is one `GLineBreak("\r\n")` with both characters
- * consumed, while a lone CR is `GUnknown('\r')` and the character after it is kept as the lookahead.
+ * Numbers, spec 3.1: `[+|-] digits [ . digits ]` or `[+|-] . digits`, at least one digit, at most one
+ * decimal point. The lexeme is handed to the token verbatim, so a sign, leading zeros (`G01`) and a
+ * trailing dot (`X1.`) survive `rawText()`. A sign belongs to a number and nothing else: without a
+ * digit or dot after it, it is a lexical error and the following character goes back to lookahead. A
+ * lone `.`, a bare sign, or more than one decimal point is kept as-is in a `GUnknown` rather than
+ * letting `BigDecimal` throw; an `Int`-overflowing integer is likewise kept verbatim rather than
+ * truncated. `toIntOrNull` and `BigDecimal(String)` both accept the whole Unicode Nd category -
+ * `"١".toIntOrNull()` is 1 - so only the ASCII digit predicate keeps a non-ASCII digit out of the
+ * lexeme; do not relax it on the assumption the conversion would reject one.
  *
- * **Numbers**, per spec 3.1: `[+|-] digits [ . digits ]` or `[+|-] . digits`, with at least one digit
- * somewhere and at most one decimal point. The lexeme is handed to the token verbatim, so a sign,
- * leading zeros (`G01`) and a trailing dot (`X1.`) survive `rawText()` unchanged. A sign belongs to a
- * number and to nothing else: if no digit or dot follows it, the sign is a lexical error and the
- * character that followed goes back into the lookahead. A lone `.`, a bare sign or more than one
- * decimal point is not a number and is kept as-is in a `GUnknown`, instead of letting `BigDecimal`
- * throw out of the iterator; an integer that does not fit an `Int` is likewise kept verbatim rather
- * than silently truncated. Spec 1.1: `toIntOrNull` and `BigDecimal(String)` are both wider than the
- * class that guards them - they accept the whole Unicode Nd category, so `"١".toIntOrNull()` is
- * 1. Only the ASCII digit predicate keeps a non-ASCII digit out of the lexeme; do not relax it on the
- * assumption that the conversion would reject one.
+ * Quoted strings, spec 3.4: `"` to the next unpaired `"`, where a doubled `""` is one literal quote
+ * (spec 3.4b) rather than the end of the string. Two texts are tracked - decoded content and exact
+ * lexeme - because only the lexeme can represent an unterminated string (a lexical error, spec 9)
+ * without inventing a closing quote it never had.
  *
- * **Quoted strings**, per spec 3.4: `"` to the next unpaired `"`, where a doubled `""` inside the
- * string is one literal quote (spec 3.4b) rather than the end of it. Two texts are tracked because
- * they differ: the decoded content the token carries, and the exact lexeme. Only the lexeme can
- * represent an unterminated string, which is a lexical error (spec 9) rather than a string that
- * gains a closing quote it never had. Whatever follows the closing quote belongs to the next token.
+ * Brace expressions are the same nested scan as parenthesised comments, over `{` `}`, but keep their
+ * delimiters in the token text, so there is one buffer rather than two.
  *
- * **Brace expressions** are the same nested scan as parenthesised comments, over `{` `}`. Unlike a
- * comment an expression keeps its delimiters in the token text, so there is one buffer, not two.
+ * `;` comments run to end of line; the break itself is a separate token, left in the lookahead rather
+ * than consumed. Spec 1.2: both characters of a CRLF belong to the terminator, so the scan stops at
+ * either and the separator scanner decides what it means, exactly as outside a comment.
  *
- * **`;` comments** run to the end of the line. The break itself is a separate token, so it is left
- * in the lookahead rather than consumed. Spec 1.2: a line ends at LF or at CRLF, so **both**
- * characters of a CRLF belong to the terminator and neither is comment content. The scan therefore
- * stops at either, and the separator scanner decides what the character it stopped on means - `\r\n`
- * is one `GLineBreak("\r\n")`, a lone `\r` is `GUnknown`, exactly as outside a comment. The CR is
- * still emitted, by the separator rather than by the comment, so `;ab\r\n` round-trips byte for byte.
- *
- * **Parenthesised comments**, per spec section 2, track nesting so an inner `(` `)` pair stays part
- * of the text. Nothing is read past the closing delimiter, so the lookahead is written once on entry
- * and never inside the loop. Writing it in the loop is what made an unterminated comment re-emit its
- * last character as a second token (TODO 1.7); appending the closing paren before the nesting counter
- * reached zero is what put it inside the comment text (TODO 1.2). The delimiters frame the comment,
- * and only the closing one drops the depth to zero, so every character seen while still nested is
- * content. The brace-expression scan is deliberately kept in the same shape.
+ * Parenthesised comments, spec section 2, track nesting so an inner `(` `)` pair stays part of the
+ * text. The lookahead is written once on entry and never inside the loop - writing it in the loop
+ * re-emitted an unterminated comment's last character as a second token (TODO 1.7), and appending the
+ * closing paren before the nesting counter reached zero put it inside the comment text (TODO 1.2).
+ * Only the closing delimiter drops the depth to zero, so every character seen while still nested is
+ * content. The brace-expression scan is kept in the same shape.
  */
 internal class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<GToken> {
 
@@ -201,18 +178,10 @@ internal class GTokenizerIterator(private val chars: Iterator<Char>) : Iterator<
     override fun hasNext() = ch != null || chars.hasNext()
 
     /**
-     * Lexes and returns the next token.
-     *
-     * Past the end this throws `NoSuchElementException`, as `Iterator.next()` specifies. Without
-     * that guard the exception type depended on the source overload - a `String` source raised
-     * `StringIndexOutOfBoundsException` (TODO 1.17). Malformed input never throws; it is a
-     * `GUnknown` carrying the offending characters.
-     *
-     * ```
-     * val it = GTokenizerIterator("G1".iterator())
-     * it.next()   // GLetter('G')
-     * it.next()   // GInt(1)
-     * ```
+     * Lexes and returns the next token. Throws `NoSuchElementException` past the end, per the
+     * iterator contract - without this guard the exception type depended on the source overload (a
+     * `String` source raised `StringIndexOutOfBoundsException`, TODO 1.17). Malformed input never
+     * throws; it comes back as `GUnknown`.
      *
      * @return the next token
      */

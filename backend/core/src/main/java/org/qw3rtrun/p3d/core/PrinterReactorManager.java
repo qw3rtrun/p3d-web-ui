@@ -20,19 +20,49 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * The running printers, and the thing that owns them.
+ * The farm's running printers: {@code UUID -> PrinterReactor}, and the only owner allowed to build
+ * or release one.
  *
- * <p>A reactor is a <strong>resource</strong>, not a value: it holds a TCP connection, a send
- * window, a command queue, a replay sink that keeps every SSE subscriber referenced, and - since
- * #54 - <strong>two threads of its own</strong>. This map used to only ever grow -
- * {@code computeIfAbsent} and nothing else - so deleting a printer through the management API left
- * all of that behind, connected to a machine the farm no longer knew about. Over a long-running
- * process that is a socket and a sink per printer ever registered.
+ * <p>A reactor is a <strong>resource</strong>: a TCP connection, a send window, a command queue, a
+ * replay sink referencing every SSE subscriber and, since #54, two threads of its own
+ * ({@link PrinterThreads} is a factory, not a cache - every {@link #openReactor(UUID)} miss
+ * allocates a pair that nothing but that reactor's own {@code stop()} will ever dispose).
+ * {@link #release(UUID)} is what returns all of it; {@link #openReactor}, {@link #openReactorIfKnown}
+ * and {@link #runtimeOf} differ only in what they do when there is none yet - throw, build one, or
+ * answer null - and none of them dials a socket.
  *
- * <p>{@link #release(UUID)} is what returns all of it, and the threads are the newest and least
- * obvious part of the list: {@link PrinterThreads} is a factory rather than a cache, so every
- * {@link #openReactor(UUID)} that misses allocates a scheduler pair that nothing else will ever
- * dispose. The reactor disposes them in {@code stop()}; this is what calls it.
+ * <h3>Shutdown (#87)</h3>
+ * {@link #releaseAll()} stops every reactor first and only then waits for each one's update stream
+ * to actually finish, against <strong>one shared budget for the whole farm</strong>
+ * ({@link #RELEASE_BUDGET}, five seconds - comfortably under Boot's default thirty-second
+ * shutdown-phase timeout, since this runs inside that phase alongside other beans and spending the
+ * whole thirty here would only move the hang issue #87 fixes rather than close it). Waiting on each
+ * reactor in turn, instead of stopping all of them up front, could cost up to forty times that
+ * budget on a farm of forty. {@link #shuttingDown} then refuses every new
+ * {@link #openReactorIfKnown}, so a request arriving in the gap before the web server itself starts
+ * refusing connections cannot dial a machine the farm is already saying goodbye to.
+ * {@code shuttingDown} and {@link #running} are both read and written only inside the narrow
+ * {@code synchronized} block at the top of {@link #releaseAll()} - never across the wait that
+ * follows, which would otherwise block every concurrent {@link #openReactorIfKnown}/
+ * {@link #runtimeOf} caller for the length of the budget. Blocking inside {@link #releaseAll()}
+ * itself is correct here: its only caller is {@code SmartLifecycle.stop()} on the shutdown thread,
+ * never a WebFlux event loop.
+ *
+ * <h3>Startup redial</h3>
+ * {@link #onRegistered(MRegisteredEvent)} acts only when this module holds no runtime for the
+ * machine yet; a machine already running is left alone. That gate matters because
+ * {@code MRegisteredEvent} is re-published roughly seven times per connect (once per firmware
+ * report, once per capability line, each from a {@code @Transactional} roster listener), so this
+ * listener sees "it was linked" long after it stopped being news - one test window held thirty such
+ * repeats and eleven redundant {@code -> CONNECTING} transitions before this existed. Gating on
+ * "does a runtime exist" rather than on the announcement's own persisted state is deliberate: that
+ * state lags the live aggregate by whatever is still ahead of it on this printer's single-consumer
+ * listener queue, so the copies that read {@code IDLE} for a machine told to disconnect a moment ago
+ * are exactly the ones that would do damage. The redial itself goes through
+ * {@code PrinterState.handle(ConnectCmd)} rather than {@code PrinterReactor.connect()} directly, so
+ * the connection intent is set before the retry's own
+ * {@code filter(cause -> wantsToBeConnected())} ever consults it - skipping that used to mean a
+ * machine redialled at startup gave up after its first refusal, silently.
  */
 @Slf4j
 public class PrinterReactorManager {
@@ -45,61 +75,14 @@ public class PrinterReactorManager {
 
     private final ConnectionPolicy policy;
 
-    /**
-     * Where a machine's runtime is allowed to run - one thread for its aggregate, one for its
-     * listeners, per machine.
-     *
-     * <p>Held instead of a single {@code Scheduler} since #54. The old field was the farm's one
-     * shared {@code Schedulers.single()}, handed to every reactor this class built.
-     */
     private final PrinterThreads threads;
 
     private final Scheduler retries;
 
     private final Map<UUID, PrinterReactor> running = new HashMap<>();
 
-    /**
-     * Set once by {@link #releaseAll()}, so that this module never opens another reactor once the
-     * farm has started letting go of all of them - issue #87.
-     *
-     * <p><strong>Concurrency.</strong> A plain {@code boolean}, not a {@code volatile} one: every
-     * statement that reads or writes it - this field is only ever touched inside the one
-     * {@code synchronized} block at the top of {@link #releaseAll()} and inside
-     * {@link #openReactorIfKnown(UUID)} - runs holding this manager's own monitor, same as every
-     * other statement that touches {@link #running}, so the lock already in place is the
-     * happens-before edge this needs and a second mechanism would buy nothing.
-     * <strong>{@link #releaseAll()} itself is not a {@code synchronized} method any more</strong> -
-     * only the part of it that reads and writes this field and {@link #running} is, which is the
-     * point: the unbounded wait that follows must not run with the monitor held. It is set on
-     * whichever thread {@code DefaultLifecycleProcessor} runs the shutdown phase on, which is not
-     * necessarily the main thread and not any printer's own listener thread. A call to
-     * {@link #openReactorIfKnown(UUID)} racing {@link #releaseAll()} either takes the monitor first
-     * and sees the full map as it stood before the release, or takes it after and sees {@code true}
-     * and an empty map - never a reactor half-way through being stopped, because the lock serialises
-     * the two entirely.
-     */
     private boolean shuttingDown;
 
-    /**
-     * How long {@link #releaseAll()} may spend, in total, waiting for every printer's update stream
-     * to actually finish once every {@link PrinterReactor#stop()} has been called - issue #87.
-     *
-     * <p><strong>One shared budget for the whole farm, not one per machine.</strong> Awaiting each
-     * reactor in turn for up to this long each would let a farm of forty spend up to forty times
-     * this figure end to end if several machines genuinely needed it - exactly the
-     * quadratic-at-forty shape this skill asks every structure here to be checked against. A single
-     * deadline computed once at the start of {@link #releaseAll()} and consulted by every
-     * {@link PrinterReactor#awaitSubscribersGone(Duration)} call bounds the whole farm's wait by
-     * this figure regardless of how many machines are in it.
-     *
-     * <p><strong>Five seconds, well under {@code spring.lifecycle.timeout-per-shutdown-phase}'s
-     * default of thirty - deliberately, not coincidentally.</strong> {@code FarmShutdown.stop()}
-     * calls this and then {@code FarmEvents.close()}, and both run inside one phase of
-     * {@code DefaultLifecycleProcessor} that may have other beans in it too. Spending the whole
-     * thirty seconds here would not remove the hang issue #87 exists to fix, it would only move it
-     * from "the web server is waiting for an SSE response to finish" to "the lifecycle processor is
-     * waiting for this bean's {@code stop()} to return" - the same wait, moved rather than closed.
-     */
     private static final Duration RELEASE_BUDGET = Duration.ofSeconds(5);
 
     private final Duration releaseBudget;
@@ -115,17 +98,7 @@ public class PrinterReactorManager {
                 PrinterThreads.virtualPerPrinter(), Schedulers.parallel());
     }
 
-    /**
-     * The form that still takes one scheduler for everything, which is what a test wants.
-     *
-     * <p>Kept so that the seam a {@code VirtualTimeScheduler} or a {@code Schedulers.immediate()}
-     * reaches the reactor through survives #54 unchanged. It is
-     * {@link PrinterThreads#shared(Scheduler)}: every machine on the one handed in, and the
-     * listeners on it too, which is exactly the arrangement the farm had before.
-     *
-     * <p>Unambiguous against the overload below because {@code Scheduler} and
-     * {@link PrinterThreads} are unrelated types.
-     */
+    /** One scheduler for everything, as the farm had before #54 - a test seam ({@link PrinterThreads#shared}). */
     public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
                                  ApplicationEventPublisher roster, ConnectionPolicy policy,
                                  Scheduler executor, Scheduler retries) {
@@ -138,13 +111,7 @@ public class PrinterReactorManager {
         this(directory, aggregateManager, roster, policy, threads, retries, RELEASE_BUDGET);
     }
 
-    /**
-     * The form that takes {@link #releaseBudget} itself, for a test that needs
-     * {@link #releaseAll()}'s wait to be short rather than waiting out a real five seconds to prove
-     * it is bounded at all - the same reason {@link ConnectionPolicy} and {@link PrinterThreads}
-     * are seams rather than constants. Package-private: nothing in production has a reason to pick
-     * its own budget.
-     */
+    /** Takes {@link #releaseBudget} itself, so a test can prove {@link #releaseAll()} is bounded without waiting out a real five seconds. Package-private: nothing in production picks its own budget. */
     PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
                           ApplicationEventPublisher roster, ConnectionPolicy policy,
                           PrinterThreads threads, Scheduler retries, Duration releaseBudget) {
@@ -158,24 +125,10 @@ public class PrinterReactorManager {
     }
 
     /**
-     * The printer's runtime, started if this is the first caller.
-     *
-     * <p><strong>Called {@code open} and not {@code get} because it is not a getter.</strong> On a
-     * miss it builds a reactor for the machine, which is a resource. It pairs with
-     * {@link #release(UUID)}: whatever this opens, that closes.
-     *
-     * <p>It does not open a socket. It used to, when the printer's row said {@code connected} -
-     * which made a GET on a query path dial a machine, and which was dead code besides, since
-     * nothing in production ever wrote the flag. Reconnecting after a restart is a real feature and
-     * it is {@link #onRegistered(MRegisteredEvent)} now: a deliberate step at startup rather than a
-     * side effect of a lookup.
-     *
-     * <p>Throws when the machine is unknown to this module. That is a different statement from
-     * "the farm has no such machine" - it can also mean this module has not been told yet - and the
-     * caller gets to see the difference rather than receiving a reactor pointed at nowhere.
-     *
-     * <p>A caller that would rather answer an unknown machine than be thrown at asks
-     * {@link #openReactorIfKnown(UUID)}, which is what this is built on.
+     * The printer's runtime, started if this is the first caller - throws for a machine this module
+     * does not know, which is different from "the farm has no such machine" (it can also mean this
+     * module has not been told yet). {@link #openReactorIfKnown(UUID)} is the non-throwing form this
+     * is built on, and neither one dials a socket.
      */
     public synchronized PrinterReactor openReactor(UUID uuid) {
         return openReactorIfKnown(uuid)
@@ -183,28 +136,11 @@ public class PrinterReactorManager {
     }
 
     /**
-     * The printer's runtime, started if this is the first caller - or empty when there is no such
-     * machine.
-     *
-     * <p>The same resource {@link #openReactor(UUID)} opens, with absence as a value instead of an
-     * exception. That matters because the absence is ordinary: a page left open on a printer
-     * somebody deleted posts to it, and the caller wants to answer "the farm has no machine X"
-     * rather than catch an {@code IllegalArgumentException} and guess what it meant.
-     *
-     * <p><strong>One {@code synchronized} step, and that is the point of it being here rather than
-     * composed at the call site.</strong> {@code knows(id)} followed by {@code openReactor(id)}
-     * would be a check-then-act with a window for a concurrent {@code MDeletedEvent} to land in,
-     * and the loser of that race opens a reactor nothing will ever release.
-     *
-     * <p>It still does not dial. Whatever this opens, {@link #release(UUID)} closes.
-     *
-     * <p><strong>Empty, unconditionally, once {@link #releaseAll()} has run.</strong> That is the
-     * gate issue #87 needed: a request arriving in the window between the farm releasing every
-     * printer and the web server actually refusing new connections must not be able to build a
-     * fresh reactor and dial a machine the farm is in the middle of saying goodbye to.
-     * {@link #openReactor(UUID)} then throws for it, exactly as it already does for a machine this
-     * module has never heard of - a shut-down farm and an unknown machine are the same answer to
-     * "can I have a reactor for this id", which is no.
+     * The printer's runtime, started if this is the first caller, or empty for an unknown machine -
+     * which is ordinary (a page left open on a deleted printer) rather than exceptional. One
+     * {@code synchronized} step rather than a check-then-act at the call site, so a concurrent
+     * {@code MDeletedEvent} cannot land in the gap and leave a reactor nothing will ever release.
+     * Answers empty unconditionally once {@link #releaseAll()} has run - see the class javadoc.
      */
     public synchronized Optional<PrinterReactor> openReactorIfKnown(UUID uuid) {
         if (shuttingDown) {
@@ -222,32 +158,17 @@ public class PrinterReactorManager {
     }
 
     /**
-     * Whether this module has been told about the machine at all - and <strong>opens nothing</strong>.
-     *
-     * <p>Separate from {@link #openReactorIfKnown(UUID)} because some questions do not deserve a
-     * runtime. A <em>cancel</em> has to be able to answer "there is no such machine" without
-     * building one, and building one costs a socket's worth of resource - a terminal manager, a
-     * command queue, a replay sink that keeps every subscriber referenced and, since #54, two
-     * threads of this machine's own. Allocating all of that to tell a caller that a transfer which
-     * is not running is not running would be the opposite of {@link #release(UUID)}'s whole point.
-     *
-     * <p><strong>It is {@code core}'s replica answering, and that is the only roster this module
-     * is allowed to consult</strong> - rule 2 of {@code doc/sub_boundaries.txt}.
-     * {@link PrinterDirectory} is fed by {@code MRegisteredEvent} and {@code MDeletedEvent}, so
-     * "known" here means "this module has been told", which can lag the database by a transaction
-     * and never by more. Asking {@code MachineManagementService} instead would be {@code core}
-     * naming another submodel, and it would be a blocking JDBC call besides.
+     * Whether this module has even been told about the machine - opens nothing. Answers from
+     * {@link PrinterDirectory}, the only roster this module may consult (rule 2 of
+     * {@code doc/sub_boundaries.txt}), so it can lag the database by a transaction and no more.
+     * Kept separate from {@link #openReactorIfKnown} because a question like a cancel's "is this
+     * even running" should not have to pay for a socket, a queue and two threads to be answered.
      */
     public boolean knows(UUID uuid) {
         return directory.find(uuid).isPresent();
     }
 
-    /**
-     * Lets go of a printer's runtime: stops it, and forgets it.
-     *
-     * <p>Idempotent, and a no-op for a printer that was never opened - a delete of a machine nobody
-     * ever talked to has nothing to release, and should not have to know that.
-     */
+    /** Stops and forgets a printer's runtime. Idempotent, and a no-op for one never opened. */
     public synchronized void release(UUID uuid) {
         var reactor = running.remove(uuid);
         if (reactor == null) {
@@ -258,59 +179,9 @@ public class PrinterReactorManager {
     }
 
     /**
-     * Lets go of every printer's runtime, and closes the gate on opening another - issue #87.
-     *
-     * <p><strong>What was missing.</strong> {@link #release(UUID)} used to be reached from exactly
-     * one place, {@link #onDeleted(MDeletedEvent)} - a machine being removed from the farm - so a
-     * process told to stop with machines connected left every TCP socket open, every send window
-     * mid-flight and every per-printer scheduler alive; it stopped talking to them only because it
-     * died. This is the other caller: a {@code FarmShutdown} bean reaches it from a
-     * {@link org.springframework.context.SmartLifecycle#stop()} at a phase that runs before the web
-     * server starts draining in-flight requests, so an SSE subscription on a released printer is
-     * already completed - see {@code PrinterReactor.stop()} - by the time anything is waiting for
-     * it to finish.
-     *
-     * <p>Releases every entry the same way a single {@link #release(UUID)} does - stopping the
-     * reactor disconnects it, completes its update sink and disposes that machine's two schedulers
-     * - and then the map is empty, exactly as if every printer had been deleted at once.
-     *
-     * <p><strong>Sets {@link #shuttingDown} first</strong>, which is what makes a request arriving
-     * in the gap between this returning and the web server actually refusing new connections unable
-     * to build a fresh reactor into a farm that is on its way out: see
-     * {@link #openReactorIfKnown(UUID)}. {@link #knows(UUID)} is deliberately left answering from
-     * the directory regardless - it opens nothing, and a cancel still deserves a truthful answer
-     * about whether the farm has ever heard of the machine, which {@link #shuttingDown} does not
-     * change.
-     *
-     * <p><strong>Idempotent.</strong> A second call finds {@link #shuttingDown} already set and
-     * returns without touching the map, which by then is empty anyway - so it releases nothing and
-     * does not ask an already-stopped {@link PrinterReactor#stop()} to park a second terminal
-     * signal.
-     *
-     * <p><strong>Stops every reactor first, then waits for all of them - two passes, not one.</strong>
-     * Stopping one machine and waiting for its stream to finish before moving to the next would
-     * serialise a farm of forty machines' drains end to end, and could spend up to forty times
-     * {@link #releaseBudget} rather than once. Calling {@link PrinterReactor#stop()} on every
-     * reactor first means every one of them has a {@code StreamEnd} parked and draining concurrently
-     * before this method spends a single nanosecond waiting for any of them.
-     *
-     * <p><strong>Blocking here is correct, and not the rule this module otherwise enforces.</strong>
-     * {@code SmartLifecycle.stop()} - which is this method's only caller, through
-     * {@code FarmShutdown} - is called by {@code DefaultLifecycleProcessor} on the shutdown thread,
-     * never on a WebFlux event loop, and the processor itself bounds the whole phase with
-     * {@code spring.lifecycle.timeout-per-shutdown-phase}. "Nothing blocking runs on an event loop"
-     * is about the threads WebFlux hands a request to; the shutdown thread is not one of them, and
-     * this is the one place in the application where waiting, bounded, is the fix rather than the
-     * bug.
-     *
-     * <p><strong>The manager's monitor is not held while this waits, and that distinction matters
-     * only here.</strong> {@link #shuttingDown} is flipped and the map is taken for this method's
-     * own use inside one {@code synchronized} block - the same lock every other method on
-     * {@link #running} already takes - and then released before anything blocks. Holding it across
-     * the wait below would block every concurrent {@link #openReactorIfKnown(UUID)} and
-     * {@link #runtimeOf(UUID)} caller for up to {@link #releaseBudget}, which is a worse bug than
-     * the one issue #87 fixes: a request arriving during a slow shutdown would hang rather than
-     * being told, correctly and immediately, that the farm has none to give it.
+     * Lets go of every printer's runtime and closes the gate on opening another - see the class
+     * javadoc's Shutdown section. Idempotent: a second call finds {@link #shuttingDown} already set
+     * and touches nothing.
      */
     public void releaseAll() {
         List<Map.Entry<UUID, PrinterReactor>> released;
@@ -337,18 +208,11 @@ public class PrinterReactorManager {
     }
 
     /**
-     * A machine was removed from the farm, so its runtime goes with it.
-     *
-     * <p>An event and not a call, because {@code management} must not reach into this module - and
-     * because the two facts are genuinely separate: the row is gone whether or not anything was
-     * holding a socket to it.
-     *
-     * <p>A plain {@link EventListener} rather than a transactional one. The transactional variant
-     * would only release after the delete commits, which is tidier, but it silently does nothing
-     * when no transaction is active - a failure mode that would reappear as a leaked socket the
-     * next time someone published this event from somewhere else. Releasing slightly early is the
-     * cheaper mistake: a rolled-back delete leaves a printer whose runtime is closed, and the next
-     * {@link #openReactor(UUID)} builds a new one.
+     * A machine was removed from the farm, so its runtime goes with it - an event rather than a call,
+     * since {@code management} must not reach into this module. A plain {@link EventListener}, not a
+     * transactional one: the transactional form silently does nothing outside a transaction, which
+     * would reappear as a leaked socket; releasing slightly early on a rolled-back delete is the
+     * cheaper mistake; a new runtime simply builds again later.
      */
     @EventListener
     public void onDeleted(MDeletedEvent event) {
@@ -356,32 +220,10 @@ public class PrinterReactorManager {
     }
 
     /**
-     * A machine the roster says was connected gets dialled again.
-     *
-     * <p><strong>This is what gives the persisted connection state a reader.</strong> Before B3 the
-     * {@code connected} column was written once at registration and never again, so a restart lost
-     * every connection and nothing noticed; B3 makes {@code core} report each transition and the
-     * roster keep it, and this is the other end of that - without it the column would merely be
-     * write-only in a new place.
-     *
-     * <p>Ordered after {@link PrinterDirectory#onRegistered}, which consumes the same event: this
-     * asks the replica where to dial, so the replica has to have been told first.
-     *
-     * <p><strong>An announcement is acted on once - when this module has no runtime for the
-     * machine - and a machine that is already running is left entirely alone.</strong>
-     * {@code MRegisteredEvent} is a statement of current fact re-published whenever the roster
-     * learns something, which is roughly seven times per connect: once per firmware report and
-     * once per capability line, each of them a {@code @Transactional} listener in
-     * {@code MachineManagementImpl} that reads the row back and announces it again. So this
-     * listener sees the same "it was linked" sentence over and over, long after it was true.
-     *
-     * <p>The paragraph this replaces claimed the repetition was harmless because
-     * {@code openReactor} is idempotent and {@code connect()} "declines to start a second attempt
-     * while one is in flight". That clause was load-bearing and false at the one moment it was
-     * needed: {@link PrinterReactor#disconnect()} disposes the attempt and nulls it, so after a
-     * disconnect there is no attempt in flight and a republication queued behind it redialled the
-     * machine. See {@link #redialAtStartup(MRegisteredEvent)} for why the runtime, and not the
-     * event's own state, is the thing that can tell the two apart.
+     * A re-announced machine: its declared spec is always re-applied to a running aggregate
+     * ({@link #redeclare}), and if the roster says it was linked and nothing is running yet, it is
+     * dialled again - see the class javadoc's Startup redial section. Ordered after
+     * {@link PrinterDirectory#onRegistered}, which the redial depends on having already run.
      */
     @Order(Ordered.LOWEST_PRECEDENCE)
     @EventListener
@@ -393,40 +235,8 @@ public class PrinterReactorManager {
         redialAtStartup(event);
     }
 
-    /**
-     * Dials a machine the roster says was linked - the first time it says so, and never again.
-     *
-     * <p><strong>The redial is issued as a command, not as a call to {@code connect()}.</strong>
-     * This repository's rule is that every operating command crosses the aggregate with a named
-     * {@code PrinterState.handle(<Command>)}; {@code openReactor(id).connect()} was the write side
-     * going round it, and that is how the connection intent came to be unset on a machine the farm
-     * was actively dialling.
-     *
-     * <p><strong>Which fixed a second thing in the same line.</strong> Because the startup redial
-     * never set the intent, {@code connect()}'s own
-     * {@code Retry.backoff(...).filter(cause -> printer.wantsToBeConnected())} was consulting an
-     * intent nobody had established - so a machine redialled at startup gave up after its first
-     * refusal, with no retry and nothing in the log to say the series had been cut short. Nothing
-     * covered that, which is why it was never seen.
-     *
-     * <p><strong>And it removes the republication storm.</strong> One test window of
-     * {@code ConnectivityIntegrationTest} held thirty "dialling it again" lines for one machine and
-     * eleven {@code -> CONNECTING} transitions. It is one line now.
-     *
-     * <p><strong>Why the runtime is the gate and {@code event.getState()} is not.</strong> The
-     * state on the announcement is the <em>persisted</em> one, and it lags the live aggregate by
-     * however much of this printer's listener queue is still ahead of the
-     * {@code MConnectionChangedEvent} that would correct it - the republication triggers and the
-     * connection fact travel the same single-consumer queue, and the triggers are in front. So the
-     * copies that say {@code IDLE} for a machine told to disconnect a millisecond ago are exactly
-     * the ones that do the damage, and gating on them would gate on nothing. Whether this module
-     * already holds a runtime is not stale: at startup there is none, and afterwards there is one
-     * that has already been told what it should be doing by someone closer to the truth than a
-     * re-published statement of fact.
-     *
-     * <p>{@code synchronized} like everything else that touches {@link #running}, so that the
-     * check and the open are one step against a concurrent {@link #release(UUID)}.
-     */
+    // synchronized with everything else touching running(), so the check and the open are one step
+    // against a concurrent release(UUID).
     private synchronized void redialAtStartup(MRegisteredEvent event) {
         if (running.containsKey(event.getMachineId())) {
             return;
@@ -435,31 +245,18 @@ public class PrinterReactorManager {
         openReactor(event.getMachineId()).handleConnectCmd(new ConnectCmd(true));
     }
 
-    /**
-     * Hands an edited spec to a machine that is already running (plan item B4).
-     *
-     * <p>An aggregate is seeded with the spec when it is built, which covers a restart and nothing
-     * else. Without this, declaring a second extruder on a printer that is connected right now
-     * would reach the database and the replica and not the object that refuses the command - so
-     * the edit would appear to do nothing until the farm was restarted, which is the same shape of
-     * defect as the write-only {@code connected} column plan item B3 removed.
-     *
-     * <p>Only an existing runtime is touched: this must not build one. {@code MRegisteredEvent} is
-     * re-published for every machine at startup and on every firmware report, and starting a
-     * reactor for each would undo plan item A3's "a reactor has an owner" by opening one for every
-     * row in the farm.
-     */
-    /**
-     * The runtime of a machine that is already running, or null.
-     *
-     * <p>Deliberately does not build one, which is why it is not {@code openReactor}. A feed into a
-     * machine nothing has dialled is a print into a socket that does not exist, and answering it
-     * with a fresh reactor would make that look like it had started.
-     */
+    /** The runtime of a machine already running, or null - deliberately does not build one (unlike {@link #openReactor}). */
     public synchronized PrinterReactor runtimeOf(UUID uuid) {
         return running.get(uuid);
     }
 
+    /**
+     * Hands an edited spec to an already-running machine (plan item B4) - an aggregate is otherwise
+     * only seeded at construction, so a declared change would reach the database and not the object
+     * that refuses commands until a restart. Touches only an existing runtime; building one here
+     * would open a reactor for every row in the farm, since this event is re-published at startup
+     * and on every firmware report.
+     */
     private synchronized void redeclare(MRegisteredEvent event) {
         var reactor = running.get(event.getMachineId());
         if (reactor != null) {
@@ -468,18 +265,12 @@ public class PrinterReactorManager {
     }
 
     /**
-     * Builds one machine's runtime, on threads allocated for that machine alone.
-     *
-     * <p>The two schedulers are asked for here and nowhere else, so the reactor that gets them is
-     * the one thing that could dispose them - which is what makes "a reactor owns its threads"
-     * true rather than aspirational. {@code retries} is shared on purpose: it only ever holds a
-     * timer, it does no work of this printer's, and giving every machine its own would be a thread
-     * per printer for nothing.
-     *
-     * <p><strong>It takes the directory entry rather than finding it.</strong> The caller has just
-     * looked the machine up in order to decide whether there is one at all, and looking it up
-     * again here would be a second answer to a question already asked - which on a replica fed by
-     * events is not guaranteed to be the same answer.
+     * Builds one machine's runtime on threads allocated for it alone - asked for here and nowhere
+     * else, which is what makes this reactor the one thing able to dispose them. {@code retries} is
+     * shared across the farm on purpose: it only ever holds a timer and does no work of this
+     * printer's. Takes the directory entry rather than re-looking it up, since the caller has
+     * already answered "is there one" and a second lookup on an event-fed replica is not guaranteed
+     * to agree.
      */
     private PrinterReactor startReactor(PrinterDirectory.Entry entry) {
         var uuid = entry.id();

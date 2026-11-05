@@ -10,38 +10,34 @@ import org.qw3rtrun.p3d.g.code.core.token.*
 
 /**
  * The command-building DSL: a facade over the model in `code/core`, for writing G-code rather than
- * reading it.
- *
- * The rule it is built to satisfy is **any valid G-code can be written with it**, and
- * `GDslCorpusTest` keeps that honest by re-writing a real corpus line by line and comparing bytes.
- * Concretely that means it has to reach past commands and parameters to the things a naive builder
- * forgets: comments (41% of the corpus's non-blank lines carry one), flags, subcodes, non-canonical
- * lexemes like `G01` and `X10.50`, lowercase letters, strings, expressions, and more than one
- * command in a block.
+ * reading it. The rule it exists to satisfy is **any valid G-code can be written with it**, which
+ * `GDslCorpusTest` keeps honest by rewriting a real corpus line by line and comparing bytes -
+ * comments (41% of the corpus's non-blank lines carry one), flags, subcodes, non-canonical lexemes
+ * like `G01` and `X10.50`, lowercase letters, strings, expressions and multi-command blocks all have
+ * to round-trip.
  *
  * ```
- * G(1, X("10.5"), F(1800)) comment " move"     // G1 X10.5 F1800 ; move
- * G(28, X, Y)                                   // G28 X Y
- * G("29.1", P(1))                               // G29.1 P1
- * M(117, S(text("Hello")))                      // M117 S"Hello"
- * block(G(53), G(0, X(0)))                      // G53 G0 X0
+ * G(1, X("10.5"), F(1800)) comment " move"      // G1 X10.5 F1800 ; move
+ * G(28, X, Y)                                    // G28 X Y
+ * G("29.1", P(1))                                // G29.1 P1
+ * M(117, S(text("Hello")))                       // M117 S"Hello"
+ * block(G(53), G(0, X(0)))                       // G53 G0 X0
  * commentBlock(" LAYER:42")                      // ; LAYER:42
  * ```
  *
- * **Builders return values.** Nothing here emits, so a command can be built, inspected and asserted
- * on before anything is sent. A sink for callers who want one - `GSender` - is a thin layer over
- * this and lives in `:backend:terminal`, not here: emitting is transport's business, and keeping it
- * out is what lets this file be tested without one. The Java facade this replaces took its sink in
- * the constructor and returned `Unit`, which is why its own test had to keep a mutable list to see
- * what it had produced.
+ * Builders return values and never emit, so a command can be built, inspected and asserted on before
+ * anything is sent. `GSender`, in `:backend:terminal`, is a thin sink over this and is kept separate
+ * on purpose - emitting is transport's business, and keeping it out is what lets this file be tested
+ * without one. (The Java facade this replaces took its sink in the constructor and had to keep a
+ * mutable list in its own test to see what it had produced.)
  *
- * **Unlike `code/core`, this file is allowed full Kotlin** - extension and infix functions, default
- * arguments, overloads. The layering rule makes only the `code/core` package portable; this is a
- * host-side convenience over it, and a port re-implements the core and writes its own facade.
+ * Unlike `code/core`, this file is allowed full Kotlin - extension and infix functions, default
+ * arguments, overloads - because the layering rule makes only `code/core` portable; a port
+ * re-implements that and writes its own facade.
  *
- * The file has two halves: the **command** builders of spec 4 - [G], [M], [T] and the general
- * [command] - and the **block** builders of spec 5 - [block], [comment] and [commentBlock].
- * Parameter words live in `GWords.kt`.
+ * Two halves: the **command** builders of spec 4 - [G], [M], [T] and the general [command] - and the
+ * **block** builders of spec 5 - [block], [comment] and [commentBlock]. Parameter words live in
+ * `GWords.kt`.
  */
 
 /**
@@ -50,10 +46,6 @@ import org.qw3rtrun.p3d.g.code.core.token.*
  * ```
  * GEncoder.encode(G(1, X(10), F(1800)))   // "G1 X10 F1800"
  * ```
- *
- * @param number the command number, rendered in canonical decimal
- * @param params the parameter words, in wire order
- * @return the command
  */
 fun G(number: Int, vararg params: GWord): GCommand = command('G', number, *params)
 
@@ -65,10 +57,6 @@ fun G(number: Int, vararg params: GWord): GCommand = command('G', number, *param
  * GEncoder.encode(G("29.1", P(1)))   // "G29.1 P1"
  * GEncoder.encode(G("01"))           // "G01"
  * ```
- *
- * @param lexeme the command number exactly as it should reach the wire
- * @param params the parameter words, in wire order
- * @return the command
  */
 fun G(lexeme: String, vararg params: GWord): GCommand = command('G', lexeme, *params)
 
@@ -78,10 +66,6 @@ fun G(lexeme: String, vararg params: GWord): GCommand = command('G', lexeme, *pa
  * ```
  * GEncoder.encode(M(104, S(200)))   // "M104 S200"
  * ```
- *
- * @param number the command number, rendered in canonical decimal
- * @param params the parameter words, in wire order
- * @return the command
  */
 fun M(number: Int, vararg params: GWord): GCommand = command('M', number, *params)
 
@@ -92,10 +76,6 @@ fun M(number: Int, vararg params: GWord): GCommand = command('M', number, *param
  * ```
  * GEncoder.encode(M("0105"))   // "M0105"
  * ```
- *
- * @param lexeme the command number exactly as it should reach the wire
- * @param params the parameter words, in wire order
- * @return the command
  */
 fun M(lexeme: String, vararg params: GWord): GCommand = command('M', lexeme, *params)
 
@@ -105,10 +85,6 @@ fun M(lexeme: String, vararg params: GWord): GCommand = command('M', lexeme, *pa
  * ```
  * GEncoder.encode(T(0))   // "T0"
  * ```
- *
- * @param number the tool number, rendered in canonical decimal
- * @param params the parameter words, in wire order
- * @return the command
  */
 fun T(number: Int, vararg params: GWord): GCommand = command('T', number, *params)
 
@@ -119,10 +95,6 @@ fun T(number: Int, vararg params: GWord): GCommand = command('T', number, *param
  * ```
  * GEncoder.encode(T("1"))   // "T1"
  * ```
- *
- * @param lexeme the tool number exactly as it should reach the wire
- * @param params the parameter words, in wire order
- * @return the command
  */
 fun T(lexeme: String, vararg params: GWord): GCommand = command('T', lexeme, *params)
 
@@ -145,11 +117,6 @@ fun T(lexeme: String, vararg params: GWord): GCommand = command('T', lexeme, *pa
  * GEncoder.encode(command('D', 3))                   // "D3"
  * GEncoder.encode(command('M', 110, word('N', 7)))   // "M110 N7"
  * ```
- *
- * @param letter the command letter, A-Z in either case
- * @param number the command number, rendered in canonical decimal
- * @param params the parameter words, in wire order
- * @return the command
  */
 fun command(letter: Char, number: Int, vararg params: GWord): GCommand =
     command(letter, number.toString(), *params)
@@ -178,11 +145,6 @@ fun command(letter: Char, number: Int, vararg params: GWord): GCommand =
  * command('G', "-1")                             // throws IllegalArgumentException
  * command('G', 1, GFlagWord(GChecksum))          // throws IllegalArgumentException
  * ```
- *
- * @param letter the command letter, A-Z in either case
- * @param lexeme the command number exactly as it should reach the wire
- * @param params the parameter words, in wire order
- * @return the command
  */
 fun command(letter: Char, lexeme: String, vararg params: GWord): GCommand {
     require(isCommandNumber(lexeme)) {
@@ -202,9 +164,6 @@ fun command(letter: Char, lexeme: String, vararg params: GWord): GCommand {
  * ```
  * GEncoder.encode(block(G(53), G(0, X(0))))   // "G53 G0 X0"
  * ```
- *
- * @param parts the commands and comments, in wire order
- * @return the block, unframed
  */
 fun block(vararg parts: GBlockPart): GBlockDraft = GBlockDraft(parts.toList())
 
@@ -214,9 +173,6 @@ fun block(vararg parts: GBlockPart): GBlockDraft = GBlockDraft(parts.toList())
  * ```
  * GEncoder.encode(G(28).block())   // "G28"
  * ```
- *
- * @receiver the command
- * @return a block holding only this command
  */
 fun GCommand.block(): GBlockDraft = GBlockDraft(listOf(this))
 
@@ -226,10 +182,6 @@ fun GCommand.block(): GBlockDraft = GBlockDraft(listOf(this))
  * ```
  * GEncoder.encode(G(1, X(10)) comment " move")   // "G1 X10 ; move"
  * ```
- *
- * @receiver the command
- * @param text the comment's text, after the `;`
- * @return a block of the command and the comment
  */
 infix fun GCommand.comment(text: String): GBlockDraft = GBlockDraft(listOf(this, tailComment(text)))
 
@@ -239,10 +191,6 @@ infix fun GCommand.comment(text: String): GBlockDraft = GBlockDraft(listOf(this,
  * ```
  * GEncoder.encode(block(G(53), G(0, X(0))) comment " machine")   // "G53 G0 X0 ; machine"
  * ```
- *
- * @receiver the block
- * @param text the comment's text, after the `;`
- * @return a new block with the comment as its last part
  */
 infix fun GBlockDraft.comment(text: String): GBlockDraft = GBlockDraft(parts + tailComment(text))
 
@@ -252,9 +200,5 @@ infix fun GBlockDraft.comment(text: String): GBlockDraft = GBlockDraft(parts + t
  * ```
  * GEncoder.encode(commentBlock(" LAYER:42"))   // "; LAYER:42"
  * ```
- *
- * @param text the comment's text, after the `;`
- * @return a block holding only the comment
  */
 fun commentBlock(text: String): GBlockDraft = GBlockDraft(listOf(tailComment(text)))
-

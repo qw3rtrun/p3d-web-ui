@@ -3,37 +3,28 @@ import type {SliceInfo} from './api/types'
 /**
  * Numbers from the server, turned into something a person reads.
  *
- * **Pure functions in a module rather than expressions in a template**, because this is the only
- * logic in the UI that can be wrong without rendering wrong: `3661` and `1h 1m` are the same fact,
- * and a bad conversion looks exactly as plausible as a good one. Nothing here touches Vue, a DOM
- * node or the clock, so every one of them is a call with an expected string beside it the moment
- * there is a runner to put it in - see the known debt in the UI skill: `vue-tsc` checks types and
- * nothing checks behaviour.
+ * Pure functions in a module rather than expressions in a template, since a bad conversion looks
+ * exactly as plausible as a good one (`3661` and `1h 1m` are the same fact) - nothing here touches
+ * Vue, a DOM node or the clock, so each is a call with an expected string beside it the moment there
+ * is a runner to put it in.
  *
- * **Null in, null out.** The primitives return null for "nobody said" rather than a placeholder,
- * so the sentence a page shows for an unknown value is the page's choice and is made in exactly
- * one place - {@link NOT_STATED} below.
+ * Null in, null out: the primitives return null for "nobody said" rather than a placeholder, so the
+ * sentence a page shows for an unknown value is made in exactly one place - {@link NOT_STATED}.
  */
 
-/**
- * What a field says when the file did not say it.
- *
- * Not `0`, which would be a claim - a print that takes no time and uses no filament - and not an
- * error, because a file nothing could be read from is still a printable file.
- */
+// Not `0`, which would claim a print takes no time and uses no filament, and not an error - a file
+// nothing could be read from is still printable.
 export const NOT_STATED = 'not stated'
 
 /**
  * Seconds as a human duration: `3661` is `1h 1m`.
  *
- * Coarse on purpose and deliberately asymmetric. A print measured in hours does not want its
- * seconds, and an eight-hour one does not want its minutes to the unit, so each magnitude drops
- * the one below the one below it and a zero remainder is left out entirely - `7200` is `2h`, not
- * `2h 0m`. Days exist because multi-day prints do.
+ * Coarse and deliberately asymmetric: each magnitude drops the one below the one below it, and a
+ * zero remainder is left out entirely (`7200` is `2h`, not `2h 0m`). Days exist because multi-day
+ * prints do.
  *
- * Returns null for null, and for anything that is not a usable count of seconds. A negative
- * estimate is not a duration, and a slicer that wrote one is a slicer whose arithmetic nothing
- * here should be repeating back to an operator as fact.
+ * Returns null for null and for anything not a usable count of seconds - a negative estimate is not
+ * a duration, and this should not repeat a slicer's bad arithmetic back as fact.
  */
 export function duration(seconds: number | null): string | null {
     if (seconds === null || !Number.isFinite(seconds) || seconds < 0) {
@@ -62,10 +53,8 @@ export function duration(seconds: number | null): string | null {
 /**
  * Filament length as a human measure: `1234.5` millimetres is `1.23 m`.
  *
- * **The server's unit is millimetres and nobody thinks in them.** A spool is sold by the kilometre
- * of filament and a slicer prints metres on its own summary, so a figure over a metre is shown in
- * metres to two places; below that, whole millimetres, because `0.45 m` for a benchmark cube reads
- * as a rounding error rather than as a length.
+ * The server's unit is millimetres and nobody thinks in them: over a metre is shown in metres to two
+ * places, below that whole millimetres - `0.45 m` for a benchmark cube reads as a rounding error.
  *
  * Null and nonsense are null, as in {@link duration}.
  */
@@ -101,14 +90,10 @@ export function filamentUsed(slice: SliceInfo): string {
 }
 
 /**
- * The rest of what the slicer said, as one line for a tooltip.
- *
- * The estimate and the filament are what earn a column; **the program's name and the layer height
- * are detail**, true but not what anybody scans a list for. They go where a hover finds them.
- *
- * `known` is read here and nowhere else, and this is what it is for: a file whose comments said
- * nothing gets a sentence explaining that the host could not read a summary, rather than a blank
- * that looks like a bug or three repetitions of {@link NOT_STATED}.
+ * The rest of what the slicer said, as one line for a tooltip - the program's name and layer height,
+ * detail that does not earn a column. `known` is read here and nowhere else: a file with nothing
+ * read gets a sentence explaining that, rather than a blank or three repetitions of
+ * {@link NOT_STATED}.
  */
 export function sliceDetail(slice: SliceInfo): string {
     if (!slice.known) {

@@ -13,51 +13,31 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * What this machine says its own configuration is: {@code M503}'s report, {@code M504}'s verdict on
- * the EEPROM, and whether {@code M503} exists on this firmware at all.
+ * What this machine says its own configuration is: {@code M503}'s report, {@code M504}'s verdict,
+ * and whether {@code M503} exists on this firmware at all. Same shape as {@link SdCardControl},
+ * {@link TemperatureControl} and {@link ProfileControl}: {@code on} folds a reply in,
+ * {@link #snapshot()} hands it back as the replies that would have announced it.
  *
- * <p>The same shape as {@link SdCardControl}, {@link TemperatureControl} and
- * {@link ProfileControl}: {@code on} folds a reply in and {@link #snapshot()} hands the state back
- * as the replies that would have announced it, so a Settings tab opened late shows the machine's
- * settings instead of an empty table until somebody presses "read".
+ * <p>The report is one ordered list, not three maps - the firmware interleaves section headings and
+ * values with no other link between them, so a value's place in the sequence is which heading it is
+ * under. A value merges in place on a second read of the same key rather than accumulating, which is
+ * what makes a single-setting read-back ({@code >> M92}) update the held report without a second
+ * 25-line dump. Nothing is parsed: {@code :gcode}'s {@link SettingsValue} keeps the line verbatim,
+ * and a caller wanting {@code X80.00} runs it through {@code GTokenizer} rather than a second, looser
+ * reader of the same bytes.
  *
- * <p><strong>The report is one ordered list, not three maps.</strong> The firmware interleaves
- * section headings with the values under them and writes no other association between the two, so a
- * value's place in the sequence <em>is</em> which heading it belongs under. Splitting it into
- * "sections" and "values" would throw that away and the tab groups by exactly it.
- *
- * <p><strong>Values merge in place; they do not accumulate.</strong> A second {@code SettingsValue}
- * for a code replaces the first and keeps its position, which is what makes a single-setting
- * read-back useful: {@code >> M92} answers one unprefixed line and nothing else, and the held report
- * absorbs it without a second 25-line dump and without moving the setting out from under its own
- * heading.
- *
- * <p><strong>Nothing here is parsed.</strong> The report <em>is</em> G-code and that is all it
- * claims to be - {@code :gcode}'s {@link SettingsValue} keeps the line verbatim, trailing comment
- * included, and a caller that wants {@code X80.00} runs it through {@code GTokenizer}, which
- * already reads exactly this syntax. A parsed settings model here would be a second place for the
- * number rules to drift.
- *
- * <p><strong>Everything is "the last thing the machine said", and only that</strong>, the rule every
- * control in this package keeps - with one exception, {@link #invalidated()}, whose reason is
- * written there. A setting nothing has reported is absent rather than defaulted: an unknown
- * configuration is not a blank one.
+ * <p>Everything is "the last thing the machine said" - absent rather than defaulted - except
+ * {@link #invalidated()}, documented at its own declaration.
  *
  * <h2>Concurrency</h2>
- *
- * <p>One immutable {@link State} behind one volatile reference, which is {@link SdCardControl}'s
- * pattern and is why it is written that way. <strong>The aggregate's thread is the only writer</strong>
- * - every {@code on} here is reached from {@code PrinterState.onEvent}, which runs on that machine's
- * {@code p3d-printer-<uuid>} thread - and <strong>any thread may read</strong>, because
- * {@link #snapshot()} is called from whatever subscribes to {@code PrinterReactor.updates()}. The
- * volatile write of a fully-built {@code State} is the happens-before edge: a reader either sees the
- * previous report or the whole of the new one, never a list being rebuilt. The lists inside are
- * copied on every fold and handed out as {@code List.copyOf}, so nothing a reader holds can be
- * mutated underneath it.
- *
- * <p>A synchronized mutable map would be the wrong substitute twice over: it would put a lock on the
- * aggregate's thread for the benefit of a reader, and a reader iterating it would still have to hold
- * that lock for the length of a snapshot.
+ * One immutable {@link State} behind one volatile reference ({@link SdCardControl}'s pattern): the
+ * aggregate's own thread is the only writer (every {@code on} runs on {@code PrinterState.onEvent}'s
+ * {@code p3d-printer-<uuid>} thread), any thread may read ({@link #snapshot()} runs on whatever
+ * subscribes to {@code PrinterReactor.updates()}), and the volatile write of a fully-built
+ * {@code State} is the happens-before edge - a reader sees the whole of the old state or the whole
+ * of the new one, never a list mid-rebuild. A synchronized mutable map would put a lock on the
+ * aggregate's thread for a reader's benefit and would still need holding for the length of a
+ * snapshot.
  */
 public class EEPROMSettingsControl {
 
@@ -80,21 +60,15 @@ public class EEPROMSettingsControl {
         return state;
     }
 
-    /**
-     * One line of a settings report, folded into what is known about them.
-     *
-     * <p>One entry point for the whole family, so {@code PrinterState} has one arm - the same
-     * reason {@link SdCardControl#on} takes an {@code SdCardRs}. A reply added to the family in
-     * {@code :gcode} arrives here already routed.
-     */
+    /** One entry point for the whole family, so {@code PrinterState} has one arm - a reply added to it in {@code :gcode} arrives here already routed. */
     public void on(SettingsRs<?> reply) {
         switch (reply) {
             case SettingsSection section -> onSection(section);
             case SettingsValue value -> onValue(value);
             case EepromReport report -> onEeprom(report);
             default -> {
-                // A member of the family this control has nothing to keep about. There is none
-                // today; the arm exists because SettingsRs is an interface and not a sealed one.
+                // a member of the family this control keeps nothing about; none exists today, the
+                // arm exists because SettingsRs is an interface and not a sealed one.
             }
         }
     }
@@ -144,36 +118,23 @@ public class EEPROMSettingsControl {
     }
 
     /**
-     * The codes whose {@code S} word is part of their identity - a named exception, not a rule.
-     *
-     * <p><strong>{@code M145} is the only code MarlinSim reports twice in one dump</strong>, and it
-     * was measured rather than reasoned about:
-     *
+     * Codes whose {@code S} word is part of their identity - an exception list, not a rule, because
+     * every general rule guesses wrong somewhere ({@code M200 S0 D1.75}'s {@code S} is a flag, not
+     * an index; "reported twice" cannot be evaluated until the dump has finished arriving).
+     * {@code M145} is the only code MarlinSim reports twice in one dump - the two material presets -
+     * measured:
      * <pre>
      * echo:  M145 S0 H180.00 B70.00 F0
      * echo:  M145 S1 H240.00 B110.00 F0
      * </pre>
-     *
-     * <p>Those are the two material presets, so keying on {@code M145} alone collapses them into
-     * one and the tab loses a preset.
-     *
-     * <p><strong>It is a list and not a general rule because every general rule guesses wrong
-     * somewhere.</strong> "A command with an {@code S} word is indexed" takes
-     * {@code M200 S0 D1.75}, which is reported once and whose {@code S} is a flag rather than an
-     * index. "A command reported twice is indexed" cannot be evaluated until the dump has finished
-     * arriving, and a line is folded as it comes. So the trade is deliberate: an indexed setting
-     * this list does not name merges wrongly and loses all but its last instance, and the fix is to
-     * add the code here when one turns up - with the dump that proves it, the way this one is
-     * proved.
+     * An indexed setting not named here merges wrongly and loses all but its last instance; add the
+     * code here when one turns up, with the dump that proves it.
      */
     private static final List<String> INDEXED = List.of("M145");
 
     /**
-     * The {@code S} word's lexeme, read with {@code :gcode}'s own tokenizer.
-     *
-     * <p>The tokenizer and not a split on spaces, because the syntax rules for pairing a letter
-     * with a number are spec 2.1's and are already written down once - and a key built by a second,
-     * sloppier reading of the same bytes would disagree with them on something eventually.
+     * The {@code S} word's lexeme, read with {@code :gcode}'s own tokenizer rather than a split on
+     * spaces - spec sect. 2.1 already defines how a letter pairs with a number.
      *
      * @return the lexeme as the firmware wrote it, or null when there is no {@code S} word
      */
@@ -195,23 +156,13 @@ public class EEPROMSettingsControl {
     }
 
     /**
-     * {@code echo:Unknown command: "…"} - the only thing that can prove this firmware has no
-     * {@code M503}.
+     * {@code echo:Unknown command: "…"} - the only way to prove this firmware has no {@code M503}.
+     * {@code Cap:EEPROM:1}/{@code MachineProfile.hasEeprom()} say the firmware stores settings;
+     * {@code DISABLE_M503} removes only the report, with no capability line announcing it - so the
+     * report is assumed present until refused. Other refusals are ignored: {@code UnknownCommand}
+     * answers anything unrecognised, and only {@code M503}'s is about settings.
      *
-     * <p><strong>A third question, and neither of the other two answers it.</strong>
-     * {@code Cap:EEPROM:1} says the firmware stores settings; {@code MachineProfile.hasEeprom()}
-     * reads that. {@code DISABLE_M503} is a separate build option that removes the <em>report</em>
-     * from a build which stores settings perfectly well, and no capability line announces it. So the
-     * report is assumed present - mainline Marlin has it - until a machine refuses the command, and
-     * then it is not.
-     *
-     * <p>Refusals of other commands are ignored. {@code UnknownCommand} is Marlin's answer to
-     * anything it does not recognise, so this handler sees every one on the stream and only
-     * {@code M503}'s is about the settings.
-     *
-     * @param refusal any {@code Unknown command:} reply
-     * @return whether this changed anything, so the aggregate knows whether it has news. True only
-     *         for the first {@code M503} refusal of a session
+     * @return whether this changed anything - true only for the first {@code M503} refusal of a session
      */
     public boolean on(UnknownCommand refusal) {
         if (!M503.equals(refusal.getCommand())) {
@@ -234,37 +185,23 @@ public class EEPROMSettingsControl {
     }
 
     /**
-     * An {@code M501} or {@code M502} was sent, so the held report describes settings that are no
-     * longer in the machine.
-     *
-     * <p><strong>This is the central design fact of the Settings tab.</strong> Both commands answer
-     * a <em>bare {@code ok}</em> and announce nothing else - measured - while genuinely changing
-     * live memory, with {@code M503} as the control:
-     *
+     * An {@code M501} or {@code M502} was sent, so the held report no longer matches the machine.
+     * Both answer a bare {@code ok} with no announcement while changing live memory - measured
+     * against {@code M503} as the control:
      * <pre>
-     * &gt;&gt; M503   &lt;&lt; echo:  M104 S0 B250 F0.00      (from the EEPROM)
-     * &gt;&gt; M502   &lt;&lt; ok P15 B3
-     * &gt;&gt; M503   &lt;&lt; echo:  M104 S210 B250 F0.10    (the defaults - changed, and unannounced)
-     * &gt;&gt; M501   &lt;&lt; ok P15 B3
-     * &gt;&gt; M503   &lt;&lt; echo:  M104 S0 B250 F0.00      (back)
+     * M503 -&gt; M104 S0 B250 F0.00    (stored)
+     * M502 -&gt; ok
+     * M503 -&gt; M104 S210 B250 F0.10  (defaults, unannounced)
+     * M501 -&gt; ok
+     * M503 -&gt; M104 S0 B250 F0.00    (back)
      * </pre>
-     *
-     * <p>So anything still holding the old report is silently wrong and the firmware will never
-     * correct it. Forgetting is half the answer; the other half is {@code PrinterState}'s, which
-     * re-asks - see {@code PrinterState.handle(RestoreSettings)} for why re-asking beat telling the
-     * UI the report had gone stale.
-     *
-     * <p><strong>{@link #reportSupported()} is deliberately untouched.</strong> A restore or a reset
-     * changed what the settings are; it did not change which commands the firmware understands.
-     * Clearing it would send an {@code M503} that is known to be refused after every reset.
-     *
-     * <p><strong>And so is {@code M504}'s verdict</strong>, which is the less obvious half. Neither
-     * {@code M501} nor {@code M502} writes the EEPROM - the transcript above proves it from both
-     * ends, because {@code M501} could only put the stored values back if they were still there -
-     * and {@code M504} judges the stored contents. Its answer is as true afterwards as before.
-     *
-     * <p>Like {@link SdCardControl#released()}, this is the one part of the class that follows a
-     * command rather than a reply, and for the same kind of reason: there is no reply to follow.
+     * So this forgets the report; {@code PrinterState.handle(RestoreSettings)} re-asks rather than
+     * inventing a "stale" event. {@link #reportSupported()} and {@code M504}'s verdict are
+     * deliberately untouched: neither command changes which commands the firmware understands, and
+     * neither writes the EEPROM (the transcript proves it - {@code M501} could not restore values
+     * that were not still there), so {@code M504}'s judgement of the stored contents stays true.
+     * Like {@link SdCardControl#released()}, this follows a command rather than a reply, because
+     * there is no reply to follow.
      */
     public void invalidated() {
         var s = state;
@@ -272,29 +209,20 @@ public class EEPROMSettingsControl {
     }
 
     /**
-     * A new session on the wire: whatever was known about the settings belonged to the last one.
-     *
-     * <p>Everything goes, <strong>including {@link #reportSupported()}</strong>. A link that was
-     * down may have been down because the machine was being reflashed, or because a cable was moved
-     * to a different machine at the same address - {@link SdCardControl#sessionStarted()} makes the
-     * same argument for a card that could have been swapped. A remembered refusal would hide the
-     * Settings tab on a firmware that now answers {@code M503} perfectly well, and nothing would
-     * ever ask again.
+     * A new session: everything known belongs to the last one, including
+     * {@link #reportSupported()} - a link that was down may return to a reflashed machine, or one
+     * swapped at the same address (see {@link SdCardControl#sessionStarted()}), and a remembered
+     * refusal would hide the tab forever on a firmware that now answers {@code M503} fine.
      */
     public void sessionStarted() {
         state = State.NOTHING;
     }
 
     /**
-     * The settings as the replies that would have announced them: the report in the order the
-     * firmware wrote it, then {@code M504}'s verdict if one has answered, then the refusal that
-     * proved {@code M503} absent if one arrived.
-     *
-     * <p><strong>The refusal is published as itself, which is deliberate.</strong> The thing that
-     * announced the fact is the thing that gets handed on, so the farm invents no
-     * "settings-unsupported" event of its own and a page that opens later learns it exactly the way
-     * the first one did. That is the rule the rest of this method already keeps - every element here
-     * is a reply the machine actually sent.
+     * The settings as the replies that announced them: the report in firmware order, then
+     * {@code M504}'s verdict if any, then the refusal if {@code M503} was declined - each published
+     * as itself rather than a synthetic "unsupported" event, so a late page learns it the same way
+     * the first one did.
      */
     public List<Object> snapshot() {
         var s = state;

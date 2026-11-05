@@ -34,13 +34,7 @@ class JobProgressTest {
         assertNull(none.remaining());
     }
 
-    /**
-     * Accepted is sent minus what is still in the send window.
-     *
-     * <p>The gap is at most four blocks, because the window will not pull another until one comes
-     * back - but it is the gap that matters on a job that failed, where it is the difference
-     * between what was sent and what was printed.
-     */
+    /** Accepted is sent minus what is still in the send window - at most four blocks behind. */
     @Test
     void acceptedIsSentMinusWhatIsStillInFlight() {
         assertEquals(96148, at(96152, 4, 0, 0, 0).blocksAccepted());
@@ -53,13 +47,7 @@ class JobProgressTest {
         assertEquals(0, at(2, 4, 0, 0, 0).blocksAccepted());
     }
 
-    /**
-     * The fraction is bytes, not blocks.
-     *
-     * <p>Because the file's size is known before anything starts and its block count is not: a
-     * tenth of a sliced file is comments and blank lines, which are dropped rather than sent, so
-     * the line count is an upper bound and would leave a progress bar permanently short.
-     */
+    /** The fraction is bytes, not blocks: a block count is only ever an upper bound. */
     @Test
     void theFractionIsByBytes() {
         assertEquals(0.5, at(10, 0, 500, 1000, 0).fraction());
@@ -97,11 +85,8 @@ class JobProgressTest {
     }
 
     /**
-     * Progress only moves forward, which is plan item C4's first done-when.
-     *
-     * <p>It holds because of where the numbers come from rather than because anything clamps them:
-     * bytes are counted as the file is read and a file is read once, and blocks are counted as the
-     * job's source emits them, which a resend does not re-enter.
+     * Progress only moves forward (plan item C4's first done-when): bytes are counted as the file
+     * is read once, and blocks as the source emits them, which a resend does not re-enter.
      */
     @Test
     void progressIsMonotoneAcrossASequenceOfReadings() {

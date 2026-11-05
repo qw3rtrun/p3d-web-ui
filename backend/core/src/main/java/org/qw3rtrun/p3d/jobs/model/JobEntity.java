@@ -21,20 +21,12 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * One print job, and the only thing that moves it.
- *
- * <p><strong>The state machine is on the entity rather than in the service, which is the same
- * choice {@code ConnectionLifecycle} made one phase earlier and for the same reason.</strong> A
- * transition is a fact about a job - what it is allowed to do next depends only on where it is -
- * so it belongs with the job. Putting it in the service would mean every caller of every verb
- * re-deriving it, and the first one to forget would write an illegal row that the next reader has
- * to cope with.
- *
- * <p><strong>{@link #moveTo} returns the event it caused, or null when the move is not legal.</strong>
- * Null and not an exception: whether a move is legal is a question with a perfectly good negative
- * answer, and the service turns that into {@code JobOutcome.Refused}. Plan item C2's "a typed
- * failure rather than an exception from the database" is that pair - this decides, the service
- * phrases it, and nothing reaches the database to find out.
+ * One print job, and the only thing that moves it. The state machine lives on the entity rather
+ * than the service - the same choice {@code ConnectionLifecycle} made, since a transition is a fact
+ * about a job and putting it in the service would mean every caller re-deriving it. {@link #moveTo}
+ * returns the event it caused, or null when the move is not legal (not an exception - the service
+ * turns that into {@code JobOutcome.Refused}, plan item C2's "a typed failure rather than an
+ * exception from the database").
  */
 @Entity
 @Table(name = "print_job")
@@ -71,12 +63,7 @@ public class JobEntity {
     @Column(name = "finished_at")
     LocalDateTime finishedAt;
 
-    /**
-     * The last progress checkpoint - see the changeset for why these are approximate.
-     *
-     * <p>Null on a job that has never run, which is a different statement from zero: a job that has
-     * sent no blocks because it has not started is not a job that is stuck at the first one.
-     */
+    /** The last progress checkpoint, approximate - see the changeset. Null means never run, which is a different statement from zero. */
     @Column(name = "blocks_sent")
     Long blocksSent;
     @Column(name = "blocks_in_flight")
@@ -108,13 +95,7 @@ public class JobEntity {
     @Column(name = "requires_tag")
     String requiresTag;
 
-    /**
-     * Why this queued job has not been given a machine yet.
-     *
-     * <p>Separate from {@link #reason}, which says why a job ended. A job can be blocked for an
-     * hour and then run perfectly, and overwriting the one with the other would lose whichever
-     * mattered.
-     */
+    /** Why this queued job has not been given a machine yet - separate from {@link #reason} (why a job ended), since a job blocked for an hour can still run perfectly. */
     @Column(name = "blocked_reason", length = 1024)
     String blockedReason;
 
@@ -159,17 +140,13 @@ public class JobEntity {
     }
 
     /**
-     * Moves the job, or answers null because it may not move that way.
+     * Moves the job, or answers null because it may not move that way. Timestamps are set here
+     * because they are part of the transition: {@code startedAt} is set only the first time it
+     * becomes {@code RUNNING}, so a resume after a pause does not make it look like it started
+     * twice; {@code finishedAt} is set once, by whichever terminal state is reached.
      *
-     * <p>The timestamps are set here rather than by the caller because they are part of the
-     * transition and not beside it: {@code startedAt} is the moment it became {@code RUNNING} for
-     * the first time, and a resume after a pause must not overwrite it - the job did not start
-     * twice. {@code finishedAt} is set once, by whichever terminal state it reached.
-     *
-     * @param next    where it should go
-     * @param onto    the machine involved, or null to leave the machine as it is
-     * @param why     a reason worth keeping on the job, or null
-     * @param clock   when this is happening
+     * @param onto  the machine involved, or null to leave the machine as it is
+     * @param why   a reason worth keeping on the job, or null
      * @return the event this caused, or null when the move is not legal from here
      */
     public JobStateChanged moveTo(JobState next, UUID onto, String why, LocalDateTime clock) {
@@ -202,19 +179,14 @@ public class JobEntity {
     }
 
     /**
-     * Records a progress checkpoint, if it is ahead of the one already here.
-     *
-     * <p><strong>Monotone rather than state-gated, and the difference cost a reprint.</strong> The
-     * first version ignored any checkpoint that arrived once the job had stopped, to stop a late
-     * timer tick overwriting the last real one. That also threw away the <em>exact</em> reading the
-     * feed takes at the moment it pauses - so a resume read a checkpoint up to a second stale and
-     * restarted several thousand blocks early, extruding over what was already printed. Observed
-     * on a live run as the E value going backwards from 50.3952 to 46.4220.
-     *
-     * <p>Comparing the count instead keeps what the state check was for - a stale reading is
-     * behind, so it loses - and lets the accurate final one through. It is also plan item C4's
-     * "progress never moves backwards" as an invariant of the row rather than a property the
-     * callers are trusted to have.
+     * Records a progress checkpoint, if it is ahead of the one already here - monotone rather than
+     * state-gated, and the difference cost a reprint. The first version ignored any checkpoint
+     * arriving once the job had stopped, which also threw away the exact reading a pause takes: a
+     * resume read a checkpoint up to a second stale and restarted thousands of blocks early,
+     * extruding over what was already printed (observed live as the E value going backwards from
+     * 50.3952 to 46.4220). Comparing the count instead keeps what the state check was for - a stale
+     * reading is behind, so it loses - while letting the accurate final one through: plan item C4's
+     * "progress never moves backwards" as an invariant of the row.
      */
     public void progressed(JobProgress progress) {
         if (blocksSent != null && progress.blocksSent() < blocksSent) {

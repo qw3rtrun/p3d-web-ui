@@ -263,6 +263,26 @@ Before designing anything inside `gcode/`, invoke **`low-level-protocol-dev`** o
 for the layer you are in. A plan that "cleans up" the core into small helpers and pipelines will be
 rejected by the house style, and the house style wins.
 
+## Comments, and what you enforce on the agents you brief
+
+**The code documents itself, and a comment block is not something a reader has to get past.** Four
+rules, from [issue #86](https://github.com/qw3rtrun/p3d-web-ui/issues/86), the same in every layer:
+
+1. a method gets full javadoc — description, parameters, example, corner cases — only where it is
+   **public interface another module calls**;
+2. for a regular class, the javadoc is **one block before the class**: details, usage, lifecycle,
+   links;
+3. a public member gets its own javadoc only where the code genuinely cannot say it;
+4. a one-line `//` where something is unusual.
+
+Agents wrote this repository's comments and wrote far too many of them, so this is yours to enforce
+in every brief and to check in every diff you review. The move is **consolidate, not delete**: the
+rationale, the thread contract and the thing somebody measured all go up into the class block, said
+in a quarter of the words. **A measured fact that disappears is a regression** — a number, a captured
+wire line, a firmware version and date, a spec section, a named test. If its home is wrong, the class
+block or a `doc/` spec is where it goes, not the bin. Each layer skill's *Documentation duty* section
+is that layer's authority; `:app` is yours.
+
 ## Repository map
 
 ```

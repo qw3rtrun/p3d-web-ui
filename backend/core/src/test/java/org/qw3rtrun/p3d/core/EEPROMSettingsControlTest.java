@@ -19,14 +19,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class EEPROMSettingsControlTest {
 
-    /**
-     * The dump MarlinSim writes, captured verbatim on 2026-11-04 from
-     * {@code FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56) MACHINE_TYPE:MarlinSim}.
-     *
-     * <p>Kept as the firmware's own text, headings and all, because the headings are what the tab
-     * groups by and the awkward ones - brackets, angle brackets, a trailing comment on
-     * {@code G21} - are exactly what must survive being held.
-     */
+    // the dump MarlinSim writes, captured verbatim on 2026-11-04 from
+    // FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56) MACHINE_TYPE:MarlinSim. Kept as the
+    // firmware's own text, headings and all - the headings are what the tab groups by, and the
+    // awkward ones (brackets, a trailing comment on G21) are exactly what must survive being held.
     private static final List<Object[]> DUMP = List.of(
             new Object[]{"Linear Units", "G21", "G21 ; (mm)"},
             new Object[]{"Auto Temp Control", "M104", "M104 S0 B250 F0.00"},
@@ -68,13 +64,8 @@ class EEPROMSettingsControlTest {
         assertEquals(List.of(), settings.snapshot());
     }
 
-    /**
-     * The whole dump comes back in report order, sections and values interleaved as received.
-     *
-     * <p><strong>One ordered list and not three maps.</strong> The sections are what the tab groups
-     * by, so a value's place in the sequence is the only thing that says which heading it belongs
-     * under - the firmware writes no other association.
-     */
+    // one ordered list, not three maps: a value's place in the sequence is the only thing that says
+    // which heading it belongs under, since the firmware writes no other association.
     @Test
     void theWholeDumpReplaysInReportOrder() {
         fold(dump());
@@ -82,15 +73,9 @@ class EEPROMSettingsControlTest {
         assertEquals(List.copyOf(dump()), settings.snapshot());
     }
 
-    /**
-     * A second value for a code replaces the first <em>in place</em>.
-     *
-     * <p>This is what makes a single-setting read-back useful: {@code >> M92} answers
-     * {@code <<   M92 X81.00 …} in the unprefixed shape and nothing else, so the held report has to
-     * absorb one line without a second full dump - and without moving it out from under its own
-     * heading. Asserted as the whole sequence rather than "the new value is in there", because
-     * appending would satisfy the weaker claim and put the setting under the wrong section.
-     */
+    // what makes a single-setting read-back useful: >> M92 answers one unprefixed line, so the held
+    // report absorbs it in place without a second full dump. Asserted as the whole sequence, since
+    // appending would satisfy "the new value is in there" while putting it under the wrong section.
     @Test
     void aSecondValueForACodeReplacesTheFirstInItsPlace() {
         fold(dump());
@@ -105,16 +90,11 @@ class EEPROMSettingsControlTest {
     }
 
     /**
-     * Both {@code M145} presets survive a re-read, which is the test for the named exception.
-     *
-     * <p><strong>{@code M145} is the one code MarlinSim reports twice in a single dump</strong> -
-     * {@code S0} and {@code S1}, the two material presets - so a merge keyed on the code alone
-     * collapses them into one and the tab loses a preset. The exception is named rather than
-     * general on purpose: {@code M200 S0 D1.75} also carries an {@code S} and is reported once, so
-     * every general rule tried guesses wrong somewhere.
-     *
-     * <p>Folded twice, because once is what the order test already covers. If this passes with the
-     * exception removed, the test is wrong.
+     * Both {@code M145} presets survive a re-read - the test for the named exception.
+     * {@code M145} is the one code MarlinSim reports twice in a single dump ({@code S0}/{@code S1},
+     * the two material presets), so a merge keyed on the code alone would collapse them; the
+     * exception is named rather than general because {@code M200 S0 D1.75} also carries an
+     * {@code S} but is reported once. Folded twice, since once is already covered by the order test.
      */
     @Test
     void bothMaterialPresetsSurviveAReread() {
@@ -132,13 +112,7 @@ class EEPROMSettingsControlTest {
                 "keying on M145 alone collapses the two presets into one");
     }
 
-    /**
-     * A re-read is the same report, not twice the report.
-     *
-     * <p>A section whose title is already held is not appended again, and neither is a value whose
-     * code is - so pressing refresh twice leaves the tab exactly as it was rather than doubling
-     * every row.
-     */
+    // pressing refresh twice must leave the tab as it was, not doubling every row.
     @Test
     void aRereadDoesNotDuplicateAnything() {
         fold(dump());
@@ -151,13 +125,8 @@ class EEPROMSettingsControlTest {
 
     // --------------------------------------------------------------------------- M504's verdict
 
-    /**
-     * {@code M504}'s answer is held and replayed, as the string the firmware wrote.
-     *
-     * <p>Not reduced to a boolean: only the healthy answer has been measured - MarlinSim writes
-     * {@code echo:EEPROM OK} and has no way to be asked for a corrupt one - so a boolean would have
-     * meant inventing the failure text and a rule for recognising it.
-     */
+    // not reduced to a boolean: only the healthy answer (echo:EEPROM OK) has been measured -
+    // MarlinSim has no way to be asked for a corrupt one.
     @Test
     void theEepromVerdictIsHeldAndReplayed() {
         settings.on(new EepromReport("OK"));
@@ -185,14 +154,8 @@ class EEPROMSettingsControlTest {
         assertTrue(settings.reportSupported());
     }
 
-    /**
-     * An {@code M503} refusal turns it to no, once.
-     *
-     * <p>{@code DISABLE_M503} is a real build option, and a firmware compiled with it stores
-     * settings perfectly well and simply cannot report them - so {@code Cap:EEPROM:1} is true and
-     * the report is still absent. The only thing that can tell a host is the refusal, and the return
-     * value says whether anything changed so the aggregate knows whether it has news.
-     */
+    // DISABLE_M503 is a real build option: a firmware with it stores settings fine but cannot report
+    // them, so Cap:EEPROM:1 is true and the report is still absent - only the refusal can tell a host.
     @Test
     void aRefusalOfM503SaysTheReportIsNotThere() {
         assertTrue(settings.on(new UnknownCommand("M503")), "the first one is news");
@@ -214,14 +177,8 @@ class EEPROMSettingsControlTest {
         assertEquals(before, settings.snapshot());
     }
 
-    /**
-     * The refusal itself is what a late subscriber is handed, and that is deliberate.
-     *
-     * <p>The thing that announced the fact is the thing that gets published, so the farm invents no
-     * "settings unsupported" event of its own and a page that opens afterwards learns it the same
-     * way the first one did - which is the rule the rest of {@link EEPROMSettingsControl#snapshot()}
-     * already keeps.
-     */
+    // the refusal itself is what a late subscriber is handed, deliberately - no synthetic
+    // "settings unsupported" event, same rule the rest of EEPROMSettingsControl#snapshot() keeps.
     @Test
     void theRefusalIsPartOfTheSnapshotOnceM503IsKnownAbsent() {
         settings.on(new UnknownCommand("M503"));
@@ -244,14 +201,8 @@ class EEPROMSettingsControlTest {
 
     // ----------------------------------------------------------------- forgetting, two ways
 
-    /**
-     * A new session starts from nothing known, <strong>including</strong> that {@code M503} works.
-     *
-     * <p>What comes back up on the same address can be a different firmware: a reflash, a cable
-     * moved, a board swapped. {@link SdCardControl#sessionStarted()} makes the same argument for a
-     * card that could have been swapped while the link was down, and a refusal remembered across a
-     * session would hide a Settings tab on a machine that now answers perfectly well.
-     */
+    // including whether M503 works: what comes back up on the same address can be a different
+    // firmware (a reflash, a swapped board), and a remembered refusal would hide the tab forever.
     @Test
     void aNewSessionForgetsEverythingIncludingTheRefusal() {
         fold(dump());
@@ -264,15 +215,8 @@ class EEPROMSettingsControlTest {
         assertTrue(settings.reportSupported(), "a reflashed machine may well answer M503 now");
     }
 
-    /**
-     * {@code M501}/{@code M502} empty the report and leave {@code reportSupported} alone.
-     *
-     * <p>The two forgettings are different facts. A restore or a reset changed what the settings
-     * <em>are</em> - and said nothing about it, which is why the held report has to go - but the
-     * firmware is the same firmware it was a millisecond ago, so whether it can report is unchanged.
-     * Forgetting that too would cost an {@code M503} that is known to be refused being sent again
-     * after every reset.
-     */
+    // two different facts: a restore/reset changed what the settings are, so the held report must
+    // go, but the firmware is still the same firmware, so whether it can report is unchanged.
     @Test
     void anInvalidationEmptiesTheReportAndKeepsWhetherM503Works() {
         settings.on(new UnknownCommand("M503"));
@@ -286,15 +230,10 @@ class EEPROMSettingsControlTest {
     }
 
     /**
-     * And it leaves {@code M504}'s verdict alone, which is a deliberate departure from "empty
-     * everything".
-     *
-     * <p><strong>{@code M501} and {@code M502} do not write the EEPROM.</strong> The control run
-     * this feature was designed from proves it from both ends: {@code M502} changed live memory
-     * ({@code M104 S0 B250 F0.00} became {@code M104 S210 B250 F0.10}) and {@code M501} put the
-     * stored values back, which it could only do because they were still there. {@code M504} judges
-     * the <em>stored</em> contents, so its verdict is as true after a restore or a reset as it was
-     * before and discarding it would make the tab ask again for an answer it already has.
+     * And it leaves {@code M504}'s verdict alone - a deliberate departure from "empty everything",
+     * since {@code M501}/{@code M502} do not write the EEPROM (proven by the control run: {@code M502}
+     * changed live memory and {@code M501} restored it from values that had to still be stored), so
+     * {@code M504}'s judgement of the stored contents stays true across both.
      */
     @Test
     void anInvalidationKeepsTheEepromVerdict() {

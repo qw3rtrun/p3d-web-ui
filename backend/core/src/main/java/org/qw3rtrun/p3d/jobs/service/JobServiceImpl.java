@@ -28,18 +28,20 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * The print queue: one verb per thing that can happen to a job, all of them going through
- * {@link JobEntity#moveTo}.
+ * The print queue: one verb per thing that can happen to a job, all going through
+ * {@link JobEntity#moveTo} - find the job, ask it to move, publish what moved, deliberately
+ * repetitive rather than letting each verb reimplement "is this legal". A refusal never reaches the
+ * database: the entity answers null for an illegal move and {@link #apply} turns that into
+ * {@link JobOutcome.Refused} with where the job actually is (plan item C2's "a value rather than a
+ * constraint violation or an exception from somewhere deep" - the common cause is an ordinary race,
+ * a user clicking Pause while the last line is being acknowledged).
  *
- * <p><strong>Every verb has the same shape</strong> - find the job, ask it to move, publish what
- * moved - and that is deliberate rather than repetitive. The alternative is the shape where each
- * verb reimplements "is this legal", which is how a queue acquires a state nobody designed.
- *
- * <p><strong>A refusal never reaches the database.</strong> The entity answers null for an illegal
- * move and {@link #apply} turns that into {@link JobOutcome.Refused} with where the job actually
- * is. Plan item C2's first done-when is that this is a value rather than a constraint violation or
- * an exception from somewhere deep, because the common cause is an ordinary race - a user clicking
- * Pause while the last line is being acknowledged - and that deserves an answer.
+ * <p>A listener is {@code @ApplicationModuleListener} only when its event is published inside a
+ * transaction; {@code core} publishes {@link JobFeedCompleted}/{@link JobFeedFailed}/
+ * {@link JobProgressed} from a reactive thread with no transaction to tie a durable publication to,
+ * so those are a plain {@code @EventListener} plus their own {@code @Transactional} (which has to be
+ * on the listener and not only on the verb it calls, since that call is a self-invocation and would
+ * skip the proxy) - making those three outcomes at-most-once rather than guaranteed.
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -50,14 +52,7 @@ public class JobServiceImpl implements JobService {
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
-    /**
-     * Queues a file.
-     *
-     * <p>The file is checked here rather than by a foreign key. The two live in different modules,
-     * so a database constraint between them would be a dependency the boundary says does not
-     * exist - and it would be the wrong behaviour anyway, since deleting a file that a finished job
-     * printed must not delete the record that it printed.
-     */
+    /** Queues a file. Checked here rather than by a foreign key: the two live in different modules, and a finished job's record must survive deleting the file it printed. */
     @Override
     @Transactional
     public JobOutcome queue(UUID fileId, JobRequirements requires) {
@@ -123,19 +118,13 @@ public class JobServiceImpl implements JobService {
     }
 
     /**
-     * A machine left the farm, so everything it was holding is dealt with.
-     *
-     * <p><strong>An unstarted job goes back to the queue; a started one fails.</strong> That is the
-     * one distinction worth making here: a job that has not begun can be given to another printer
-     * with nothing lost, and a job that was half printed cannot - the file has been partly consumed
-     * and a second machine starting it from line one would print the top half of the part onto an
-     * empty bed. What happens to those is plan item C5's recovery, and in the meantime they are
-     * {@code FAILED} with a reason that says so.
-     *
-     * <p><strong>{@code @ApplicationModuleListener} and not a plain {@code @EventListener}</strong>,
-     * so the registry writes the publication down inside the delete's transaction and redelivers if
-     * this fails. A printer deleted while the application was shutting down would otherwise leave
-     * its jobs assigned to a machine that no longer exists, which nothing would ever notice.
+     * A machine left the farm, so everything it was holding is dealt with: an unstarted job goes
+     * back to the queue (nothing lost); a started one fails, since the file is partly consumed and a
+     * second machine starting from line one would print the top half onto an empty bed - plan item
+     * C5's recovery is what happens to those next. {@code @ApplicationModuleListener}, so the
+     * registry writes the publication inside the delete's own transaction and redelivers on failure -
+     * otherwise a printer deleted mid-shutdown could leave its jobs assigned to a machine that no
+     * longer exists, unnoticed.
      */
     @ApplicationModuleListener
     public void onMachineDeleted(MDeletedEvent event) {
@@ -151,26 +140,13 @@ public class JobServiceImpl implements JobService {
     }
 
     /**
-     * The machine has been sent every line of the file, so the job is done.
-     *
-     * <p>Only {@code core} can know this - knowing it means holding the socket - and only this
-     * module may move a job, which is why it crosses as an event rather than a call. The same
-     * division a firmware report crosses in plan item B2, running the other way.
-     *
-     * <p><strong>A plain listener, and deliberately not an {@code @ApplicationModuleListener}.</strong>
-     * That annotation is a {@code @TransactionalEventListener}, which <em>drops</em> an event
-     * published outside a transaction - and this one is published by {@code core} from a
-     * reactor-netty thread, which has no transaction and no database to tie one to. Using it here
-     * silently swallowed the completion: a 96,152-block print reached the end of its file, the
-     * transport logged the last block, and the job stayed {@code RUNNING} forever.
-     *
-     * <p>So a feed outcome is <strong>at-most-once</strong>, and that is a real limitation rather
-     * than a detail: if the process dies between the last block and this listener, the job is left
-     * {@code RUNNING} with nothing feeding it. Reconciling that at startup belongs to plan item C5,
-     * which already has to deal with a job whose machine went away mid-print.
-     *
-     * <p>{@code @Transactional} is on the listener rather than only on {@link #complete}, because
-     * the call below is a self-invocation and would not go through the proxy.
+     * The machine has been sent every line of the file, so the job is done - crosses as an event
+     * rather than a call since only {@code core} can know it (holding the socket) and only this
+     * module may move a job, the same division a firmware report crosses in B2, the other way.
+     * {@code @ApplicationModuleListener} here would silently drop the event, since it is published by
+     * {@code core} from a reactor-netty thread with no transaction - measured live as a
+     * 96,152-block print that reached the end of its file and stayed {@code RUNNING} forever. See the
+     * class javadoc for why this makes a feed outcome at-most-once.
      */
     @EventListener
     @Transactional
@@ -180,23 +156,15 @@ public class JobServiceImpl implements JobService {
     }
 
     /**
-     * A job that was printing when the process died cannot still be printing - plan item C5.
-     *
-     * <p><strong>The feed lives in memory and the process took it with it.</strong> Nothing is
-     * sending blocks to that machine any more, so a job left {@code RUNNING} is a job that reads
-     * as alive and is not: it would hold its printer against the scheduler for ever and tell an
-     * operator that a cold machine is halfway through a part.
-     *
-     * <p><strong>They fail, with the checkpoint intact.</strong> That is the plan's own "the honest
-     * first version": resuming would mean restoring temperatures, position, extrusion mode and
-     * feedrate as of the last block, which is a replay of the file's state-setting commands and not
-     * the seek that {@code JobFeeder.resume} does for a pause. The recorded position is what makes
-     * a better version possible later, and it is deliberately not overwritten here.
-     *
-     * <p><strong>{@code PAUSED} jobs are left alone, and that is the useful half.</strong> A paused
-     * job's machine is still connected and still hot - the farm redials it at startup - and the
-     * block it stopped at is in the checkpoint, so resuming it after a restart works exactly as
-     * resuming it before one does.
+     * A job that was printing when the process died cannot still be printing - plan item C5. The
+     * feed lived in memory and the process took it with it, so a {@code RUNNING} job would hold its
+     * printer against the scheduler forever and claim a cold machine is halfway through a part. They
+     * fail, with the checkpoint intact - "the honest first version", since resuming would mean
+     * replaying the file's state-setting commands up to the last block rather than the seek
+     * {@code JobFeeder.resume} does for a pause, and the recorded position is deliberately left for a
+     * better version to use later. {@code PAUSED} jobs are left alone: that machine is still
+     * connected and hot (the farm redials it at startup), and the checkpoint lets it resume exactly
+     * as it would have before the restart.
      */
     @EventListener(ApplicationReadyEvent.class)
     @Transactional
@@ -212,16 +180,7 @@ public class JobServiceImpl implements JobService {
                         + job.describe().progress().blocksSent() + " blocks"));
     }
 
-    /**
-     * A running job got further, so the checkpoint moves.
-     *
-     * <p>Arrives about once a second rather than once a block - {@code core} publishes on a timer -
-     * so this is one write per second per running printer, which is what "persisted often enough to
-     * survive a restart" costs. The plan item asks for a checkpoint and not a ledger.
-     *
-     * <p>Plain and transactional for the same reason as the two below: it is published from a
-     * reactive thread with no transaction to tie a durable publication to.
-     */
+    /** A running job got further, so the checkpoint moves. Arrives about once a second, not once a block - {@code core} publishes on a timer - so this is one write per second per running printer, a checkpoint rather than a ledger. */
     @EventListener
     @Transactional
     public void onProgress(JobProgressed event) {
@@ -231,7 +190,7 @@ public class JobServiceImpl implements JobService {
         });
     }
 
-    /** The feed stopped before the file did - see {@link #onFeedCompleted} for why this is plain. */
+    /** The feed stopped before the file did. */
     @EventListener
     @Transactional
     public void onFeedFailed(JobFeedFailed event) {
@@ -261,13 +220,7 @@ public class JobServiceImpl implements JobService {
         return new JobOutcome.Done(job.describe());
     }
 
-    /**
-     * Records why a queued job is stuck, without moving it.
-     *
-     * <p>Written only when the reason has changed. A scheduler runs on every job transition and on
-     * a timer, so a farm with one unassignable job and nothing else happening would otherwise
-     * write the same sentence to the same row for ever.
-     */
+    /** Records why a queued job is stuck, without moving it - only when the reason has changed, since a scheduler runs on every transition and on a timer and would otherwise rewrite the same row forever. */
     @Override
     @Transactional
     public JobOutcome blocked(UUID jobId, String why) {

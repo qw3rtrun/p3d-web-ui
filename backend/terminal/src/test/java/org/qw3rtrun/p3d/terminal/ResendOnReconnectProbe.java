@@ -26,25 +26,20 @@ import java.util.concurrent.TimeUnit;
  *
  * <ul>
  *   <li><strong>Session A is the control.</strong> A host attaches to a firmware whose counter is
- *       wherever the last client left it, sends a few blocks, and is disposed. It establishes what
- *       the opening exchange looks like and how far the firmware's {@code last_N} is pushed.</li>
+ *       wherever the last client left it, sends a few blocks, and is disposed - establishing the
+ *       opening exchange and how far the firmware's {@code last_N} is pushed.</li>
  *   <li><strong>Session B is the measurement.</strong> A second host attaches to the same process
- *       and sends the issue's own three blocks - {@code G21}, {@code G90}, {@code G28}. Everything
- *       written and everything received is printed verbatim, and every block is then classified:
- *       acknowledged, replayed, or abandoned by {@code CommandProcessor.resynchronise}.</li>
+ *       and sends the issue's own three blocks ({@code G21}, {@code G90}, {@code G28}); everything
+ *       written and received is printed verbatim and classified: acknowledged, replayed, or
+ *       abandoned by {@code CommandProcessor.resynchronise}.</li>
  * </ul>
  *
- * <p>Two further facts are read off the same capture, because both decide the fix:
- *
- * <ul>
- *   <li><strong>What number the opening {@code M110 N0} carries, and what the block behind it
- *       carries.</strong> {@code GSendWindow.reset(0)} frames the {@code M110} with the number that
- *       was next and then sets {@code next = 1}, so on a fresh window both are {@code N1}. Whether
- *       that is benign depends on which {@code N} the firmware reads out of an {@code M110} line,
- *       and that is on the wire here.</li>
- *   <li><strong>Whether the {@code M110} is acknowledged before the first real block goes out.</strong>
- *       The written transcript is in order, so the interleaving answers it.</li>
- * </ul>
+ * <p>Two further facts are read off the same capture, because both decide the fix: what number the
+ * opening {@code M110 N0} carries and what the block behind it carries
+ * ({@code GSendWindow.reset(0)} frames the {@code M110} with the number that was next, then sets
+ * {@code next = 1}, so on a fresh window both are {@code N1} - whether that is benign depends on
+ * which {@code N} the firmware reads out of an {@code M110} line), and whether the {@code M110} is
+ * acknowledged before the first real block goes out, which the ordered transcript answers.
  *
  * <p>Usage: {@code ResendOnReconnectProbe [host] [port]}, defaulting to {@code localhost 8099}.
  * Run it twice in a row if the far end reboots on disconnect: the second run is then the one whose

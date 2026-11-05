@@ -19,10 +19,10 @@ package org.qw3rtrun.p3d.g.protocol
  * and a line is claimed by at most one of them. The one pair that could overlap - `//action:` and
  * `//` - is separated inside [CommentRsDecoder].
  *
- * **A line that decodes to null is not an error.** The spec's original rule that every line
- * carries one of four two-character prefixes is called out there as obsolete, so unprefixed
- * replies are normal: `M105` answers with a bare temperature report, `M115` with
- * `FIRMWARE_NAME:...`. Those have their own decoders and are not part of this base set.
+ * A line that decodes to null is not an error: the spec's original rule that every line carries one
+ * of four two-character prefixes is called out there as obsolete, so unprefixed replies are normal -
+ * `M105` answers with a bare temperature report, `M115` with `FIRMWARE_NAME:...`. Those have their
+ * own decoders and are not part of this base set.
  *
  * ```
  * BaseRsDecoder.decode("wait")     // WaitRs

@@ -23,23 +23,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Every blocking call this module makes runs somewhere it is allowed to block.
  *
  * <p>WebFlux serves requests on a handful of Netty event-loop threads and Spring Data JPA is
- * blocking JDBC. Putting the second inside the first stalls every other request sharing that
- * thread, and it has no symptom at all until the farm is under load - which is why this layer
- * carried the bug in four controllers at once and nothing noticed.
+ * blocking JDBC; putting the second inside the first stalls every other request sharing that
+ * thread, with no symptom until the farm is under load - which is how this layer carried the bug
+ * in four controllers at once.
  *
- * <p><strong>What is asserted is the thread the service was called on</strong>, not the shape of
- * the code. A {@code Mono.fromSupplier(…)} with no {@code subscribeOn} looks asynchronous and is
- * not: a {@code Mono} is lazy, so its supplier runs on whoever subscribes. These tests record
+ * <p>What is asserted is the thread the service was called on, not the shape of the code: a
+ * {@code Mono.fromSupplier(…)} with no {@code subscribeOn} looks asynchronous and is not, since a
+ * {@code Mono} is lazy and its supplier runs on whoever subscribes. These tests record
  * {@code Thread.currentThread()} from inside a fake service and insist on a {@code boundedElastic}
- * worker, so the "looks async" version fails here - the recorded thread would be the caller's.
+ * worker, so the "looks async" version fails here.
  *
- * <p>This is the check that catches the next one. A new handler that reaches the management
- * service without scheduling it has to break one of these.
- *
- * <p>The printer-control side is not here any more, and not because it stopped mattering: opening a
- * runtime is still scheduled off the caller's thread, but that moved into {@code core} along with
- * the control interface, so {@code PrinterControlServiceTest} is where it is asserted. This module
- * no longer knows what a reactor is.
+ * <p>The printer-control side is not here any more: opening a runtime still runs off the caller's
+ * thread, but that moved into {@code core} along with the control interface, so
+ * {@code PrinterControlServiceTest} asserts it now.
  */
 class BlockingBoundaryTest {
 
@@ -116,13 +112,8 @@ class BlockingBoundaryTest {
         assertRanOffTheCallersThread();
     }
 
-    /**
-     * The write paths too.
-     *
-     * <p>{@code create} was the subtlest of the four: it was {@code payload.map(…)}, so the insert
-     * ran on whichever thread delivered the request body - the event loop - with no {@code Mono}
-     * wrapper anywhere to make it look suspicious.
-     */
+    // create was the subtlest of the four: it was payload.map(...), so the insert ran on the event
+    // loop that delivered the request body, with no Mono wrapper to make it look suspicious.
     @Test
     void creatingAPrinterRunsOffTheCallersThread() {
         management().post().uri("/api-manager")
@@ -140,13 +131,8 @@ class BlockingBoundaryTest {
         assertRanOffTheCallersThread();
     }
 
-    /**
-     * The server-rendered pages, called directly rather than through a view resolver.
-     *
-     * <p>What is under test is where the query runs, and that does not need Thymeleaf to be
-     * configured. These handlers returned {@code Mono<String>} while calling the repository from
-     * the method body - a signature that looks reactive around work that is not.
-     */
+    // The server-rendered pages, called directly rather than through a view resolver, since what is
+    // under test is where the query runs and that needs no Thymeleaf configured.
     @Test
     void theDashboardQueryRunsOffTheCallersThread() {
         var controller = new MvcPrinterController(recordingService());

@@ -64,12 +64,8 @@ class SliceInfoReaderTest {
         assertEquals(0, new BigDecimal("0.2").compareTo(slice.layerHeight()));
     }
 
-    /**
-     * The tail window is read, which is the reason there are two.
-     *
-     * <p>PrusaSlicer writes its summary at the end of the file. A reader that only looked at the
-     * top would find the slicer's name and nothing else, which is the least useful subset.
-     */
+    // PrusaSlicer writes its summary at the end of the file, so a head-only reader would find the
+    // slicer's name and nothing else.
     @Test
     void aValueOnlyInTheFooterIsStillFound() {
         var slice = SliceInfoReader.read(
@@ -103,13 +99,7 @@ class SliceInfoReaderTest {
                 .estimatedSeconds();
     }
 
-    /**
-     * A file from a slicer nothing here knows is a fact, not a failure.
-     *
-     * <p>It is still a perfectly printable file. Refusing it, or recording zeroes that would read
-     * as "a print that takes no time and uses no filament", would both be worse answers than
-     * nothing.
-     */
+    // still a perfectly printable file - refusing it, or recording zeroes, would both be worse.
     @Test
     void anUnrecognisedHeaderYieldsNothingRatherThanFailing() {
         var slice = SliceInfoReader.read(bytes(";SomeOtherSlicer v9\n;whatever: 12\nG28\n"));
@@ -133,12 +123,7 @@ class SliceInfoReaderTest {
         assertNull(slice.layerHeight());
     }
 
-    /**
-     * A {@code ;} inside a parenthesised comment does not start a new one.
-     *
-     * <p>This is why the tokenizer does the finding. A reader that split lines on {@code ;} would
-     * take {@code TIME:1} here as a key-value and report a one-second print.
-     */
+    // why the tokenizer does the finding: a split on ';' would take TIME:1 here as a key-value.
     @Test
     void aSemicolonInsideAnInlineCommentIsNotAComment() {
         var slice = SliceInfoReader.read(bytes("(a note ;TIME:1)\n;TIME:3600\n"));

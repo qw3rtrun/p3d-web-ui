@@ -16,20 +16,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * What a machine turned out to be, written down and read back.
- *
- * <p>Against the <strong>real Liquibase schema</strong> rather than one Hibernate generated from
- * the entity, which is the only version of this test worth having: the two disagreeing is exactly
- * the failure it exists to catch, and it already caught one. The firmware value column is
- * {@code key_value} and not {@code value} because {@code value} is a reserved word - Hibernate
- * emitted it happily and the database rejected the query, with no hint that the entity was the
- * problem.
- *
- * <p><strong>Not {@code @DataJpaTest}</strong>, which the plan item asked for: Spring Boot 4 moved
- * the test slices out of {@code spring-boot-test-autoconfigure} and the annotation is not on this
- * module's classpath at all. {@code @SpringBootTest} with {@code @Transactional} gives what the
- * item actually wanted - the repository exercised against the real schema, rolled back after each
- * test - at the cost of booting the whole module rather than a slice of it.
+ * What a machine turned out to be, written down and read back - against the real Liquibase schema
+ * rather than one Hibernate generated, which already caught one disagreement: the firmware value
+ * column is {@code key_value}, not {@code value}, a reserved word Hibernate emitted happily and the
+ * database rejected. Not {@code @DataJpaTest}, since Spring Boot 4 moved the test slices out of
+ * {@code spring-boot-test-autoconfigure}; {@code @SpringBootTest} with {@code @Transactional} gives
+ * the same round-trip-and-roll-back at the cost of booting the whole module.
  */
 @SpringBootTest
 @Transactional
@@ -42,12 +34,7 @@ class PrinterProfilePersistenceTest {
         return repo.save(new PrinterEntity(UUID.randomUUID(), "a printer", "localhost", 8099));
     }
 
-    /**
-     * A machine nothing has ever connected to has a profile, and it says so.
-     *
-     * <p>Never null, so that a caller - the aggregate seeding itself, a page rendering a row - does
-     * not have to check. An unknown machine is a fact rather than a gap.
-     */
+    // never null, so a caller does not have to check - an unknown machine is a fact, not a gap.
     @Test
     void aFreshlyRegisteredMachineHasAnUnknownProfile() {
         var profile = registered().profile();
@@ -57,13 +44,8 @@ class PrinterProfilePersistenceTest {
         assertEquals(Map.of(), profile.capabilities());
     }
 
-    /**
-     * An unknown machine still claims one extruder.
-     *
-     * <p>One and not zero, because the aggregate checks a tool index against this before sending
-     * {@code M104}, and zero would refuse every command including the one for tool 0 - on a machine
-     * nobody has had the chance to ask yet.
-     */
+    // one, not zero: the aggregate checks a tool index against this before sending M104, and zero
+    // would refuse even tool 0 on a machine nobody has had the chance to ask yet.
     @Test
     void anUnknownMachineStillClaimsOneExtruder() {
         assertEquals(1, registered().profile().extruderCount());
@@ -89,13 +71,8 @@ class PrinterProfilePersistenceTest {
         assertEquals(when, profile.learnedAt());
     }
 
-    /**
-     * A key the host has never heard of comes back anyway.
-     *
-     * <p>The reason the firmware is a table of key-values rather than a column per field: what
-     * {@code M115} reports differs between builds, and a schema that named only today's keys would
-     * silently drop whatever a later Marlin adds.
-     */
+    // the reason firmware is a table of key-values, not a column per field: M115 differs between
+    // builds, and a schema naming only today's keys would drop whatever a later Marlin adds.
     @Test
     void aKeyNobodyModelledSurvivesToo() {
         var id = registered().getId();
@@ -107,13 +84,8 @@ class PrinterProfilePersistenceTest {
         assertEquals("42", repo.findById(id).orElseThrow().profile().firmware().get("SOMETHING_NEW"));
     }
 
-    /**
-     * A second firmware report replaces the first rather than merging into it.
-     *
-     * <p>An {@code M115} is a complete statement about one build, so a key that has stopped being
-     * reported has stopped being true - a reflashed printer should not keep claiming the extruder
-     * count of the firmware it used to run.
-     */
+    // an M115 is a complete statement about one build, so a key that stopped being reported has
+    // stopped being true.
     @Test
     void aFreshFirmwareReportReplacesTheOldOne() {
         var id = registered().getId();
@@ -130,12 +102,8 @@ class PrinterProfilePersistenceTest {
         assertEquals(Map.of("EXTRUDER_COUNT", "1"), firmware);
     }
 
-    /**
-     * Capabilities accumulate, because the firmware sends them one line at a time.
-     *
-     * <p>Nothing marks the last {@code Cap:} line, so there is no moment at which the set is known
-     * to be complete - which is why these are upserted while a firmware report is replaced.
-     */
+    // nothing marks the last Cap: line, so there is no moment the set is known complete - which is
+    // why these are upserted while a firmware report is replaced.
     @Test
     void capabilitiesAccumulateOneLineAtATime() {
         var id = registered().getId();

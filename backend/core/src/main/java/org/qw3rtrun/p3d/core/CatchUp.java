@@ -12,27 +12,18 @@ import java.util.function.Supplier;
 /**
  * A snapshot of where things are, then everything that happens next - with nothing in between lost.
  *
- * <p><strong>The live stream is subscribed <em>before</em> the snapshot is taken, and that order is
- * the whole point.</strong> The obvious {@code Flux.concat(snapshot, live)} subscribes to the live
- * stream only once the snapshot has completed, so an event emitted between the two reads is in
- * neither: the subscriber is shown the state from before it and never told it changed. On an idle
- * printer that is a stale connection state for as long as nothing else happens, which could be
- * for ever.
+ * <p>The live stream is subscribed <em>before</em> the snapshot is taken, which is the whole point:
+ * the obvious {@code Flux.concat(snapshot, live)} subscribes live only once the snapshot completes,
+ * so an event emitted between the two is in neither - a stale connection state on an idle printer,
+ * possibly forever. Subscribing first instead buffers what arrives meanwhile and delivers it after,
+ * at the cost of a much smaller failure: a value the snapshot already covers can arrive once more,
+ * or an older value flash before the newer one. Nothing is ever missing, and the last thing a
+ * subscriber sees is current.
  *
- * <p>Subscribed first, what arrives during the snapshot is held in a buffer and delivered after it.
- * The cost is the opposite and much smaller failure: an event whose change the snapshot already
- * includes arrives once more, and when an emission was still on its way, an older value can be
- * shown for an instant before the newer one that follows it. Nothing is ever <em>missing</em>, and
- * the last thing a subscriber sees is the current state, which is what a page needs.
- *
- * <p><strong>The buffer is bounded and drops, like every other per-subscriber queue in this
- * module.</strong> A browser that stops reading must not make the host hold its backlog, and a
- * printer must never wait on a dashboard - so an overflow loses that subscriber one message, says
- * so, and nothing else is affected.
- *
- * <p>Feeding the buffer from the live stream is single-producer by the Reactive Streams rules: a
- * publisher never signals one subscriber from two threads at once, so {@code tryEmitNext} on the
- * unicast sink cannot collide with itself.
+ * <p>The buffer is bounded and drops, like every other per-subscriber queue in this module - a
+ * browser that stops reading must not make the host hold its backlog. Feeding it from the live
+ * stream is single-producer by the Reactive Streams rules (a publisher never signals one subscriber
+ * from two threads at once), so {@code tryEmitNext} on the unicast sink cannot collide with itself.
  */
 @Slf4j
 final class CatchUp {

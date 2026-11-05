@@ -29,82 +29,44 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * What every per-feature integration test in this module is built on - issue #43.
- *
- * <p>The three rules the issue sets, and how this holds them:
- *
- * <ul>
- *   <li><strong>"Tests call endpoints and validate results."</strong> Everything here goes over
- *       HTTP against a real port. There is no autowired service, no repository and no application
- *       event published by hand. A subclass that needs an {@code @Autowired} field has found a gap
- *       in the HTTP surface, and that is a finding rather than a licence.</li>
- *   <li><strong>"Simulator is out of scope - it mocked."</strong> The far end is {@link MockPrinter},
- *       which binds a loopback port and speaks Marlin. The machine is registered at that port
- *       through {@code POST /api-manager}, so nothing about the application is reconfigured for a
- *       test - the farm simply has a printer there.</li>
- *   <li><strong>"Split by Feature."</strong> One subclass per feature, named for it.</li>
- * </ul>
+ * What every per-feature integration test in this module is built on - issue #43: one subclass per
+ * feature, everything over HTTP against a real port, the far end a {@link MockPrinter} registered
+ * through {@code POST /api-manager}. No autowired service, no repository, no hand-published event -
+ * a subclass needing an {@code @Autowired} field has found a gap in the HTTP surface, which is a
+ * finding rather than a licence.
  *
  * <h2>The two observables</h2>
+ * Only two assertions are allowed, both at a boundary: what came back over HTTP or SSE
+ * ({@link #farm}, {@link Events}), and what reached the machine ({@link MockPrinter#commands()}).
+ * The second is the far boundary, not an in-the-middle probe, and it is the only assertion that has
+ * caught this repository's recurring failure - the motion commands, the Storage tab's commands, then
+ * its replies all shipped green and silent, answering 200 with nothing on the wire.
  *
- * A test here may assert on exactly two things, and both are at the system's boundary:
- *
- * <ol>
- *   <li>what came back over HTTP or SSE - {@link #farm} and {@link Events};</li>
- *   <li>what reached the machine - {@link MockPrinter#commands()}.</li>
- * </ol>
- *
- * The second is not an in-the-middle probe. It is the far boundary, and it is the only assertion
- * that has ever caught this repository's recurring failure: three features - the motion commands,
- * the Storage tab's commands, then its replies - shipped complete, green and silent, each answering
- * 200 while putting nothing on the wire. A test that stops at the HTTP response would have passed
- * on all three.
- *
- * <h2>Signing in</h2>
- *
+ * <h2>Signing in, and as whom</h2>
  * As a browser does: fetch {@code /login} for the {@code XSRF-TOKEN} cookie, post the form, keep the
- * {@code SESSION} cookie. A mock exchange would skip the CSRF hand-off, which is issued by one
- * filter and checked by another.
- *
- * <p><strong>Everything runs as the administrator</strong>, who may both change what the farm is and
- * drive a machine. Which role may do what is a different question with its own test -
- * {@code FarmSecurityTest} in {@code :frontend:web-ui} drives every role against every surface - and
- * re-deciding it here would be a second copy of that matrix to keep in step.
+ * {@code SESSION} cookie - a mock exchange would skip a CSRF hand-off issued by one filter and
+ * checked by another. Everything runs as the administrator; which role may do what is
+ * {@code FarmSecurityTest}'s matrix in {@code :frontend:web-ui}, and a second copy here would have
+ * to be kept in step.
  *
  * <h2>Why one context</h2>
- *
- * Every subclass carries the same annotations, so Spring caches one application context across all
- * of them and the suite pays for one boot. The price is that state leaks between classes, which is
- * what {@link #tidyUp()} is for: every machine a test registers is deleted, which publishes
- * {@code MDeletedEvent} and so releases its runtime, its socket and its event sink.
+ * Identical annotations on every subclass let Spring cache one context, so the suite boots once. The
+ * price is leaked state, which {@link #tidyUp()} pays: every registered machine is deleted, which
+ * publishes {@code MDeletedEvent} and releases its runtime, socket and event sink.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 abstract class FarmIntegrationTest {
 
     /**
-     * Long enough for a dial, a handshake and a round trip on a loaded build agent.
-     *
-     * <p><strong>Thirty seconds, and it used to be a real bottleneck rather than nerves.</strong>
-     * Until issue #54 every {@code PrinterReactor} in the process used {@code Schedulers.single()}
-     * as its aggregate executor - Reactor's <em>JVM-wide cached single thread</em>, not one per
-     * printer - and the inbound path ran a blocking JPA write on it: a reply reached
-     * {@code PrinterState.onEvent}, which published {@code MFirmwareReportedEvent}, which
-     * {@code MachineManagementImpl} handled with a synchronous {@code @Transactional} save on the
-     * calling thread. A connect does that seven times - one firmware report and five capabilities,
-     * each also re-publishing {@code MRegisteredEvent} - so every reply, every command and every
-     * connection query for every machine in the suite queued behind one thread that was also
-     * talking to a database.
-     *
-     * <p><strong>Both halves of that are gone, and neither is a reason to shorten this.</strong>
-     * A machine now has its own virtual thread for its aggregate ({@code p3d-printer-<id>}) and its
-     * own for the listeners it feeds ({@code p3d-listener-<id>}), so one machine's database write
-     * no longer delays another machine's replies - but a suite that registers a dozen machines
-     * against H2 on a two-core runner sharing its cores with Gradle and netty still has a database
-     * to wait for, and that wait is now per machine rather than farm-wide only because the queueing
-     * moved, not because the work got smaller.
-     *
-     * <p>It costs nothing when a test passes and only lengthens a failure, which is the right trade.
+     * Thirty seconds - long enough for a dial, a handshake and a round trip on a loaded build agent.
+     * Before issue #54 this was a real bottleneck: every {@code PrinterReactor} used
+     * {@code Schedulers.single()}, Reactor's JVM-wide cached thread, and ran a blocking JPA write on
+     * it seven times per connect (one firmware report, five capabilities, each re-publishing
+     * {@code MRegisteredEvent}). A machine now has its own virtual threads,
+     * {@code p3d-printer-<id>} and {@code p3d-listener-<id>}, but the queueing only moved - a dozen
+     * machines against H2 on a two-core runner still wait on a database. It costs nothing when a
+     * test passes and only lengthens a failure.
      */
     protected static final Duration PATIENCE = Duration.ofSeconds(30);
 
@@ -120,17 +82,9 @@ abstract class FarmIntegrationTest {
     private String adminPassword;
 
     /**
-     * One sign-in for the whole suite.
-     *
-     * <p>Signing in per test cost about a second each, nearly all of it BCrypt - which is
-     * deliberately slow and is the one thing here that is <em>meant</em> to be. Every subclass
-     * shares one application context, so the session a browser would keep across a sitting is the
-     * honest thing to share too; the port is the key, so a context that is ever rebuilt gets a
-     * fresh one rather than a stale cookie against a new server.
-     *
-     * <p>What this gives up is per-test proof that sign-in works. That is not a loss: it is
-     * {@code FarmSecurityTest}'s subject in {@code :frontend:web-ui}, which performs the whole
-     * browser flow for every role.
+     * One sign-in for the whole suite - per test it cost about a second each, nearly all BCrypt,
+     * which is deliberately slow. Keyed by port, so a rebuilt context gets a fresh session rather
+     * than a stale cookie. Per-test proof that sign-in works is {@code FarmSecurityTest}'s subject.
      */
     private record Session(int port, String csrf, String cookie) {
     }
@@ -153,12 +107,9 @@ abstract class FarmIntegrationTest {
         var anonymous = WebTestClient.bindToServer()
                 .baseUrl("http://localhost:" + port)
                 .responseTimeout(Duration.ofSeconds(30))
-                // The test client buffers a response to assert on it; the server never does. A
-                // download is the one place the two differ - GcodeFileController streams the bytes
-                // straight out, and a test that wants to compare them has to hold them. The default
-                // ceiling is 256 KiB, which is below the size a file has to be for "larger than any
-                // single buffer" to mean anything, so it is raised here rather than silently
-                // bounding what a fixture may weigh.
+                // The test client buffers a response to assert on it; the server never does.
+                // GcodeFileController streams a download straight out, so the default 256 KiB
+                // ceiling would silently bound what a fixture may weigh.
                 .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(8 * 1024 * 1024))
                 .build();
 
@@ -204,17 +155,12 @@ abstract class FarmIntegrationTest {
     }
 
     /**
-     * Gives back everything the test took: the streams, the machines, the sockets.
-     *
-     * <p>Deleting the printer is what releases its runtime - {@code MDeletedEvent} reaches
-     * {@code PrinterReactorManager.release}, which stops the reactor, disposes any retry still in
-     * flight, closes the terminal and completes the update sink. Closing the mock without that would
-     * leave a reactor redialling a dead port for the rest of the suite.
-     *
-     * <p>Uploaded files go the same way and for a related reason. The store is content-addressed
-     * and the whole module shares one database, so a file left behind is a row every later
-     * {@code GET /api-files} can see and a blob every later upload of the same bytes will be handed
-     * back instead of its own.
+     * Gives back everything the test took: the streams, the machines, the sockets. Deleting the
+     * printer is what releases its runtime - {@code MDeletedEvent} reaches
+     * {@code PrinterReactorManager.release} - and closing the mock without that leaves a reactor
+     * redialling a dead port for the rest of the suite. Uploaded files go too: the store is
+     * content-addressed over one shared database, so a leftover is a row every later
+     * {@code GET /api-files} sees and a blob every later upload of the same bytes is handed back.
      */
     @AfterEach
     void tidyUp() {
@@ -340,10 +286,8 @@ abstract class FarmIntegrationTest {
 
     /**
      * Dials the machine and waits until the firmware has acknowledged a block this session sent.
-     *
-     * <p>{@code IDLE} and not {@code ONLINE}: a socket being open proves the machine is reachable,
-     * not that it is usable. A test that went on to send a command after {@code ONLINE} would be
-     * racing the handshake.
+     * {@code IDLE}, not {@code ONLINE}: an open socket proves reachable, not usable, and a command
+     * sent after {@code ONLINE} races the handshake.
      */
     protected void connectAndWait(UUID id) {
         connect(id);
@@ -352,37 +296,23 @@ abstract class FarmIntegrationTest {
 
     /**
      * Dials the machine and waits until <strong>the aggregate has taken the firmware report</strong>,
-     * handing back the stream it watched.
+     * handing back the stream it watched. Use this rather than {@link #connectAndWait(UUID)} for
+     * anything depending on what the machine said it is - an extruder count, a capability.
      *
-     * <p>Use this, and not {@link #connectAndWait(UUID)}, for anything that depends on what the
-     * machine said it is - an extruder count, a capability, the roster's copy of either.
+     * <p>Neither {@code IDLE} nor a later command reaching the wire is that precondition, and both
+     * were used here. {@code IDLE} only means the first block of the session, {@code M110 N0}, was
+     * acknowledged; {@code PrinterState.onOnline} queues {@code M115} behind it. And {@code M155 S1}
+     * reaching the machine proves only that the {@code ok} closing {@code M115} was processed - on
+     * the <em>netty inbound thread</em>, inside {@code CommandProcessor.handleBackpressure}, which
+     * pulls and writes the next block directly, while the {@code FirmwareInfoRs} from the same reply
+     * was queued onto the aggregate thread by {@code PrinterReactor}'s {@code publishOn(executor)}.
+     * Two threads with no happens-before between them, so the next command can be on the wire before
+     * the aggregate has looked at the report. Issue #54 changed how long that gap is, not that it
+     * exists.
      *
-     * <p><strong>{@code IDLE} is not that precondition, and neither is a later command reaching the
-     * wire.</strong> Both were used here and both are wrong, in ways that only show up on a loaded
-     * machine:
-     *
-     * <ul>
-     *   <li>{@code IDLE} is reached when the firmware acknowledges a block this session sent, and the
-     *       first block of a session is {@code M110 N0}. {@code PrinterState.onOnline} queues
-     *       {@code M115} behind it, so when a machine reports {@code IDLE} the {@code M115} has
-     *       typically not been <em>written</em> yet, let alone answered;</li>
-     *   <li>{@code M155 S1} reaching the machine proves only that the {@code ok} closing {@code M115}
-     *       was processed - and that happens on the <em>netty inbound thread</em>, inside
-     *       {@code CommandProcessor.handleBackpressure}, which pulls and writes the next block
-     *       directly. The {@code FirmwareInfoRs} from the same reply went the other way, queued onto
-     *       this machine's aggregate thread by {@code PrinterReactor}'s {@code publishOn(executor)}.
-     *       Two threads, and no happens-before from the one to the other: the next command can be on
-     *       the wire before the aggregate has looked at the report. Issue #54 gave that executor a
-     *       thread per machine instead of one for the farm, which changes how long the gap is and
-     *       not that there is one.</li>
-     * </ul>
-     *
-     * <p>What <em>is</em> a guarantee is the report arriving on this machine's own event stream,
-     * because that emission is the last thing {@code PrinterState.on(FirmwareInfoRs)} does after
-     * updating itself. Seeing it means the aggregate has the firmware.
-     *
-     * <p>The stream is opened <em>before</em> the dial on purpose. The per-printer sink replays only
-     * the latest message, so a subscriber that attaches afterwards has already missed this.
+     * <p>The guarantee is the report arriving on this machine's event stream: that emission is the
+     * last thing {@code PrinterState.on(FirmwareInfoRs)} does. The stream is opened <em>before</em>
+     * the dial because the per-printer sink replays only the latest message.
      */
     protected Events connectAndLearn(UUID id) {
         var events = watch(id);
@@ -401,27 +331,17 @@ abstract class FarmIntegrationTest {
     }
 
     /**
-     * Dials the machine, waits for the whole opening handshake to be <em>over</em>, and clears the
-     * machine's command log - so what follows is exactly what the test's own request caused.
+     * Dials the machine, waits for the opening handshake to be <em>over</em>, and clears the
+     * command log, so what follows is exactly what the test's own request caused.
      *
-     * <p><strong>This is what {@code connectAndWait} followed by {@code forget()} was getting
-     * wrong, and it is the shape that broke on CI.</strong> A machine reports {@code IDLE} as soon
-     * as the firmware acknowledges the first block of the session, which is {@code M110 N0}.
-     * {@code M115} and {@code M155 S1} are queued behind it and are typically still in flight at
-     * that moment. Clearing the log there does not remove them - it removes {@code M110} and then
-     * lets the other two land in the cleared log, where the test reads them as its own:
-     *
-     * <ul>
-     *   <li>an exact-list assertion sees {@code [M115, M155 S1, M23 …, M24]} and fails;</li>
-     *   <li>{@code firstSent("M155")} returns the handshake's {@code M155 S1} rather than the
-     *       {@code M155 S3} the test asked for, and fails on the parameter.</li>
-     * </ul>
-     *
-     * <p>Locally the handshake finishes in microseconds and always wins the race. On a loaded
-     * two-core runner it does not, which is why this only ever failed in CI.
-     *
-     * <p>{@code M155 S1} is the last block of the handshake - see {@code PrinterState.onOnline} -
-     * so its arrival is the honest signal that the opening conversation is complete.
+     * <p>{@code connectAndWait} then {@code forget()} is the shape that broke on CI: {@code IDLE}
+     * arrives when {@code M110 N0} is acknowledged, with {@code M115} and {@code M155 S1} still in
+     * flight, so clearing there removes {@code M110} and lets the other two land in the cleared log
+     * as the test's own - an exact-list assertion sees {@code [M115, M155 S1, M23 …, M24]}, and
+     * {@code firstSent("M155")} returns the handshake's {@code M155 S1} rather than the
+     * {@code M155 S3} asked for. Locally the handshake wins the race in microseconds; on a loaded
+     * two-core runner it does not. {@code M155 S1} is the handshake's last block - see
+     * {@code PrinterState.onOnline} - so its arrival is the honest signal.
      */
     protected Events connectAndSettle(UUID id, MockPrinter printer) {
         var events = connectAndLearn(id);
@@ -448,17 +368,11 @@ abstract class FarmIntegrationTest {
     // ------------------------------------------------------------------ the file store
 
     /**
-     * Puts a file into the farm's store and hands back the record it became.
-     *
-     * <p>Shared rather than kept in {@code GcodeFileIntegrationTest} because two more features are
-     * waiting on it: a print job names a file the farm already holds (#51) and an SD upload writes
-     * one onto a card (#53). Neither can be driven through its endpoints without a file being in
-     * the store first, and putting one there by any other means is what §3 of the integration-test
-     * spec forbids.
-     *
-     * <p>The request is the one the browser makes - {@code client.ts}'s {@code files.upload}: the
-     * body is the raw bytes, the name travels in {@code X-File-Name}, and nothing is multipart. A
-     * test that posted a form here would be exercising a shape no caller uses.
+     * Puts a file into the farm's store and hands back the record it became. Shared because a print
+     * job (#51) and an SD upload (#53) both need one there first, and putting it there by any other
+     * means is what §3 of the integration-test spec forbids. The request is the browser's -
+     * {@code client.ts}'s {@code files.upload}: raw bytes, the name in {@code X-File-Name}, not
+     * multipart.
      */
     protected Map<String, Object> upload(GcodeFixture file) {
         return upload(file.name(), file.bytes());
@@ -500,17 +414,11 @@ abstract class FarmIntegrationTest {
     /**
      * Opens the farm-wide channel - the one a dashboard holds instead of one per machine.
      *
-     * <p><strong>Register the machines first.</strong> What a subscriber receives first is a
-     * snapshot built from the machines the farm knows about at that moment - each one's connection
-     * state and, if it has reported one, its last temperature - and nothing at all when it knows
-     * about none. Opening it before registering therefore produces a stream that is correct and
-     * silent, and the first thing a test asserts on it would be waiting for an event the
-     * subscription was too early to hear.
-     *
-     * <p>It is also the one guarantee a test gets that the subscription is <em>live</em>: the live
-     * sink is subscribed before the snapshot is built, so once a machine's snapshot entry has
-     * arrived anything caused afterwards will be heard. Wait for it before causing anything, and
-     * cause it with a request rather than with a direct push.
+     * <p><strong>Register the machines first.</strong> A subscriber first receives a snapshot of the
+     * machines the farm knows about at that moment, and nothing at all when it knows of none, so
+     * opening early gives a stream that is correct and silent. That snapshot entry is also the only
+     * guarantee the subscription is <em>live</em> - the live sink is subscribed before the snapshot
+     * is built - so wait for it before causing anything, and cause it with a request.
      */
     protected Events watchTheFarm() {
         var events = new Events("/api-farm/stream");
@@ -519,17 +427,12 @@ abstract class FarmIntegrationTest {
     }
 
     /**
-     * An open SSE subscription, recording what arrived.
-     *
-     * <p>Each element is one {@code EventMessage} as JSON: {@code id}, {@code type} and the event
-     * itself. {@code type} is the event's <em>simple class name</em>, which makes it a
-     * browser-visible name that a rename in {@code :gcode} would change - so a test naming one here
-     * is pinning the same contract {@code EventStreamContractTest} pins, at the other end of the
-     * wire.
-     *
-     * <p>Decoded into a map rather than bound to {@code EventMessage}, deliberately: the browser
-     * has no such class, and binding to it would let a field that never reaches the wire pass
-     * unnoticed.
+     * An open SSE subscription, recording what arrived: one {@code EventMessage} as JSON per
+     * element - {@code id}, {@code type}, the event. {@code type} is the event's <em>simple class
+     * name</em>, so it is browser-visible and a rename in {@code :gcode} changes it; a test naming
+     * one pins the contract {@code EventStreamContractTest} pins from the other end. Decoded into a
+     * map rather than bound to {@code EventMessage}, because the browser has no such class and
+     * binding would let a field that never reaches the wire pass unnoticed.
      */
     protected final class Events implements AutoCloseable {
 
@@ -574,12 +477,10 @@ abstract class FarmIntegrationTest {
 
         /**
          * The payload of <strong>every</strong> message of this type, oldest first.
-         *
-         * <p>{@link #payloadOf(String)} keeps the last one, which is right for a state a machine
-         * restates - a temperature, a connection. It is wrong for a reply that arrives many times
-         * as one answer: an {@code M503} settings report is twenty-five messages of two types, and
-         * a test that read only the last {@code SettingsValue} would pass against a host that
-         * dropped the other twelve.
+         * {@link #payloadOf(String)} keeps only the last, which is right for a restated state and
+         * wrong for a reply arriving many times as one answer: an {@code M503} report is
+         * twenty-five messages of two types, and reading only the last {@code SettingsValue} would
+         * pass against a host that dropped the other twelve.
          */
         @SuppressWarnings("unchecked")
         public List<Map<String, Object>> allOf(String type) {

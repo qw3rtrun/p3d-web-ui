@@ -59,12 +59,8 @@ class JobRequirementsTest {
     }
 
     /**
-     * An undeclared machine satisfies nothing that was asked for.
-     *
-     * <p>"Nobody said" is not "yes". A job that needs PETG must not land on a printer whose
-     * materials nobody has filled in - the answer is unknown, and the cost of being wrong is a
-     * failed print on the wrong filament. The effect is that stating requirements forces B4's data
-     * to be filled in, which is the right pressure.
+     * An undeclared machine satisfies nothing that was asked for: "nobody said" is not "yes", and
+     * a job needing PETG must not land on a printer whose materials are blank.
      */
     @Test
     void anUndeclaredMachineSatisfiesNothingThatWasAskedFor() {
@@ -95,10 +91,8 @@ class JobRequirementsTest {
     }
 
     /**
-     * Pinning is not a capability, and the capability check does not look at it.
-     *
-     * <p>Conflating them would let a capability match quietly override an operator who named a
-     * machine on purpose - which is the whole point of the override.
+     * Pinning is not a capability: conflating them would let a capability match quietly override
+     * an operator who named a machine on purpose.
      */
     @Test
     void pinningIsSeparateFromCapability() {

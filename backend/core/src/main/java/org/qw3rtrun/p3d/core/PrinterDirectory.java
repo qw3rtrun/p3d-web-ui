@@ -20,65 +20,42 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * What this module knows about the machines in the farm: enough to dial one, and nothing more.
  *
- * <p><strong>A replica, fed by events, and never a query.</strong> Rule 2 of
- * {@code doc/sub_boundaries.txt} says {@code core} communicates with other submodels through
- * events, and until now it did not: {@code PrinterReactorManager} called
- * {@code MachineManagementService.fetch} to find out where to dial. That read as compliant because
- * the interface lives in the shared {@code api} module, so the boundary check could not see it -
- * which is precisely why the rule needed to be made real rather than merely written down.
+ * <p>A replica fed by events, never a query - rule 2 of {@code doc/sub_boundaries.txt}, made real
+ * rather than merely written down: {@code PrinterReactorManager} used to call
+ * {@code MachineManagementService.fetch} directly, which read as compliant only because the
+ * interface lives in the shared {@code api} module and the boundary check could not see it. The
+ * payoff is not purity but testability - this module starts and is reasoned about with no database
+ * behind it, since a printer is something it was <em>told</em> about ({@code PrinterReactorManagerTest}
+ * has no management module in it at all).
  *
- * <p>What it buys is not purity. It is that this module can be started, tested and reasoned about
- * without a database behind it: a printer is something it was *told* about, so a test tells it.
- * {@code PrinterReactorManagerTest} has no management module in it at all.
+ * <p>Idempotent by construction: {@link MRegisteredEvent} is a statement of current fact, not of a
+ * change, and {@code printer-management} re-announces every row at startup since the replica starts
+ * empty - so the map simply takes the latest arrival.
  *
- * <p><strong>Idempotent by construction.</strong> {@link MRegisteredEvent} is a statement of
- * current fact rather than of a change, and {@code printer-management} re-announces every row at
- * startup because a replica is empty when the process begins. So the same machine arrives more than
- * once by design, and the map simply takes the latest.
- *
- * <p><strong>A plain {@link EventListener}, and the reason is worth knowing.</strong> The obvious
- * choice is {@code @TransactionalEventListener}, so the replica only learns about a machine once
- * its row is committed. Using it here fails at runtime: {@code spring-modulith-starter-jpa} is on
- * the persistence module's classpath, and a transactional listener switches on Modulith's
- * <em>durable event publication registry</em>, which writes every such event to an
- * {@code EVENT_PUBLICATION} table. Liquibase owns this schema and has no changeset for that table,
- * so registering a printer dies on commit with {@code Table "EVENT_PUBLICATION" not found}.
- *
- * <p>That registry is a real feature and the plan wants it later - at-least-once delivery for job
- * events that must survive a restart (items C2 and C5), which needs a changeset for its table. It
- * is the wrong tool for <em>this</em>: a replica is derived state, rebuilt from the startup
- * announcement every time the process begins, so durably persisting the events that fill it buys
- * nothing and costs a database write per registration.
- *
- * <p>The cost of the plain listener is that it fires inside the registering transaction rather than
- * after it. A rolled-back {@code add} therefore leaves a machine in this map that has no row -
- * which is survivable, because a reactor opened for it can reach nothing and no caller is misled
- * about the farm's contents, since the farm's contents are answered from the database and not from
- * here.
+ * <p>A plain {@link EventListener}, not {@code @TransactionalEventListener}: the transactional form
+ * switches on Modulith's durable event publication registry the moment
+ * {@code spring-modulith-starter-jpa} is on the classpath, writing every such event to an
+ * {@code EVENT_PUBLICATION} table Liquibase has no changeset for - so registering a printer would
+ * die on commit. That registry is the right tool for job events that must survive a restart (items
+ * C2/C5); it is the wrong one for a replica that is rebuilt from scratch every boot anyway. The
+ * trade-off: this listener fires inside the registering transaction, so a rolled-back {@code add}
+ * can leave an entry with no row - survivable, since a reactor opened for it reaches nothing and the
+ * farm's real contents are still answered from the database, not from here.
  */
 @Slf4j
 public class PrinterDirectory {
 
     /**
      * Everything this module needs about one machine: where to dial it, and what it turned out to
-     * be.
-     *
-     * <p>The profile is here so that a restart does not have to ask. {@code PrinterState} checks a
-     * tool index against the extruder count, and before anything learned it that check had nothing
-     * to read - which is why a command to a machine the process had never connected to failed with
-     * a {@code NullPointerException} rather than a refusal.
-     *
-     * <p>The spec travels beside it because that same check has to honour an override. A machine
-     * flashed with a single-extruder configuration reports one tool whatever is bolted to it, and
-     * the operator's declared count is the only thing that can say otherwise - so a replica that
-     * carried the profile alone would refuse every command for tool 1 on a machine its owner had
-     * already described correctly. It is also what plan item D1 will match a job against.
-     *
-     * <p>The state is the roster's last-known record of the machine's connection, and it is read
-     * once: {@link PrinterReactorManager} redials, at startup, whatever was connected when the
-     * process went down. It is not kept current here afterwards - {@code core} is where the live
-     * answer lives, on the aggregate - so a reader that wants to know whether a printer is
-     * connected asks {@code PrinterControl.connection}, not this.
+     * be. The profile is here so a restart does not have to ask - {@code PrinterState} checks a
+     * tool index against the extruder count, and before this existed that check had nothing to
+     * read, so a command to a never-connected machine NPE'd instead of being refused. The spec
+     * travels beside it because the same check must honour an operator's override (a replica
+     * carrying the profile alone would refuse tool 1 on a machine its owner had already described
+     * correctly); it is also what plan item D1 will match a job against. The state is read once, at
+     * startup, for {@link PrinterReactorManager} to redial what was connected when the process went
+     * down - it is not kept current afterwards, since the live answer is {@code core}'s own
+     * aggregate, reached through {@code PrinterControl.connection}.
      */
     public record Entry(UUID id, String name, ConnectionDetails connection, MachineProfile profile,
                         MachineSpec spec, MachineConnectionState state) {
@@ -86,23 +63,12 @@ public class PrinterDirectory {
 
     private final Map<UUID, Entry> known = new ConcurrentHashMap<>();
 
-    /**
-     * Every machine this module has been told about.
-     *
-     * <p>A copy, so a caller iterating it cannot be surprised by a printer being registered
-     * halfway through - which plan item D2's snapshot would otherwise be, since it is built on
-     * whatever thread a browser attached on.
-     */
+    /** A copy, so a caller iterating it (plan item D2's snapshot, built on whatever thread a browser attached on) cannot be surprised by a registration arriving mid-iteration. */
     public List<Entry> all() {
         return List.copyOf(known.values());
     }
 
-    /**
-     * <p>{@code HIGHEST_PRECEDENCE} because {@link PrinterReactorManager} listens to the same event
-     * in order to redial what was connected, and it asks this replica where to dial. Spring runs
-     * same-event listeners in an undefined order unless they say otherwise, and "undefined" here
-     * would mean a restart that reconnects only when the coin lands right.
-     */
+    /** {@code HIGHEST_PRECEDENCE}: {@link PrinterReactorManager} listens to the same event to redial what was connected, and asks this replica where - Spring's otherwise-undefined ordering would mean a restart that reconnects only when the coin lands right. */
     @Order(Ordered.HIGHEST_PRECEDENCE)
     @EventListener
     public void onRegistered(MRegisteredEvent event) {

@@ -33,12 +33,12 @@ import java.util.List;
  * single-setting queries behind them - actually answer, over a plain socket, decoding every
  * received line through this module's own {@link MarlinRsDecoder}.
  *
- * <p>A hand-run probe and not a test: it needs a listener on the far end, it writes to the
- * machine's live memory and - once - to its EEPROM, and it has no assertions. It must never be
- * part of {@code check}. It exists because issue #88 was designed from an ad-hoc measurement that
- * lived in a scratch directory, and a fact the feature rests on has to be re-runnable from the
- * repository. {@link GCodeLiveProbe} is the model for the shape; this one narrows to the settings
- * surface and adds the before/after controls that make the measurement mean something.
+ * <p>A hand-run probe and not a test: it writes to the machine's live memory and - once - to its
+ * EEPROM, and has no assertions, so it must never be part of {@code check}. It exists because
+ * issue #88 was designed from an ad-hoc measurement that lived in a scratch directory, and a fact
+ * the feature rests on has to be re-runnable from the repository. {@link GCodeLiveProbe} is the
+ * model for the shape; this one narrows to the settings surface and adds the before/after controls
+ * that make the measurement mean something.
  *
  * <p>Usage: {@code SettingsProbe [host] [port]}, defaulting to {@code localhost 8099}.
  *
@@ -63,27 +63,26 @@ import java.util.List;
  *   <tr><td>{@code M504}</td><td>{@code echo:EEPROM OK} + {@code ok}</td></tr>
  * </table>
  *
- * <p><b>Two numbers in that table did not reproduce exactly, and the difference is recorded rather
- * than reconciled.</b> This probe's first run counted <strong>25</strong> {@code echo:} lines from a
- * bare {@code M503}, not 24: twelve {@code ; <section>:} headers and thirteen value lines. The
- * thirteen match {@code M503 S0} exactly, which is the reference run's own figure, so the likely
- * reading is that 24 counted one value line per section and {@code Material heatup parameters} has
- * two ({@code M145 S0} and {@code M145 S1}). Everything else in the table reproduced verbatim,
- * including {@code M500}'s {@code //action:notification} and the bare {@code ok}s.
+ * <p>Two numbers in that table did not reproduce exactly, recorded rather than reconciled. This
+ * probe's first run counted <strong>25</strong> {@code echo:} lines from a bare {@code M503}, not
+ * 24: twelve {@code ; <section>:} headers and thirteen value lines. The thirteen match
+ * {@code M503 S0} exactly (the reference run's own figure), so the likely reading is that 24 counted
+ * one value line per section and {@code Material heatup parameters} has two
+ * ({@code M145 S0} and {@code M145 S1}). Everything else in the table reproduced verbatim, including
+ * {@code M500}'s {@code //action:notification} and the bare {@code ok}s.
  *
- * <p>The second is the backlog: the reference run was met by 601 {@code M155} auto-reports, and
- * this one by <strong>none at all</strong> - no boot banner either, on two consecutive runs. So the
- * flood is a property of what the previous client left running and not of the simulator, and a
- * re-run that prints {@code 0 temperature auto-report lines suppressed} has not lost anything.
+ * <p>The second is the backlog: the reference run was met by 601 {@code M155} auto-reports, this one
+ * by <strong>none at all</strong> - no boot banner either, on two consecutive runs. So the flood is
+ * a property of what the previous client left running and not of the simulator, and a re-run that
+ * prints {@code 0 temperature auto-report lines suppressed} has not lost anything.
  *
  * <h2>Why there are three controls and not just a transcript</h2>
  *
- * <p>{@code M501} and {@code M502} both answer a <strong>bare {@code ok}</strong> and announce
- * nothing at all about what they changed. "It worked" is therefore unobservable from the reply, and
- * the only way to see that the two are different operations is to bracket each one with an
- * {@code M503} and read the values on either side. That is the fact the whole feature had to be
- * designed around, so each control is printed as a labelled before/after pair with the differing
- * line lifted out at the end of the section.
+ * <p>{@code M501} and {@code M502} both answer a bare {@code ok} and announce nothing about what
+ * they changed - "it worked" is unobservable from the reply, so the only way to see that the two are
+ * different operations is to bracket each with an {@code M503} and read the values on either side.
+ * Each control is printed as a labelled before/after pair with the differing line lifted out at the
+ * end of the section.
  *
  * <ul>
  *   <li><b>Control A</b> - {@code M503}/{@code M502}/{@code M503}/{@code M501}/{@code M503}:
@@ -98,20 +97,20 @@ import java.util.List;
  * <h2>Where the temperature lines went</h2>
  *
  * <p>A fresh connection can carry a backlog of {@code M155} auto-reports a previous session left
- * running - the reference run was greeted by 601 of them before it had sent a single command. So
- * this probe sends {@code M155 S0} first to stop them, drains whatever was already queued, and
- * suppresses every line that decodes to a {@link BareTemperatureRs} from then on, printing a count
- * instead. The filter is the module's own decoder and not a text match, and nothing else is
- * filtered: an {@code ok T:...} is an acknowledgement and still prints. A reader comparing this
- * output to the reference run should expect the 600 lines to be a single counted line here.
+ * running - the reference run was greeted by 601 of them before a single command was sent. So this
+ * probe sends {@code M155 S0} first to stop them, drains whatever was already queued, and suppresses
+ * every line that decodes to a {@link BareTemperatureRs} from then on, printing a count instead. The
+ * filter is the module's own decoder, not a text match - an {@code ok T:...} is an acknowledgement
+ * and still prints. A reader comparing this to the reference run should expect the 600 lines to be a
+ * single counted line here.
  *
  * <h2>This probe restores the machine before it exits</h2>
  *
  * <p>The run writes to live memory and {@code M500} writes to the EEPROM, so the last command sent
- * is an {@code M501} and the battery's {@code M502} is followed immediately by one too. Without
- * that, the second run of this probe would start from the firmware defaults and Control A would
- * compare two identical reports - a probe whose own controls only work once. The {@code M500} is
- * deliberately sent <em>before</em> the first {@code M502}, so it never persists the defaults.
+ * is an {@code M501}, and the battery's {@code M502} is followed immediately by one too - without
+ * that, the second run would start from the firmware defaults and Control A would compare two
+ * identical reports. {@code M500} is deliberately sent <em>before</em> the first {@code M502}, so it
+ * never persists the defaults.
  *
  * <h2>UNMEASURED - what this simulator cannot show</h2>
  *
@@ -121,19 +120,17 @@ import java.util.List;
  *       cannot be captured here.</li>
  *   <li><b>A firmware built with {@code DISABLE_M503}.</b> Not configurable on this build, so the
  *       shape of a refused {@code M503} is unknown.</li>
- *   <li><b>There is no {@code Cap:} line about {@code M503} under any spelling.</b> Verified
- *       against the simulator's 38 {@code Cap:} lines and against Marlin's {@code M115.cpp} on
- *       {@code 2.1.x}. So a farm cannot learn from the capability roster whether a printer will
- *       answer {@code M503}; it has to learn it from
- *       {@code echo:Unknown command: "M503"} coming back instead of a report. That is why
- *       {@code M115} is the first thing in the battery: the roster this probe prints <em>is</em>
- *       the evidence, and a re-run can count the 38 lines itself.</li>
+ *   <li><b>No {@code Cap:} line names {@code M503} under any spelling.</b> Verified against the
+ *       simulator's 38 {@code Cap:} lines and against Marlin's {@code M115.cpp} on {@code 2.1.x}, so
+ *       a farm cannot learn from the capability roster whether a printer will answer {@code M503} -
+ *       it has to learn it from {@code echo:Unknown command: "M503"} coming back instead. That is
+ *       why {@code M115} is first in the battery: the roster printed <em>is</em> the evidence, and a
+ *       re-run can count the 38 lines itself.</li>
  *   <li><b>{@code M851} (probe offset) and {@code M304} (bed PID) answer
- *       {@code echo:Unknown command:} on this build</b>, so no settings work on those two can be
- *       probed here at all. Re-verified on 2026-11-04 over a bare socket -
- *       {@code echo:Unknown command: "M851"} then {@code ok P15 B3}, and the same for
- *       {@code M304} - which is why neither is in the battery: a probe that only ever prints
- *       "unknown" for two of its commands teaches a reader to skim the column that matters.</li>
+ *       {@code echo:Unknown command:} on this build</b>, so neither is in the battery - a probe that
+ *       only ever prints "unknown" teaches a reader to skim the column that matters. Re-verified on
+ *       2026-11-04 over a bare socket: {@code echo:Unknown command: "M851"} then {@code ok P15 B3},
+ *       and the same for {@code M304}.</li>
  * </ul>
  */
 public final class SettingsProbe {
@@ -186,13 +183,10 @@ public final class SettingsProbe {
 
     // ----- the plain battery ---------------------------------------------------------------
 
-    /**
-     * Every settings command once, in the order issue #88 names them, each built through its
-     * generated command class and rendered by {@link GEncoder} so the probe also exercises the
-     * encoder. {@code M503 S0} is the one exception and is sent as a raw string, because
-     * {@code ReportSettings(s = true)} encodes {@code M503 S} and has no way to express
-     * {@code S0}.
-     */
+    /** Every settings command once, in the order issue #88 names them, built through its generated
+     * command class and rendered by {@link GEncoder} so the probe also exercises the encoder.
+     * {@code M503 S0} is the exception, sent as a raw string, since
+     * {@code ReportSettings(s = true)} encodes {@code M503 S} with no way to express {@code S0}. */
     private static void battery(OutputStream out, BufferedReader in) {
         System.out.println();
         System.out.println("##### battery: each settings command once #####");
@@ -246,10 +240,9 @@ public final class SettingsProbe {
         System.out.println("##### CONTROL B: a live set takes effect, and M501 undoes it #####");
 
         var before = send(out, in, "B1. M92 - the current steps per unit", enc(new SetAxisStepsPerUnit()));
-        // SetAxisStepsPerUnit's first parameter is named `steps` and writes `X`: a generator
-        // artifact. commands.json documents every axis word as `<steps>`, and the generator names
-        // the first parameter after its value rather than after its letter, so `steps` is X and
-        // every other axis keeps its letter. Worth knowing before reading `steps` as a total.
+        // SetAxisStepsPerUnit's first parameter is named `steps` and writes `X` - a generator
+        // artifact: commands.json documents every axis word as `<steps>` and the generator names the
+        // first parameter after its value, not its letter, so `steps` is X here.
         send(out, in, "B2. M92 X81 - set X, built through SetAxisStepsPerUnit(steps = 81)",
                 enc(new SetAxisStepsPerUnit(new BigDecimal("81"), null, null, null, null, null,
                         null, null, null, null, null)));
@@ -311,13 +304,9 @@ public final class SettingsProbe {
         return replies;
     }
 
-    /**
-     * Everything readable up to and including the {@code ok} that ends the answer, with temperature
-     * auto-reports counted out.
-     *
-     * <p>Marlin does not frame its replies, so the acknowledgement is the only end marker - reading
-     * to a fixed timeout instead mis-attributes a slow command's answer to the next label.
-     */
+    /** Everything readable up to and including the {@code ok} that ends the answer, with temperature
+     * auto-reports counted out. Marlin does not frame its replies, so the acknowledgement is the
+     * only end marker - a fixed timeout instead would mis-attribute a slow answer to the next label. */
     private static List<String> drainUntilOk(BufferedReader in) {
         var lines = new ArrayList<String>();
         try {

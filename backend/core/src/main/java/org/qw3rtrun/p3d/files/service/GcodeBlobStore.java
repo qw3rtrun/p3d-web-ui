@@ -22,35 +22,23 @@ import java.util.Arrays;
 /**
  * Where the bytes actually live: a content-addressed directory of files, and nothing else.
  *
- * <p><strong>A filesystem and not a BLOB column.</strong> A sliced part is tens to hundreds of
- * megabytes. Through JDBC that is the database streaming it twice, once each way, through a driver
- * built for rows - and every tool that looks at the schema then has to cope with a table whose rows
- * are the size of the rest of the database put together. Plan item C1 named this and it is the one
- * decision here that would be expensive to reverse.
+ * <p>A filesystem, not a BLOB column (plan item C1): a sliced part is tens to hundreds of megabytes,
+ * and through JDBC that is the database streaming it twice through a driver built for rows, with
+ * every schema tool then coping with a table whose rows dwarf the rest of the database. A blob's
+ * name is the SHA-256 of its bytes, fanned out two levels ({@code ab/cd/abcd...}, since a flat
+ * directory of tens of thousands of entries is slow on every filesystem shipped), so writing the
+ * same bytes twice produces the same path and the second write is simply skipped - dedupe falls out
+ * of the naming rather than needing a check of its own.
  *
- * <p><strong>Content-addressed, so storing is idempotent.</strong> A blob's name is the SHA-256 of
- * its bytes, fanned out two levels - {@code ab/cd/abcd...} - because a flat directory of tens of
- * thousands of entries is slow on every filesystem that has ever been shipped. Writing the same
- * bytes twice therefore produces the same path, and the second write is skipped rather than
- * duplicated. That is plan item C1's "the same bytes uploaded twice do not duplicate storage",
- * and it falls out of the naming rather than needing a check of its own.
- *
- * <p><strong>Nothing here holds the content.</strong> The incoming publisher is written chunk by
- * chunk to a temporary file while the digest and the line count are updated in the same pass, and
- * the result carries only the three numbers. The temp file is what makes that possible: the hash
- * is not known until the last byte has been seen, and the final path is named after the hash, so
- * the bytes have to land somewhere before they can be addressed.
+ * <p>Nothing here holds the content: the incoming publisher is written chunk by chunk to a temp file
+ * while the digest and line count update in the same pass, and the result carries only the three
+ * numbers. The temp file exists because the hash is not known until the last byte is seen, and the
+ * final path is named after the hash.
  */
 @Slf4j
 public class GcodeBlobStore {
 
-    /**
-     * How much is read from each end of a stored file when looking for slicer comments.
-     *
-     * <p>Bounded on purpose, and read from the file rather than kept while streaming - see
-     * {@link #headAndTail}. 64 KiB is comfortably more than any slicer's preamble and enough of
-     * PrusaSlicer's trailing config block to find what is worth having.
-     */
+    /** Bounded and read from the file rather than kept while streaming - see {@link #headAndTail}. 64 KiB covers any slicer's preamble and enough of PrusaSlicer's trailing config block. */
     static final int METADATA_WINDOW = 64 * 1024;
 
     /** Big enough to make the write syscalls worthwhile, small enough to be irrelevant to the heap. */
@@ -67,12 +55,10 @@ public class GcodeBlobStore {
     }
 
     /**
-     * Streams {@code content} to disk and answers with what it was.
-     *
-     * <p>Runs on {@code boundedElastic}: every line of it is blocking file I/O, and the caller is a
-     * WebFlux request on an event loop. {@code FileChannel} has no non-blocking mode worth the name
-     * for this - {@code AsynchronousFileChannel} exists and buys nothing here, since the work is a
-     * sequential append and the thread would be parked either way.
+     * Streams {@code content} to disk and answers with what it was. Runs on {@code boundedElastic}:
+     * every line of it is blocking file I/O and the caller is a WebFlux event-loop thread;
+     * {@code AsynchronousFileChannel} buys nothing here, since the work is a sequential append and
+     * the thread is parked either way.
      */
     public Mono<Stored> write(Publisher<ByteBuffer> content) {
         return Mono.usingWhen(
@@ -82,15 +68,7 @@ public class GcodeBlobStore {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
-    /**
-     * Writes every chunk, hashing and counting newlines as they go past.
-     *
-     * <p>One pass over the bytes for three answers. Counting lines by reading the file again
-     * afterwards would double the I/O for a number that is free while the bytes are already in
-     * hand, and parsing them to count would be slower still for no better answer - a line is a
-     * {@code \n}, and a G-code file that ends without one still has a last line, which is what the
-     * trailing adjustment is for.
-     */
+    /** One pass over the bytes for three answers - re-reading afterwards to count lines would double the I/O, and the trailing-line adjustment in {@link Counting#finish()} is what a terminator-less last line needs. */
     private Mono<Stored> digestInto(Path temp, Publisher<ByteBuffer> content) {
         return Mono.using(
                 () -> new Counting(temp),
@@ -103,15 +81,12 @@ public class GcodeBlobStore {
     /**
      * One chunk at a time, into the file and through the digest and the counter.
      *
-     * <p><strong>{@code concatMap} with a prefetch of one is what makes "bounded" provable</strong>
-     * rather than merely likely. It requests a single element, processes it, and asks for the next,
-     * so exactly one chunk is ever in flight no matter how fast the network delivers - and the
-     * demand propagates back to the socket, which is the only thing that actually slows an upload
-     * down. The obvious shapes all fail that test: {@code reduce} and {@code doOnNext} request
-     * {@code Long.MAX_VALUE} and let the producer run away, and {@code toIterable} parks the
-     * overflow in a 256-element queue, which at this chunk size is sixteen megabytes of heap that
-     * nothing asked for. {@code GcodeBlobStoreTest} asserts the in-flight count rather than
-     * trusting any of this.
+     * <p>{@code concatMap} with a prefetch of one is what makes "bounded" provable rather than
+     * merely likely: it requests a single element, processes it, asks for the next, so exactly one
+     * chunk is ever in flight and demand propagates back to the socket. {@code reduce} and
+     * {@code doOnNext} request {@code Long.MAX_VALUE}; {@code toIterable} parks the overflow in a
+     * 256-element queue, sixteen megabytes of heap at this chunk size. {@code GcodeBlobStoreTest}
+     * asserts the in-flight count rather than trusting any of this.
      */
     private final class Counting implements AutoCloseable {
 
@@ -125,13 +100,7 @@ public class GcodeBlobStore {
             this.channel = FileChannel.open(temp, StandardOpenOption.WRITE);
         }
 
-        /**
-         * Counts the bytes, digests them, writes them - in that order, over separate views.
-         *
-         * <p>Three {@code duplicate}s and not three rewinds: each view has its own position, so
-         * counting does not consume the bytes the digest needs and neither disturbs the write. They
-         * share the underlying memory, so this costs three ints rather than three copies.
-         */
+        /** Counts, digests and writes the same bytes over three separate {@code duplicate} views - independent positions, shared memory, so no copy and no interference between the three passes. */
         Long accept(ByteBuffer chunk) throws IOException {
             var counting = chunk.duplicate();
             while (counting.hasRemaining()) {
@@ -150,13 +119,7 @@ public class GcodeBlobStore {
             return size;
         }
 
-        /**
-         * The three answers, with the last line counted even when the file does not end in one.
-         *
-         * <p>A G-code file whose final line has no terminator still has that line, and a slicer
-         * that omits it is common enough that counting newlines alone is simply wrong. An empty
-         * file has no lines, which is why the adjustment asks about the size first.
-         */
+        /** Counts the last line even without a terminator, since a G-code file that ends without one still has that line; an empty file has none. */
         Stored finish() {
             if (size > 0 && !endsWithNewline) {
                 lines++;
@@ -175,15 +138,12 @@ public class GcodeBlobStore {
     }
 
     /**
-     * Moves the temporary file to its content-addressed home, unless something already lives there.
-     *
-     * <p>The already-there case is the dedupe, and it is the common one in a farm that re-uploads a
-     * part after tweaking a setting that did not change the G-code. The temp file is left for
+     * Moves the temp file to its content-addressed home, unless something is already there - the
+     * dedupe, and the common case on a farm re-uploading a part after a tweak that did not change
+     * the G-code. {@code ATOMIC_MOVE} means a reader either finds the whole file or none of it; both
+     * paths are on the same filesystem by construction (the temp directory is inside the root),
+     * which is what makes an atomic move available at all. The temp file is left for
      * {@code usingWhen}'s cleanup to remove.
-     *
-     * <p>{@code ATOMIC_MOVE} so that a blob is never half-visible: a reader either finds the whole
-     * file or does not find it. Both paths are on the same filesystem by construction - the temp
-     * directory is inside the root - which is what makes an atomic move available at all.
      */
     private Mono<Stored> publish(Path temp, Stored stored) {
         return Mono.fromCallable(() -> {
@@ -204,13 +164,7 @@ public class GcodeBlobStore {
         });
     }
 
-    /**
-     * The blob's bytes, in chunks, from the file named by {@code contentHash}.
-     *
-     * <p>{@code generate} rather than reading the file and emitting it: the channel is opened once,
-     * each request reads one chunk, and the stream ends when the file does. So a slow consumer
-     * holds one chunk and not a file, which is the whole point of handing back a publisher.
-     */
+    /** {@code generate} rather than reading the whole file: the channel opens once, each request reads one chunk, so a slow consumer holds one chunk and not a file. */
     public Flux<ByteBuffer> read(String contentHash) {
         return Flux.<ByteBuffer, FileChannel>generate(
                         () -> FileChannel.open(pathFor(contentHash), StandardOpenOption.READ),
@@ -232,15 +186,10 @@ public class GcodeBlobStore {
     }
 
     /**
-     * The first and last {@link #METADATA_WINDOW} bytes of a blob, for the header parser.
-     *
-     * <p>Both ends because slicers disagree about where they put things: Cura writes its summary at
-     * the top, PrusaSlicer repeats much of its configuration at the bottom. Bounded because the
-     * alternative - tokenizing the whole file looking for comments - would turn an upload into a
-     * full parse of every motion command in a two-hundred-megabyte file to find four numbers.
-     *
-     * <p>A file smaller than two windows is returned once rather than twice, so nothing is parsed
-     * double.
+     * The first and last {@link #METADATA_WINDOW} bytes of a blob, for the header parser. Both ends
+     * because slicers disagree where they write their summary (Cura at the top, PrusaSlicer
+     * repeating config at the bottom); bounded because tokenizing a whole two-hundred-megabyte file
+     * to find four numbers is not worth it. A file smaller than two windows is returned once.
      */
     byte[][] headAndTail(String contentHash) throws IOException {
         var path = pathFor(contentHash);
@@ -277,13 +226,7 @@ public class GcodeBlobStore {
         return Arrays.copyOf(buffer.array(), buffer.position());
     }
 
-    /**
-     * Two levels of fan-out from the hash, then the hash itself.
-     *
-     * <p>{@code ab/cd/abcd…} rather than a flat directory, because every filesystem in use slows
-     * down on a directory of tens of thousands of entries and a farm that prints every day gets
-     * there.
-     */
+    /** Two levels of fan-out from the hash, then the hash itself - a flat directory slows down past tens of thousands of entries, which a farm printing daily reaches. */
     Path pathFor(String contentHash) {
         return root.resolve(contentHash.substring(0, 2))
                 .resolve(contentHash.substring(2, 4))

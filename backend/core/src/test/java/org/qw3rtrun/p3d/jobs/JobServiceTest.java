@@ -187,13 +187,9 @@ class JobServiceTest {
         assertEquals(machine, finished.machineId());
     }
 
-    /**
-     * <strong>An illegal move is a value, which is plan item C2's first done-when.</strong>
-     *
-     * <p>Not an exception, and above all not a constraint violation surfacing from the database:
-     * the usual cause is a user clicking Pause as the last line is acknowledged, and the right
-     * answer to that is to say where the job actually is.
-     */
+    // an illegal move is a value, not an exception or a constraint violation from the database -
+    // plan item C2's first done-when (the usual cause is a user clicking Pause as the last line is
+    // acknowledged).
     @Test
     void anIllegalTransitionIsRefusedWithWhereTheJobActuallyIs() {
         var job = queued("illegal.gcode");
@@ -306,13 +302,9 @@ class JobServiceTest {
         assertEquals(List.of(), announcements.heard);
     }
 
-    /**
-     * A deleted machine releases what it was holding, and the two cases differ.
-     *
-     * <p>An assigned job can go to another printer with nothing lost. A running one cannot - the
-     * file has been partly consumed, and a second machine starting it from line one would print
-     * the top half of the part onto an empty bed - so it fails with a reason that says why.
-     */
+    // a deleted machine releases what it was holding: an assigned job can go to another printer with
+    // nothing lost, but a running one fails, since a second machine starting from line one would
+    // print over a partly-consumed file.
     @Test
     void aDeletedMachineReleasesItsAssignedJobAndFailsItsRunningOne() {
         var machine = UUID.randomUUID();
@@ -322,16 +314,14 @@ class JobServiceTest {
         jobs.assign(printing.id(), machine);
         jobs.start(printing.id());
 
-        // Published inside a transaction, because @ApplicationModuleListener is a
-        // @TransactionalEventListener: an event published outside one is dropped, which is the
-        // whole point - it is only durable if there was a commit to tie it to. In production this
-        // comes from MachineManagementImpl.delete, which is @Transactional.
+        // published inside a transaction: @ApplicationModuleListener is @TransactionalEventListener
+        // and drops an event published outside one, which is the whole point - durable only with a
+        // commit to tie it to.
         transactions.executeWithoutResult(status ->
                 publisher.publishEvent(new MDeletedEvent(machine, LocalDateTime.now())));
 
-        // And awaited, because the same annotation makes it @Async - the delete returns before the
-        // queue has reacted, which is the behaviour that keeps one module's transaction out of
-        // another module's.
+        // awaited, since the same annotation makes it @Async - the delete returns before the queue
+        // reacts, keeping one module's transaction out of another's.
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
             var wasWaiting = jobs.fetch(waiting.id()).orElseThrow();
             assertEquals(JobState.QUEUED, wasWaiting.state());
@@ -344,17 +334,11 @@ class JobServiceTest {
     }
 
     /**
-     * The event publication registry is doing its job, which is C2's second done-when.
-     *
-     * <p>A durable listener means Modulith writes a row inside the publishing transaction and
-     * marks it complete when the listener returns. That is what makes delivery at-least-once
-     * across a commit - without it an event is a method call that happens to be late, and a
-     * printer deleted as the application shut down would leave its jobs pointing at a machine that
-     * no longer exists with nothing to notice.
-     *
-     * <p>Asserted on {@code CompletedEventPublications} rather than by counting table rows: what
-     * matters is not that something was written but that it was <em>completed</em>, because an
-     * incomplete publication is exactly what gets replayed on the next start.
+     * The event publication registry is doing its job - C2's second done-when. A durable listener
+     * means Modulith writes a row inside the publishing transaction and marks it complete when the
+     * listener returns, which is what makes delivery at-least-once across a commit. Asserted on
+     * {@code CompletedEventPublications} rather than by counting rows, since what matters is that
+     * the publication was completed - an incomplete one is exactly what gets replayed next start.
      */
     @Test
     void aDurableEventIsRegisteredAndCompleted() {
@@ -375,13 +359,8 @@ class JobServiceTest {
         });
     }
 
-    /**
-     * A checkpoint is kept, and read back - plan item C4's second done-when.
-     *
-     * <p>"Within one persisted checkpoint" is the promise, and the point of writing it at all is a
-     * restart: a job that was half printed when the process died should say so rather than
-     * starting from nothing.
-     */
+    // plan item C4's second done-when: a job half printed when the process died should say so
+    // rather than starting from nothing.
     @Test
     void progressIsCheckpointedAndReadBack() {
         var machine = UUID.randomUUID();
@@ -401,14 +380,9 @@ class JobServiceTest {
         assertEquals(0.15, read.fraction(), 0.0001);
     }
 
-    /**
-     * A stale checkpoint loses to the one already recorded.
-     *
-     * <p>The timer and a stop race by construction, so readings can arrive out of order. What must
-     * never happen is progress going backwards - and the rule that enforces it is a comparison
-     * rather than a state check, because the <em>exact</em> reading taken at the moment of a pause
-     * arrives after the job has left {@code RUNNING} and is the one a resume depends on.
-     */
+    // the timer and a stop race by construction, so readings can arrive out of order; the rule
+    // against progress going backwards is a comparison rather than a state check, since the exact
+    // reading at a pause arrives after the job has left RUNNING.
     @Test
     void aStaleCheckpointLosesToTheOneAlreadyRecorded() {
         var machine = UUID.randomUUID();
@@ -428,13 +402,8 @@ class JobServiceTest {
         assertEquals(100, read.blocksSent(), "the stale reading must not pull progress backwards");
     }
 
-    /**
-     * The exact reading taken when a feed stops is kept, even though the job has already moved.
-     *
-     * <p>This is the half the first version got wrong. A resume reads the checkpoint to decide
-     * where to pick up, and the timer's readings are up to a second stale - so throwing away the
-     * accurate final one made a paused job restart thousands of blocks early and print over itself.
-     */
+    // the half the first version got wrong: the timer's readings are up to a second stale, so
+    // throwing away the accurate final one made a paused job restart thousands of blocks early.
     @Test
     void theExactReadingTakenAtAPauseIsKept() {
         var machine = UUID.randomUUID();
@@ -464,13 +433,8 @@ class JobServiceTest {
         assertNull(read.at());
     }
 
-    /**
-     * A job that was printing when the process died is failed, with its position kept.
-     *
-     * <p>Plan item C5's "the honest first version". The feed lived in memory and the restart took
-     * it, so nothing is sending blocks any more - a job left {@code RUNNING} would hold its printer
-     * against the scheduler for ever and tell an operator that a cold machine is mid-part.
-     */
+    // plan item C5's "the honest first version": the feed lived in memory and the restart took it,
+    // so a job left RUNNING would hold its printer forever and claim a cold machine is mid-part.
     @Test
     void aJobThatWasPrintingWhenTheProcessDiedIsFailed() {
         var machine = UUID.randomUUID();
@@ -490,13 +454,8 @@ class JobServiceTest {
                 "and the position survives, because a better recovery starts from it");
     }
 
-    /**
-     * A paused job survives a restart, which is the useful half of the same rule.
-     *
-     * <p>Its machine is still connected and still hot - the farm redials at startup - and the block
-     * it stopped at is in the checkpoint, so resuming after a restart works exactly as resuming
-     * before one does.
-     */
+    // the useful half of the same rule: its machine is still connected and hot (the farm redials at
+    // startup), and the block it stopped at is in the checkpoint.
     @Test
     void aPausedJobSurvivesARestart() {
         var machine = UUID.randomUUID();

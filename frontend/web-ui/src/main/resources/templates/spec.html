@@ -1,11 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
-<!--
-  The declared half of a machine's description, as form fields (plan item B4).
-
-  One fragment so the add page and the edit page cannot drift: a field added to one and not the
-  other is the sort of thing nothing fails on.
--->
+<!-- The declared half of a machine's description, as form fields (plan item B4). One fragment so
+     the add and edit pages cannot drift. -->
 <body>
 
 <div th:fragment="declared_fields" th:remove="tag">
@@ -48,10 +44,7 @@
     </div>
 </div>
 
-<!--
-  What the machine said about itself. Read-only on purpose: it is written from firmware reports and
-  nothing a person types here could be true.
--->
+<!-- Read-only: written from firmware reports, so nothing a person types here could be true. -->
 <div th:fragment="discovered_card(discovered)" th:remove="tag">
     <div class="card">
         <div class="card-body">

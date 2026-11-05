@@ -17,29 +17,20 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * A stored G-code file as the blocks a printer should be sent, read lazily and without holding it.
  *
- * <p>Two jobs, and both have a trap in them.
+ * <p>Framing bytes into lines must not accumulate: a chunk off the file store is an arbitrary slice
+ * (a line routinely spans two, one routinely holds thousands), so the remainder carries across
+ * chunks rather than building a list - plan item C1 kept a two-hundred-megabyte file off the heap,
+ * and reading it back into lines here would undo that in one operator.
  *
- * <p><strong>Framing bytes into lines.</strong> A chunk off the file store is an arbitrary slice -
- * a line is routinely split across two of them and one of them routinely holds thousands - so the
- * remainder has to be carried from chunk to chunk. What is <em>not</em> allowed is accumulating:
- * plan item C1 went to some trouble to keep a two-hundred-megabyte file off the heap, and reading
- * it back into a list of lines here would undo all of it in one operator.
+ * <p>A block is bare: no {@code N} field, {@code *} checksum, terminator or trailing comment (a
+ * comment runs to end of line and would swallow the checksum {@code GEncoder.frame} appends after
+ * it) - and a sliced file is full of them, so this is the normal case, not a corner one. The reading
+ * itself is {@code :gcode}'s ({@code GBlockReader}), not this class's, same as everywhere else in
+ * the repository; a regex over {@code ;} would be faster and wrong on {@code (a note ; not a comment)}.
  *
- * <p><strong>Turning a line into a block the transport will accept.</strong> Its contract is one
- * bare block per item: no {@code N} field, no {@code *} checksum, no terminator, and
- * <em>no trailing comment</em> - a comment runs to end of line and would swallow the checksum field
- * that {@code GEncoder.frame} appends behind it. A sliced file is full of comments, so this is not
- * a corner case; {@code ;LAYER:1} and {@code G1 X10 ; wipe} are both normal lines.
- *
- * <p><strong>The reading is {@code :gcode}'s, not this class's.</strong> {@code GBlockReader}
- * decides what a line carries, which is the same rule the rest of the repository follows: there is
- * one reader of G-code text and it is not in a backend module. A regex over {@code ;} would be
- * faster and would be wrong on {@code (a note ; not a comment)}.
- *
- * <p><strong>The cost of tokenizing every line is irrelevant here, and that is worth stating</strong>
- * because it looks alarming. The feed is gated by the printer's command buffer - four blocks in
- * flight, a few hundred a second at best - so the file is read at the speed a machine consumes it
- * and never faster. What matters on this path is memory, which is bounded, not throughput.
+ * <p>Tokenizing every line costs nothing that matters here: the feed is gated by the printer's
+ * command buffer (four in flight, a few hundred a second at best), so the file is read at the speed
+ * a machine consumes it. What this path bounds is memory, not throughput.
  */
 final class GcodeLines {
 
@@ -67,16 +58,10 @@ final class GcodeLines {
     }
 
     /**
-     * The same, carrying the layer the file was last on - plan item C4's telemetry.
-     *
-     * <p><strong>The layer is read from the comments this otherwise throws away</strong>, which is
-     * the only place it exists: a slicer announces it as {@code ;LAYER:12} (Cura) or
-     * {@code ;LAYER_CHANGE} followed by {@code ;Z:0.4} (PrusaSlicer), and nothing in the G-code
-     * itself says what layer a move belongs to. So the comment is read on its way past and then
-     * dropped as before - it is still not something to send.
-     *
-     * <p>A file from a slicer that announces nothing simply never reports a layer, which is a fact
-     * rather than a gap.
+     * The same, carrying the layer the file was last on - plan item C4's telemetry. Read from the
+     * comments this otherwise throws away, the only place it exists: {@code ;LAYER:12} (Cura) or
+     * {@code ;LAYER_CHANGE}/{@code ;Z:0.4} (PrusaSlicer); nothing in the G-code itself says what
+     * layer a move belongs to. A slicer that announces nothing simply never reports one.
      */
     static Flux<Fed> feedOf(Publisher<ByteBuffer> content) {
         var layer = new AtomicReference<Integer>();
@@ -93,13 +78,7 @@ final class GcodeLines {
                 });
     }
 
-    /**
-     * The layer a comment declares, or null.
-     *
-     * <p>Read off the comment text rather than the raw line, so a {@code ;} inside a parenthesised
-     * comment does not produce a layer number - the same reason the block reading goes through
-     * {@code :gcode} rather than a pattern.
-     */
+    /** The layer a comment declares, or null - read off the comment text, not the raw line, so a {@code ;} inside a parenthesised comment cannot produce one. */
     static Integer layerOf(String line) {
         var blocks = GBlockReader.Companion.blocks(line + "\n").iterator();
         if (!blocks.hasNext()) {
@@ -124,16 +103,12 @@ final class GcodeLines {
     }
 
     /**
-     * Chunks in, lines out, with the remainder carried across.
-     *
-     * <p>Hand-written rather than a {@code bufferUntil} over characters, which is what
-     * {@code ReplyFlux} does and what the transport's skill names as the shape not to copy: it
-     * boxes every byte into a {@code String} and pushes it through an inner {@code Flux}. Here that
-     * would be two hundred million of them.
-     *
-     * <p>A file whose last line has no terminator still ends in a line, which is why the tail is
-     * flushed on completion - and {@code concatWith} over a {@code defer} is what makes that happen
-     * after the last chunk rather than when the pipeline is assembled.
+     * Chunks in, lines out, with the remainder carried across. Hand-written rather than a
+     * {@code bufferUntil} over characters - the shape {@code ReplyFlux} uses and the transport's
+     * skill names as the one not to copy, since it boxes every byte into a {@code String}; here
+     * that would be two hundred million of them. The tail is flushed on completion via
+     * {@code concatWith}/{@code defer}, since a file whose last line has no terminator still ends
+     * in a line.
      */
     private static Flux<String> lines(Publisher<ByteBuffer> content) {
         var remainder = new StringBuilder();

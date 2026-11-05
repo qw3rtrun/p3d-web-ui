@@ -14,17 +14,14 @@ import java.util.Set;
  *   anything not yet terminal  --operator cancelled--&gt;  CANCELLED
  * </pre>
  *
- * <p><strong>The table is on the enum rather than in the service, so there is one copy.</strong>
- * A web page deciding which buttons to show and a scheduler deciding what it may assign are asking
- * the same question as the service that enforces it, and the three answering it separately is how
- * a UI comes to offer an action the backend refuses.
+ * <p>The table lives on the enum rather than in the service, so there is one copy: a page
+ * choosing buttons and a scheduler choosing what it may assign ask the same question the service
+ * enforces.
  *
- * <p><strong>A terminal state is terminal.</strong> {@code COMPLETED}, {@code FAILED} and
- * {@code CANCELLED} have no outgoing edges at all - not even to each other, and not back to
- * {@code QUEUED}. Re-running a file means a new job, which is what keeps a job's history a fact
- * rather than a thing that can be overwritten: plan item C5's recovery records the last
- * acknowledged line on a failed job, and that record is worthless if the job can be revived in
- * place.
+ * <p>A terminal state is terminal - {@code COMPLETED}, {@code FAILED} and {@code CANCELLED} have
+ * no outgoing edges, not even to each other or back to {@code QUEUED}. Re-running means a new
+ * job, so a job's history stays a fact rather than something C5's recovery data could be
+ * overwritten under.
  */
 public enum JobState {
 

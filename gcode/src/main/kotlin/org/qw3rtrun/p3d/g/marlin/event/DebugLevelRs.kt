@@ -31,7 +31,6 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * DebugLevelRs(setOf("DRYRUN")).encode()          // "echo:DEBUG:DRYRUN"
  * ```
  *
- * @property flags the channels now being written, empty when the firmware answered `off`
  * @see <a href="https://marlinfw.org/docs/gcode/M111.html">MarlinFirmware M111 doc</a>
  */
 data class DebugLevelRs(val flags: Set<String>) : EchoRs<DebugLevelRs> {

@@ -23,48 +23,35 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Writes a stored G-code file onto a machine's SD card.
+ * Writes a stored G-code file onto a machine's SD card - shaped like {@link JobFeeder}, except the
+ * blocks go into a file instead of being executed and nothing else may reach the wire meanwhile. No
+ * bytes pass through here from a browser: the file already lives in the content-addressed store
+ * behind {@code /api-files}, which is what makes {@link GcodeFile#sizeBytes()} an exact denominator
+ * before a single line goes out and lets a second machine reuse the same upload.
  *
- * <p>Shaped like {@link JobFeeder}, because it is the same job with two differences: the blocks go
- * into a file on the card instead of being executed, and <strong>nothing else may reach the wire
- * while they do</strong>.
- *
- * <p><strong>No bytes pass through here from a browser.</strong> The file is one the server already
- * holds, uploaded to {@code /api-files} and streamed into a content-addressed store. That is what
- * makes {@link GcodeFile#sizeBytes()} available as an exact denominator before a single line goes
- * out, and it means sending the same file to a second machine costs no second upload.
- *
- * <h2>The three things this has to get right</h2>
- *
- * <p><strong>1. Exclusivity.</strong> {@code M28} turns the wire into a file sink until
- * {@code M29}, so a command from any other source that lands in between is written into the G-code
- * rather than executed - silently, surfacing much later as a line of nonsense mid-print.
- * {@link PrinterReactor#uploadToCard} queues this as an exclusive source for that reason.
- *
- * <p><strong>2. {@code M29} goes out even when the transfer is stopped.</strong> This is the
- * subtle one. A cancel does <em>not</em> tear the source out - it completes the content with
- * {@code takeUntilOther}, and {@code concat} then moves on to the close. Cancelling outright would
- * leave the file <strong>open</strong> on the card, and the very next command the machine was given
- * would be written into it: the corruption this whole arrangement exists to prevent, caused by the
- * button meant to stop it.
- *
- * <p><strong>3. The name has to be listable.</strong> {@code M20} reports only what Marlin
- * considers printable, so a file written as {@code benchy} is on the card, is printable by exact
- * name, and never appears in a listing. {@link #cardNameFor} gives it an extension rather than
- * letting an operator create a file they cannot see. That was measured rather than read - a probe
- * wrote a file with no extension, got an empty listing, and the first conclusion drawn was that the
- * simulator was broken.
+ * <p>Three things this has to get right:
+ * <ol>
+ *   <li><strong>Exclusivity.</strong> {@code M28} turns the wire into a file sink until
+ *       {@code M29}; any other command landing in between is written into the G-code rather than
+ *       executed, silently, surfacing later as nonsense mid-print.
+ *       {@link PrinterReactor#uploadToCard} queues this as an exclusive source for that reason.</li>
+ *   <li><strong>{@code M29} goes out even when stopped.</strong> A cancel completes the content with
+ *       {@code takeUntilOther} rather than tearing the source out, and {@code concat} moves on to the
+ *       close - cancelling outright would leave the file open, and the very next command given to
+ *       the machine would be written into it: the corruption this exists to prevent, caused by the
+ *       button meant to stop it.</li>
+ *   <li><strong>The name has to be listable.</strong> {@code M20} reports only what Marlin considers
+ *       printable, so a file written as {@code benchy} is on the card, printable by exact name, and
+ *       invisible to every listing - measured, not read: a probe once wrote an extensionless file,
+ *       got an empty listing, and the first conclusion drawn was that the simulator was broken.
+ *       {@link #cardNameFor} gives it an extension instead.</li>
+ * </ol>
  */
 @Slf4j
 @RequiredArgsConstructor
 public class SdUploader {
 
-    /**
-     * What Marlin's {@code M20} considers printable, lower-cased.
-     *
-     * <p>Not a style preference - a name outside this set produces a file that exists, prints, and
-     * is invisible to every listing, which is the worst of the three possible outcomes.
-     */
+    /** What Marlin's {@code M20} considers printable, lower-cased - anything else exists, prints, and is invisible to every listing. */
     private static final List<String> PRINTABLE = List.of(".gcode", ".gco", ".g");
 
     /** What a name without a printable extension gets. The short one, because the block is 96 bytes. */
@@ -73,7 +60,6 @@ public class SdUploader {
     private final PrinterReactorManager reactors;
     private final GcodeFileService files;
 
-    /** What is being written right now, per machine, so a cancel has something to stop. */
     private final Map<UUID, Transfer> running = new ConcurrentHashMap<>();
 
     /** One transfer in flight. */
@@ -82,7 +68,6 @@ public class SdUploader {
         private final String cardName;
         private final long bytesTotal;
 
-        /** Emits when the transfer should stop producing content - see the class note on {@code M29}. */
         private final Sinks.Empty<Void> stop = Sinks.empty();
 
         private final AtomicLong bytesSent = new AtomicLong();
@@ -108,26 +93,14 @@ public class SdUploader {
     }
 
     /**
-     * Starts writing {@code fileId} to {@code machineId}'s card, and answers whether it was taken
-     * on.
-     *
-     * <p>It deliberately does not wait for the transfer. Every line is a round trip inside the send
-     * window, so a real file takes minutes and an HTTP request held open for it would time out.
-     * What the caller gets back is "this started"; what says it finished is
-     * {@link SdUploadProgressed} on the machine's event stream.
-     *
-     * <p><strong>Every way this can decline is a {@link ControlOutcome}, not an exception.</strong>
-     * Two of the three are ordinary - a stale page naming a file the store no longer holds, a
-     * printer somebody unplugged - and as exceptions they left the web layer with nothing to do but
-     * guess a status from a class name, which it did by answering 500 to both.
-     *
-     * <p><strong>The order of the checks is a decision and not an accident</strong>: the machine is
-     * known (the caller's, since it is the caller that holds the runtime map), then the link, then
-     * the file, then "one at a time". Cheapest and most certain first - the first two are field
-     * reads and the third is a database round trip - and <em>the link check in front of the file
-     * lookup is what keeps a blocking store lookup off the path for a machine that could not have
-     * taken the file anyway</em>. A farm whose printers are mostly idle and mostly unplugged is the
-     * normal case, not the exceptional one.
+     * Starts writing {@code fileId} to {@code machineId}'s card and answers whether it was taken on
+     * - it does not wait for the transfer, since a real file takes minutes of round trips and an
+     * HTTP request held open for it would time out; {@link SdUploadProgressed} on the machine's
+     * event stream says how it is going. Every way this can decline is a {@link ControlOutcome}, not
+     * an exception - a stale file id and an unplugged printer are ordinary, and as exceptions both
+     * used to answer 500. Checks run cheapest and most certain first (known machine, then link, then
+     * file, then "one at a time"), so a blocking file-store lookup never runs for a printer that
+     * could not have taken the file anyway - the common case on a farm that is mostly idle.
      *
      * @param reactor   the machine's runtime, which the caller has already opened
      * @param requested what the operator asked to call it, which may lack an extension
@@ -145,19 +118,16 @@ public class SdUploader {
     }
 
     /**
-     * Queues the transfer, or says why it could not be.
-     *
-     * <p>Returns a value rather than a {@code Mono} because nothing in it is asynchronous - it is
-     * a map insert, a subscription and an announcement. It still runs on {@code boundedElastic},
-     * because it is called from inside the {@code map} the file lookup was scheduled on.
+     * Queues the transfer, or says why it could not be. Returns a value rather than a {@code Mono}
+     * because nothing in it is asynchronous; it still runs on {@code boundedElastic} because it is
+     * called from inside the {@code map} the file lookup was scheduled on.
      */
     private ControlOutcome begin(PrinterReactor reactor, UUID machineId, UUID fileId,
                                  GcodeFile file, String requested) {
         var cardName = cardNameFor(requested);
         var transfer = new Transfer(cardName, file.sizeBytes());
 
-        // One at a time, per machine. A second would have its M28 written into the first one's
-        // file, which is the same corruption from a different direction.
+        // one at a time per machine - a second would have its M28 written into the first one's file.
         if (running.putIfAbsent(machineId, transfer) != null) {
             return ControlOutcome.wrongState(machineId,
                     "printer " + machineId + " is already writing to its card");
@@ -171,8 +141,8 @@ public class SdUploader {
 
         log.info("writing {} ({} bytes) to {} as {}", file.name(), file.sizeBytes(), machineId, cardName);
 
-        // Announced before the first block, so the page shows the panel - and the machine as busy -
-        // from the moment the request is answered rather than a second later.
+        // announced before the first block, so the page shows the panel from the moment the request
+        // is answered rather than a second later.
         reactor.announce(transfer.at(SdUploadState.UPLOADING, null));
 
         transfer.subscription = reactor.uploadToCard(whole).subscribe(
@@ -187,11 +157,9 @@ public class SdUploader {
     }
 
     /**
-     * Stops the transfer this machine is running, if it is running one.
-     *
-     * <p>Asks the content to end; {@code M29} still follows it, so what is left on the card is a
-     * short but <em>closed</em> file. Doing nothing when there is no transfer is the right answer
-     * rather than an error: the page's button and the machine's state are different clocks.
+     * Stops the transfer this machine is running, if any - a no-op rather than an error when there
+     * is none, since the page's button and the machine's state are different clocks. {@code M29}
+     * still follows, so what is left on the card is short but closed.
      */
     public Mono<Void> cancel(UUID machineId) {
         return Mono.fromRunnable(() -> {
@@ -207,13 +175,7 @@ public class SdUploader {
         });
     }
 
-    /**
-     * Publishes where every running transfer has got to.
-     *
-     * <p>On a timer rather than per block, which is the same rate decision {@code JobFeeder} makes
-     * and for the same reason: a hundred-thousand-block file would otherwise be a hundred thousand
-     * events to answer a question a page asks about once a second.
-     */
+    /** On a timer rather than per block - the same rate decision {@code JobFeeder} makes, and for the same reason. */
     @Scheduled(fixedDelayString = "${p3d.sd.upload-progress-interval:1000}")
     public void reportProgress() {
         running.forEach((machineId, transfer) -> {
@@ -224,13 +186,7 @@ public class SdUploader {
         });
     }
 
-    /**
-     * The transfer is over, one way or another: say so exactly, once.
-     *
-     * <p>The final reading is published here rather than left to the timer, because the timer's is
-     * up to a second stale and this is the one a page acts on - it is what re-enables the controls
-     * the transfer was holding.
-     */
+    /** The transfer is over, one way or another - published here rather than left to the timer, which is up to a second stale, since this is what re-enables the controls the transfer was holding. */
     private void finish(UUID machineId, SdUploadState state, String reason) {
         var transfer = running.remove(machineId);
         if (transfer == null || !transfer.reported.compareAndSet(false, true)) {
@@ -253,21 +209,12 @@ public class SdUploader {
     }
 
     /**
-     * The blocks of one transfer: open the file, write it, close it.
-     *
-     * <p><strong>The close is concatenated rather than appended to the content, and that is the
-     * whole of how a stop stays safe.</strong> {@code takeUntilOther} <em>completes</em> the
-     * content when {@code stop} fires, and {@code concat} then moves on to its next source - so
-     * {@code M29} goes out either way, and the card is left with a closed file.
-     *
-     * <p>The alternative, cancelling the transfer outright, leaves the file <strong>open</strong>:
-     * the exclusive hold on the connection ends, the next command the machine is given is written
-     * into the file, and the corruption this whole arrangement exists to prevent is caused by the
-     * button meant to stop it.
-     *
-     * <p>Package-private and taking its pieces rather than finding them, so that the shape can be
-     * asserted without a printer on the end of it - it is the one part of this class worth a test
-     * of its own.
+     * The blocks of one transfer: open, write, close. The close is concatenated rather than appended
+     * to the content - {@code takeUntilOther} completes the content when {@code stop} fires and
+     * {@code concat} moves on to it - so {@code M29} goes out either way and the card keeps a closed
+     * file; cancelling the transfer outright instead would leave it open for the next command to be
+     * written into. Package-private and taking its pieces rather than finding them, so this shape
+     * can be asserted without a printer on the end of it.
      */
     static Flux<String> transferOf(String cardName, Flux<String> content, Mono<Void> stop) {
         return Flux.concat(
@@ -277,27 +224,20 @@ public class SdUploader {
     }
 
     /**
-     * Counts a chunk as it goes past, without consuming it.
-     *
-     * <p>{@code GcodeLines} reads the same buffer, so the position may not move: it duplicates
-     * before decoding and so does this. The count therefore runs slightly <em>ahead</em> of the
-     * blocks - a chunk is measured when it is read and turned into blocks after - which is the
-     * right way round for a progress bar and the same thing {@code JobFeeder} does.
+     * Counts a chunk without consuming it ({@code GcodeLines} reads the same buffer, so this
+     * duplicates first) - the count therefore runs slightly ahead of the blocks, which is the right
+     * way round for a progress bar, and the same thing {@code JobFeeder} does.
      */
     private static void read(Transfer transfer, ByteBuffer chunk) {
         transfer.bytesSent.addAndGet(chunk.duplicate().remaining());
     }
 
     /**
-     * The name the file will have on the card - the operator's, with an extension if it had none.
-     *
-     * <p>{@code M20} lists only {@code .gcode}, {@code .gco} and {@code .g}. Anything else is on
-     * the card, opens under {@code M23}, and is invisible to every listing - so an operator who
-     * typed {@code benchy} would have made a file they cannot find, let alone delete. The
-     * comparison is a plain lower-cased tail check, because the card's own names are ASCII.
-     *
-     * <p>The name that comes out is what travels in {@code SdUploadProgressed}, so a page that
-     * shows it is showing what is really on the card rather than what was typed.
+     * The name the file will have on the card. {@code M20} lists only {@code .gcode}, {@code .gco}
+     * and {@code .g}; anything else opens under {@code M23} but is invisible to every listing, so an
+     * operator typing {@code benchy} would make a file they cannot find or delete. The comparison is
+     * a plain lower-cased tail check, since the card's own names are ASCII; the result is what
+     * travels in {@code SdUploadProgressed}, so a page shows what is really on the card.
      */
     static String cardNameFor(String requested) {
         var trimmed = requested == null ? "" : requested.trim();

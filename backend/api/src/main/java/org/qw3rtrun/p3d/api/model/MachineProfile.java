@@ -7,19 +7,15 @@ import java.util.Map;
  * What a machine turned out to be, once something asked it.
  *
  * <p>Firmware key-values exactly as {@code M115} reported them, and the capability flags from the
- * {@code Cap:} lines that follow it. Kept as maps rather than as named fields because that is what
- * the firmware sends and what it sends differs between builds: a host that models only the keys it
- * knows today throws away the one a later Marlin adds.
+ * {@code Cap:} lines that follow it - kept as maps rather than named fields because what firmware
+ * sends differs between builds, and a host that models only today's keys throws away a later one.
  *
- * <p><strong>Static data, so it belongs to {@code printer-management}.</strong> That is
- * {@code doc/sub_boundaries.txt} read literally - names, connection information, types,
- * capabilities and firmware versions are the roster's business, while what a machine is doing right
- * now is {@code core}'s. The awkward part is that only {@code core} can <em>learn</em> this, because
- * learning it means talking to the printer; so {@code core} reports and {@code management} keeps.
+ * <p>Static data, so it belongs to {@code printer-management} ({@code doc/sub_boundaries.txt}):
+ * names, connection, types, capabilities and firmware are the roster's business, while what a
+ * machine is doing now is {@code core}'s. Only {@code core} can <em>learn</em> this - learning
+ * means talking to the printer - so {@code core} reports and {@code management} keeps.
  *
- * @param firmware     every key {@code M115} reported, in the firmware's own words
- * @param capabilities each {@code Cap:} line, by name
- * @param learnedAt    when a machine last told us this. Null when nothing ever has
+ * @param learnedAt when a machine last told us this; null when nothing ever has
  */
 public record MachineProfile(Map<String, String> firmware,
                              Map<String, Boolean> capabilities,
@@ -36,11 +32,9 @@ public record MachineProfile(Map<String, String> firmware,
     }
 
     /**
-     * How many extruders the firmware claims, defaulting to one.
-     *
-     * <p>One, and not zero, because a machine that did not say is far likelier to have a hotend
-     * than none - and because the caller is usually about to check a tool index against this, where
-     * zero rejects every command including the one for tool 0.
+     * How many extruders the firmware claims, defaulting to one - not zero, since an unstated
+     * machine is far likelier to have a hotend than none, and the caller is usually checking a
+     * tool index against this, where zero would reject even tool 0.
      */
     public int extruderCount() {
         var raw = firmware.get("EXTRUDER_COUNT");
@@ -57,17 +51,15 @@ public record MachineProfile(Map<String, String> firmware,
     /**
      * Whether the firmware said it has an SD card reader - Marlin's {@code Cap:SDCARD}.
      *
-     * <p><strong>This is a question about the <em>firmware</em>, not about the slot.</strong> A
-     * build compiled without SD support reports {@code Cap:SDCARD:0} and will not answer
-     * {@code M20} or {@code M21} however many cards are pushed into it; a build that reports
-     * {@code 1} may still have an empty slot. So this decides whether the Storage tab is offered at
-     * all, and whether a card is actually present is a separate question nothing but {@code M21}
-     * can answer.
+     * <p>A question about the <em>firmware</em>, not the slot: a build without SD support reports
+     * {@code Cap:SDCARD:0} and will not answer {@code M20}/{@code M21} however many cards are
+     * inserted; a build reporting {@code 1} may still have an empty slot. Decides whether the
+     * Storage tab is offered; whether a card is present is a separate question only {@code M21}
+     * answers.
      *
-     * <p>Absent is false, which covers both a machine that has never reported and one whose
-     * firmware does not know the capability. Mainline Marlin always writes the line, so in practice
-     * absent means nothing has asked yet - and {@link #isKnown()} is what tells those two apart for
-     * a page that wants to explain itself.
+     * <p>Absent is false - covering both "never reported" and "firmware does not know the
+     * capability" (mainline Marlin always writes the line, so in practice it means "never asked");
+     * {@link #isKnown()} tells those apart.
      */
     public boolean hasSdCard() {
         return Boolean.TRUE.equals(capabilities.get("SDCARD"));
@@ -77,25 +69,22 @@ public record MachineProfile(Map<String, String> firmware,
      * Whether the firmware said it has an EEPROM it can store settings in - Marlin's
      * {@code Cap:EEPROM}.
      *
-     * <p><strong>The capability is {@code EEPROM}; the build macro is {@code EEPROM_SETTINGS}, and
-     * they are not the same name.</strong> Issue #88's checklist says the second, which is the
-     * {@code #define} in {@code Configuration.h} and never leaves the compiler. What reaches the
-     * wire is {@code Cap:EEPROM:0|1} - measured off MarlinSim, which answers {@code Cap:EEPROM:1}
-     * among 38 {@code Cap:} lines, and cross-checked against
-     * {@code Marlin/src/gcode/host/M115.cpp} on {@code 2.1.x}, where the line is emitted as
-     * {@code EEPROM} under {@code ENABLED(EEPROM_SETTINGS)}. So the key here is the capability name
-     * and not the macro, and a "correction" to the macro would be false on every machine there is.
+     * <p>The capability is {@code EEPROM}; the build macro is {@code EEPROM_SETTINGS} - not the
+     * same name. Issue #88's checklist names the macro, but what reaches the wire is
+     * {@code Cap:EEPROM:0|1}: measured off MarlinSim ({@code Cap:EEPROM:1} among 38 {@code Cap:}
+     * lines) and cross-checked against {@code Marlin/src/gcode/host/M115.cpp} on {@code 2.1.x},
+     * where the line is emitted as {@code EEPROM} under {@code ENABLED(EEPROM_SETTINGS)}. A
+     * "correction" to the macro name would be false on every machine there is.
      *
-     * <p>Like {@link #hasSdCard()} this is a question about the <em>firmware</em>: a build compiled
-     * without EEPROM support will not answer {@code M500}, {@code M501} or {@code M504} however
-     * much flash the board has. So it decides whether the Settings tab is offered at all. Whether
-     * {@code M503} exists is a <em>third</em> question this cannot answer - {@code DISABLE_M503}
-     * removes the report from a build that still stores settings - and the only thing that answers
-     * it is the machine refusing the command.
+     * <p>Like {@link #hasSdCard()}, a question about the <em>firmware</em>: a build without
+     * EEPROM support will not answer {@code M500}/{@code M501}/{@code M504} however much flash
+     * the board has, so it decides whether the Settings tab is offered. Whether {@code M503}
+     * exists is a third question this cannot answer - {@code DISABLE_M503} removes the report
+     * from a build that still stores settings - only the machine refusing the command answers
+     * that.
      *
-     * <p>Absent is false, which covers both a machine that has never reported and one whose
-     * firmware does not know the capability; {@link #isKnown()} is what tells those two apart for a
-     * page that wants to explain itself.
+     * <p>Absent is false, covering both "never reported" and "firmware does not know the
+     * capability"; {@link #isKnown()} tells those apart.
      */
     public boolean hasEeprom() {
         return Boolean.TRUE.equals(capabilities.get("EEPROM"));

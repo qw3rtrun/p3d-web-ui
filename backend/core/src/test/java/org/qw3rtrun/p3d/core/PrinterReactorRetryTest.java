@@ -32,21 +32,14 @@ import static org.qw3rtrun.p3d.api.model.MachineConnectionState.OFFLINE;
 import static org.qw3rtrun.p3d.api.model.MachineConnectionState.ONLINE;
 
 /**
- * The timing half of plan item B3: retry, backoff, and giving up.
- *
- * <p><strong>No sleeps anywhere.</strong> The backoff is timed on a {@link VirtualTimeScheduler}
- * the test owns, so "wait out a minute of exponential backoff" is one call and the whole file runs
- * in milliseconds. That is also why {@link ConnectionPolicy} and the two schedulers are
- * constructor arguments rather than constants: a retry policy that cannot be shortened is a retry
- * policy that cannot be tested.
- *
- * <p>Time is advanced generously rather than by the exact backoff, because the production policy
- * jitters its delays on purpose - several printers dropped by one network blip must not all redial
- * on the same tick - so the <em>sequence</em> is deterministic and the instants are not.
- *
- * <p>What this replaces had none of it. {@code connect()} subscribed once and relied on
- * {@code doOnTerminate} to notice the end; a machine that refused the connection, or dropped it an
- * hour later, simply stopped being connected and nothing ever tried again.
+ * The timing half of plan item B3: retry, backoff, and giving up. No sleeps anywhere: the backoff
+ * runs on a {@link VirtualTimeScheduler} the test owns, so "wait out a minute of exponential
+ * backoff" is one call - which is also why {@link ConnectionPolicy} and the two schedulers are
+ * constructor arguments, not constants. Time is advanced generously rather than exactly, since
+ * production jitters its delays on purpose (so several printers dropped at once do not all redial
+ * on the same tick), so the sequence is deterministic and the instants are not. What this replaces
+ * had none of it: {@code connect()} subscribed once and relied on {@code doOnTerminate}, so a
+ * refused or later-dropped connection simply stopped, with nothing ever trying again.
  */
 class PrinterReactorRetryTest {
 
@@ -58,13 +51,8 @@ class PrinterReactorRetryTest {
     private Disposable watching;
     private PrinterReactor reactor;
 
-    /**
-     * A terminal manager that answers from a script instead of dialling.
-     *
-     * <p>{@code TerminalManager} is a class and not an interface, and this subclass is the cheapest
-     * honest way past that: its constructor only builds a {@code TcpClient}, so nothing here opens
-     * a socket or needs a printer to exist.
-     */
+    // TerminalManager is a class, not an interface; this subclass is the cheapest honest way past
+    // that - its constructor only builds a TcpClient, so nothing here opens a socket.
     private static final class ScriptedDial extends TerminalManager {
         private final AtomicInteger dialled = new AtomicInteger();
         private final List<Mono<HostTerminal>> answers;
@@ -74,13 +62,9 @@ class PrinterReactorRetryTest {
             this.answers = answers;
         }
 
-        /**
-         * <p>{@code Mono.defer}, and the reason is the point of the test. The retry resubscribes to
-         * the chain {@code connect()} was called on once, so a fake that counted calls would have
-         * counted one dial however many times it redialled - which is exactly what the first
-         * version of this file did, and it reported a working retry as a broken one. The real
-         * {@code TcpClient.connect()} is cold in the same way: the dial happens per subscription.
-         */
+        // Mono.defer is the point of the test: the retry resubscribes to the chain connect() was
+        // called on once, so a fake that counted calls wrong reported a working retry as broken -
+        // real TcpClient.connect() is cold the same way.
         @Override
         public Mono<HostTerminal> connect() {
             return Mono.defer(() -> answers.get(Math.min(dialled.getAndIncrement(), answers.size() - 1)));
@@ -138,13 +122,8 @@ class PrinterReactorRetryTest {
                 .toList();
     }
 
-    /**
-     * A machine that refuses is dialled the policy's number of times and then let alone.
-     *
-     * <p>The attempt numbers are the assertion that matters as much as the states: a farm that
-     * retries silently is indistinguishable from one that has given up, which is what the plan item
-     * means by "says so on the event stream".
-     */
+    // the attempt numbers matter as much as the states: a farm retrying silently is
+    // indistinguishable from one that has given up.
     @Test
     void aRefusedConnectionIsRetriedWithBackoffAndThenGivenUpOn() {
         var dial = new ScriptedDial(List.of(refused()));
@@ -173,13 +152,8 @@ class PrinterReactorRetryTest {
         assertTrue(told.stream().allMatch(event -> event.getMachineId().equals(id)));
     }
 
-    /**
-     * A link that drops after it was established is redialled, not merely forgotten.
-     *
-     * <p>The same chain as a refused connection, deliberately: everything from the dial to the end
-     * of the conversation is inside the retry, so "reconnect a machine that dropped" needed no
-     * second mechanism with its own backoff and its own bugs.
-     */
+    // same chain as a refused connection, deliberately: everything from dial to end-of-conversation
+    // is inside the retry, so "reconnect a dropped machine" needs no second mechanism.
     @Test
     void aDroppedLinkIsDialledAgain() {
         var firstLink = Sinks.<Void>empty();
@@ -200,13 +174,8 @@ class PrinterReactorRetryTest {
         assertEquals(List.of(OFFLINE, CONNECTING, ONLINE, CONNECTING, ONLINE), announced());
     }
 
-    /**
-     * Disconnecting mid-backoff stops the series instead of being recorded over it.
-     *
-     * <p>A retry is a subscription holding a timer, so the intent and the machinery both have to be
-     * cancelled. Without the second half a machine told to disconnect would come back a few seconds
-     * later, and the only trace would be a connection nobody asked for.
-     */
+    // a retry is a subscription holding a timer, so both the intent and the machinery must be
+    // cancelled, or the machine comes back a few seconds later as a connection nobody asked for.
     @Test
     void disconnectingDuringTheBackoffStopsIt() {
         var dial = new ScriptedDial(List.of(refused()));
@@ -223,12 +192,7 @@ class PrinterReactorRetryTest {
         assertFalse(announced().isEmpty());
     }
 
-    /**
-     * An impatient second click does not start a second series.
-     *
-     * <p>Two concurrent retry chains against one printer would double the dials and race to set the
-     * state, and nothing in the aggregate would have been able to tell.
-     */
+    // two concurrent retry chains against one printer would double the dials and race to set state.
     @Test
     void connectingTwiceDoesNotStartTwoSeries() {
         var dial = new ScriptedDial(List.of(refused()));
@@ -241,13 +205,8 @@ class PrinterReactorRetryTest {
         assertEquals(3, dial.dialled.get(), "one series of three, not two");
     }
 
-    /**
-     * A subscriber that arrives late is told where the machine is straight away.
-     *
-     * <p>The health signal in its stream form: the replay sink is seeded with the current state, so
-     * a browser attaching to a printer does not have to wait for the next thing to happen to it.
-     * The page used to infer "online" from the fact that <em>any</em> event had arrived.
-     */
+    // the replay sink is seeded with the current state, so a browser attaching does not wait for the
+    // next thing to happen - the page used to infer "online" from any event arriving at all.
     @Test
     void aLateSubscriberIsHandedTheCurrentState() {
         var link = Sinks.<Void>empty();

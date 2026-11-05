@@ -9,13 +9,11 @@ import java.util.List;
  * Ask the firmware whether what is in its EEPROM is readable - {@code M504}.
  *
  * <p>The verdict arrives on the event stream as an {@code EepromReport}, carrying the firmware's
- * message verbatim: {@code echo:EEPROM OK} is what MarlinSim writes, and <strong>the failure text
- * has never been captured</strong> - the simulator has no way to be asked for a corrupt one. That
- * is why the reply is a string rather than a boolean, and why the page renders the message instead
- * of a tick or a cross it would have had to guess the rule for.
+ * message verbatim: {@code echo:EEPROM OK} is what MarlinSim writes, and the failure text has never
+ * been captured - the simulator has no way to be asked for a corrupt one. That is why the reply is
+ * a string rather than a boolean a page would have had to guess the rule for.
  *
- * <p>It changes nothing. A validation is the one operation here an operator can run on a machine
- * mid-print without consequence.
+ * <p>Changes nothing - the one operation here safe to run on a machine mid-print.
  */
 public record ValidateSettings() implements PrinterCommand {
 

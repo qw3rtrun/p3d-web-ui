@@ -32,6 +32,10 @@ import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
  * Done printing file                    SdDonePrinting  - unbidden, at the end of a job
  * echo:SD card ok                       SdCardOk        - M21
  * echo:Now fresh file: test.gco         SdFreshFile     - M28, M32
+ * echo:; Steps per unit:                SettingsSection - M503, a heading
+ * echo:  M92 X80.00 Y80.00              SettingsValue   - M503, one setting
+ *   M92 X80.00 Y80.00                   SettingsValue   - M503 S0, the unprefixed shape
+ * echo:EEPROM OK                        EepromReport    - M504
  * ```
  *
  * **The `M20` entries between those two markers are deliberately absent**, and that is the one
@@ -40,11 +44,14 @@ import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
  *
  * The decoders partition the reply space - a test pins that no line is claimed by two - so [decode]
  * does not depend on the order of [decoders]. The Marlin ones come first anyway, because
- * `ok T:210.00 /210.00` is a temperature report and only incidentally an `ok`.
+ * `ok T:210.00 /210.00` is a temperature report and only incidentally an `ok`. `SettingsRsDecoder`
+ * sits ahead of `EchoRsDecoder` for the same reading, and `EchoMessage` excludes what it claims:
+ * `echo:` is a catch-all, and `M503` writes its whole report under it.
  *
  * **Null is not an error.** Most of what a printer says is still outside this set: the whole of
- * tiers 2 to 4 in todo 12, every `M503` settings line, the boot banner. Those lines are the
- * caller's to keep as raw text.
+ * tiers 2 to 4 in todo 12, the `M114 D` detail block, the boot banner. Those lines are the
+ * caller's to keep as raw text. `M503`'s settings report used to be on that list and no longer
+ * is - `SettingsRsDecoder` reads every line of it.
  *
  * ```
  * MarlinRsDecoder.decode("ok T:210.00 /210.00")        // OkTemperatureRs
@@ -61,6 +68,7 @@ object MarlinRsDecoder : GRsDecoder<GRs<*>> {
         SdCardRsDecoder,
         FirmwareInfoRs,
         CapabilityRs,
+        SettingsRsDecoder,
         EchoRsDecoder,
         EndstopRsDecoder,
         BaseRsDecoder,

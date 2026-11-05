@@ -16,8 +16,8 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * `serial_echo_start()` writes the prefix, and everything from a settings dump to a busy notice to
  * a rejected command comes out under it. [UnknownCommand] and [BusyNotice] are split out because a
  * host has to act on them; [SdCardOk] and [SdFreshFile] because what they report is the card
- * rather than the echo channel, and they are [SdCardRs] as well for that reason; everything else is
- * [EchoMessage].
+ * rather than the echo channel, and they are [SdCardRs] as well for that reason; `M503`'s whole
+ * report because it is a [SettingsRs] and not prose; everything else is [EchoMessage].
  *
  * ```
  * EchoRsDecoder.decode("echo:Unknown command: \"M9999\"")   // UnknownCommand("M9999")
@@ -34,8 +34,8 @@ interface EchoRs<D : EchoRs<D>> : GEventRs<D>
  *
  * Deliberately matches none of the specialisations - [UnknownCommand], [InvalidExtruder],
  * [BusyNotice], [DebugLevelRs], [ColdExtrusionRs], [ColdExtrusionPrevented], [SdCardOk],
- * [SdFreshFile] - so they partition the prefix between them and no line is claimed by two, the way
- * `DebugRs` and `ActionRs` partition `//`.
+ * [SdFreshFile], and the whole [SettingsRs] family - so they partition the prefix between them and
+ * no line is claimed by two, the way `DebugRs` and `ActionRs` partition `//`.
  *
  * ```
  * EchoMessage.decode("echo:busy")   // EchoMessage("busy")
@@ -51,13 +51,17 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
     companion object : GRsDecoder<EchoMessage> {
 
         /**
-         * The general `echo:` line - everything on that channel that is not one of the eight kinds
-         * with a class of its own.
+         * The general `echo:` line - everything on that channel that is not one of the kinds with
+         * a class of its own.
          *
-         * The `echo:` test comes first and is cheap, so the eight reads below happen only for a line
-         * that really is an echo. They are kept for a **direct** call, which has no other way to
-         * know; [EchoRsDecoder] answers the same question by trying the specific decoders first and
-         * never reaching this one for a line they claim.
+         * The `echo:` test comes first and is cheap, so the reads below happen only for a line that
+         * really is an echo. They are kept for a **direct** call, which has no other way to know;
+         * [EchoRsDecoder] answers the same question by trying the specific decoders first and never
+         * reaching this one for a line they claim.
+         *
+         * `SettingsRsDecoder` is among them although its types are not [EchoRs]: `M503` writes its
+         * whole report under this prefix, so without the exclusion every line of a settings dump
+         * would be claimed twice - once as the setting it is and once as prose.
          */
         override fun decode(line: String): EchoMessage? {
             val text = line.asciiTrim()
@@ -70,6 +74,7 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
             if (InvalidExtruder.match(line)) return null
             if (SdCardOk.match(line)) return null
             if (SdFreshFile.match(line)) return null
+            if (SettingsRsDecoder.match(line)) return null
             return EchoMessage(text.substring(PREFIX.length).asciiTrim())
         }
 

@@ -69,31 +69,31 @@ AdvancedOkRs	ok P15 B3
 ActionRs	//action:notification 0s
 EchoMessage	echo:Print time: 0s
 AdvancedOkRs	ok P15 B3
-EchoMessage	echo:; Linear Units:
-EchoMessage	echo:  G21 ; (mm)
-EchoMessage	echo:; Auto Temp Control:
-EchoMessage	echo:  M104 S210 B250 F0.00
-EchoMessage	echo:; Temperature Units:
-EchoMessage	echo:  M149 C ; Units in Celsius
-EchoMessage	echo:; Filament settings (Disabled):
-EchoMessage	echo:  M200 S0 D1.75
-EchoMessage	echo:; Steps per unit:
-EchoMessage	echo:  M92 X80.00 Y80.00 Z400.00 E500.00
-EchoMessage	echo:; Max feedrates (units/s):
-EchoMessage	echo:  M203 X300.00 Y300.00 Z5.00 E25.00
-EchoMessage	echo:; Max Acceleration (units/s2):
-EchoMessage	echo:  M201 X3000.00 Y3000.00 Z100.00 E10000.00
-EchoMessage	echo:; Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>):
-EchoMessage	echo:  M204 P3000.00 R3000.00 T3000.00
-EchoMessage	echo:; Advanced (B<min_segment_time_us> S<min_feedrate> T<min_travel_feedrate> J<junc_dev>):
-EchoMessage	echo:  M205 B20000.00 S0.00 T0.00 J0.01
-EchoMessage	echo:; Home offset:
-EchoMessage	echo:  M206 X0.00 Y0.00 Z0.00
-EchoMessage	echo:; Material heatup parameters:
-EchoMessage	echo:  M145 S0 H180.00 B70.00 F0
-EchoMessage	echo:  M145 S1 H240.00 B110.00 F0
-EchoMessage	echo:; Hotend PID:
-EchoMessage	echo:  M301 P22.20 I1.08 D114.00
+SettingsSection	echo:; Linear Units:
+SettingsValue	echo:  G21 ; (mm)
+SettingsSection	echo:; Auto Temp Control:
+SettingsValue	echo:  M104 S210 B250 F0.00
+SettingsSection	echo:; Temperature Units:
+SettingsValue	echo:  M149 C ; Units in Celsius
+SettingsSection	echo:; Filament settings (Disabled):
+SettingsValue	echo:  M200 S0 D1.75
+SettingsSection	echo:; Steps per unit:
+SettingsValue	echo:  M92 X80.00 Y80.00 Z400.00 E500.00
+SettingsSection	echo:; Max feedrates (units/s):
+SettingsValue	echo:  M203 X300.00 Y300.00 Z5.00 E25.00
+SettingsSection	echo:; Max Acceleration (units/s2):
+SettingsValue	echo:  M201 X3000.00 Y3000.00 Z100.00 E10000.00
+SettingsSection	echo:; Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>):
+SettingsValue	echo:  M204 P3000.00 R3000.00 T3000.00
+SettingsSection	echo:; Advanced (B<min_segment_time_us> S<min_feedrate> T<min_travel_feedrate> J<junc_dev>):
+SettingsValue	echo:  M205 B20000.00 S0.00 T0.00 J0.01
+SettingsSection	echo:; Home offset:
+SettingsValue	echo:  M206 X0.00 Y0.00 Z0.00
+SettingsSection	echo:; Material heatup parameters:
+SettingsValue	echo:  M145 S0 H180.00 B70.00 F0
+SettingsValue	echo:  M145 S1 H240.00 B110.00 F0
+SettingsSection	echo:; Hotend PID:
+SettingsValue	echo:  M301 P22.20 I1.08 D114.00
 AdvancedOkRs	ok P15 B3
 ActionRs	//action:notification corpus capture
 AdvancedOkRs	ok P15 B3

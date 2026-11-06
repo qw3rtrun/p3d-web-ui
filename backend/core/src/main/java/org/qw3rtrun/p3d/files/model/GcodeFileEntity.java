@@ -21,6 +21,15 @@ import java.util.UUID;
  * its size and line count, and whatever the slicer said. Everything on this row was computed once,
  * while the upload streamed past, and none of it changes afterwards - a stored file is immutable,
  * so there is no operation on this entity that edits anything.
+ *
+ * <p><strong>Neither {@code @DynamicUpdate} nor {@code @Version}, and that is the audited
+ * answer</strong> (#100): there is no {@code UPDATE} to narrow and no lost update to refuse,
+ * because this row is inserted once and then only deleted. {@code GcodeFileServiceImpl.store} is
+ * the single writer and it saves a new entity; a re-upload of the same bytes returns the existing
+ * record rather than rewriting it, which is why {@code content_hash} is unique. Two concurrent
+ * uploads of identical content race the unique constraint, not each other's columns. <strong>Any
+ * method that edits a stored file invalidates this note</strong> - the immutability is the whole
+ * argument, and a mutable column here would need the same answer {@code PrinterEntity} got.
  */
 @Entity
 @Table(name = "gcode_file")

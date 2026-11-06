@@ -1,10 +1,13 @@
 package org.qw3rtrun.p3d.jobs;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.files.SliceInfo;
 import org.qw3rtrun.p3d.api.jobs.Job;
+import org.qw3rtrun.p3d.api.jobs.JobFeedCompleted;
+import org.qw3rtrun.p3d.api.jobs.JobFeedFailed;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
 import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobProgressed;
@@ -22,8 +25,10 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.event.EventListener;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.modulith.events.CompletedEventPublications;
 import org.springframework.transaction.support.TransactionTemplate;
+import reactor.core.scheduler.Schedulers;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;
@@ -33,9 +38,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import static org.awaitility.Awaitility.await;
@@ -43,6 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -97,13 +106,33 @@ class JobServiceTest {
         }
     }
 
-    /** Catches what the queue announces. A plain listener, so it sees events synchronously. */
+    /**
+     * Catches what the queue announces. A plain listener, so it sees events synchronously and on
+     * whichever thread did the work - which also makes it the probe for <em>where</em> that work
+     * ran, since {@link JobStateChanged} is published from inside the transaction that moved the
+     * job.
+     */
     static class Announcements {
         final List<JobStateChanged> heard = new ArrayList<>();
+        final List<JobStateChanged> fromAThreadThatCannotBlock = new CopyOnWriteArrayList<>();
+
+        /**
+         * A seam for the contention tests: an announcement is published from inside the
+         * transaction that moved the job and before it commits, so this is the one point at which
+         * a test can get another writer in between a transition's read and its write.
+         */
+        volatile Consumer<JobStateChanged> alsoDo;
 
         @EventListener
         void on(JobStateChanged event) {
             heard.add(event);
+            if (Schedulers.isInNonBlockingThread()) {
+                fromAThreadThatCannotBlock.add(event);
+            }
+            var hook = alsoDo;
+            if (hook != null) {
+                hook.accept(event);
+            }
         }
     }
 
@@ -144,6 +173,11 @@ class JobServiceTest {
 
     @Autowired
     private CompletedEventPublications completed;
+
+    @AfterEach
+    void disarmTheHook() {
+        announcements.alsoDo = null;
+    }
 
     private Job queued(String name) {
         var file = files.add(name);
@@ -506,11 +540,64 @@ class JobServiceTest {
         assertTrue(jobs.fetchAll().size() >= 2);
     }
 
+    // --- where a feed outcome is written down -----------------------------------------------
+    //
+    // Both tests below report the outcome from Schedulers.parallel(), whose workers carry the same
+    // NonBlocking marker a reactor-netty event loop does. That is the thread a feed that runs out
+    // of file actually reports on, and the probe is the thread the write ran on rather than
+    // whether it ran at all - H2 would happily serve JDBC from an event loop, which is the whole
+    // reason this had no symptom.
+
+    /** A print that reaches the end of its file still reaches {@code COMPLETED}, and not from the thread that said so. */
+    @Test
+    void aFeedThatCompletesOnAnEventLoopIsWrittenDownOffIt() {
+        var machine = UUID.randomUUID();
+        var job = queued("off-the-loop.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+        announcements.fromAThreadThatCannotBlock.clear();
+
+        Schedulers.parallel().schedule(() -> publisher.publishEvent(
+                new JobFeedCompleted(job.id(), machine, 96_152, LocalDateTime.now())));
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertEquals(JobState.COMPLETED,
+                jobs.fetch(job.id()).orElseThrow().state()));
+        assertEquals(List.of(), mine(announcements.fromAThreadThatCannotBlock, job),
+                "the transaction that finished the job must not run on the thread that reported it");
+    }
+
+    /** And the other way a feed ends. */
+    @Test
+    void aFeedThatFailsOnAnEventLoopIsWrittenDownOffIt() {
+        var machine = UUID.randomUUID();
+        var job = queued("broken-off-the-loop.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+        announcements.fromAThreadThatCannotBlock.clear();
+
+        Schedulers.parallel().schedule(() -> publisher.publishEvent(new JobFeedFailed(job.id(),
+                machine, 1_204, "the connection went away", LocalDateTime.now())));
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            var after = jobs.fetch(job.id()).orElseThrow();
+            assertEquals(JobState.FAILED, after.state());
+            assertTrue(after.reason().contains("1204"), after.reason());
+        });
+        assertEquals(List.of(), mine(announcements.fromAThreadThatCannotBlock, job),
+                "the transaction that failed the job must not run on the thread that reported it");
+    }
+
+    private static List<JobStateChanged> mine(List<JobStateChanged> all, Job job) {
+        return all.stream().filter(event -> job.id().equals(event.jobId())).toList();
+    }
+
     // --- two writers, one row ---------------------------------------------------------------
     //
-    // Both tests below hold one transaction open at the point a real caller holds one - having
-    // read the job, before writing a field onto it - and move the job from another thread in
-    // between. The interleaving is forced rather than hoped for: the window is a few milliseconds
+    // The first two tests below hold one transaction open at the point a real caller holds one -
+    // having read the job, before writing a field onto it - and move the job from another thread in
+    // between. The third does the same the other way round, through the service, using the
+    // announcement a transition publishes from inside its own transaction as the seam. The
+    // interleaving is forced rather than hoped for in all three: the window is a few milliseconds
     // and a test that writes from two threads and hopes passes against the bug on nearly every run.
 
     /** Runs {@code body} in its own transaction on another thread, so the test can move the job while it is open. */
@@ -537,6 +624,11 @@ class JobServiceTest {
      * each time, all of them {@code POST /api-jobs/{id}/start} answering
      * {@code {"state":"QUEUED","attempted":"RUNNING"}} four milliseconds after the log had recorded
      * {@code QUEUED -> ASSIGNED} for that job.
+     *
+     * <p>{@code @DynamicUpdate} (#97) narrowed what such a write carries, so that it stopped
+     * dragging the {@code state} column along with it. {@code @Version} (#100) is the stronger
+     * statement and the one asserted here: the write is refused outright, because the row its
+     * reader saw is not the row it is writing to.
      */
     @Test
     void aReasonWrittenFromAStaleReadDoesNotUndoAnAssignmentMadeSince() {
@@ -557,7 +649,10 @@ class JobServiceTest {
         waitFor(read);
         assertEquals(JobState.ASSIGNED, done(jobs.assign(job.id(), machine)).state());
         assigned.countDown();
-        pass.join();
+
+        var refused = assertThrows(CompletionException.class, pass::join);
+        assertInstanceOf(OptimisticLockingFailureException.class, refused.getCause(),
+                "a writer that was overtaken is refused rather than landing on top of the winner");
 
         var after = jobs.fetch(job.id()).orElseThrow();
         assertEquals(JobState.ASSIGNED, after.state(),
@@ -568,10 +663,54 @@ class JobServiceTest {
     }
 
     /**
+     * Two genuine transitions on one row. The other writer commits while this one is still open -
+     * it has read {@code QUEUED} and decided, and has not yet written - which is the race
+     * {@code @DynamicUpdate} explicitly does not close: both writers carry the {@code state}
+     * column because moving the job is the whole of what they do.
+     *
+     * <p>The loser is told where the job actually went, in the same
+     * {@code {"state":…,"attempted":…}} shape an illegal transition answers with, so there is one
+     * failure shape for "the job was not in the state you thought" and
+     * {@code Outcomes.of(JobOutcome)} turns both into a 409. Without {@code @Version} the losing
+     * write lands, this test's {@code cancel} answers {@code Done}, and the assignment is gone with
+     * no trace anywhere.
+     */
+    @Test
+    void aTransitionThatLosesTheRaceIsRefusedWithWhereTheJobWent() {
+        var machine = UUID.randomUUID();
+        var job = queued("contended.gcode");
+
+        announcements.alsoDo = event -> {
+            if (!job.id().equals(event.jobId()) || event.to() != JobState.CANCELLED) {
+                return;
+            }
+            announcements.alsoDo = null;
+            inAnOpenTransaction(() -> {
+                var entity = repo.findById(job.id()).orElseThrow();
+                entity.moveTo(JobState.ASSIGNED, machine, null, LocalDateTime.now());
+                repo.save(entity);
+            }).join();
+        };
+
+        var refusal = refused(jobs.cancel(job.id(), "the operator changed their mind"));
+
+        assertEquals(job.id(), refusal.jobId());
+        assertEquals(JobState.ASSIGNED, refusal.state(), "where the job actually went");
+        assertEquals(JobState.CANCELLED, refusal.attempted());
+
+        var after = jobs.fetch(job.id()).orElseThrow();
+        assertEquals(JobState.ASSIGNED, after.state(), "and the writer that won keeps its move");
+        assertEquals(machine, after.machineId());
+        assertNull(after.finishedAt(), "nothing about the cancellation reached the row");
+    }
+
+    /**
      * The same shape with a far shorter fuse: a checkpoint arrives about once a second for every
-     * running printer, and {@code JobFeeder} publishes an exact one immediately <em>before</em> the
-     * event that stops the job - so a checkpoint whose transaction is still open when the pause
-     * commits is the designed sequence, not an unlucky one.
+     * running printer, so a checkpoint whose transaction is still open when a pause commits is the
+     * designed sequence, not an unlucky one. It is refused and dropped, which costs nothing: the
+     * timer writes again a second later, and the reading that must not be lost - the exact one
+     * taken when the feed stops - is published from inside the transition's own transaction and so
+     * shares its persistence context instead of racing it.
      */
     @Test
     void aProgressCheckpointFromBeforeAPauseDoesNotPutTheJobBackToRunning() {
@@ -595,14 +734,20 @@ class JobServiceTest {
         waitFor(read);
         assertEquals(JobState.PAUSED, done(jobs.pause(job.id())).state());
         paused.countDown();
-        checkpoint.join();
+
+        var refused = assertThrows(CompletionException.class, checkpoint::join);
+        assertInstanceOf(OptimisticLockingFailureException.class, refused.getCause());
 
         var after = jobs.fetch(job.id()).orElseThrow();
         assertEquals(JobState.PAUSED, after.state(),
                 "a job the operator paused must stay paused; a checkpoint records where it got to"
                         + " and decides nothing about whether it is still running");
-        assertEquals(1200, after.progress().blocksSent(),
-                "and the reading itself still lands - this is about which columns a write carries,"
-                        + " not about dropping the write");
+        assertEquals(0, after.progress().blocksSent(), "the overtaken reading is dropped");
+
+        // and nothing is lost for long: the next one is written against the row as it now is.
+        publisher.publishEvent(new JobProgressed(job.id(), machine,
+                new JobProgress(1200, 3, 14_000, 500_000, 4,
+                        LocalDateTime.now(), LocalDateTime.now())));
+        assertEquals(1200, jobs.fetch(job.id()).orElseThrow().progress().blocksSent());
     }
 }

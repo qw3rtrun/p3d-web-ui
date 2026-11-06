@@ -15,6 +15,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.NonNull;
+import org.hibernate.annotations.DynamicUpdate;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.BedVolume;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
@@ -29,7 +30,37 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+/**
+ * One machine in the roster: where to reach it, what a person declared about it, what its firmware
+ * reported, and where {@code core} last said its connection had got to. Internal to
+ * {@code management}; what crosses is {@link org.qw3rtrun.p3d.api.model.Descriptor}.
+ *
+ * <p><strong>{@code @DynamicUpdate}, because three transactions write this row and none of them
+ * writes all of it</strong> (#100). An operator's edit owns the name, the address and the declared
+ * spec; {@link #learnedFirmware}/{@link #learnedCapability} own the profile;
+ * {@link #connectionChanged} owns one column. Hibernate's default is to write <em>every</em>
+ * column from the snapshot the transaction loaded, so each of them also wrote back whatever the
+ * others had put there - {@code update}'s own javadoc claims an edit "writes only the spec columns
+ * and the three reachability fields", which was true in Java and false in SQL. The three listeners
+ * are serialised per machine by that machine's own listener thread, but an edit is not: it arrives
+ * on {@code boundedElastic} from an HTTP request, and the moment somebody is most likely to press
+ * Save is while they are watching a printer connect, which is when the other three are busiest.
+ * {@code PrinterConcurrentWriteTest} forces both directions; the expensive one is an edit putting
+ * back a stale {@code connection_state}, because that column is read exactly once, at startup, to
+ * decide which machines to dial again - so reverting it costs a reconnection and nothing says so
+ * until the restart.
+ *
+ * <p><strong>No {@code @Version} here, unlike {@code JobEntity}</strong>, and the reason is that
+ * there is nothing to tell the loser. A refusal in this module has no value type - {@code update}
+ * returns a {@code Descriptor} and {@code orElseThrow}s - so an
+ * {@code OptimisticLockingFailureException} would reach a REST caller as a 500, which is the one
+ * thing this layer's status mapping exists to prevent. With the writers' columns disjoint, what is
+ * left for a version to catch is two operators editing the same printer at the same instant, which
+ * is an ordinary form race whose cost is one of the two edits. Giving the roster a refusal value
+ * first, and a version second, is the order that work wants doing in.
+ */
 @Entity
+@DynamicUpdate
 @NoArgsConstructor
 @AllArgsConstructor
 @Getter

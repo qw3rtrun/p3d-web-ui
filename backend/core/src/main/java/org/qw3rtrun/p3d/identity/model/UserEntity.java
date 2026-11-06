@@ -21,6 +21,17 @@ import org.qw3rtrun.p3d.api.identity.FarmUser;
  * {@code Alice} and {@code alice} cannot become two accounts where revoking one leaves the other
  * working. The role is stored as its name, not {@code EnumType.ORDINAL}'s number, so inserting a
  * role into the middle of {@link FarmRole} cannot silently promote every existing user.
+ *
+ * <p><strong>Neither {@code @DynamicUpdate} nor {@code @Version}, and that is the audited
+ * answer</strong> (#100). Signing in does not write this row - there is no last-login column and
+ * no attempt counter - so the only writers are {@code FarmUserDirectoryImpl.add} (an insert) and
+ * {@code changePassword}, both of which are ADMIN-only requests about a named account. Two
+ * administrators changing the same person's password in the same second is the whole of the race,
+ * and its cost is that one of the two passwords is the one that works, which whoever set it can
+ * see by trying it. A {@code @Version} would buy a 500 on that path rather than a better outcome,
+ * since this module has no refusal value either. <strong>Adding anything the login path writes</strong>
+ * - a failed-attempt counter for the rate limiting this farm does not yet have, a last-seen
+ * timestamp - <strong>makes every sign-in a writer and this note wrong.</strong>
  */
 @Entity
 @Table(name = "app_user")

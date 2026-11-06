@@ -5,8 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.jobs.Job;
-import org.qw3rtrun.p3d.api.jobs.JobFeedCompleted;
-import org.qw3rtrun.p3d.api.jobs.JobFeedFailed;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
 import org.qw3rtrun.p3d.api.jobs.JobProgressed;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
@@ -18,8 +16,10 @@ import org.qw3rtrun.p3d.jobs.model.JobEntity;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.modulith.events.ApplicationModuleListener;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -37,11 +37,42 @@ import java.util.UUID;
  * a user clicking Pause while the last line is being acknowledged).
  *
  * <p>A listener is {@code @ApplicationModuleListener} only when its event is published inside a
- * transaction; {@code core} publishes {@link JobFeedCompleted}/{@link JobFeedFailed}/
- * {@link JobProgressed} from a reactive thread with no transaction to tie a durable publication to,
- * so those are a plain {@code @EventListener} plus their own {@code @Transactional} (which has to be
- * on the listener and not only on the verb it calls, since that call is a self-invocation and would
- * skip the proxy) - making those three outcomes at-most-once rather than guaranteed.
+ * transaction, which rules it out for anything {@code core} reports from a reactive thread -
+ * {@link JobProgressed} here, and the two feed outcomes in {@link FeedOutcomes}. Those are a plain
+ * {@code @EventListener}, which makes them at-most-once rather than guaranteed, and the
+ * {@code @Transactional} goes on the listener rather than only on the verb it calls, since that call
+ * is a self-invocation and would otherwise skip the proxy.
+ *
+ * <p>{@link #onProgress} is therefore the one listener left here that can open a transaction on a
+ * reactor-netty thread: a checkpoint usually arrives from {@code JobFeeder}'s own timer, but the
+ * exact reading taken when a feed ends is published inline from wherever the feed ended. That is
+ * deliberate for now - the reading must be written before the event that moves the job, and running
+ * inline is what buys that order - so moving it needs a design for keeping the order rather than a
+ * scheduler hop.
+ *
+ * <p><strong>Every write path that can be overtaken owns its transaction explicitly</strong>
+ * (#100), with a {@link TransactionTemplate} rather than {@code @Transactional}. Since
+ * {@code JobEntity} carries a {@code @Version}, a writer whose read has been overtaken is refused
+ * at flush - and the flush is on commit, which is <em>after</em> an annotated method has returned.
+ * What to tell the caller therefore cannot be decided inside the method that failed; it has to be
+ * decided outside the transaction boundary, which is what makes that boundary something this class
+ * states rather than something the proxy supplies. The verbs below are consequently not annotated:
+ * the template in {@link #move} is their transaction.
+ *
+ * <p>Being overtaken is answered the way an illegal transition is - {@link JobOutcome.Refused}
+ * carrying the state the job actually went to, which {@code Outcomes} turns into a 409 - so there
+ * is one failure shape for "the job was not in the state you thought". It is deliberately
+ * <em>not</em> retried: the caller asked to move a job that was somewhere else, and doing it anyway
+ * from wherever it has since got to decides on their behalf something they can see for themselves.
+ * {@link #onProgress} and {@link #blocked} are the exceptions, and only because neither has a
+ * caller to tell - both merely annotate the row, so losing drops the write: the checkpoint timer
+ * writes again a second later, and a reason attached to a job that has moved is stale by
+ * definition.
+ *
+ * <p>The two listeners that call {@link #apply} directly - {@link #onMachineDeleted} and
+ * {@link #failWhatTheRestartInterrupted} - keep {@code @Transactional} and let the failure out.
+ * That is right for both: the first is durable, so the registry redelivers it, and the second runs
+ * at startup where nothing else is moving jobs.
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -51,6 +82,7 @@ public class JobServiceImpl implements JobService {
     private final GcodeFileService files;
     private final ApplicationEventPublisher events;
     private final Clock clock;
+    private final TransactionTemplate transactions;
 
     /** Queues a file. Checked here rather than by a foreign key: the two live in different modules, and a finished job's record must survive deleting the file it printed. */
     @Override
@@ -70,49 +102,41 @@ public class JobServiceImpl implements JobService {
     }
 
     @Override
-    @Transactional
     public JobOutcome assign(UUID jobId, UUID machineId) {
         return move(jobId, JobState.ASSIGNED, machineId, null);
     }
 
     @Override
-    @Transactional
     public JobOutcome unassign(UUID jobId, String reason) {
         return move(jobId, JobState.QUEUED, null, reason);
     }
 
     @Override
-    @Transactional
     public JobOutcome start(UUID jobId) {
         return move(jobId, JobState.RUNNING, null, null);
     }
 
     @Override
-    @Transactional
     public JobOutcome pause(UUID jobId) {
         return move(jobId, JobState.PAUSED, null, null);
     }
 
     @Override
-    @Transactional
     public JobOutcome resume(UUID jobId) {
         return move(jobId, JobState.RUNNING, null, null);
     }
 
     @Override
-    @Transactional
     public JobOutcome complete(UUID jobId) {
         return move(jobId, JobState.COMPLETED, null, null);
     }
 
     @Override
-    @Transactional
     public JobOutcome fail(UUID jobId, String reason) {
         return move(jobId, JobState.FAILED, null, reason);
     }
 
     @Override
-    @Transactional
     public JobOutcome cancel(UUID jobId, String reason) {
         return move(jobId, JobState.CANCELLED, null, reason);
     }
@@ -140,22 +164,6 @@ public class JobServiceImpl implements JobService {
     }
 
     /**
-     * The machine has been sent every line of the file, so the job is done - crosses as an event
-     * rather than a call since only {@code core} can know it (holding the socket) and only this
-     * module may move a job, the same division a firmware report crosses in B2, the other way.
-     * {@code @ApplicationModuleListener} here would silently drop the event, since it is published by
-     * {@code core} from a reactor-netty thread with no transaction - measured live as a
-     * 96,152-block print that reached the end of its file and stayed {@code RUNNING} forever. See the
-     * class javadoc for why this makes a feed outcome at-most-once.
-     */
-    @EventListener
-    @Transactional
-    public void onFeedCompleted(JobFeedCompleted event) {
-        log.info("job {} was fed {} blocks and is done", event.jobId(), event.lines());
-        complete(event.jobId());
-    }
-
-    /**
      * A job that was printing when the process died cannot still be printing - plan item C5. The
      * feed lived in memory and the process took it with it, so a {@code RUNNING} job would hold its
      * printer against the scheduler forever and claim a cold machine is halfway through a part. They
@@ -180,29 +188,55 @@ public class JobServiceImpl implements JobService {
                         + job.describe().progress().blocksSent() + " blocks"));
     }
 
-    /** A running job got further, so the checkpoint moves. Arrives about once a second, not once a block - {@code core} publishes on a timer - so this is one write per second per running printer, a checkpoint rather than a ledger. */
+    /**
+     * A running job got further, so the checkpoint moves. Arrives about once a second, not once a
+     * block - {@code core} publishes on a timer - so this is one write per second per running
+     * printer, a checkpoint rather than a ledger. A reading overtaken by a transition is dropped
+     * rather than refused to anybody: the timer writes again a second later, and the one reading
+     * that has to land - the exact one taken when a feed stops - is published from inside the
+     * transition's own transaction and therefore shares its persistence context rather than racing
+     * it.
+     */
     @EventListener
-    @Transactional
     public void onProgress(JobProgressed event) {
-        repo.findById(event.jobId()).ifPresent(job -> {
-            job.progressed(event.progress());
-            repo.save(job);
-        });
-    }
-
-    /** The feed stopped before the file did. */
-    @EventListener
-    @Transactional
-    public void onFeedFailed(JobFeedFailed event) {
-        fail(event.jobId(), event.reason() + " (after " + event.lines() + " blocks)");
+        try {
+            transactions.executeWithoutResult(status ->
+                    repo.findById(event.jobId()).ifPresent(job -> {
+                        job.progressed(event.progress());
+                        repo.save(job);
+                    }));
+        } catch (OptimisticLockingFailureException lost) {
+            log.debug("the checkpoint for job {} was overtaken by a transition and dropped",
+                    event.jobId());
+        }
     }
 
     private JobOutcome move(UUID jobId, JobState next, UUID machineId, String reason) {
-        Optional<JobEntity> found = repo.findById(jobId);
-        if (found.isEmpty()) {
-            return new JobOutcome.Refused(jobId, null, next, "there is no job " + jobId);
+        try {
+            return transactions.execute(status -> {
+                Optional<JobEntity> found = repo.findById(jobId);
+                if (found.isEmpty()) {
+                    return new JobOutcome.Refused(jobId, null, next, "there is no job " + jobId);
+                }
+                return apply(found.get(), next, machineId, reason);
+            });
+        } catch (OptimisticLockingFailureException lost) {
+            return overtaken(jobId, next);
         }
-        return apply(found.get(), next, machineId, reason);
+    }
+
+    /** Where the job actually went while this move was being decided, as the refusal its caller gets. */
+    private JobOutcome overtaken(UUID jobId, JobState attempted) {
+        var where = transactions.execute(
+                status -> repo.findById(jobId).map(JobEntity::getState).orElse(null));
+        if (where == null) {
+            return new JobOutcome.Refused(jobId, null, attempted, "there is no job " + jobId);
+        }
+        log.info("job {} could not become {}: something else moved it to {} first",
+                jobId, attempted, where);
+        return new JobOutcome.Refused(jobId, where, attempted,
+                "this job was moved to " + where + " by something else before it could become "
+                        + attempted);
     }
 
     private JobOutcome apply(JobEntity job, JobState next, UUID machineId, String reason) {
@@ -220,25 +254,30 @@ public class JobServiceImpl implements JobService {
         return new JobOutcome.Done(job.describe());
     }
 
-    /** Records why a queued job is stuck, without moving it - only when the reason has changed, since a scheduler runs on every transition and on a timer and would otherwise rewrite the same row forever. */
+    /** Records why a queued job is stuck, without moving it - only when the reason has changed, since a scheduler runs on every transition and on a timer and would otherwise rewrite the same row forever. A reason overtaken by a transition is dropped rather than written: a job that has moved is not waiting for anything. */
     @Override
-    @Transactional
     public JobOutcome blocked(UUID jobId, String why) {
-        var found = repo.findById(jobId);
-        if (found.isEmpty()) {
-            return new JobOutcome.Refused(jobId, null, null, "there is no job " + jobId);
+        try {
+            return transactions.execute(status -> {
+                var found = repo.findById(jobId);
+                if (found.isEmpty()) {
+                    return new JobOutcome.Refused(jobId, null, null, "there is no job " + jobId);
+                }
+                var job = found.get();
+                if (job.getState() != JobState.QUEUED) {
+                    return new JobOutcome.Refused(jobId, job.getState(), null,
+                            "only a queued job can be waiting for a machine");
+                }
+                if (job.blockedReasonIs(why)) {
+                    return new JobOutcome.Done(job.describe());
+                }
+                log.info("job {} is waiting: {}", jobId, why);
+                job.blocked(why);
+                return new JobOutcome.Done(repo.save(job).describe());
+            });
+        } catch (OptimisticLockingFailureException lost) {
+            return overtaken(jobId, null);
         }
-        var job = found.get();
-        if (job.getState() != JobState.QUEUED) {
-            return new JobOutcome.Refused(jobId, job.getState(), null,
-                    "only a queued job can be waiting for a machine");
-        }
-        if (job.blockedReasonIs(why)) {
-            return new JobOutcome.Done(job.describe());
-        }
-        log.info("job {} is waiting: {}", jobId, why);
-        job.blocked(why);
-        return new JobOutcome.Done(repo.save(job).describe());
     }
 
     @Override

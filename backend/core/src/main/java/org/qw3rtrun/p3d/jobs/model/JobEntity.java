@@ -6,9 +6,11 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.DynamicUpdate;
+import org.hibernate.annotations.OptimisticLock;
 import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
@@ -33,7 +35,7 @@ import java.util.UUID;
  * job without moving it - {@link #blocked} (why a queued job has no machine) and
  * {@link #progressed} (how far a running one has got) - and Hibernate's default is to write
  * <em>every</em> column, so each of them also wrote back the {@code state} and {@code machine_id}
- * its own transaction had read. There is no {@code @Version} here, so nothing refused it: a write
+ * its own transaction had read. There was no {@code @Version} then, so nothing refused it: a write
  * that changed one field silently undid a transition another transaction had committed in between.
  * Measured as issue #97's second defect, with {@code FarmScheduler}'s pass on its own thread:
  * {@code PrintJobIntegrationTest} failed three runs out of three, a different test each time, all
@@ -45,8 +47,35 @@ import java.util.UUID;
  * {@code JobFeeder} publishes an exact one immediately before the event that stops the job, so a
  * pause reverted to {@code RUNNING} by the checkpoint that preceded it is the designed sequence.
  * Writing only what changed makes "this does not move the job" true in SQL as well as in Java.
- * Two transitions racing each other still both write {@code state} and the later one still wins;
- * closing that needs a version column, and nothing has been seen to need it.
+ *
+ * <p><strong>{@code @Version} closes the half {@code @DynamicUpdate} cannot</strong> (#100). Two
+ * writers that both genuinely move the job both carry the {@code state} column, because moving it
+ * is the whole of what they do - so narrowing the write does nothing for them and the later commit
+ * silently overwrote the earlier one. Every update now carries {@code WHERE version = ?}, and a
+ * writer that reads a row somebody else has since moved is refused at flush rather than landing on
+ * top of them. {@code JobServiceImpl} turns that refusal into {@code JobOutcome.Refused} carrying
+ * the state the job actually went to, which is a 409 and the same shape an illegal transition
+ * answers with; an {@code OptimisticLockingFailureException} must never reach a REST caller as a
+ * 500.
+ *
+ * <p><strong>The lock covers the transition and nothing else</strong>, which is why the checkpoint
+ * columns and {@code blocked_reason} are {@code @OptimisticLock(excluded = true)}. Without that,
+ * {@code @Version} turns the two annotate-the-row writers into competitors for the version in the
+ * other direction: a scheduler pass writing <em>why</em> a job is waiting bumps the version, and
+ * the operator's {@code assign} - which read the same row a moment earlier - is then refused by a
+ * write that decided nothing. Measured: {@code PrintJobIntegrationTest} failed intermittently (two
+ * of twelve on one run, three across a full build, none on the next) with
+ * {@code POST /api-jobs/&#123;id&#125;/start} answering 409 because the {@code assign} before it
+ * had quietly lost to {@code job … is waiting: it is pinned to …, which is OFFLINE}. Excluding
+ * them states the same rule {@code @DynamicUpdate} states in SQL - "this does not move the job" -
+ * in the lock as well. The exclusion is one-way, which is what is wanted: such a write does not
+ * <em>increment</em> the version, so it cannot beat a transition, but it is still
+ * <em>checked</em> against it, so a reason or a reading that has been overtaken is still dropped
+ * rather than landing on a job that has moved.
+ *
+ * <p>A boxed {@code Long}, not a {@code long}, so Spring Data reads "is this new" off the version
+ * rather than off the assigned {@code @Id} - a primitive would fall back to the id check, find one
+ * set by the constructor, and turn every insert into a merge and a wasted {@code SELECT}.
  */
 @Entity
 @DynamicUpdate
@@ -57,6 +86,10 @@ public class JobEntity {
 
     @Id
     UUID id;
+
+    @Version
+    @Column(nullable = false)
+    Long version;
 
     @Column(name = "file_id", nullable = false)
     UUID fileId;
@@ -85,16 +118,22 @@ public class JobEntity {
     LocalDateTime finishedAt;
 
     /** The last progress checkpoint, approximate - see the changeset. Null means never run, which is a different statement from zero. */
+    @OptimisticLock(excluded = true)
     @Column(name = "blocks_sent")
     Long blocksSent;
+    @OptimisticLock(excluded = true)
     @Column(name = "blocks_in_flight")
     Integer blocksInFlight;
+    @OptimisticLock(excluded = true)
     @Column(name = "bytes_sent")
     Long bytesSent;
+    @OptimisticLock(excluded = true)
     @Column(name = "bytes_total")
     Long bytesTotal;
+    @OptimisticLock(excluded = true)
     @Column(name = "layer")
     Integer layer;
+    @OptimisticLock(excluded = true)
     @Column(name = "progress_at")
     LocalDateTime progressAt;
 
@@ -117,6 +156,7 @@ public class JobEntity {
     String requiresTag;
 
     /** Why this queued job has not been given a machine yet - separate from {@link #reason} (why a job ended), since a job blocked for an hour can still run perfectly. */
+    @OptimisticLock(excluded = true)
     @Column(name = "blocked_reason", length = 1024)
     String blockedReason;
 

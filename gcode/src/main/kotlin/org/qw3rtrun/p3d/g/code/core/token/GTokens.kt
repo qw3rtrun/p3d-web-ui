@@ -280,13 +280,24 @@ fun String.asGFloat() = GFloat(this)
 
 fun Int.asGFloat() = GFloat(this)
 
+/** Unvalidated: [GLetter]'s constructor is public and the core does not throw, so an alias over it cannot enforce what the constructor does not. */
 fun Char.asGLetter() = GLetter(this)
 
 /**
- * @throws IllegalArgumentException if the string is not a single letter
+ * Parses a one-character string into a letter identifier. Identifiers are ASCII letters (spec 4.3),
+ * spelled out as comparisons per `GTokenizer`'s rule rather than `Char.isLetter()`, which accepts
+ * the whole Unicode category. Lowercase is accepted on spec 2.2's case rule and not 4.3's `A`-`Z`,
+ * for parity with the tokenizer, which emits lowercase letters for `headKey` to fold.
+ *
+ * @throws IllegalArgumentException if the string is not a single ASCII letter
  */
-fun String.asGLetter() =
-    if (this.length == 1 && this[0].isLetter()) GLetter(this[0]) else throw IllegalArgumentException("'$this' is not a letter")
+fun String.asGLetter(): GLetter {
+    if (this.length == 1) {
+        val c = this[0]
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) return GLetter(c)
+    }
+    throw IllegalArgumentException("'$this' is not an ASCII letter")
+}
 
 fun String.asGQuotedString() = GQuotedString(this)
 

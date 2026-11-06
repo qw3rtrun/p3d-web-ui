@@ -5,6 +5,8 @@ import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.files.SliceInfo;
 import org.qw3rtrun.p3d.api.jobs.Job;
+import org.qw3rtrun.p3d.api.jobs.JobFeedCompleted;
+import org.qw3rtrun.p3d.api.jobs.JobFeedFailed;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
 import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobProgressed;
@@ -24,6 +26,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.event.EventListener;
 import org.springframework.modulith.events.CompletedEventPublications;
 import org.springframework.transaction.support.TransactionTemplate;
+import reactor.core.scheduler.Schedulers;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;
@@ -34,6 +37,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -97,13 +101,22 @@ class JobServiceTest {
         }
     }
 
-    /** Catches what the queue announces. A plain listener, so it sees events synchronously. */
+    /**
+     * Catches what the queue announces. A plain listener, so it sees events synchronously and on
+     * whichever thread did the work - which also makes it the probe for <em>where</em> that work
+     * ran, since {@link JobStateChanged} is published from inside the transaction that moved the
+     * job.
+     */
     static class Announcements {
         final List<JobStateChanged> heard = new ArrayList<>();
+        final List<JobStateChanged> fromAThreadThatCannotBlock = new CopyOnWriteArrayList<>();
 
         @EventListener
         void on(JobStateChanged event) {
             heard.add(event);
+            if (Schedulers.isInNonBlockingThread()) {
+                fromAThreadThatCannotBlock.add(event);
+            }
         }
     }
 
@@ -504,6 +517,57 @@ class JobServiceTest {
         assertTrue(forMachine.contains(mine.id()));
         assertTrue(!forMachine.contains(theirs.id()));
         assertTrue(jobs.fetchAll().size() >= 2);
+    }
+
+    // --- where a feed outcome is written down -----------------------------------------------
+    //
+    // Both tests below report the outcome from Schedulers.parallel(), whose workers carry the same
+    // NonBlocking marker a reactor-netty event loop does. That is the thread a feed that runs out
+    // of file actually reports on, and the probe is the thread the write ran on rather than
+    // whether it ran at all - H2 would happily serve JDBC from an event loop, which is the whole
+    // reason this had no symptom.
+
+    /** A print that reaches the end of its file still reaches {@code COMPLETED}, and not from the thread that said so. */
+    @Test
+    void aFeedThatCompletesOnAnEventLoopIsWrittenDownOffIt() {
+        var machine = UUID.randomUUID();
+        var job = queued("off-the-loop.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+        announcements.fromAThreadThatCannotBlock.clear();
+
+        Schedulers.parallel().schedule(() -> publisher.publishEvent(
+                new JobFeedCompleted(job.id(), machine, 96_152, LocalDateTime.now())));
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertEquals(JobState.COMPLETED,
+                jobs.fetch(job.id()).orElseThrow().state()));
+        assertEquals(List.of(), mine(announcements.fromAThreadThatCannotBlock, job),
+                "the transaction that finished the job must not run on the thread that reported it");
+    }
+
+    /** And the other way a feed ends. */
+    @Test
+    void aFeedThatFailsOnAnEventLoopIsWrittenDownOffIt() {
+        var machine = UUID.randomUUID();
+        var job = queued("broken-off-the-loop.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+        announcements.fromAThreadThatCannotBlock.clear();
+
+        Schedulers.parallel().schedule(() -> publisher.publishEvent(new JobFeedFailed(job.id(),
+                machine, 1_204, "the connection went away", LocalDateTime.now())));
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            var after = jobs.fetch(job.id()).orElseThrow();
+            assertEquals(JobState.FAILED, after.state());
+            assertTrue(after.reason().contains("1204"), after.reason());
+        });
+        assertEquals(List.of(), mine(announcements.fromAThreadThatCannotBlock, job),
+                "the transaction that failed the job must not run on the thread that reported it");
+    }
+
+    private static List<JobStateChanged> mine(List<JobStateChanged> all, Job job) {
+        return all.stream().filter(event -> job.id().equals(event.jobId())).toList();
     }
 
     // --- two writers, one row ---------------------------------------------------------------

@@ -5,8 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.jobs.Job;
-import org.qw3rtrun.p3d.api.jobs.JobFeedCompleted;
-import org.qw3rtrun.p3d.api.jobs.JobFeedFailed;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
 import org.qw3rtrun.p3d.api.jobs.JobProgressed;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
@@ -37,11 +35,18 @@ import java.util.UUID;
  * a user clicking Pause while the last line is being acknowledged).
  *
  * <p>A listener is {@code @ApplicationModuleListener} only when its event is published inside a
- * transaction; {@code core} publishes {@link JobFeedCompleted}/{@link JobFeedFailed}/
- * {@link JobProgressed} from a reactive thread with no transaction to tie a durable publication to,
- * so those are a plain {@code @EventListener} plus their own {@code @Transactional} (which has to be
- * on the listener and not only on the verb it calls, since that call is a self-invocation and would
- * skip the proxy) - making those three outcomes at-most-once rather than guaranteed.
+ * transaction, which rules it out for anything {@code core} reports from a reactive thread -
+ * {@link JobProgressed} here, and the two feed outcomes in {@link FeedOutcomes}. Those are a plain
+ * {@code @EventListener}, which makes them at-most-once rather than guaranteed, and the
+ * {@code @Transactional} goes on the listener rather than only on the verb it calls, since that call
+ * is a self-invocation and would otherwise skip the proxy.
+ *
+ * <p>{@link #onProgress} is therefore the one listener left here that can open a transaction on a
+ * reactor-netty thread: a checkpoint usually arrives from {@code JobFeeder}'s own timer, but the
+ * exact reading taken when a feed ends is published inline from wherever the feed ended. That is
+ * deliberate for now - the reading must be written before the event that moves the job, and running
+ * inline is what buys that order - so moving it needs a design for keeping the order rather than a
+ * scheduler hop.
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -140,22 +145,6 @@ public class JobServiceImpl implements JobService {
     }
 
     /**
-     * The machine has been sent every line of the file, so the job is done - crosses as an event
-     * rather than a call since only {@code core} can know it (holding the socket) and only this
-     * module may move a job, the same division a firmware report crosses in B2, the other way.
-     * {@code @ApplicationModuleListener} here would silently drop the event, since it is published by
-     * {@code core} from a reactor-netty thread with no transaction - measured live as a
-     * 96,152-block print that reached the end of its file and stayed {@code RUNNING} forever. See the
-     * class javadoc for why this makes a feed outcome at-most-once.
-     */
-    @EventListener
-    @Transactional
-    public void onFeedCompleted(JobFeedCompleted event) {
-        log.info("job {} was fed {} blocks and is done", event.jobId(), event.lines());
-        complete(event.jobId());
-    }
-
-    /**
      * A job that was printing when the process died cannot still be printing - plan item C5. The
      * feed lived in memory and the process took it with it, so a {@code RUNNING} job would hold its
      * printer against the scheduler forever and claim a cold machine is halfway through a part. They
@@ -188,13 +177,6 @@ public class JobServiceImpl implements JobService {
             job.progressed(event.progress());
             repo.save(job);
         });
-    }
-
-    /** The feed stopped before the file did. */
-    @EventListener
-    @Transactional
-    public void onFeedFailed(JobFeedFailed event) {
-        fail(event.jobId(), event.reason() + " (after " + event.lines() + " blocks)");
     }
 
     private JobOutcome move(UUID jobId, JobState next, UUID machineId, String reason) {

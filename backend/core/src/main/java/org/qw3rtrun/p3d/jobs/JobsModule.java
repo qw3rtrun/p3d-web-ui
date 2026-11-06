@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.jobs;
 
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.jobs.JobService;
+import org.qw3rtrun.p3d.jobs.service.FeedOutcomes;
 import org.qw3rtrun.p3d.jobs.service.JobRepository;
 import org.qw3rtrun.p3d.jobs.service.JobServiceImpl;
 import org.springframework.context.ApplicationEventPublisher;
@@ -43,5 +44,11 @@ public class JobsModule {
     public JobService jobService(JobRepository repo, GcodeFileService files,
                                  ApplicationEventPublisher events, Clock jobClock) {
         return new JobServiceImpl(repo, files, events, jobClock);
+    }
+
+    /** A bean of its own, not two methods on the service - see {@link FeedOutcomes} for why the proxy boundary is the point. */
+    @Bean
+    public FeedOutcomes feedOutcomes(JobService jobService) {
+        return new FeedOutcomes(jobService);
     }
 }

@@ -9,6 +9,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 
@@ -42,8 +43,9 @@ public class JobsModule {
 
     @Bean
     public JobService jobService(JobRepository repo, GcodeFileService files,
-                                 ApplicationEventPublisher events, Clock jobClock) {
-        return new JobServiceImpl(repo, files, events, jobClock);
+                                 ApplicationEventPublisher events, Clock jobClock,
+                                 TransactionTemplate transactions) {
+        return new JobServiceImpl(repo, files, events, jobClock, transactions);
     }
 
     /** A bean of its own, not two methods on the service - see {@link FeedOutcomes} for why the proxy boundary is the point. */

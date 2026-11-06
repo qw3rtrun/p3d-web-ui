@@ -114,4 +114,25 @@
         </addColumn>
     </changeSet>
 
+    <!--
+      The optimistic lock (#100).
+
+      Changeset 3's sibling in spirit: that one narrowed what a write carries, this one refuses a
+      write whose reader has been overtaken. Two transitions racing each other both carry the
+      state column - moving the job is the whole of what they do - so narrowing cannot help them
+      and the later commit silently won. Every update now carries WHERE version = ?, and the loser
+      is told where the job actually went.
+
+      Defaulted and not null so that rows written before this changeset ran start at zero rather
+      than at null: a null version is what Spring Data reads as "this entity has never been
+      saved", and an existing row claiming that would be inserted again on the next write.
+    -->
+    <changeSet id="4" author="agentic">
+        <addColumn tableName="print_job">
+            <column name="version" type="bigint" defaultValueNumeric="0">
+                <constraints nullable="false"/>
+            </column>
+        </addColumn>
+    </changeSet>
+
 </databaseChangeLog>

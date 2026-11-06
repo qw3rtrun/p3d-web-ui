@@ -27,6 +27,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * Measures what Marlin's EEPROM settings commands - {@code M500}-{@code M504} and the bare
@@ -103,6 +104,15 @@ import java.util.List;
  * filter is the module's own decoder, not a text match - an {@code ok T:...} is an acknowledgement
  * and still prints. A reader comparing this to the reference run should expect the 600 lines to be a
  * single counted line here.
+ *
+ * <p><b>A suppressed line still has to count against a bound.</b> It does not go in the transcript,
+ * so it moves neither the line cap nor the silence timeout, and a printer the application has
+ * already sent {@code M155 S1} answers faster than the silence window - a line every ~115ms against
+ * the 1.5s window. The drain's only two exits were therefore both unreachable, and the probe hung
+ * on its very first statement, before the {@code M155 S0} that would have stopped the flood (issue
+ * #92, reproduced against a local flooding socket rather than inferred). Every drain now carries a
+ * wall-clock budget as well, which is the one bound a far end cannot outrun;
+ * {@code SettingsProbeDrainTest} is the guard.
  *
  * <h2>This probe restores the machine before it exits</h2>
  *
@@ -306,47 +316,55 @@ public final class SettingsProbe {
 
     /** Everything readable up to and including the {@code ok} that ends the answer, with temperature
      * auto-reports counted out. Marlin does not frame its replies, so the acknowledgement is the
-     * only end marker - a fixed timeout instead would mis-attribute a slow answer to the next label. */
+     * only end marker - a fixed timeout instead would mis-attribute a slow answer to the next label.
+     * The 20s budget is well clear of the 12s read window a send sets, so it bounds only the case
+     * where the {@code ok} never comes and a flood hides its absence. */
     private static List<String> drainUntilOk(BufferedReader in) {
-        var lines = new ArrayList<String>();
-        try {
-            String line;
-            while ((line = in.readLine()) != null) {
-                if (isAutoReport(line)) {
-                    suppressed++;
-                    continue;
-                }
-                lines.add(line);
-                var trimmed = line.trim();
-                if (trimmed.length() >= 2 && trimmed.regionMatches(true, 0, "ok", 0, 2)) break;
-                if (lines.size() > 1000) break;
-            }
-        } catch (Exception quiet) {
-            // a read timeout: either there is no answer, or it is slower than the window
-        }
-        return lines;
+        return drain(in, 20_000, 1000, SettingsProbe::endsAnAnswer);
     }
 
     /**
      * Everything readable until the far end goes quiet. Used for the banner and for a backlog,
-     * neither of which is terminated by an {@code ok} of its own.
+     * neither of which is terminated by an {@code ok} of its own. The 6s budget is four times the
+     * 1.5s silence window this is called under, so a quiet printer still ends it on silence.
      */
     private static List<String> drainUntilQuiet(BufferedReader in) {
+        return drain(in, 6_000, 2000, line -> false);
+    }
+
+    /**
+     * Reads until {@code isEnd}, until the far end goes quiet, until {@code cap} kept lines, or
+     * until {@code budgetMs} of wall clock - whichever comes first. Suppressed lines are read and
+     * discarded, so they move neither of the first three bounds, and against a printer that
+     * auto-reports faster than the read window none of them is reachable: measured at a line every
+     * ~115ms, comfortably inside the 1.5s silence window, which hung {@link #drainUntilQuiet} for
+     * ever before a single command had been sent (issue #92). The clock is the one bound that holds
+     * whatever the far end does, which is why it is here and not only in the caller that hung.
+     */
+    static List<String> drain(BufferedReader in, long budgetMs, int cap, Predicate<String> isEnd) {
         var lines = new ArrayList<String>();
+        var deadline = System.nanoTime() + budgetMs * 1_000_000L;
         try {
             String line;
-            while ((line = in.readLine()) != null) {
+            while (System.nanoTime() < deadline && (line = in.readLine()) != null) {
                 if (isAutoReport(line)) {
                     suppressed++;
                     continue;
                 }
                 lines.add(line);
-                if (lines.size() > 2000) break;
+                if (isEnd.test(line)) break;
+                if (lines.size() > cap) break;
             }
         } catch (Exception quiet) {
-            // the read window elapsed, which is how a drain-until-quiet ends
+            // the read window elapsed: for a drain-until-quiet that is how it ends, and for a
+            // drain-until-ok it means there is no answer, or it is slower than the window
         }
         return lines;
+    }
+
+    private static boolean endsAnAnswer(String line) {
+        var trimmed = line.trim();
+        return trimmed.length() >= 2 && trimmed.regionMatches(true, 0, "ok", 0, 2);
     }
 
     /**

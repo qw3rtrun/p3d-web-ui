@@ -72,10 +72,15 @@ import java.util.function.Predicate;
  * ({@code M145 S0} and {@code M145 S1}). Everything else in the table reproduced verbatim, including
  * {@code M500}'s {@code //action:notification} and the bare {@code ok}s.
  *
- * <p>The second is the backlog: the reference run was met by 601 {@code M155} auto-reports, this one
- * by <strong>none at all</strong> - no boot banner either, on two consecutive runs. So the flood is
- * a property of what the previous client left running and not of the simulator, and a re-run that
- * prints {@code 0 temperature auto-report lines suppressed} has not lost anything.
+ * <p>The second is the backlog, and it reconciles as <em>not a property of the firmware at all</em>.
+ * Three runs have now counted it: <strong>601</strong> (the reference run), <strong>0</strong>
+ * (#92's re-run, on two consecutive attempts) and <strong>98</strong> (2026-11-06, issue #97). What
+ * decides the figure is how the previous client left. {@code M155 S1} survives a disconnect on this
+ * simulator - measured by reconnecting after an abrupt RST and sending nothing, which still draws
+ * auto-reports at the ~1/s the period asks for - while {@code PrinterState} sends {@code M155 S0} on
+ * its way offline, so a clean application shutdown leaves nothing behind and a killed one leaves a
+ * backlog. No count here reconciles to another, and none should be edited to: whatever a re-run
+ * prints is correct for the conditions it ran in.
  *
  * <h2>Why there are three controls and not just a transcript</h2>
  *
@@ -102,8 +107,8 @@ import java.util.function.Predicate;
  * probe sends {@code M155 S0} first to stop them, drains whatever was already queued, and suppresses
  * every line that decodes to a {@link BareTemperatureRs} from then on, printing a count instead. The
  * filter is the module's own decoder, not a text match - an {@code ok T:...} is an acknowledgement
- * and still prints. A reader comparing this to the reference run should expect the 600 lines to be a
- * single counted line here.
+ * and still prints. A reader comparing this to the reference run should expect that whole backlog to
+ * be a single counted line here.
  *
  * <p><b>A suppressed line still has to count against a bound.</b> It does not go in the transcript,
  * so it moves neither the line cap nor the silence timeout, and a printer the application has
@@ -112,7 +117,8 @@ import java.util.function.Predicate;
  * on its very first statement, before the {@code M155 S0} that would have stopped the flood (issue
  * #92, reproduced against a local flooding socket rather than inferred). Every drain now carries a
  * wall-clock budget as well, which is the one bound a far end cannot outrun;
- * {@code SettingsProbeDrainTest} is the guard.
+ * {@code SettingsProbeDrainTest} is the guard. Confirmed on the live simulator 2026-11-06: 98 lines
+ * drained and the drain ended, all of them before the {@code M155 S0} that stops the flood.
  *
  * <h2>This probe restores the machine before it exits</h2>
  *

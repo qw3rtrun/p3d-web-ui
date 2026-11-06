@@ -1219,9 +1219,9 @@ travels, and that is rule 7 of `doc/sub_boundaries.txt`.
   method whose whole job is to annotate a row - `JobEntity.blocked` (why a queued job has no
   machine), `JobEntity.progressed` (how far a running one has got) - also wrote back the `state` and
   `machine_id` it had read, silently undoing a transition another transaction had committed in
-  between. There is no `@Version`, so nothing refused it. **`@DynamicUpdate` on the entity is what
-  makes "this decides nothing about the state" true in SQL**, and it is load-bearing rather than
-  tuning. Measured as issue #97: with `FarmScheduler`'s pass hopped onto its own thread,
+  between. There was no `@Version` then, so nothing refused it. **`@DynamicUpdate` on the entity is
+  what makes "this decides nothing about the state" true in SQL**, and it is load-bearing rather
+  than tuning. Measured as issue #97: with `FarmScheduler`'s pass hopped onto its own thread,
   `PrintJobIntegrationTest` failed **three runs out of three**, a different test each time, always
   `POST /api-jobs/{id}/start` answering `{"state":"QUEUED","attempted":"RUNNING"}` - the log has
   `QUEUED -> ASSIGNED` at `52.012` and the pass's `is waiting: it is pinned to … which is OFFLINE`
@@ -1234,11 +1234,37 @@ travels, and that is rule 7 of `doc/sub_boundaries.txt`.
   above: a pass that used to run inside the `queue()` transaction now runs beside the operator's
   next request. **A hop is also a concurrency change, not only a thread-safety one** - when one is
   added, name what the hopped work writes and who else can be writing it.
-- **Two transitions racing each other are still last-writer-wins.** `canMoveTo` is checked against a
-  read, and two transactions can both read `QUEUED` and both commit `ASSIGNED`. Closing that needs a
-  version column and a decision about what the loser's REST caller is told - a refusal is a value
-  here, so an `OptimisticLockingFailureException` escaping to a 500 is not an option. Nothing has
-  been seen to need it; it is named so the next person does not rediscover it as a mystery.
+- **Two transitions racing each other are refused, not silently merged, and the loser is told where
+  the job went.** `canMoveTo` is checked against a read, so two transactions could both read
+  `QUEUED` and both commit `ASSIGNED`; `JobEntity` carries a `@Version` now (issue #100,
+  `jobs.xml` changeset 4) and the later commit is refused. **The contract callers depend on is that
+  it comes back as `JobOutcome.Refused` with the state the job actually reached and what was
+  attempted** - a 409 through `Outcomes`, the same body an illegal transition answers with, so
+  there is one failure shape for *"the job was not in the state you thought"* and an
+  `OptimisticLockingFailureException` never reaches a REST caller as a 500. **It is deliberately
+  not retried**: the caller asked to move a job that was somewhere else, and doing it anyway from
+  wherever it has since got to decides on their behalf something they can see for themselves.
+- **The version covers the transition columns and nothing else, and that half is load-bearing.**
+  `blocked_reason` and the six checkpoint columns are `@OptimisticLock(excluded = true)`. Without
+  that, `@Version` makes the two annotate-the-row writers competitors for the version *in the
+  other direction*: a scheduler pass writing why a job is waiting bumps the version, and the
+  operator's `assign` - which read the same row a moment earlier - is refused by a write that
+  decided nothing. Measured before the exclusion: `PrintJobIntegrationTest` failed intermittently
+  (two of twelve on one run, three across a full `build`, none on the next) with
+  `POST /api-jobs/{id}/start` answering 409 because the `assign` in front of it had quietly lost to
+  `job … is waiting: it is pinned to …, which is OFFLINE`. **The exclusion is one-way** - such a
+  write does not *increment* the version but is still *checked* against it - so an overtaken reason
+  or reading is still dropped rather than landing on a job that has moved. Say of any new column:
+  *does writing this decide where the aggregate is?* If not, exclude it.
+- **The refusal has to be decided outside the transaction, which is why `JobServiceImpl`'s write
+  paths carry a `TransactionTemplate` rather than `@Transactional`.** The version is checked at
+  flush and a flush is on commit - after an annotated method has already returned - so a `catch`
+  inside the method that failed never sees it. An entity with a `@Version` therefore changes where
+  its service's transaction boundary has to be stated, not just what the database does.
+- **`@Version` needs a value type to refuse into, and a module without one should not have it.**
+  `PrinterEntity` got `@DynamicUpdate` and deliberately no version: `MachineManagementService.update`
+  returns a `Descriptor` and `orElseThrow`s, so the failure would surface as the 500 this layer's
+  status mapping exists to prevent. A refusal value first, a version second.
 
 ## Testing
 
@@ -1400,11 +1426,28 @@ the source, not suspected.
   roster's `MachineProfile` - firmware and capabilities - but a temperature from before the process
   restarted is not state, it is a stale number that would read as current. A machine starts with no
   reading and says so until it reports one.
-- **A feed outcome is at-most-once.** `JobFeedCompleted` and `JobFeedFailed` are published from a
-  reactive thread with no transaction, so they cannot go through the event registry - see above. If
-  the process dies between the last block and the listener, the job is left `RUNNING` with nothing
-  feeding it. C5 has to reconcile that at startup, and already has to for a job whose machine went
-  away mid-print.
+- **A feed outcome is at-most-once, and is now heard off the thread that reported it.**
+  `JobFeedCompleted` and `JobFeedFailed` are published from a reactor-netty event loop with no
+  transaction, so they cannot go through the event registry - see above - and they used to be heard
+  by a plain `@EventListener` + `@Transactional` *on that loop*, which ran a `findById`, a `save`
+  and a commit there on every print that finished or failed. `FeedOutcomes` (issue #100) is a bean
+  of its own that hands the work to `boundedElastic` and then calls `JobService` across a bean
+  boundary, because **the transaction has to start on the thread that does the writing and
+  `@Transactional` on a listener that hops cannot do that** - it wraps the publishing thread's call,
+  which returns the moment the task is queued. Measured live against MarlinSim, same 42-block file,
+  same endpoint: `[reactor-tcp-nio-4] JobServiceImpl: RUNNING -> COMPLETED` before,
+  `[boundedElastic-6]` after. At-most-once is unchanged, with the window widened by the length of
+  the hop: if the process dies between the last block and the listener, the job is left `RUNNING`
+  with nothing feeding it, and C5 has to reconcile that at startup as it already does for a job
+  whose machine went away mid-print.
+- **`JobServiceImpl.onProgress` still opens a transaction on a reactor-netty thread, and that is
+  deliberate until somebody designs the ordering.** A checkpoint usually arrives from `JobFeeder`'s
+  own timer, but the exact reading taken when a feed ends is published *inline* from wherever the
+  feed ended - and it has to be written before the event that moves the job (#62), which is what
+  running inline buys. A scheduler hop would break that order, so closing this needs a design
+  rather than a one-liner. It also means that reading shares the transition's persistence context
+  rather than racing it, which is why excluding the checkpoint columns from the version costs
+  nothing on the path that matters.
 - **A job is failed when the transport abandons blocks, and the count it is failed on is a lower
   bound.** `BlocksAbandoned` says how many framed blocks the send window was still holding when an
   unanswerable `Resend:` made it renumber the session; `JobFeeder.watchForAbandonedBlocks` turns the

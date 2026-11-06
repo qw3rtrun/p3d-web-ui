@@ -233,6 +233,55 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
+     * Starting a job that cannot run must answer with what went wrong, not with "somebody else
+     * moved your job" - and here the somebody else would be the start's own feed.
+     *
+     * <p>Issue #93's root cause, on demand rather than under load. {@code JobFeeder} hears
+     * {@code JobStateChanged} as a plain {@code @EventListener}, so it starts feeding <em>inside</em>
+     * the still-uncommitted transaction that wrote {@code RUNNING}. Against a machine nothing has
+     * dialled the feed gives up on its first line, and the {@code JobFeedFailed} that follows is
+     * acted on by {@code FeedOutcomes} in a <strong>second</strong> transaction, which reads the row
+     * the first one has not committed - {@code ASSIGNED} - and writes {@code FAILED} over it. The
+     * first transaction then loses its own optimistic lock and {@code POST /api-jobs/{id}/start}
+     * answers <strong>409</strong>, "this job was moved to FAILED by something else before it could
+     * become RUNNING", five times in five runs on {@code ba28bd8} with the machine otherwise idle.
+     *
+     * <p>Same window, same cause as the two timeouts above, which is where #93 was actually seen:
+     * in 4 of 10 loaded runs a twelve-block file against an instantly-answering mock ran out in
+     * five milliseconds - sooner than the commit - and the log read
+     * {@code refused to move job ... from ASSIGNED to COMPLETED} with every block of the file
+     * already on the wire. {@code ASSIGNED -> COMPLETED} is not a legal move, so that one is simply
+     * dropped and the job is {@code RUNNING} for ever; {@code ASSIGNED -> FAILED} is legal, which is
+     * why the same defect is a lost update here and a lost signal there. Those two tests are left
+     * alone - what they assert is the file reaching the machine, and a timing window is not
+     * something to assert through them.
+     */
+    @Test
+    void startingAJobOnAMachineThatIsNotConnectedIsNotAConflictWithItself() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("never dialled", printer);
+        var stored = upload(GcodeFixture.unsliced("orphan").named("orphan.gcode").withBodyLines(2));
+
+        var job = idOf(queue(idOf(stored), id));
+        assign(job, id);
+
+        var started = json(farm.post().uri("/api-jobs/{id}/start", job)
+                .exchange().expectStatus().isOk());
+        assertEquals("RUNNING", started.get("state"), "the job did not start: " + started);
+
+        await(() -> "job " + job + " to fail, because nothing has dialled " + id + ". It is "
+                        + stateOf(job), () -> "FAILED".equals(stateOf(job)));
+
+        assertFalse(printer.sessionOpen(), "the premise is a machine nothing has dialled");
+        var reason = (String) fetch(job).get("reason");
+        // Two things notice a feed against a cold machine - the feed refusing to start, and the
+        // link watcher seeing OFFLINE - and whichever lands first writes the sentence. The subject
+        // is the assertion; the wording is not.
+        assertTrue(reason != null && reason.contains("connect"),
+                "a failed job has to say what went wrong in words an operator can act on: " + reason);
+    }
+
+    /**
      * A job feeds at {@code BACKGROUND} and an interactive command is queued at {@code REGULAR},
      * so: {@code M105} takes the very next slot rather than waiting behind the file (the difference
      * between answering now and in six hours on a real print); the job is not restarted (no block

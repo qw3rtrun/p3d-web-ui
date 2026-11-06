@@ -14,8 +14,10 @@ import org.springframework.context.event.EventListener;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * What this module knows about the machines in the farm: enough to dial one, and nothing more.
@@ -30,7 +32,46 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>Idempotent by construction: {@link MRegisteredEvent} is a statement of current fact, not of a
  * change, and {@code printer-management} re-announces every row at startup since the replica starts
- * empty - so the map simply takes the latest arrival.
+ * empty - so the map takes the latest arrival, <strong>except for a machine that has been
+ * deleted</strong>. For a deleted id a late arrival is not the latest fact, and issue #93 measured
+ * what believing one costs: the roster re-publishes {@code MRegisteredEvent} about seven times per
+ * connect, each from a {@code @Transactional} listener queued on that machine's own
+ * {@code p3d-listener-<uuid>} thread, so one can land five milliseconds <em>after</em> the
+ * {@code MDeletedEvent} that followed it in real time. It put the entry back; {@code PrinterReactorManager}
+ * then found no runtime for a machine the roster still called {@code IDLE} and dialled a second
+ * one, which nothing would ever release - a socket, a send window, a replay sink and two threads,
+ * redialling the closed port for 45 seconds into the test classes that followed.
+ *
+ * <p>So {@link #onDeleted} writes a tombstone and {@link #onRegistered} refuses an id that carries
+ * one. Three things about that, each load-bearing:
+ * <ul>
+ * <li><strong>It never expires.</strong> The straggler is bounded by that machine's listener queue,
+ * not by a clock, so there is no interval that is safely long. The set holds one {@code UUID} per
+ * machine ever deleted in this process, which on a farm of tens of machines is nothing.</li>
+ * <li><strong>A deleted id can never legitimately return.</strong> {@code MachineManagementImpl}
+ * generates a fresh {@code UUID} for every {@code add}, and an edit re-announces a machine that was
+ * never deleted - which is why refusing by id is not over-strict.</li>
+ * <li><strong>Not by timestamp.</strong> Both events carry a {@code LocalDateTime}, but they are
+ * taken on different threads at millisecond resolution and the measured pair is 5 ms apart.</li>
+ * </ul>
+ *
+ * <p>Both maps are concurrent and both listeners run on whichever thread published - a machine's
+ * own listener thread, or a {@code boundedElastic} worker carrying a delete. The tombstone is
+ * written <em>before</em> the entry is removed, and {@link #onRegistered} reads it from inside
+ * {@code known.compute}, so the check and the write are one step under that key's lock: a delete
+ * that lands in the middle either loses the race entirely (and its own {@code remove} runs after)
+ * or is already visible (and the entry is never written). A {@code containsKey}-then-{@code put}
+ * would have a gap between them, which is the whole of the bug being fixed.
+ *
+ * <p><strong>Both listeners are {@code HIGHEST_PRECEDENCE}, the delete side included</strong>, and
+ * that half closes the last way round the tombstone. The two delete listeners run on one thread
+ * inside one {@code publishEvent}, but a stale announcement arrives on another and can land
+ * between them: with {@code PrinterReactorManager.onDeleted} first it would find the runtime
+ * already released and the entry not yet gone, and dial a second one. Ordered this way the
+ * announcement is either wholly before the delete (the machine is still running, so nothing dials)
+ * or wholly after the tombstone (refused). The default for a listener is
+ * {@code LOWEST_PRECEDENCE}, which makes the relative order bean-definition order and not a
+ * contract.
  *
  * <p>A plain {@link EventListener}, not {@code @TransactionalEventListener}: the transactional form
  * switches on Modulith's durable event publication registry the moment
@@ -63,6 +104,9 @@ public class PrinterDirectory {
 
     private final Map<UUID, Entry> known = new ConcurrentHashMap<>();
 
+    /** Every machine this process has been told was removed - see the class javadoc for why it is never pruned. */
+    private final Set<UUID> deleted = ConcurrentHashMap.newKeySet();
+
     /** A copy, so a caller iterating it (plan item D2's snapshot, built on whatever thread a browser attached on) cannot be surprised by a registration arriving mid-iteration. */
     public List<Entry> all() {
         return List.copyOf(known.values());
@@ -75,14 +119,23 @@ public class PrinterDirectory {
         var entry = new Entry(event.getMachineId(), event.getName(),
                 new ConnectionDetails(event.getHost(), event.getPort()), event.getProfile(),
                 event.getSpec(), event.getState());
-        var previous = known.put(entry.id(), entry);
-        if (previous == null) {
+        var replaced = new AtomicReference<Entry>();
+        var accepted = known.compute(entry.id(), (id, previous) -> {
+            replaced.set(previous);
+            return deleted.contains(id) ? null : entry;
+        });
+        if (accepted == null) {
+            log.info("ignoring an announcement of {} ({}): the farm has deleted it, so this one"
+                    + " arrived behind its own deletion", entry.name(), entry.id());
+        } else if (replaced.get() == null) {
             log.info("the farm has {} at {}:{}", entry.name(), event.getHost(), event.getPort());
         }
     }
 
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     @EventListener
     public void onDeleted(MDeletedEvent event) {
+        deleted.add(event.getMachineId());
         var gone = known.remove(event.getMachineId());
         if (gone != null) {
             log.info("the farm no longer has {}", gone.name());

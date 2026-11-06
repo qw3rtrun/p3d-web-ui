@@ -66,7 +66,10 @@ import java.util.function.Consumer;
  * The printer aggregate: one machine's connection, firmware/capability profile, declared spec,
  * EEPROM settings, SD card state and last temperature, plus the dispatch that routes every command
  * and reply through it. One instance per printer, touched by that printer's own single thread (see
- * {@link PrinterReactor}); this class itself holds no scheduler.
+ * {@link PrinterReactor}) except for {@link #declared}, which arrives on the thread that served the
+ * edit; this class itself holds no scheduler. State a reader can be on a different thread from is
+ * held behind one {@code volatile} reference - {@link #spec} and {@link #blocksInFlight} here, one
+ * immutable value apiece in the four controls.
  *
  * <h3>Profile vs spec</h3>
  * {@link #profile} is what the machine <em>reported</em> (seeded from a {@link MachineProfile},
@@ -119,8 +122,14 @@ public class PrinterState implements PrinterAggregate {
 
     private final ConnectionLifecycle connection;
 
+    // volatile: written off this machine's thread by PrinterReactorManager.onSpecDeclared - the
+    // boundedElastic worker serving the edit - and read on it by extruderCount(). A real missing
+    // happens-before edge, and the one field in this class that lacked one. Found while
+    // investigating #93 and not its cause: adding it moved the measured failure rate not at all,
+    // because the write was visible and simply had the wrong value. What #93 actually was is in
+    // MSpecDeclaredEvent's KDoc.
     @Getter
-    private MachineSpec spec;
+    private volatile MachineSpec spec;
 
     public PrinterState(UUID id) {
         this(id, MachineProfile.unknown(), MachineSpec.undeclared());

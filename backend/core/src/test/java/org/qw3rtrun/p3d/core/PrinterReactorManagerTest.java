@@ -9,6 +9,7 @@ import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
+import org.qw3rtrun.p3d.api.msg.MSpecDeclaredEvent;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.reactivestreams.Subscription;
 import reactor.core.publisher.BaseSubscriber;
@@ -150,10 +151,78 @@ class PrinterReactorManagerTest {
         owner.openReactor(id);
         assertEquals(1, aggregates.get(id).extruderCount(), "nothing declared, nothing reported");
 
-        owner.onRegistered(announcing(new MachineSpec(null, 2, List.of(), Set.of(), Set.of())));
+        owner.onSpecDeclared(declaring(2));
 
         assertEquals(2, aggregates.get(id).extruderCount());
         owner.release(id);
+    }
+
+    /**
+     * An operator's edit is not undone by an announcement built before it - issue #93's fourth root
+     * cause, and the same mistake as {@code PrinterDirectory}'s tombstone seen from the other side:
+     * a stale announcement applied unconditionally. The sequence here is the capture's, on one
+     * machine over seven milliseconds: the roster re-publishes {@code MRegisteredEvent} about seven
+     * times per connect from that machine's own listener thread, the {@code PUT} lands on a
+     * {@code boundedElastic} worker in the middle of them, and the next straggler carries the spec
+     * the roster had when <em>it</em> was read - {@code extruderCount=null} - 1.5 ms after the edit
+     * and puts it back. The cost was permanent rather than late: {@code M104 S210 T1} was refused
+     * with {@code This machine has only 1 extruders}, nothing reached the wire, and a command is
+     * sent once and never retried.
+     *
+     * <p>Ordering cannot fix it, which is why there are two events: the straggler's own timestamp
+     * is <em>later</em> than the edit's, because it is taken when the listener runs. See
+     * {@code MSpecDeclaredEvent}'s KDoc.
+     */
+    @Test
+    void aStaleAnnouncementDoesNotUndoAnOperatorsDeclaration() {
+        var aggregates = new HashMap<UUID, PrinterState>();
+        var owner = new PrinterReactorManager(directory,
+                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
+        });
+        theFarmHas(id);
+        owner.openReactor(id);
+        owner.onSpecDeclared(declaring(2));
+        assertEquals(2, aggregates.get(id).extruderCount(), "the premise is a declaration that took");
+
+        owner.onRegistered(announcing(MachineSpec.undeclared()));
+
+        assertEquals(2, aggregates.get(id).extruderCount(),
+                "an announcement built before the edit put the old spec back, so the next command "
+                        + "for tool 1 is refused and never sent again");
+        owner.release(id);
+    }
+
+    /**
+     * The other half of why dropping the announcement is safe: a machine standing up <em>after</em>
+     * it was declared gets the declaration anyway, through the replica rather than through a
+     * re-announcement. {@code CoreConfiguration.aggregates} is the production seeding lambda itself,
+     * not a stand-in - the point is that nobody can later "simplify" it and silently take plan item
+     * B4's startup half away, leaving a farm where an edit only reaches a machine that happened to
+     * be running at the time.
+     */
+    @Test
+    void aMachineDeclaredBeforeItWasRunningIsSeededWithThatSpec() {
+        var aggregates = new HashMap<UUID, PrinterState>();
+        var seeding = new CoreConfiguration().aggregates(directory);
+        var owner = new PrinterReactorManager(directory,
+                machine -> aggregates.computeIfAbsent(machine,
+                        it -> (PrinterState) seeding.loadState(it)), event -> {
+        });
+        directory.onRegistered(new MRegisteredEvent(id, "a printer", "localhost", 8099,
+                MachineProfile.unknown(), new MachineSpec(null, 2, List.of(), Set.of(), Set.of()),
+                MachineConnectionState.OFFLINE, LocalDateTime.now()));
+
+        owner.openReactor(id);
+
+        assertEquals(2, aggregates.get(id).extruderCount(),
+                "a fresh aggregate takes its declared spec from the replica at construction, which "
+                        + "is what makes the edit event's 'already running only' scope safe");
+        owner.release(id);
+    }
+
+    private MSpecDeclaredEvent declaring(int extruders) {
+        return new MSpecDeclaredEvent(id,
+                new MachineSpec(null, extruders, List.of(), Set.of(), Set.of()), LocalDateTime.now());
     }
 
     // MRegisteredEvent is re-published for every machine at startup and on every firmware report;
@@ -190,6 +259,12 @@ class PrinterReactorManagerTest {
                 MachineProfile.unknown(), MachineSpec.undeclared(), state, LocalDateTime.now());
     }
 
+    /** One announcement down the whole listener chain, in Spring's order: the replica is {@code HIGHEST_PRECEDENCE} and the manager asks it where to dial. */
+    private void announce(PrinterReactorManager farm, MRegisteredEvent event) {
+        directory.onRegistered(event);
+        farm.onRegistered(event);
+    }
+
     private PrinterReactorManager aFarmThatDials(Map<UUID, PrinterState> aggregates) {
         directory.onRegistered(announcing(MachineConnectionState.OFFLINE));
         dialled = new PrinterReactorManager(directory,
@@ -224,6 +299,61 @@ class PrinterReactorManagerTest {
                 "a republication that arrived late is not a reason to dial");
         assertFalse(aggregates.get(id).wantsToBeConnected(),
                 "and it is not a reason to want a connection either");
+    }
+
+    /**
+     * A deleted machine is not dialled again by an announcement that arrived after its deletion -
+     * issue #93, the damage half of {@code PrinterDirectoryTest}'s tombstone. Measured over five
+     * milliseconds on one machine: the directory forgot it, the manager released its runtime, and a
+     * straggler from the same listener backlog put the entry back and had the manager open a
+     * <em>second</em> runtime - which nothing would ever release, since the {@code MDeletedEvent}
+     * that would have was long gone, so it held a socket, a send window, a replay sink and two
+     * threads and went on redialling the closed port for another 45 seconds into the test classes
+     * that followed. The sequence here is the farm's own: announce, delete both sides, re-announce.
+     *
+     * <p>Asserted on the runtime rather than on a mock's call count - {@code runtimeOf} answering
+     * null is the observable that means no socket was opened.
+     */
+    @Test
+    void aStaleAnnouncementDoesNotRedialAMachineTheFarmHasDeleted() {
+        var aggregates = new HashMap<UUID, PrinterState>();
+        var farm = aFarmThatDials(aggregates);
+        var linked = announcing(MachineConnectionState.IDLE);
+        announce(farm, linked);
+        assertNotNull(farm.runtimeOf(id), "the premise is a machine that was running");
+
+        var deleted = new MDeletedEvent(id, LocalDateTime.now());
+        directory.onDeleted(deleted);
+        farm.onDeleted(deleted);
+
+        announce(farm, linked);
+
+        assertTrue(directory.find(id).isEmpty(), "the farm deleted it, so the replica has let go");
+        assertNull(farm.runtimeOf(id),
+                "a second runtime was opened for a deleted machine, and nothing will ever release"
+                        + " it - it holds a socket and two threads and keeps redialling a dead port");
+    }
+
+    /**
+     * The interleaving the listener ordering exists for: the two delete listeners run on one
+     * thread, but a stale announcement arrives on the machine's own listener thread and can land
+     * between them. With the replica's {@code onDeleted} ordered first the tombstone is already
+     * written, so there is no window in which the entry is present and the runtime has gone.
+     */
+    @Test
+    void aStaleAnnouncementLandingInsideTheDeleteDoesNotDialEither() {
+        var aggregates = new HashMap<UUID, PrinterState>();
+        var farm = aFarmThatDials(aggregates);
+        var linked = announcing(MachineConnectionState.IDLE);
+        announce(farm, linked);
+        var deleted = new MDeletedEvent(id, LocalDateTime.now());
+
+        directory.onDeleted(deleted);
+        announce(farm, linked);
+        farm.onDeleted(deleted);
+
+        assertTrue(directory.find(id).isEmpty());
+        assertNull(farm.runtimeOf(id), "the runtime released by the delete must stay released");
     }
 
     /**

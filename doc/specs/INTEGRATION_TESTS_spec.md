@@ -203,6 +203,17 @@ Three rules that were each learned by a CI failure nobody could reproduce:
   next block itself, while the `FirmwareInfoRs` from the same reply is queued onto the aggregate's
   scheduler. Two threads, no happens-before. Use `connectAndLearn` or `connectAndSettle`, which
   wait on the aggregate's own emission.
+
+  **And those are still not enough for anything read back from the roster**, which is a third hop
+  and a slower one: the aggregate emits, and `core` then tells `printer-management` on the
+  machine's own `p3d-listener-<uuid>` thread, through a transaction. Every Thymeleaf page is in
+  that position, because `MvcPrinterController` renders from the roster rather than from the
+  aggregate — `monitor.html` gates its Storage and Settings tabs on `printer.profile.hasSdCard()`
+  and `hasEeprom()`. Issue #93 measured the cost: `theSettingsBlockHasMovedOffTheMonitorTab` asked
+  for the page between the two hops and the tab was legitimately absent, in 3 of 10 loaded runs,
+  0.2 to 0.9 s after the handshake had finished. Use `awaitCapability(id, capability)`, and when a
+  page gates on something that is not a capability, wait on the roster's copy of *that* rather than
+  assuming this one implies it.
 - **Build the evidence into the failure message, lazily.** A CI-only failure is diagnosed by what
   its message carries and nothing else. Use the `Supplier<String>` overload of `await` so the
   evidence is sampled *after* the wait rather than before it, and name both observables — what the

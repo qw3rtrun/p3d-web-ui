@@ -16,6 +16,8 @@ import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
@@ -63,6 +65,30 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code inFlight} routinely stays non-zero on a {@code COMPLETED} job (measured {@code 12, inFlight 2}) -
  * a feed ends when the file runs out, not when the firmware has caught up, and the field says so
  * rather than hiding it.
+ *
+ * <h3>A start waits for the commit; a stop must not (#93)</h3>
+ * One listener split in two, not rewritten - the three branches were already mutually exclusive on
+ * {@code (from, to)}, since nothing moves from {@code RUNNING} to {@code RUNNING}.
+ * {@link #onJobStarted} is {@code AFTER_COMMIT} because <strong>this feed's own outcome moves the
+ * job again, and a message that moves a job must not be produced from inside the transaction that
+ * produced its own precondition</strong>. It was: a twelve-block file against a mock printer ran
+ * out five milliseconds after {@code ASSIGNED -> RUNNING} and before that transition committed, so
+ * {@code FeedOutcomes}' separate transaction read the row as {@code ASSIGNED} and logged
+ * {@code refused to move job e0417935... from ASSIGNED to COMPLETED} - whole file on the wire, job
+ * {@code RUNNING} for ever, because a feed outcome is at-most-once and nothing retries (4 of 10
+ * loaded runs of {@code PrintJobIntegrationTest}, 0 of 10 idle). <strong>No responsiveness is
+ * traded away</strong>: {@code AFTER_COMMIT} runs synchronously on the publishing thread, inside
+ * the {@code TransactionTemplate} the service call is still in, so the feed is still under way
+ * before the request that started it returns and a start against a disconnected machine is still
+ * answered immediately. {@code fallbackExecution} because some callers publish
+ * {@link JobStateChanged} with no transaction, and without it those starts would be dropped in
+ * silence.
+ *
+ * <p>{@link #onJobStopped} stays inline for the opposite reason: {@link #stop} takes the one exact
+ * checkpoint a resume reads and publishes it from inside the transition's own transaction, so
+ * {@code JobServiceImpl.onProgress} shares that persistence context rather than racing it (#62).
+ * After the commit it would be a second transaction an {@code OptimisticLockingFailureException}
+ * may legitimately drop, and a resume would seek to the timer's stale number instead.
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -137,27 +163,26 @@ public class JobFeeder {
                 });
     }
 
-    /**
-     * A plain {@code @EventListener}, so this runs inside the transaction that moved the job and the
-     * feed is under way before the request that started it returns - a start against a disconnected
-     * machine is answered immediately rather than leaving a job that reads {@code RUNNING} with
-     * nothing behind it.
-     */
-    @EventListener
-    public void onJobStateChanged(JobStateChanged event) {
-        if (event.to() == JobState.RUNNING && event.from() == JobState.ASSIGNED) {
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onJobStarted(JobStateChanged event) {
+        if (event.to() != JobState.RUNNING) {
+            return;
+        }
+        if (event.from() == JobState.ASSIGNED) {
             start(event);
-            return;
-        }
-        if (event.to() == JobState.RUNNING && event.from() == JobState.PAUSED) {
+        } else if (event.from() == JobState.PAUSED) {
             resume(event);
+        }
+    }
+
+    @EventListener
+    public void onJobStopped(JobStateChanged event) {
+        if (event.from() != JobState.RUNNING) {
             return;
         }
-        if (event.from() == JobState.RUNNING) {
-            stop(event.jobId(), event.to());
-            if (event.to() == JobState.CANCELLED || event.to() == JobState.FAILED) {
-                coolDown(event.machineId());
-            }
+        stop(event.jobId(), event.to());
+        if (event.to() == JobState.CANCELLED || event.to() == JobState.FAILED) {
+            coolDown(event.machineId());
         }
     }
 

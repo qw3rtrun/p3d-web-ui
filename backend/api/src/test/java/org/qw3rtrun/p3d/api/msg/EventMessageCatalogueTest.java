@@ -70,7 +70,8 @@ class EventMessageCatalogueTest {
             "MDeletedEvent", "roster news on the Spring bus; never wrapped for a browser",
             "MConnectionChangedEvent", "roster news on the Spring bus; never wrapped for a browser",
             "MFirmwareReportedEvent", "roster news on the Spring bus; never wrapped for a browser",
-            "MCapabilityReportedEvent", "roster news on the Spring bus; never wrapped for a browser"));
+            "MCapabilityReportedEvent", "roster news on the Spring bus; never wrapped for a browser",
+            "MSpecDeclaredEvent", "roster news on the Spring bus; never wrapped for a browser"));
 
     @Test
     @DisplayName("every type in this package is classified, and the classification names nothing gone")

@@ -260,6 +260,56 @@ abstract class FarmIntegrationTest {
         return json(farm.get().uri("/api-manager/{id}", id).exchange().expectStatus().isOk());
     }
 
+    /** What the machine told the farm it is, out of {@link #describe}. */
+    @SuppressWarnings("unchecked")
+    protected static Map<String, Object> firmware(Map<String, Object> described) {
+        return (Map<String, Object>) profile(described).get("firmware");
+    }
+
+    /** Which {@code Cap:} lines the machine answered with, out of {@link #describe}. */
+    @SuppressWarnings("unchecked")
+    protected static Map<String, Object> capabilities(Map<String, Object> described) {
+        return (Map<String, Object>) profile(described).get("capabilities");
+    }
+
+    /** What a person typed about a machine, as opposed to what it reported. */
+    @SuppressWarnings("unchecked")
+    protected static Map<String, Object> spec(Map<String, Object> described) {
+        return (Map<String, Object>) described.get("spec");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> profile(Map<String, Object> described) {
+        return (Map<String, Object>) described.get("profile");
+    }
+
+    /**
+     * Waits until <strong>the roster</strong> has written down a capability the machine reported.
+     *
+     * <p>A second wait after {@link #connectAndLearn(UUID)} rather than part of it, because it is a
+     * second hop and a slower one: {@code connectAndLearn} returns when the <em>aggregate</em> has
+     * taken the report, and the roster is told afterwards, by {@code MCapabilityReportedEvent} on
+     * this machine's own {@code p3d-listener-<uuid>} thread, through a transaction.
+     *
+     * <p>Needed by anything read back from the roster rather than from the aggregate - which is
+     * every Thymeleaf page, since {@code MvcPrinterController} renders from the roster.
+     * {@code monitor.html} gates its Storage and Settings tabs on
+     * {@code printer.profile.hasSdCard()} and {@code hasEeprom()}, so asking for the page before
+     * this has passed renders a machine that has not reported yet - correctly, and uselessly.
+     * Measured as one of issue #93's four flakes: {@code theSettingsBlockHasMovedOffTheMonitorTab}
+     * came back without {@code data-p3d="settings-tab"} in 3 of 10 loaded runs, 0.2 to 0.9 s after
+     * the handshake had finished.
+     *
+     * <p>Every profile {@link MockPrinter} offers answers the capability either way - a machine
+     * without EEPROM sends {@code Cap:EEPROM:0}, not nothing - so this waits for the key and the
+     * caller asserts on the value.
+     */
+    protected void awaitCapability(UUID id, String capability) {
+        await(() -> "the roster to learn " + capability + " for machine " + id
+                        + ". It holds " + capabilities(describe(id)),
+                () -> capabilities(describe(id)).containsKey(capability));
+    }
+
     /** Asks the farm to dial the machine. Returns when the request is accepted, not when it is up. */
     protected void connect(UUID id) {
         farm.post().uri("/api-printer/{id}/connect", id)

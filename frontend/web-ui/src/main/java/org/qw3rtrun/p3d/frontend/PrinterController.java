@@ -1,7 +1,6 @@
 package org.qw3rtrun.p3d.frontend;
 
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.control.PrinterControl;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
@@ -83,7 +82,6 @@ import java.util.UUID;
  * Reactive Streams cancel: the content stops but {@code M29} still goes out, closing a short but
  * valid file; it answers 200 whether or not anything was running, and its only refusal is 404.
  */
-@Slf4j
 @RestController
 @RequestMapping("/api-printer/{id}")
 @RequiredArgsConstructor
@@ -269,7 +267,6 @@ public class PrinterController {
 
     @PostMapping("/connect")
     public Mono<Void> connect(@PathVariable UUID id, @RequestBody Mono<ConnectCmd> cmd) {
-        log.info("Cmd Connect received");
         return cmd.flatMap(c -> Mono.from(printers.connect(id, c)));
     }
 

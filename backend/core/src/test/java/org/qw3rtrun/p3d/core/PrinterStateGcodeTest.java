@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
@@ -11,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -18,8 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * The bytes {@link PrinterState} puts on the wire, pinned across the move from the old {@code G}
  * facade to {@link GSender}. Every expectation was captured from the old facade before deletion, so
- * this is a characterisation test: it passes against both implementations, except the one deliberate
- * exception, {@link #aTemperatureIsNotFormattedThroughTheDefaultLocale()}, which the old code failed.
+ * this is a characterisation test: it passes against both implementations, except two -
+ * {@link #aTemperatureIsNotFormattedThroughTheDefaultLocale()}, which the old code failed, and
+ * {@link #aDeclarationMadeOnAnotherThreadIsHonouredByTheNextCommand()}, which pins a threading
+ * contract rather than characterising anything.
  */
 class PrinterStateGcodeTest {
 
@@ -81,6 +85,40 @@ class PrinterStateGcodeTest {
         printer.handle(MarlinG.INSTANCE.m104(new BigDecimal("60.0"), 5));
 
         assertEquals(List.of(), sent);
+    }
+
+    /**
+     * An edit reaches the aggregate on whichever thread served it - a {@code boundedElastic} worker,
+     * through {@code PrinterReactorManager.onSpecDeclared}, which is synchronous inside the roster's
+     * transaction (plan item B4) - while commands are applied on this machine's own
+     * {@code p3d-printer-<uuid>} thread. {@code PrinterState.spec} is {@code volatile} for exactly
+     * that crossing, and this states the ordering by joining the writer, so it pins the contract:
+     * a declaration made off the aggregate's thread decides the very next command, and clearing it
+     * falls back to the firmware's count.
+     *
+     * <p>It is a latent hazard pinned, not a measured failure reproduced. The missing edge was found
+     * while investigating issue #93 and was <strong>not</strong> its cause - adding {@code volatile}
+     * moved that failure rate not at all, because the write was visible and had the wrong value;
+     * see {@code MSpecDeclaredEvent}'s KDoc for what #93 actually was. A visibility race cannot be
+     * made to fail deterministically, so this test does not try: it states the ordering instead.
+     */
+    @Test
+    void aDeclarationMadeOnAnotherThreadIsHonouredByTheNextCommand() throws InterruptedException {
+        PrinterState printer = onlineWithExtruders(1);
+
+        declaredFromAnotherThread(printer, new MachineSpec(null, 2, List.of(), Set.of(), Set.of()));
+        printer.handle(MarlinG.INSTANCE.m104(new BigDecimal("210.0"), 1));
+        declaredFromAnotherThread(printer, MachineSpec.undeclared());
+        printer.handle(MarlinG.INSTANCE.m104(new BigDecimal("215.0"), 1));
+
+        assertEquals(List.of("M104 S210.00 T1"), sent, "the declaration, then the fall back to one extruder");
+    }
+
+    private static void declaredFromAnotherThread(PrinterState printer, MachineSpec spec)
+            throws InterruptedException {
+        Thread editor = new Thread(() -> printer.declared(spec), "an-edit");
+        editor.start();
+        editor.join();
     }
 
     // changed with the move off the old records: a bare request used to encode as M105 T0 (the

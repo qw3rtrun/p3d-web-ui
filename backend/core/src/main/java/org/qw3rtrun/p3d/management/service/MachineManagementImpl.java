@@ -9,6 +9,7 @@ import org.qw3rtrun.p3d.api.msg.MConnectionChangedEvent;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
+import org.qw3rtrun.p3d.api.msg.MSpecDeclaredEvent;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.management.model.PrinterEntity;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -55,9 +56,19 @@ public class MachineManagementImpl implements MachineManagementService {
     /**
      * Changes what a human declared, and tells everyone. Cannot touch the profile - an edit writes
      * only the spec columns and the three reachability fields, so what a firmware reported survives
-     * untouched (plan item B4's "distinguishable" in the one place it could be broken). Re-announced
-     * as {@link MRegisteredEvent} so {@code core}'s replica learns the new spec at once - without
-     * this an edit would reach the database and not the running machine until a restart.
+     * untouched (plan item B4's "distinguishable" in the one place it could be broken).
+     *
+     * <p>Says it <strong>twice, in two different kinds of sentence</strong>, and that is the fix for
+     * issue #93's fourth root cause rather than belt and braces. {@link MRegisteredEvent} is the
+     * announcement that rebuilds {@code core}'s replica - idempotent, re-published about seven times
+     * per connect, and carrying whatever the roster had when each copy was read.
+     * {@link MSpecDeclaredEvent} is this one edit, published once, and the only thing
+     * {@code PrinterReactorManager} hands to a machine that is already running. While the running
+     * machine learned the spec from the announcement, an announcement whose read predated this
+     * transaction silently put the old spec back 1.5 ms after the edit landed - see
+     * {@code MSpecDeclaredEvent}'s KDoc for the capture. This is the only path that publishes it:
+     * {@link #add} needs none, since nothing can be running under a {@code UUID} minted in its own
+     * transaction, and a new aggregate is seeded from the replica at construction.
      */
     @Transactional
     @Override
@@ -67,6 +78,7 @@ public class MachineManagementImpl implements MachineManagementService {
         entity.declare(spec);
         var saved = repo.save(entity);
         eventBus.push(registered(saved));
+        eventBus.push(new MSpecDeclaredEvent(saved.getId(), saved.spec(), LocalDateTime.now()));
         return map(saved);
     }
 

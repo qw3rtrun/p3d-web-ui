@@ -795,10 +795,16 @@ until something does, at which point they resolve the same way and no type chang
 filters on, costs the same to store, and lets a machine belong to two of them.
 
 **An edit reaches a machine that is already running**, which is the step that keeps the spec from
-being another write-only column. `update` re-publishes `MRegisteredEvent`, `PrinterDirectory`
-updates its replica, and `PrinterReactorManager.redeclare` hands the new spec to a live aggregate.
-It deliberately never *builds* a runtime: that event is re-published for every machine at startup
-and on every firmware report, and opening a reactor per row would undo A3.
+being another write-only column. `update` publishes two events: `MRegisteredEvent`, which
+`PrinterDirectory` takes into its replica (and so into any aggregate built later), and
+`MSpecDeclaredEvent`, which `PrinterReactorManager.onSpecDeclared` hands to a live aggregate. It
+deliberately never *builds* a runtime: opening a reactor per row would undo A3.
+
+The two events are separate because the announcement is re-published for every machine at startup
+and about seven times per connect, each copy carrying the spec as of its own read - so while the
+live aggregate learned its spec from the announcement, a straggler built *before* an edit put the
+old spec back 1.5 ms *after* it, and the next command was refused and never retried. That was
+issue #93's fourth root cause; the capture is in `MSpecDeclaredEvent`'s KDoc.
 
 **The edit page edits everything, not just the spec** - name and connection too. A form that can set
 a nozzle diameter but cannot fix a mistyped hostname is a worse product than one extra parameter is

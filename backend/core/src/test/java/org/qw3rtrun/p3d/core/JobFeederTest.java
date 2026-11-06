@@ -114,7 +114,7 @@ class JobFeederTest {
      */
     @Test
     void blocksAbandonedByTheTransportFailTheJobRatherThanFinishingIt() {
-        feeder.onJobStateChanged(started());
+        feeder.onJobStarted(started());
         theFileSays("G21\nG90\nG28\n");
         assertEquals(List.of("G21", "G90", "G28"), onTheWire,
                 "the premise is a feed under way, and these are the blocks it had written");
@@ -141,7 +141,7 @@ class JobFeederTest {
     // PrintJobIntegrationTest.aResendTheHostCanAnswerDoesNotFailTheJob, one layer down.
     @Test
     void aFeedThatReachesTheEndOfItsFileStillCompletes() {
-        feeder.onJobStateChanged(started());
+        feeder.onJobStarted(started());
         theFileSays("G21\nG90\nG28\n");
         file.tryEmitComplete();
 
@@ -163,7 +163,7 @@ class JobFeederTest {
      */
     @Test
     void aJobThatFinishesWritesDownEveryBlockItSent() {
-        feeder.onJobStateChanged(started());
+        feeder.onJobStarted(started());
         theFileSays("G21\nG90\nG28\n");
         file.tryEmitComplete();
 
@@ -199,7 +199,7 @@ class JobFeederTest {
      */
     @Test
     void aJobFailedByAbandonedBlocksWritesDownWhatItSentRatherThanWhatArrived() {
-        feeder.onJobStateChanged(started());
+        feeder.onJobStarted(started());
         theFileSays("G21\nG90\nG28\n");
 
         printer.onEvent(new BlocksAbandoned(15, 3));

@@ -399,7 +399,7 @@ public class PrinterReactor {
         return printer.getBlocksInFlight();
     }
 
-    /** Passes an edited spec to the aggregate - see {@code PrinterReactorManager.redeclare}. */
+    /** Passes an edited spec to the aggregate - see {@code PrinterReactorManager.onSpecDeclared}. */
     public void declared(MachineSpec spec) {
         printer.declared(spec);
     }

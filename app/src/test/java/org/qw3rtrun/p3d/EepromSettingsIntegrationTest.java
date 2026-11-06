@@ -298,6 +298,12 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         var unable = register("eeprom no", without);
         connectAndSettle(unable, without);
 
+        // Both halves, not just the positive one: the disabled tab below also renders for a machine
+        // that has not reported at all, so without this wait the negative assertion could pass on a
+        // page that knows nothing rather than on one that knows there is no EEPROM.
+        awaitCapability(able, "EEPROM");
+        awaitCapability(unable, "EEPROM");
+
         var offered = monitorPage(able);
         var refused = monitorPage(unable);
 
@@ -424,6 +430,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         var printer = machine(MockPrinter.marlin());
         var id = register("moved", printer);
         connectAndSettle(id, printer);
+        // The page is drawn from the roster, which learns a capability after the aggregate does -
+        // see FarmIntegrationTest.awaitCapability. Without this the tab is legitimately absent.
+        awaitCapability(id, "EEPROM");
 
         var page = monitorPage(id);
 

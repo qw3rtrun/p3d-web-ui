@@ -8,6 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
@@ -27,8 +28,28 @@ import java.util.UUID;
  * returns the event it caused, or null when the move is not legal (not an exception - the service
  * turns that into {@code JobOutcome.Refused}, plan item C2's "a typed failure rather than an
  * exception from the database").
+ *
+ * <p><strong>{@code @DynamicUpdate} is load-bearing, not tuning.</strong> Two writers annotate a
+ * job without moving it - {@link #blocked} (why a queued job has no machine) and
+ * {@link #progressed} (how far a running one has got) - and Hibernate's default is to write
+ * <em>every</em> column, so each of them also wrote back the {@code state} and {@code machine_id}
+ * its own transaction had read. There is no {@code @Version} here, so nothing refused it: a write
+ * that changed one field silently undid a transition another transaction had committed in between.
+ * Measured as issue #97's second defect, with {@code FarmScheduler}'s pass on its own thread:
+ * {@code PrintJobIntegrationTest} failed three runs out of three, a different test each time, all
+ * of them {@code POST /api-jobs/&#123;id&#125;/start} answering
+ * {@code &#123;"state":"QUEUED","attempted":"RUNNING"&#125;} - and the log showed
+ * {@code QUEUED -&gt; ASSIGNED} at 52.012 with the scheduler's {@code is waiting: it is pinned to
+ * recoverable resend, which is OFFLINE} at 52.016, four milliseconds behind it. The checkpoint is
+ * the sharper edge of the same bug: it arrives about once a second per running printer and
+ * {@code JobFeeder} publishes an exact one immediately before the event that stops the job, so a
+ * pause reverted to {@code RUNNING} by the checkpoint that preceded it is the designed sequence.
+ * Writing only what changed makes "this does not move the job" true in SQL as well as in Java.
+ * Two transitions racing each other still both write {@code state} and the later one still wins;
+ * closing that needs a version column, and nothing has been seen to need it.
  */
 @Entity
+@DynamicUpdate
 @Table(name = "print_job")
 @NoArgsConstructor
 @Getter

@@ -10,6 +10,7 @@ import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.qw3rtrun.p3d.api.jobs.JobState;
+import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
 import org.qw3rtrun.p3d.api.model.BedVolume;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
@@ -25,17 +26,26 @@ import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Mono;
 
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
+
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -52,8 +62,17 @@ class FarmSchedulerTest {
     private final Map<UUID, MachineConnectionState> live = new LinkedHashMap<>();
     private final List<Job> queue = new ArrayList<>();
     private final Map<UUID, List<Job>> onMachine = new LinkedHashMap<>();
-    private final List<String> actions = new ArrayList<>();
-    private final Map<UUID, String> blockedReasons = new LinkedHashMap<>();
+    private final List<String> actions = Collections.synchronizedList(new ArrayList<>());
+    private final Map<UUID, String> blockedReasons =
+            Collections.synchronizedMap(new LinkedHashMap<>());
+
+    /**
+     * Where the stubbed {@code connection(id)} answers from, mirroring
+     * {@code PrinterReactor.connection()}'s {@code publishOn(executor)} - the machine's own single
+     * thread in production, inline here except in the two tests about which thread the listener is
+     * called on.
+     */
+    private Scheduler aggregate = Schedulers.immediate();
 
     private FarmScheduler scheduler;
 
@@ -233,8 +252,9 @@ class FarmSchedulerTest {
             @Override
             public Publisher<ConnectionStatus> connection(UUID id) {
                 var state = live.get(id);
-                return state == null ? Mono.empty()
-                        : Mono.just(new ConnectionStatus(state, LocalDateTime.now(), 0, null));
+                return (state == null ? Mono.<ConnectionStatus>empty()
+                        : Mono.just(new ConnectionStatus(state, LocalDateTime.now(), 0, null)))
+                        .publishOn(aggregate);
             }
 
             // Writing to a card is nothing to do with scheduling a job onto a machine, so these
@@ -416,5 +436,55 @@ class FarmSchedulerTest {
         assertEquals(List.of(), actions);
         assertTrue(blockedReasons.get(job.id()).contains("no machine is idle"),
                 "a machine nothing has dialled cannot print, and the reason should say so");
+    }
+
+    // --- the threads a transition is announced on -------------------------------------------
+
+    private JobStateChanged started(Job job, UUID machineId) {
+        return new JobStateChanged(job.id(), job.fileId(), JobState.ASSIGNED, JobState.RUNNING,
+                machineId, null, LocalDateTime.now());
+    }
+
+    /**
+     * {@code JobFeeder}'s two watchers run on {@code reactor.updates()}, which is
+     * {@code publishOn(executor)} - this machine's own single thread - so a job failed there
+     * announces its transition from that thread. Asking the same machine where it is from inside
+     * that thread is a task queued behind the one making the call.
+     */
+    @Test
+    void aTransitionAnnouncedOnAMachinesOwnThreadDoesNotWedgeIt() throws Exception {
+        var printer = idle("alpha");
+        var job = queued("part.gcode", JobRequirements.any());
+        ExecutorService one = Executors.newSingleThreadExecutor(
+                Thread.ofVirtual().name("p3d-printer-" + printer).factory());
+        aggregate = Schedulers.fromExecutorService(one, "p3d-printer-" + printer);
+
+        try {
+            one.submit(() -> scheduler.onJobStateChanged(started(job, printer)))
+                    .get(5, TimeUnit.SECONDS);
+            await().atMost(Duration.ofSeconds(5)).until(() -> actions.size() == 2);
+            assertEquals(List.of("assign " + shortId(job.id()) + " -> alpha",
+                    "start " + shortId(job.id())), actions);
+        } finally {
+            aggregate.dispose();
+        }
+    }
+
+    /**
+     * A feed that reaches the end of its file reports it from a reactor-netty thread, and Reactor
+     * refuses a blocking read there outright - so the pass has to leave that thread rather than
+     * read every machine as unreachable. {@code Schedulers.parallel()} carries the same
+     * {@code NonBlocking} marker an event loop does.
+     */
+    @Test
+    void aTransitionAnnouncedOnANonBlockingThreadStillGivesTheJobAMachine() {
+        var printer = idle("alpha");
+        var job = queued("part.gcode", JobRequirements.any());
+
+        Schedulers.parallel().schedule(() -> scheduler.onJobStateChanged(started(job, printer)));
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertEquals(
+                List.of("assign " + shortId(job.id()) + " -> alpha",
+                        "start " + shortId(job.id())), actions));
     }
 }

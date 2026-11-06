@@ -12,6 +12,7 @@ import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.jobs.JobStateChanged;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
+import org.qw3rtrun.p3d.jobs.service.JobRepository;
 import org.qw3rtrun.p3d.jobs.service.JobServiceImpl;
 import org.reactivestreams.Publisher;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,7 +32,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.awaitility.Awaitility.await;
@@ -133,6 +137,10 @@ class JobServiceTest {
 
     @Autowired
     private TransactionTemplate transactions;
+
+    /** Needed to hold a transaction open at the exact point {@code blocked} and {@code onProgress} hold one - see the concurrent-write section at the foot of this class. */
+    @Autowired
+    private JobRepository repo;
 
     @Autowired
     private CompletedEventPublications completed;
@@ -496,5 +504,105 @@ class JobServiceTest {
         assertTrue(forMachine.contains(mine.id()));
         assertTrue(!forMachine.contains(theirs.id()));
         assertTrue(jobs.fetchAll().size() >= 2);
+    }
+
+    // --- two writers, one row ---------------------------------------------------------------
+    //
+    // Both tests below hold one transaction open at the point a real caller holds one - having
+    // read the job, before writing a field onto it - and move the job from another thread in
+    // between. The interleaving is forced rather than hoped for: the window is a few milliseconds
+    // and a test that writes from two threads and hopes passes against the bug on nearly every run.
+
+    /** Runs {@code body} in its own transaction on another thread, so the test can move the job while it is open. */
+    private CompletableFuture<Void> inAnOpenTransaction(Runnable body) {
+        return CompletableFuture.runAsync(() -> transactions.executeWithoutResult(status -> body.run()));
+    }
+
+    private static void waitFor(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(10, TimeUnit.SECONDS), "the other thread never got there");
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(interrupted);
+        }
+    }
+
+    /**
+     * {@code FarmScheduler} decides a pass against {@link JobService#queued()} and then writes a
+     * reason onto each job it could not place. That read is a snapshot, so an operator pressing
+     * Assign in between leaves the pass writing onto a job that has moved - and the pass's write is
+     * not a transition, which is exactly why it was not suspected.
+     *
+     * <p>Measured against {@code PrintJobIntegrationTest}: three runs, three failures, one test
+     * each time, all of them {@code POST /api-jobs/{id}/start} answering
+     * {@code {"state":"QUEUED","attempted":"RUNNING"}} four milliseconds after the log had recorded
+     * {@code QUEUED -> ASSIGNED} for that job.
+     */
+    @Test
+    void aReasonWrittenFromAStaleReadDoesNotUndoAnAssignmentMadeSince() {
+        var machine = UUID.randomUUID();
+        var job = queued("stale-pass.gcode");
+        var read = new CountDownLatch(1);
+        var assigned = new CountDownLatch(1);
+
+        var pass = inAnOpenTransaction(() -> {
+            var entity = repo.findById(job.id()).orElseThrow();
+            assertEquals(JobState.QUEUED, entity.getState(), "the pass read a queued job");
+            read.countDown();
+            waitFor(assigned);
+            entity.blocked("no machine is idle");
+            repo.save(entity);
+        });
+
+        waitFor(read);
+        assertEquals(JobState.ASSIGNED, done(jobs.assign(job.id(), machine)).state());
+        assigned.countDown();
+        pass.join();
+
+        var after = jobs.fetch(job.id()).orElseThrow();
+        assertEquals(JobState.ASSIGNED, after.state(),
+                "writing why a job could not be placed must not put it back in the queue - the"
+                        + " reason is a field, and a row write that carries the state column with it"
+                        + " undoes a transition nobody asked it to touch");
+        assertEquals(machine, after.machineId(), "and the machine it was given goes with it");
+    }
+
+    /**
+     * The same shape with a far shorter fuse: a checkpoint arrives about once a second for every
+     * running printer, and {@code JobFeeder} publishes an exact one immediately <em>before</em> the
+     * event that stops the job - so a checkpoint whose transaction is still open when the pause
+     * commits is the designed sequence, not an unlucky one.
+     */
+    @Test
+    void aProgressCheckpointFromBeforeAPauseDoesNotPutTheJobBackToRunning() {
+        var machine = UUID.randomUUID();
+        var job = queued("stale-checkpoint.gcode");
+        jobs.assign(job.id(), machine);
+        jobs.start(job.id());
+        var read = new CountDownLatch(1);
+        var paused = new CountDownLatch(1);
+
+        var checkpoint = inAnOpenTransaction(() -> {
+            var entity = repo.findById(job.id()).orElseThrow();
+            assertEquals(JobState.RUNNING, entity.getState(), "the checkpoint read a running job");
+            read.countDown();
+            waitFor(paused);
+            entity.progressed(new JobProgress(1200, 3, 14_000, 500_000, 4,
+                    LocalDateTime.now(), LocalDateTime.now()));
+            repo.save(entity);
+        });
+
+        waitFor(read);
+        assertEquals(JobState.PAUSED, done(jobs.pause(job.id())).state());
+        paused.countDown();
+        checkpoint.join();
+
+        var after = jobs.fetch(job.id()).orElseThrow();
+        assertEquals(JobState.PAUSED, after.state(),
+                "a job the operator paused must stay paused; a checkpoint records where it got to"
+                        + " and decides nothing about whether it is still running");
+        assertEquals(1200, after.progress().blocksSent(),
+                "and the reading itself still lands - this is about which columns a write carries,"
+                        + " not about dropping the write");
     }
 }

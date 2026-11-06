@@ -12,10 +12,13 @@ import org.qw3rtrun.p3d.api.model.Descriptor;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
-import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -44,10 +47,25 @@ public class FarmScheduler {
     private final MachineManagementService machines;
     private final PrinterControl printers;
 
-    /** Anything that moves a job may have freed a machine or added work - more responsive than the timer, since a finishing print hands its printer on in the same breath rather than at the next sweep. */
-    @EventListener
+    /**
+     * Anything that moves a job may have freed a machine or added work - more responsive than the
+     * timer, since a finishing print hands its printer on in the same breath rather than at the next
+     * sweep.
+     *
+     * <p>The pass is handed to another thread because {@link #schedule()} blocks and this runs on
+     * whichever thread moved the job, which for both of {@code JobFeeder}'s outcomes is a thread
+     * that cannot take it. A watcher fails a job from that machine's own {@code p3d-printer-<uuid>}
+     * thread (its {@code updates()} is {@code publishOn(executor)}), and {@link #liveStateOf} then
+     * queues a task on that same single thread - so the pass waited on the thread it was waiting
+     * for, for ever, holding this class's monitor against every later sweep. A feed that reaches the
+     * end of its file completes on a reactor-netty thread, where Reactor refuses {@code block()}
+     * outright and every machine therefore read {@code OFFLINE}. After commit so the pass sees the
+     * move it was told about, with {@code fallbackExecution} so a publisher outside a transaction is
+     * still heard rather than silently dropped.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onJobStateChanged(JobStateChanged event) {
-        schedule();
+        Schedulers.boundedElastic().schedule(this::schedule);
     }
 
     /** The backstop for everything a job transition cannot see - a machine coming online, a spec edited, a printer registered - any of which can make a blocked job runnable without moving a job itself. */
@@ -63,6 +81,11 @@ public class FarmScheduler {
      * machines, so serialising it costs nothing worth measuring. {@code taken} stops one pass doing
      * that to itself, since a machine assigned to the first job in a pass does not look taken to the
      * queue until {@code assign}'s transaction commits.
+     *
+     * <p>A pass also races whoever is using the farm, and the monitor does nothing about that: the
+     * queue read above is a snapshot, so every write below may land on a job an operator moved in
+     * between. {@code assign} and {@code start} re-read and are refused; what a reason costs is
+     * {@code JobEntity}'s business, and is the whole of that class's note on {@code @DynamicUpdate}.
      */
     public synchronized void schedule() {
         List<Job> waiting = jobs.queued();
@@ -162,10 +185,17 @@ public class FarmScheduler {
      * restart and stale the moment anything connects, so asking it would hand jobs to printers that
      * went offline minutes ago. A machine the runtime knows nothing about reads as {@code OFFLINE},
      * correctly: nothing has dialled it, so nothing can print on it.
+     *
+     * <p>Bounded, because the answer is a task on that machine's own thread and an unbounded wait
+     * would hold {@link #schedule()}'s monitor against every later sweep. A second is well inside
+     * the default five-second interval, so one unresponsive aggregate cannot push a pass past the
+     * next tick, and a machine that cannot say where it is within one is not a machine that can take
+     * a print - which is what {@code OFFLINE} already means here. Which threads may block at all is
+     * argued on {@link #onJobStateChanged}.
      */
     private MachineConnectionState liveStateOf(Descriptor machine) {
         try {
-            var status = Mono.from(printers.connection(machine.uuid())).block();
+            var status = Mono.from(printers.connection(machine.uuid())).block(Duration.ofSeconds(1));
             return status == null ? MachineConnectionState.OFFLINE : status.state();
         } catch (RuntimeException notRunning) {
             return MachineConnectionState.OFFLINE;

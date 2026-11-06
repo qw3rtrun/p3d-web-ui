@@ -431,6 +431,18 @@ class GTokensTest {
         }
 
         @Test
+        fun `string converts to a lowercase letter token, as the tokenizer emits one`() {
+            assertEquals(GLetter('m'), "m".asGLetter())
+        }
+
+        @Test
+        fun `string rejects a non-ASCII letter`() {
+            assertThrows<IllegalArgumentException> { "Ω".asGLetter() }
+            assertThrows<IllegalArgumentException> { "я".asGLetter() }
+            assertThrows<IllegalArgumentException> { "日".asGLetter() }
+        }
+
+        @Test
         fun `string converts to a quoted string token`() {
             assertEquals(GQuotedString("hi"), "hi".asGQuotedString())
             assertEquals("\"hi\"", "hi".asGQuotedString().rawText())

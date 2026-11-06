@@ -167,6 +167,26 @@ StepVerifier.create(Flux.from(farm.updates())
 Treat Reactor's refusal as a gift: the alternative to a 500 is not a working farm, it is one that
 stalls an event loop under load with no symptom at all.
 
+### A listener is charged to the publisher's thread, and here that is rarely one it may block
+
+`publishEvent` is synchronous, so a plain `@EventListener` runs on whichever thread moved the
+state. Since #54 that is one of three, and only the first may block: `boundedElastic` (a
+controller), a machine's own `p3d-printer-<uuid>` (anything `JobFeeder`'s two watchers decide, since
+`PrinterReactor.updates()` is `publishOn(executor)`), and a reactor-netty event loop (a feed
+reaching the end of its file, whose completion arrives through `PublisherQueue`). `FarmScheduler`
+blocked on all three and was wrong on two (issue #97, measured as two tests): on netty, Reactor
+refuses `block()` outright and `liveStateOf`'s `catch` turned the refusal into *every machine is
+`OFFLINE`* - a silent no-op that wrote "no machine is idle" onto every queued job; on the machine's
+own thread, the blocking read is `publishOn`'d onto that same single thread **behind the call making
+it**, so it waited for itself for ever while holding the `synchronized` pass against the five-second
+sweep. **Before writing a listener that blocks, name the threads its event is published from.** The
+repair is to hand the work off, not to unpick the blocking call:
+`@TransactionalEventListener(phase = AFTER_COMMIT, fallbackExecution = true)` plus a one-line
+scheduler hop - after commit so the hopped pass sees the move it was told about rather than racing
+it, `fallbackExecution` so a publisher with no transaction is still heard instead of being dropped
+the way `@ApplicationModuleListener` would drop it. A blocking read that another thread must answer
+also gets a bound, so a wedged aggregate costs one pass and not the farm's scheduling.
+
 ## Spring Modulith - the declared structure
 
 **Eight modules**, declared in `package-info.java` and verified by `ApplicationModulesTest` in
@@ -1194,6 +1214,31 @@ travels, and that is rule 7 of `doc/sub_boundaries.txt`.
 - **H2 file-backed is the development store** (`./data/printersdb`). Nothing may depend on an
   H2-specific feature, because it is not the production store.
 - An entity is internal to its module. A controller returns a record mapped from it.
+- **A write that does not move an aggregate must not carry the columns that say where it is.**
+  Hibernate's default `UPDATE` writes *every* column from the snapshot the transaction loaded, so a
+  method whose whole job is to annotate a row - `JobEntity.blocked` (why a queued job has no
+  machine), `JobEntity.progressed` (how far a running one has got) - also wrote back the `state` and
+  `machine_id` it had read, silently undoing a transition another transaction had committed in
+  between. There is no `@Version`, so nothing refused it. **`@DynamicUpdate` on the entity is what
+  makes "this decides nothing about the state" true in SQL**, and it is load-bearing rather than
+  tuning. Measured as issue #97: with `FarmScheduler`'s pass hopped onto its own thread,
+  `PrintJobIntegrationTest` failed **three runs out of three**, a different test each time, always
+  `POST /api-jobs/{id}/start` answering `{"state":"QUEUED","attempted":"RUNNING"}` - the log has
+  `QUEUED -> ASSIGNED` at `52.012` and the pass's `is waiting: it is pinned to … which is OFFLINE`
+  at `52.016`, four milliseconds behind it, with no `giving job … to …` anywhere. **The reason it
+  took a reproduction to find is that the culprit is not a transition**: `blocked` never calls
+  `moveTo`, so reading the state machine clears it of suspicion, and the write is still a row write.
+  Ask of any new annotate-the-row method: *which columns does this actually send?*
+- **An asynchronous listener turns its publisher's caller into a concurrent writer.** Moving
+  `FarmScheduler.onJobStateChanged` off the publishing thread was correct and is what exposed the
+  above: a pass that used to run inside the `queue()` transaction now runs beside the operator's
+  next request. **A hop is also a concurrency change, not only a thread-safety one** - when one is
+  added, name what the hopped work writes and who else can be writing it.
+- **Two transitions racing each other are still last-writer-wins.** `canMoveTo` is checked against a
+  read, and two transactions can both read `QUEUED` and both commit `ASSIGNED`. Closing that needs a
+  version column and a decision about what the loser's REST caller is told - a refusal is a value
+  here, so an `OptimisticLockingFailureException` escaping to a 500 is not an option. Nothing has
+  been seen to need it; it is named so the next person does not rediscover it as a mystery.
 
 ## Testing
 

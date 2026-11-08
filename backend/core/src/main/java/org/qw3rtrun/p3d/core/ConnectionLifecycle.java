@@ -128,13 +128,15 @@ public final class ConnectionLifecycle {
     /**
      * The socket is open.
      *
-     * <p>It also sets the intent: a reactor that dialled did so because something wanted it to, and
-     * the one path that reaches here without a {@link #connectRequested()} first - a test, or a
-     * caller driving the aggregate directly - would otherwise hold a live link that nothing would
-     * reconnect.
+     * <p><strong>It does not touch the intent</strong> (#80). It used to set {@code wanted}, on the
+     * grounds that a reactor dialling at all implied somebody wanted it to - but that is an
+     * observation writing an intent, and it meant a disconnect landing while a dial was already on
+     * the wire was silently undone by the socket it could no longer unmake. The caller the old
+     * behaviour protected is gone: {@link PrinterReactor#connect()} refuses to dial a machine whose
+     * aggregate has not asked for a connection, so every {@link #linkEstablished()} in production
+     * has a {@link #connectRequested()} in front of it.
      */
     public ConnectionStateChanged linkEstablished() {
-        wanted = true;
         attempt = 0;
         if (state == ONLINE) {
             return null;

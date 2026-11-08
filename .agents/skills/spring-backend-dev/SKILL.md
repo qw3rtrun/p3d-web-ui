@@ -493,12 +493,15 @@ The rules that follow:
   collections normalise to empty instead, because they arrive from a web form.
 - **Groups are tags.** B4 offered "free-form tags or a group id"; a group is a tag a reader filters
   on, costs the same, and lets a machine belong to two.
-- **An edit reaches a running machine.** `MachineManagementImpl.update` re-publishes
-  `MRegisteredEvent`, `PrinterDirectory` updates its replica, and `PrinterReactorManager.redeclare`
-  hands the new spec to an aggregate that is already running. Without that last step a declared
-  extruder count would reach the database and not the object that refuses the command - the same
-  write-only defect B3 removed. `redeclare` must never *build* a runtime: that event is re-published
-  for every machine at startup and on every firmware report.
+- **An edit reaches a running machine, through an event of its own.**
+  `MachineManagementImpl.update` publishes **two**: `MRegisteredEvent`, which updates
+  `PrinterDirectory`'s replica (and so seeds any aggregate built later), and `MSpecDeclaredEvent`,
+  which `PrinterReactorManager.onSpecDeclared` hands to an aggregate that is **already running**.
+  Without that second step a declared extruder count would reach the database and not the object
+  that refuses the command - the same write-only defect B3 removed. It must never *build* a
+  runtime: that would open a reactor per row in the farm. **The announcement used to do both jobs
+  and that was issue #93's fourth root cause**; see *an event that restates current fact … must not
+  also be the carrier for a command* under *Match the delivery to what the state is*.
 
 ### Retry belongs to the reactor, and wraps the whole conversation
 
@@ -638,6 +641,24 @@ Issue #54. Two properties, two mechanisms, and they are separate on purpose.
 - **A roster event is built on the aggregate's thread, including its `LocalDateTime.now()`.** The
   timestamp says when the machine said it, not when the database got round to it - and the gap is
   longest exactly when somebody would be reading those timestamps to find out what happened.
+- **IMPORTANT - state shared between a machine's aggregate thread and anything else needs its edge
+  written down: which field, which thread writes, which thread reads, and what makes the write
+  visible.** `PrinterState.spec` is **`volatile`** because `PrinterReactorManager.onSpecDeclared`
+  writes it from the `boundedElastic` worker serving a `PUT` while `extruderCount()` reads it on
+  that machine's own `p3d-printer-<uuid>` thread. So are `blocksInFlight`, `ConnectionLifecycle`'s
+  five transition fields, and the one immutable value behind each of `ProfileControl`,
+  `TemperatureControl`, `SdCardControl` and `EEPROMSettingsControl` - one reference assignment each
+  way, no read-modify-write anywhere, so `volatile` is the whole edge and a lock would buy nothing.
+  **`spec` is a latent hazard found while investigating #93, not the cause of it** - it was the one
+  field in the class that lacked the edge the rest follow, and adding it moved the measured failure
+  rate not at all, because the write was visible and simply had the wrong value. What #93's spec
+  failure actually was is *an announcement undoing a command*, written up under *Match the delivery
+  to what the state is*. **Say which of the two a fix is**: a comment claiming a measurement it did
+  not cause is worse than no comment, and this bullet asserted one for a day.
+  A visibility race cannot be made to fail deterministically, so do not try: state the ordering
+  instead. `PrinterStateGcodeTest.aDeclarationMadeOnAnotherThreadIsHonouredByTheNextCommand`
+  declares on a thread of its own and **joins it**, which pins the contract without pretending to
+  reproduce anything.
 - **A scheduler is disposed by scheduling the disposal as a task on it**, never by calling
   `dispose()` directly. `DelegateServiceScheduler.dispose()` is `shutdownNow()`, which discards the
   queue - and `tryEmitComplete()` has just handed `onComplete` to each subscriber's `publishOn`
@@ -708,6 +729,12 @@ said OFFLINE; and `connect()`'s own `Retry.backoff(...).filter(cause ->
 printer.wantsToBeConnected())` was consulting an intent nobody had established, so **a machine
 redialled at startup gave up after its first refusal** and nothing said so. Nothing covered that,
 which is why it was never seen.
+
+**And it goes through `openReactorIfKnown`, not `openReactor`** (#93). The replica answers empty
+for a machine the farm has deleted - which is exactly what a stale announcement is about - and for
+a farm already shutting down; `openReactor`'s `IllegalArgumentException` would come out of a
+listener and cost whatever is queued behind it. A redial that finds nothing to dial does nothing
+and says nothing, which is the right amount.
 
 **`PrinterReactor.connect()` refuses to dial a machine whose aggregate has not asked for a
 connection**, as its first statement and before the in-flight check, and it logs the refusal. That
@@ -1229,6 +1256,31 @@ travels, and that is rule 7 of `doc/sub_boundaries.txt`.
   took a reproduction to find is that the culprit is not a transition**: `blocked` never calls
   `moveTo`, so reading the state machine clears it of suspicion, and the write is still a row write.
   Ask of any new annotate-the-row method: *which columns does this actually send?*
+- **IMPORTANT - a listener that will move an aggregate again must not be run inside the transaction
+  that established its own precondition.** This is the contract `JobFeeder` now holds and callers
+  depend on: a feed is started from
+  `@TransactionalEventListener(phase = AFTER_COMMIT, fallbackExecution = true)`, never from a plain
+  `@EventListener`. Started inline, the feed's *own outcome* is a second transaction racing the
+  commit of the transition that started it - and on a short file it wins. Issue #93, measured: a
+  twelve-block file against a mock printer ran out five milliseconds after `ASSIGNED -> RUNNING`
+  and before it committed, so `FeedOutcomes`' transaction read the row as `ASSIGNED` and logged
+  `refused to move job e0417935… from ASSIGNED to COMPLETED` - every block on the wire, job
+  `RUNNING` for ever, because a feed outcome is at-most-once and nothing retries. 4 of 10 runs of
+  `PrintJobIntegrationTest` under load, 0 of 10 idle. **`AFTER_COMMIT` costs no responsiveness**:
+  it runs synchronously, on the publishing thread, inside the `TransactionTemplate` the service
+  call is still in - so a start against a disconnected machine is still answered inside
+  `jobs.start(...)`. **`fallbackExecution = true` is not optional**: some callers publish with no
+  transaction, and without it those are dropped in silence.
+  **The converse half is equally a rule: a listener that only *annotates* the row the transition is
+  writing stays inline.** `JobFeeder.onJobStopped` does, because `stop(...)` publishes the one exact
+  checkpoint a resume reads and `JobServiceImpl.onProgress` must share that persistence context
+  rather than race it (#62); after the commit it becomes a second transaction an
+  `OptimisticLockingFailureException` may legitimately drop. **Ask of each branch of a listener
+  which of the two it is**, and split the listener if the answer differs - the three branches of
+  `JobFeeder`'s were already mutually exclusive on `(from, to)`, so splitting was free.
+  `JobFeedStartTest` pins the invariant without racing anything: a stand-in with the same
+  annotation reads the job back through `PROPAGATION_REQUIRES_NEW` and must find `RUNNING`; against
+  a plain `@EventListener` it records `ASSIGNED`.
 - **An asynchronous listener turns its publisher's caller into a concurrent writer.** Moving
   `FarmScheduler.onJobStateChanged` off the publishing thread was correct and is what exposed the
   above: a pass that used to run inside the `queue()` transaction now runs beside the operator's
@@ -1310,6 +1362,69 @@ Three mechanisms, and picking the wrong one has already cost a debugging session
 - **A replica of current state** wants a plain `@EventListener` and a re-announcement at startup.
   It is derived, it is rebuilt every boot, and nothing about it must survive the process.
   `PrinterDirectory` is the example.
+  **IMPORTANT - such a replica needs a tombstone, and "the map takes the latest arrival" is wrong
+  for a key that has been deleted.** This is the contract `PrinterDirectory` now holds:
+  `onDeleted` records the id in a `ConcurrentHashMap`-backed set and `onRegistered` refuses an id
+  in it, so `find(id)` stays empty however far behind the announcement that says otherwise is.
+  Issue #93, measured over five milliseconds on one machine: the roster re-publishes
+  `MRegisteredEvent` about seven times per connect, each from a `@Transactional` listener queued on
+  that machine's own `p3d-listener-<uuid>` thread, so one landed *after* the `MDeletedEvent` that
+  followed it in real time. It put the entry back, `PrinterReactorManager` found no runtime for a
+  machine the roster still called `IDLE` and dialled a second one - which nothing would ever
+  release, so it held a socket, a send window, a replay sink and two threads and went on redialling
+  the closed port for 45 seconds *into the test classes that followed*, with
+  `ObjectOptimisticLockingFailureException` from the same backlog writing to a row that was gone.
+  Four things to carry over to the next replica:
+  - **The tombstone never expires**, because the straggler is bounded by that machine's listener
+    queue and not by a clock. One `UUID` per machine ever deleted in the process is nothing at
+    forty machines.
+  - **A deleted id can never legitimately return** - `MachineManagementImpl` generates a fresh
+    `UUID` for every `add`, and an edit re-announces a machine that was never deleted - which is
+    why refusing by id is not over-strict. Pin that with a test: a registered, edited, never-deleted
+    machine is still found and still updated.
+  - **Do not order the two events by their timestamps instead.** Both carry a `LocalDateTime`, but
+    they are taken on different threads at millisecond resolution and the measured pair is 5 ms
+    apart.
+  - **Check-then-act is the bug, not the symptom.** `contains`-then-`put` on two concurrent
+    collections has a gap a delete can land in; the tombstone is written *before* the entry is
+    removed, and the check happens inside `known.compute(...)` so it and the write are one step
+    under that key's lock. Both of the replica's listeners are `@Order(HIGHEST_PRECEDENCE)` - the
+    delete side too, and that half is load-bearing rather than symmetry: the two delete listeners
+    run on one thread but a stale announcement arrives on another, so with the manager's `onDeleted`
+    first there is a window in which the runtime is released and the entry is not yet gone. Default
+    listener order is `LOWEST_PRECEDENCE` for both, i.e. bean-definition order and not a contract.
+- **IMPORTANT - an event that restates current fact for a replica must not also be the carrier for
+  an operator's command to a live object.** This is the same mistake as the tombstone above, seen
+  from the other side, and it was the third instance of it on one branch: *a stale announcement
+  applied unconditionally*. An **announcement** is idempotent, repeated, and built from whatever
+  the publisher had at the time; a **command** is singular, ordered, and meaningful exactly once.
+  When one event type does both jobs, a repeat of the announcement half silently undoes the command
+  half. **The fix is two events, and nothing else is one**:
+  - **not timestamps** - the straggler is *built* when its listener runs, so its timestamp is newer
+    than the edit's while its content is older (`.457053` against `.455540`, measured);
+  - **not "ignore an announcement that changes nothing"** - the clobbering announcement does change
+    something, it changes it back;
+  - **not `@TransactionalEventListener` on the command** - that reorders the command against its own
+    commit, not against a straggler already behind it.
+
+  Measured as issue #93: `MRegisteredEvent` carried both "here is a machine as the roster has it"
+  (seven announcements per connect, from that machine's own `p3d-listener-<uuid>` thread) and
+  "a person declared this spec", and `PrinterReactorManager` applied every one to a running
+  aggregate. `[oundedElastic-2]` applied a `PUT`'s `extruderCount=2` at `17:13:07.455540` and
+  `[32-580ccedeae22]` put `extruderCount=null` back at `17:13:07.457053`; the next command was
+  refused with `This machine has only 1 extruders` and **nothing reached the wire at all**.
+  `PrinterManagementIntegrationTest.clearingTheDeclarationFallsBackToTheFirmware` failed **4 runs
+  in 6** isolated and unloaded. **A command is sent once and never retried, so one stale read is
+  permanent, not late** - one refused command is the whole of the operator's experience.
+  `MSpecDeclaredEvent` is now the command half, published only by `MachineManagementImpl.update`
+  and heard only by `PrinterReactorManager.onSpecDeclared`; `MRegisteredEvent` is unchanged and
+  still rebuilds the replica.
+  **Before splitting, check the announcement is not the only way some reader learns the fact.** It
+  was safe here only because `CoreConfiguration.aggregates` seeds a *fresh* aggregate from
+  `PrinterDirectory`'s entry, which still takes `spec` from `MRegisteredEvent` - so the command
+  event only ever has to reach an **already running** object.
+  `PrinterReactorManagerTest.aMachineDeclaredBeforeItWasRunningIsSeededWithThatSpec` pins that
+  startup half against the production seeding lambda itself, so nobody can simplify it away.
 - **A fact that must not be lost** - a job that was running when the printer went offline - wants
   Modulith's event publication registry: at-least-once delivery across a transaction boundary, with
   persistence and replay. **Turning it on needs a Liquibase changeset for its `EVENT_PUBLICATION`
@@ -1636,6 +1751,18 @@ the source, not suspected.
   `directBestEffort` is chosen for. It survived two earlier rounds of fixing this exact class of
   defect elsewhere, which is the argument for grepping for `tryEmitNext` rather than fixing the
   instance in front of you.
+- **The roster still tries to write facts onto a machine that has been deleted, and only a WARN
+  says so.** The other half of #93's capture, left deliberately: the same listener backlog that
+  carried the stale `MRegisteredEvent` also carries `MFirmwareReportedEvent`/`MCapabilityReportedEvent`
+  for the deleted machine, and `MachineManagementImpl`'s `@Transactional` listener writes them to a
+  row that is gone - `the roster's facts about c50717f6… could not publish
+  MCapabilityReportedEvent[… SD_WRITE …]` with `ObjectOptimisticLockingFailureException: Unexpected
+  row count (expected row count 1 but was 0) [update printer_entity set profile_learned_at=? where
+  id=?]`. The tombstone fixes the *resurrection*, not this: nothing is resurrected and nothing is
+  dialled, so the cost is one failed transaction and one WARN per straggler. Fixing it properly
+  means the roster knowing an id is gone - the same tombstone one module along, or
+  `findById`-returning-empty being an ordinary answer rather than an exception - which is
+  `printer-management`'s shape to decide, not a line in `core`.
 - **A listener that throws still skips the roster report behind it.** `PrinterReactor.onEvent` runs
   `roster.publishEvent(message)` then `report(event)`, and Spring's multicaster propagates a
   listener's exception - so a synchronous `@EventListener` on `EventMessage` that throws costs the
@@ -1665,23 +1792,32 @@ the source, not suspected.
   now reaches `connect()` only for a machine with no runtime at all, and the intent check makes a
   dial that races a disconnect lose whenever the disconnect's `wanted = false` is visible first.
   It is still a check-then-act on two fields.
-- **A stale `MachineSpec` can overwrite a fresh edit, in `PrinterReactorManager.redeclare`.** It
-  takes the same republished `MRegisteredEvent` the redial is now gated against, and hands its spec
-  to a running aggregate - so an edit that commits between the republication's `repo.findById` and
-  its listeners running is overwritten. The window is one transaction rather than the whole listener
-  queue, because the republication reads the row fresh at publication time, which is why this is
-  lower stakes than the connection case and is left alone. The same shape, and no observed failure.
+- ~~**A stale `MachineSpec` can overwrite a fresh edit, in `PrinterReactorManager.redeclare`.**~~
+  **Fixed** by `MSpecDeclaredEvent` (#93). The entry is kept because the estimate in it was wrong
+  in the way these estimates usually are: it called the window "one transaction rather than the
+  whole listener queue … lower stakes than the connection case", and "no observed failure" was
+  true only because nobody had instrumented `redeclare` yet. Instrumented, it was **4 isolated runs
+  in 6**, and the cost was not a late value but a command that is never sent again. **An
+  unmeasured window is not a small one.**
 - **`PrinterDirectory.Entry.state` has no production reader.** `PrinterReactorManager` reads
   `event.getState()`, `FarmEvents` reads the runtime, and `CoreConfiguration.aggregates()` reads
   only `profile()` and `spec()`; the one reader anywhere is `StartupAnnouncementFlowTest` in `:app`.
   So the stale announcement that overwrites it costs nothing today - but it is a write-only field,
   which is the defect B3 removed from `PrinterEntity.connected`, and the next person to read it
   will read a value that can be behind the aggregate.
-- **Three methods still touch the aggregate from the caller's thread.** `handleConnectCmd(ConnectCmd)`
-  calls `printer.handle(cmd)` on the HTTP thread - and, since the startup redial became a command,
-  on the printer's listener thread as well - and `declared(spec)` and `blocksInFlight()` read
-  the aggregate from whatever thread arrives. #54 did not close these - they predate it and fixing
+- **Three methods still touch the aggregate from the caller's thread, and one of them writes.**
+  `handleConnectCmd(ConnectCmd)` calls `printer.handle(cmd)` on the HTTP thread - and, since the
+  startup redial became a command, on the printer's listener thread as well - `blocksInFlight()`
+  reads from whatever thread arrives, and **`declared(spec)` mutates the aggregate** from the
+  `boundedElastic` worker serving the edit. #54 did not close these - they predate it and fixing
   them changes command semantics (a POST would stop being able to report a refusal synchronously).
   So "one aggregate, one thread" is true of the *reply* path and aspirational on the command path.
+  **The write is `volatile`-safe and is still debt.** Routing `declared` onto the aggregate's
+  executor is the architecturally pure answer and is deliberately not taken: `onSpecDeclared` is
+  synchronous inside the roster's transaction so that a `PUT` has taken effect by the time it
+  answers (plan item B4), and `PrinterManagementIntegrationTest` depends on that at the endpoint -
+  so making it asynchronous is a behaviour change, not a tidy-up. `volatile` makes the path safe
+  without making it tidy, and keeps the move available. Anything *new* that wants to mutate an
+  aggregate from outside its own thread does not get the same answer: hand it to the executor.
 - **There is no written spec for this layer.** This skill is the only authority, so a behaviour that
   callers come to depend on gets written down here, in the change that establishes it.

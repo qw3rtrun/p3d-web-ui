@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
+import org.qw3rtrun.p3d.api.msg.MSpecDeclaredEvent;
 import org.qw3rtrun.p3d.terminal.TerminalManager;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
@@ -220,15 +221,16 @@ public class PrinterReactorManager {
     }
 
     /**
-     * A re-announced machine: its declared spec is always re-applied to a running aggregate
-     * ({@link #redeclare}), and if the roster says it was linked and nothing is running yet, it is
+     * A re-announced machine: if the roster says it was linked and nothing is running yet, it is
      * dialled again - see the class javadoc's Startup redial section. Ordered after
      * {@link PrinterDirectory#onRegistered}, which the redial depends on having already run.
+     *
+     * <p>Deliberately does <strong>not</strong> apply the spec it carries; that is
+     * {@link #onSpecDeclared} and {@code MSpecDeclaredEvent}'s whole reason for existing.
      */
     @Order(Ordered.LOWEST_PRECEDENCE)
     @EventListener
     public void onRegistered(MRegisteredEvent event) {
-        redeclare(event);
         if (!event.getState().isLinked()) {
             return;
         }
@@ -236,13 +238,18 @@ public class PrinterReactorManager {
     }
 
     // synchronized with everything else touching running(), so the check and the open are one step
-    // against a concurrent release(UUID).
+    // against a concurrent release(UUID). openReactorIfKnown rather than openReactor: the replica
+    // answers empty for a machine the farm has deleted - which is exactly what a stale announcement
+    // is about (#93) - and for a farm already shutting down, neither of which is a reason to throw
+    // out of a listener and cost whatever is queued behind it.
     private synchronized void redialAtStartup(MRegisteredEvent event) {
         if (running.containsKey(event.getMachineId())) {
             return;
         }
-        log.info("{} was connected when the farm was last up, so dialling it again", event.getName());
-        openReactor(event.getMachineId()).handleConnectCmd(new ConnectCmd(true));
+        openReactorIfKnown(event.getMachineId()).ifPresent(reactor -> {
+            log.info("{} was connected when the farm was last up, so dialling it again", event.getName());
+            reactor.handleConnectCmd(new ConnectCmd(true));
+        });
     }
 
     /** The runtime of a machine already running, or null - deliberately does not build one (unlike {@link #openReactor}). */
@@ -253,11 +260,24 @@ public class PrinterReactorManager {
     /**
      * Hands an edited spec to an already-running machine (plan item B4) - an aggregate is otherwise
      * only seeded at construction, so a declared change would reach the database and not the object
-     * that refuses commands until a restart. Touches only an existing runtime; building one here
-     * would open a reactor for every row in the farm, since this event is re-published at startup
-     * and on every firmware report.
+     * that refuses commands until a restart. Touches only an existing runtime, never builds one: a
+     * machine that is not running will be seeded from {@link PrinterDirectory}'s entry when it is
+     * stood up ({@code CoreConfiguration.aggregates}), and building one here would open a reactor
+     * per row in the farm.
+     *
+     * <p>Runs synchronously on the {@code boundedElastic} worker serving the {@code PUT}, inside the
+     * roster's transaction, so the edit has taken effect by the time the endpoint answers (plan item
+     * B4) - which is why {@code PrinterState.spec} is {@code volatile}: this is the one writer that
+     * is not the machine's own thread.
+     *
+     * <p><strong>Deliberately not driven by {@code MRegisteredEvent}.</strong> That event is an
+     * announcement re-published about seven times per connect, each copy carrying the spec as of its
+     * own read, so one built before an edit silently put the old spec back 1.5 ms after it and the
+     * next command was refused and never retried - issue #93's fourth root cause, captured in
+     * {@code MSpecDeclaredEvent}'s KDoc.
      */
-    private synchronized void redeclare(MRegisteredEvent event) {
+    @EventListener
+    public synchronized void onSpecDeclared(MSpecDeclaredEvent event) {
         var reactor = running.get(event.getMachineId());
         if (reactor != null) {
             reactor.declared(event.getSpec());

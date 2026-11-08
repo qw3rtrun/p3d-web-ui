@@ -144,8 +144,16 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
      * without the override every command for tool 1 is refused with no way to say otherwise.
      *
      * <p>Also covers the half easiest to leave out: the edit must reach the <em>running</em>
-     * aggregate, not just the database - without {@code PrinterReactorManager.redeclare} this would
-     * pass every roster check and still drop the command until a restart.
+     * aggregate, not just the database - without {@code PrinterReactorManager.onSpecDeclared} this
+     * would pass every roster check and still drop the command until a restart.
+     *
+     * <p>Its sibling {@link #clearingTheDeclarationFallsBackToTheFirmware} is where issue #93's
+     * fourth root cause showed: the edit used to be carried by {@code MRegisteredEvent}, which the
+     * roster re-publishes about seven times per connect, so a copy built before the edit put the
+     * old spec back 1.5 ms after it landed and the one command this test sends was refused. This
+     * one passed throughout only because {@link #quiet()} and a whole refused-command round trip
+     * sit between its edit and its assertion - which is the shape of a test whose timing happens to
+     * supply a missing guarantee, and is why the other one is the honest version.
      */
     @Test
     void aDeclaredExtruderCountLetsACommandForTheSecondToolThrough() {
@@ -271,22 +279,5 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
                 .bodyValue(body)
                 .exchange()
                 .expectStatus().isOk();
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> spec(Map<String, Object> described) {
-        return (Map<String, Object>) described.get("spec");
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> firmware(Map<String, Object> described) {
-        var profile = (Map<String, Object>) described.get("profile");
-        return (Map<String, Object>) profile.get("firmware");
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> capabilities(Map<String, Object> described) {
-        var profile = (Map<String, Object>) described.get("profile");
-        return (Map<String, Object>) profile.get("capabilities");
     }
 }

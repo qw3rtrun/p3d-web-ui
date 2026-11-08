@@ -605,7 +605,7 @@ The rules that follow, each paid for:
 
 ### One aggregate, one thread - and a listener is never on it
 
-Issue #54. Two properties, two mechanisms, and they are separate on purpose.
+Issues #54 and #80. Three properties, three mechanisms, and they are separate on purpose.
 
 - **A scheduler is allocated per `PrinterReactor`, not shared across the farm.** `PrinterThreads`
   is the factory and `CoreConfiguration` declares it as a bean, so an assembly can replace the
@@ -641,24 +641,74 @@ Issue #54. Two properties, two mechanisms, and they are separate on purpose.
 - **A roster event is built on the aggregate's thread, including its `LocalDateTime.now()`.** The
   timestamp says when the machine said it, not when the database got round to it - and the gap is
   longest exactly when somebody would be reading those timestamps to find out what happened.
+- **IMPORTANT - every command and every reply crosses the aggregate on that aggregate's own thread,
+  and since #80 that is true of both halves.** It was true of replies only: `gEvent()` had
+  `publishOn(executor)` while `handleConnectCmd` ran `printer.handle(cmd)` on the HTTP worker that
+  posted it and `declared(spec)` mutated the aggregate from the `boundedElastic` worker serving a
+  `PUT`. **A half-true invariant is worse than a stated limitation** - the next reader sees
+  `PrinterThreads`, the per-printer scheduler and the thread name and reasonably concludes the whole
+  of it. Every entry point into `PrinterState` now goes through `executor`:
+  `publishOn(executor)` where there is a `Mono`/`Flux` to hang it on (`handle(List)`,
+  `handleConnectCmd(Mono)`, `connection()`, `state()`), and a scheduled task where the caller is a
+  listener that must not wait (`handleConnectCmd(ConnectCmd)`, `declared`, and `stop()`'s own
+  disconnect). `connect()` and `disconnect()` are **private**, which is what keeps it true.
+- **The payoff is that `volatile` comes off rather than on.** `PrinterReactor.attempts` and
+  `PrinterState.spec` are plain fields again, and `PrinterState.g` - the `GSender`, which never had
+  an edge at all and was read from an HTTP thread by `handle(ConnectCmd)`'s `M155 S0` - is confined.
+  `connect()`'s "is an attempt already in flight" is now **serialised** rather than merely visible,
+  which `volatile` never bought. **If a change in this area ends in more `volatile`, it is a patch
+  and not a fix**; the test of a confinement fix is that the keyword count goes down.
+- **The retry chain needed nothing, and that is measured rather than assumed.**
+  `Retry.backoff(...).scheduler(retries)` reads as though its `filter`, `doBeforeRetry` and
+  `doOnError` run on the shared `parallel()` scheduler. They do not: those hooks are applied
+  synchronously inside the retry companion, on whichever thread delivered the failure, and
+  `publishOn(executor)` sits between the dial and the `retryWhen` - so the thread is this machine's
+  own. `PrinterReactorThreadingTest.theRetryChainTouchesTheAggregateOnTheAggregatesThread` asserts
+  it by thread name, because the next person to reshuffle that chain will have no other way to know.
+- **Three reads are deliberately answered from the caller's thread, and each is one `volatile`
+  read.** `blocksInFlight()` (a progress poll on `JobFeeder`'s timer - putting it on the executor
+  would queue a progress question behind every reply), `linked()` (an upload asking whether there is
+  a link at all) and `snapshot()` (built from volatile references, so a subscriber attaching does
+  not wait for the machine to be quiet). **`blocksInFlight` is the shape to copy** when the same
+  question comes up again: a value the aggregate *publishes* beats a question *asked* of it.
 - **IMPORTANT - state shared between a machine's aggregate thread and anything else needs its edge
   written down: which field, which thread writes, which thread reads, and what makes the write
-  visible.** `PrinterState.spec` is **`volatile`** because `PrinterReactorManager.onSpecDeclared`
-  writes it from the `boundedElastic` worker serving a `PUT` while `extruderCount()` reads it on
-  that machine's own `p3d-printer-<uuid>` thread. So are `blocksInFlight`, `ConnectionLifecycle`'s
-  five transition fields, and the one immutable value behind each of `ProfileControl`,
-  `TemperatureControl`, `SdCardControl` and `EEPROMSettingsControl` - one reference assignment each
-  way, no read-modify-write anywhere, so `volatile` is the whole edge and a lock would buy nothing.
-  **`spec` is a latent hazard found while investigating #93, not the cause of it** - it was the one
-  field in the class that lacked the edge the rest follow, and adding it moved the measured failure
-  rate not at all, because the write was visible and simply had the wrong value. What #93's spec
-  failure actually was is *an announcement undoing a command*, written up under *Match the delivery
-  to what the state is*. **Say which of the two a fix is**: a comment claiming a measurement it did
-  not cause is worse than no comment, and this bullet asserted one for a day.
+  visible.** What is left after #80 is `blocksInFlight`, `ConnectionLifecycle`'s five transition
+  fields, and the one immutable value behind each of `ProfileControl`, `TemperatureControl`,
+  `SdCardControl` and `EEPROMSettingsControl` - one reference assignment each way, no
+  read-modify-write anywhere, so `volatile` is the whole edge and a lock would buy nothing.
+  **And two fields have no edge at all**: `PrinterReactor.terminal` and `commandQueue` are written
+  on the executor but read by `feed`, `uploadToCard` and `interject` from whatever thread is feeding
+  a job, so a reader can see a link that has just gone. That is the staleness `linked()`'s own
+  javadoc already declines to cover, it is recorded in the known-debt list, and it is not something
+  a `volatile` would actually close - the answer can be stale either way.
   A visibility race cannot be made to fail deterministically, so do not try: state the ordering
-  instead. `PrinterStateGcodeTest.aDeclarationMadeOnAnotherThreadIsHonouredByTheNextCommand`
-  declares on a thread of its own and **joins it**, which pins the contract without pretending to
-  reproduce anything.
+  instead, or - better, and what #80 did - remove the sharing. Confinement is assertable:
+  `PrinterReactorThreadingTest.aCommandArrivingOnAForeignThreadIsAppliedOnTheAggregatesThread`
+  records the thread the aggregate was actually touched from and compares it to
+  `p3d-printer-<uuid>`, which is exactly why that name carries the whole UUID.
+- **An ordering a caller depends on can come from FIFO rather than from blocking, and that is what
+  makes the hop free.** `PrinterReactorManager.onSpecDeclared` runs inside the roster's transaction
+  and plan item B4 promises the edit has taken effect by the time the `PUT` answers. It now *queues*
+  the edit instead of applying it, and the promise survives: the executor is single-threaded and
+  FIFO, so a command issued after the `PUT` has returned is necessarily behind the edit. The thing
+  to check before relying on that argument is that **nothing reads the aggregate synchronously on
+  the way back out** - here `describe()` answers from the roster, not from `PrinterState`.
+  `PrinterManagementIntegrationTest.aDeclaredExtruderCountLetsACommandForTheSecondToolThrough` is
+  the regression check, and it was verified live: `PUT` with `extruderCount: 2`, then the same
+  `POST /set-temp` that was refused a moment earlier reaching the wire as
+  `-> N3 M104 S205.00 T1*10`.
+- **A test that needs the hop to be invisible uses `PrinterThreads.shared(Schedulers.immediate())`,
+  and that is what the seam is for.** `publishOn(immediate())` and `immediate().schedule(...)` both
+  run on the calling thread, so a test can read the aggregate on the next line instead of awaiting
+  it. Four tests in `PrinterReactorManagerTest` use it for exactly that; everything that is actually
+  *about* threading uses `virtualPerPrinter()` and asserts on thread names.
+- **An observation must not write an intent.** `ConnectionLifecycle.linkEstablished()` used to set
+  `wanted = true` on the grounds that a reactor dialling implied somebody had asked it to. #80
+  removed it: a disconnect landing while a dial is already on the wire cannot unmake the socket, so
+  the socket coming up afterwards silently put the withdrawn intent back and the machine retried a
+  connection the operator had ended. The caller that justified it - one driving the aggregate with
+  no `connectRequested()` first - stopped existing when `connect()` gained its own intent gate.
 - **A scheduler is disposed by scheduling the disposal as a task on it**, never by calling
   `dispose()` directly. `DelegateServiceScheduler.dispose()` is `shutdownNow()`, which discards the
   queue - and `tryEmitComplete()` has just handed `onComplete` to each subscriber's `publishOn`
@@ -740,7 +790,11 @@ and says nothing, which is the right amount.
 connection**, as its first statement and before the in-flight check, and it logs the refusal. That
 is what makes its "safe to call in any state" claim true rather than nearly true, and it is the
 backstop for any future caller that skips the aggregate the way the startup redial did. It is not
-silent because thirty seconds of a test timing out is what the silence cost.
+silent because thirty seconds of a test timing out is what the silence cost. Since #80 it is also
+**private**, along with `disconnect()`, so there is no bare-`connect()` call left to be the caller
+it guards against - the gate stays because a backstop whose last caller went away is still the
+cheapest statement of the rule, and removing a method's only guard the day its only misuser is
+deleted is how the misuse comes back.
 
 Two rules for anything that touches the runtime:
 
@@ -1781,17 +1835,18 @@ the source, not suspected.
   worth remembering: `Schedulers.single()` reads like "a single thread for this" and returns the
   **JVM-wide cached one**, so a per-object scheduler was never allocated and nothing said so. The
   symptom was farm-wide and the code looked per-printer.
-- **A concurrent `connect()` and `disconnect()` can still both decide to act.** `PrinterReactor.attempts`
-  is volatile now, which it had to become once a listener thread could reach `connect()` - the
-  roster's `@Transactional` `on(MFirmwareReportedEvent)` republishes `MRegisteredEvent`, which
-  `PrinterReactorManager.onRegistered` turns into a dial - so three threads reach it: an HTTP
-  thread, the aggregate's own, and the listener's. Volatile buys the happens-before and not
-  atomicity: "is an attempt already in flight" remains a check-then-act. Closing it means deciding
-  what a concurrent connect and disconnect *mean*, which is a command-semantics question rather
-  than a threading one. **The two gates above narrow it without closing it**: the listener thread
-  now reaches `connect()` only for a machine with no runtime at all, and the intent check makes a
-  dial that races a disconnect lose whenever the disconnect's `wanted = false` is visible first.
-  It is still a check-then-act on two fields.
+- ~~**A concurrent `connect()` and `disconnect()` can still both decide to act.**~~ **Fixed** by
+  issue #80, by confinement rather than by atomics: both are private and reached only through
+  `handleConnectCmd` on the machine's own executor, so the check-then-act on `attempts` is
+  serialised and `attempts` stopped being `volatile`. Both commands are still *taken*; the one
+  taken second is the one that stands, which is the whole of what serialising buys and is what
+  `PrinterReactorThreadingTest.aDisconnectThatRacesAConnectLeavesNoDialRunning` pins - with latches
+  forcing the interleaving rather than a loop hoping for it. The entry is kept for the estimate it
+  got wrong: it said closing this "means deciding what a concurrent connect and disconnect *mean*,
+  which is a command-semantics question rather than a threading one". It did not. The semantics
+  fell out of the ordering for free, and the previous repair - making one field `volatile` - had
+  bought the happens-before and none of the atomicity. **A field made `volatile` to survive a
+  second writer is a note saying the second writer should not be there.**
 - ~~**A stale `MachineSpec` can overwrite a fresh edit, in `PrinterReactorManager.redeclare`.**~~
   **Fixed** by `MSpecDeclaredEvent` (#93). The entry is kept because the estimate in it was wrong
   in the way these estimates usually are: it called the window "one transaction rather than the
@@ -1805,19 +1860,24 @@ the source, not suspected.
   So the stale announcement that overwrites it costs nothing today - but it is a write-only field,
   which is the defect B3 removed from `PrinterEntity.connected`, and the next person to read it
   will read a value that can be behind the aggregate.
-- **Three methods still touch the aggregate from the caller's thread, and one of them writes.**
-  `handleConnectCmd(ConnectCmd)` calls `printer.handle(cmd)` on the HTTP thread - and, since the
-  startup redial became a command, on the printer's listener thread as well - `blocksInFlight()`
-  reads from whatever thread arrives, and **`declared(spec)` mutates the aggregate** from the
-  `boundedElastic` worker serving the edit. #54 did not close these - they predate it and fixing
-  them changes command semantics (a POST would stop being able to report a refusal synchronously).
-  So "one aggregate, one thread" is true of the *reply* path and aspirational on the command path.
-  **The write is `volatile`-safe and is still debt.** Routing `declared` onto the aggregate's
-  executor is the architecturally pure answer and is deliberately not taken: `onSpecDeclared` is
-  synchronous inside the roster's transaction so that a `PUT` has taken effect by the time it
-  answers (plan item B4), and `PrinterManagementIntegrationTest` depends on that at the endpoint -
-  so making it asynchronous is a behaviour change, not a tidy-up. `volatile` makes the path safe
-  without making it tidy, and keeps the move available. Anything *new* that wants to mutate an
-  aggregate from outside its own thread does not get the same answer: hand it to the executor.
+- ~~**Three methods still touch the aggregate from the caller's thread, and one of them writes.**~~
+  **Fixed** by issue #80 - `handleConnectCmd` and `declared` go through the executor, and
+  `blocksInFlight()` stays on the caller's thread as a stated exception rather than an omission.
+  Kept for the two estimates in it that were wrong, because both are the kind that get made again:
+  it said routing `declared` onto the executor "is a behaviour change, not a tidy-up" because
+  `onSpecDeclared` is synchronous inside the roster's transaction and
+  `PrinterManagementIntegrationTest` depends on the `PUT` having taken effect when it answers - but
+  the executor is single-threaded and FIFO, so the endpoint's caller cannot observe the difference
+  and that test did not change; and it said fixing `handleConnectCmd` means "a POST would stop
+  being able to report a refusal synchronously" - but `publishOn(executor)` completes the `Mono`
+  *after* the aggregate has applied the command, so nothing was given up. **Both objections were to
+  blocking, and neither hop blocks.** What genuinely remains is two fields with no edge at all:
+  `PrinterReactor.terminal` and `commandQueue` are written on the executor and read by `feed`,
+  `uploadToCard` and `interject` from whatever thread is feeding a job. Those three are correctly
+  *not* on the aggregate's thread - a 96,000-block feed handing a publisher to a queue has no
+  business queueing behind replies - so the fix is not confinement, and it is not `volatile` either:
+  the answer to "is there a link" can be stale by the time the first block is written whatever the
+  edge, which `linked()`'s javadoc already says. Closing it means asking the lifecycle rather than
+  the field, which is a design question and not a keyword.
 - **There is no written spec for this layer.** This skill is the only authority, so a behaviour that
   callers come to depend on gets written down here, in the change that establishes it.

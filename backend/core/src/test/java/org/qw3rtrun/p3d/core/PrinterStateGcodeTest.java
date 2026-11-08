@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * facade to {@link GSender}. Every expectation was captured from the old facade before deletion, so
  * this is a characterisation test: it passes against both implementations, except two -
  * {@link #aTemperatureIsNotFormattedThroughTheDefaultLocale()}, which the old code failed, and
- * {@link #aDeclarationMadeOnAnotherThreadIsHonouredByTheNextCommand()}, which pins a threading
+ * {@link #aDeclarationIsHonouredByTheVeryNextCommand()}, which pins a threading
  * contract rather than characterising anything.
  */
 class PrinterStateGcodeTest {
@@ -88,22 +88,23 @@ class PrinterStateGcodeTest {
     }
 
     /**
-     * An edit reaches the aggregate on whichever thread served it - a {@code boundedElastic} worker,
-     * through {@code PrinterReactorManager.onSpecDeclared}, which is synchronous inside the roster's
-     * transaction (plan item B4) - while commands are applied on this machine's own
-     * {@code p3d-printer-<uuid>} thread. {@code PrinterState.spec} is {@code volatile} for exactly
-     * that crossing, and this states the ordering by joining the writer, so it pins the contract:
-     * a declaration made off the aggregate's thread decides the very next command, and clearing it
-     * falls back to the firmware's count.
+     * A declaration decides the very next command, and clearing it falls back to the firmware's
+     * count. That is plan item B4's whole promise to an operator, and it is what this asserts.
      *
-     * <p>It is a latent hazard pinned, not a measured failure reproduced. The missing edge was found
-     * while investigating issue #93 and was <strong>not</strong> its cause - adding {@code volatile}
-     * moved that failure rate not at all, because the write was visible and had the wrong value;
-     * see {@code MSpecDeclaredEvent}'s KDoc for what #93 actually was. A visibility race cannot be
-     * made to fail deterministically, so this test does not try: it states the ordering instead.
+     * <p>The edit is still made from a thread of its own, <strong>joined</strong>, and that is now a
+     * deliberately weaker premise than production's rather than a copy of it: since #80
+     * {@code PrinterReactor.declared} queues the edit on this machine's own thread, so
+     * {@code PrinterState.spec} is a plain field and the aggregate needs no edge of its own. Writing
+     * it here from a joined thread says the aggregate is right under the weakest ordering anybody
+     * could hand it, without pretending {@code declared()} may be called from anywhere - it may not.
+     *
+     * <p>{@code spec} was {@code volatile} for a day, which this test's name used to assert. The
+     * missing edge was found while investigating issue #93 and was <strong>not</strong> its cause -
+     * adding {@code volatile} moved that failure rate not at all, because the write was visible and
+     * simply had the wrong value; see {@code MSpecDeclaredEvent}'s KDoc for what #93 actually was.
      */
     @Test
-    void aDeclarationMadeOnAnotherThreadIsHonouredByTheNextCommand() throws InterruptedException {
+    void aDeclarationIsHonouredByTheVeryNextCommand() throws InterruptedException {
         PrinterState printer = onlineWithExtruders(1);
 
         declaredFromAnotherThread(printer, new MachineSpec(null, 2, List.of(), Set.of(), Set.of()));

@@ -50,17 +50,25 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * A printer gets its own thread, and its listeners get another one - issue #54. Before this, every
+ * A printer gets its own thread, its listeners get another one, and everything that moves the
+ * aggregate happens on the first of them - issues #54 and #80. Before #54, every
  * {@code PrinterReactor} was handed {@code Schedulers.single()} (the JVM-wide shared scheduler, not
  * a fresh thread), so every machine's replies, every command and every roster
  * {@code @Transactional} write shared one thread - invisible with one printer in the test farm,
- * the farm's bottleneck with forty auto-reporting once a second. Four properties, each with a hard
- * bound so a broken one fails rather than hangs: one machine's slow hop does not delay another's
- * replies; a slow listener still sees one aggregate's events in the order produced; a released
- * printer leaves no thread behind; and it does not, even when the release races another thread
- * mid-emission. Ordering is per aggregate and deliberately not global - nothing in the farm decides
- * anything from "A spoke before B" - so one test asserts in-order for a single machine and another
- * asserts two machines are explicitly not ordered against each other.
+ * the farm's bottleneck with forty auto-reporting once a second.
+ *
+ * <p>Seven properties, each with a hard bound so a broken one fails rather than hangs. Isolation:
+ * one machine's slow hop does not delay another's replies; a slow listener still sees one
+ * aggregate's events in the order produced; a released printer leaves no thread behind, and does
+ * not even when the release races another thread mid-emission. Confinement (#80, where #54 reached
+ * the reply path only): a command arriving on a foreign thread is applied on the aggregate's
+ * thread, so is the retry chain's own, and a disconnect racing a connect leaves no dial running.
+ *
+ * <p>Ordering is per aggregate and deliberately not global - nothing in the farm decides anything
+ * from "A spoke before B" - so one test asserts in-order for a single machine and another asserts
+ * two machines are explicitly not ordered against each other. The confinement tests assert on
+ * thread <em>names</em>, which is possible only because {@link PrinterThreads#virtualPerPrinter()}
+ * spells the whole UUID into them.
  */
 class PrinterReactorThreadingTest {
 

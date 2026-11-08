@@ -2,19 +2,27 @@ package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
+import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.api.msg.ManagementEvent;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
+import org.qw3rtrun.p3d.g.protocol.GRq;
+import org.qw3rtrun.p3d.terminal.GSender;
+import org.qw3rtrun.p3d.terminal.HostTerminal;
+import org.qw3rtrun.p3d.terminal.TerminalManager;
 import org.springframework.context.ApplicationEventPublisher;
 import reactor.core.Disposable;
+import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
+import java.net.ConnectException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -31,6 +39,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
@@ -354,6 +363,245 @@ class PrinterReactorThreadingTest {
                 "the aggregate's scheduler was never disposed, so its thread is still there");
         assertTrue(awaitDisposed(threads.listenersOf(machine)),
                 "the listener's scheduler was never disposed, so its thread is still there");
+    }
+
+    /**
+     * A command arriving on a foreign thread is applied on the aggregate's thread - the command-path
+     * mirror of {@link #oneMachinesStuckListenerDelaysNeitherTheOtherMachineNorItsOwnReplies()},
+     * which only ever proved it for replies. Issue #80: {@code handleConnectCmd} and
+     * {@code declared} used to touch the aggregate from whoever called them (an HTTP worker and the
+     * roster's {@code boundedElastic} worker respectively), so "one aggregate, one thread" was half
+     * true and the next reader of {@link PrinterThreads} had no way to tell which half.
+     *
+     * <p>Asserted on the thread the aggregate was actually touched from, which is assertable only
+     * because {@code PrinterThreads.virtualPerPrinter()} names it {@code p3d-printer-<uuid>} in
+     * full. The dial never answers, so the only touches are the ones the two calls make:
+     * {@code handle(ConnectCmd)}, {@code connect()}'s own {@code wantsToBeConnected()} gate, and
+     * {@code declared(spec)}. No socket, no retry, nothing to time out on.
+     */
+    @Test
+    void aCommandArrivingOnAForeignThreadIsAppliedOnTheAggregatesThread() throws Exception {
+        var machine = UUID.randomUUID();
+        var watched = new Watched(machine, 3);
+        var threads = new Recorded(PrinterThreads.virtualPerPrinter());
+        var reactor = reactorOver(machine, watched, new ScriptedDial(Mono.never()), threads);
+
+        onAThreadCalled("foreign-connect", () -> reactor.handleConnectCmd(new ConnectCmd(true)));
+        onAThreadCalled("foreign-declare", () -> reactor.declared(MachineSpec.undeclared()));
+
+        assertTrue(watched.touches.await(10, TimeUnit.SECONDS),
+                "the aggregate was touched only " + watched.touchedBy.size() + " times, so the "
+                        + "assertion below would prove nothing. It saw " + watched.touchedBy);
+        assertEquals(Set.of("p3d-printer-" + machine), Set.copyOf(watched.touchedBy),
+                "a command has to reach the aggregate on the aggregate's own thread; these did "
+                        + "not: " + watched.touchedBy);
+    }
+
+    /**
+     * A disconnect that races a connect leaves no dial running - issue #80's own acceptance,
+     * decided rather than raced. The interleaving is forced with latches instead of hoped for: the
+     * aggregate is held inside {@code handle(ConnectCmd(true))} until the disconnect has been
+     * issued from another thread, which is the exact ordering the unconfined version loses on.
+     *
+     * <p>Unconfined, the disconnect runs to completion on the caller's thread while the connect is
+     * still half-applied - it finds {@code attempts} null, disposes nothing, and the connect then
+     * dials a machine the operator has just told to stop, with nothing left to cancel it.
+     * Confined, the disconnect is a task queued behind the connect on the one aggregate thread, so
+     * it runs second and disposes the chain the connect started. Both decisions are made; only one
+     * of them is last, and that is the whole of what serialising buys.
+     *
+     * <p>Quiescence is a barrier task on the same executor rather than a sleep: single-threaded and
+     * FIFO, so a task submitted after the disconnect cannot run before it.
+     */
+    @Test
+    void aDisconnectThatRacesAConnectLeavesNoDialRunning() throws Exception {
+        var machine = UUID.randomUUID();
+        var connectIsBeingApplied = new CountDownLatch(1);
+        var disconnectHasBeenIssued = new CountDownLatch(1);
+        var watched = new Watched(machine, 1) {
+
+            @Override
+            public void handle(ConnectCmd cmd) {
+                if (cmd.connect()) {
+                    connectIsBeingApplied.countDown();
+                    park(disconnectHasBeenIssued);
+                }
+                super.handle(cmd);
+            }
+        };
+        teardown.add(disconnectHasBeenIssued::countDown);
+        var dial = new ScriptedDial(Mono.never());
+        var threads = new Recorded(PrinterThreads.virtualPerPrinter());
+        var reactor = reactorOver(machine, watched, dial, threads);
+
+        var connector = onAThreadCalled("connector",
+                () -> reactor.handleConnectCmd(new ConnectCmd(true)));
+        assertTrue(connectIsBeingApplied.await(10, TimeUnit.SECONDS),
+                "nothing is held mid-connect, so there is no race here to decide");
+        reactor.handleConnectCmd(new ConnectCmd(false));
+        disconnectHasBeenIssued.countDown();
+        connector.join(TimeUnit.SECONDS.toMillis(15));
+        assertTrue(quiet(threads.aggregateOf(machine)),
+                "the aggregate's thread never drained what this test put on it");
+
+        assertEquals(0, dial.live.get(),
+                "a dial was still running after the operator said disconnect - the connect that "
+                        + "raced it started a chain the disconnect had already decided not to want, "
+                        + "and nothing is left to cancel it");
+        assertFalse(watched.wantsToBeConnected(),
+                "the disconnect was issued second, so it is the decision that stands");
+    }
+
+    /**
+     * The retry chain touches the aggregate on the aggregate's thread too, which is the half issue
+     * #80's own list of three offenders missed. {@code filter(cause -> wantsToBeConnected())} and
+     * {@code doBeforeRetry(signal -> onOffline(...))} are hooks on {@code Retry.backoff}, whose
+     * delay runs on the shared {@code retries} scheduler - so it is reasonable to read them as
+     * running there, and this test exists because that reading is wrong and nothing said so. They
+     * run inside the retry companion, synchronously on whichever thread delivered the failure, and
+     * the chain's {@code publishOn(executor)} sits between the dial and the {@code retryWhen}, so
+     * that thread is this machine's own. {@code doOnError(onGaveUp)} is the same. The assertion is
+     * on the thread names, so a chain reshuffled in a way that moves any of them off it fails here
+     * instead of becoming a second silent exception.
+     */
+    @Test
+    void theRetryChainTouchesTheAggregateOnTheAggregatesThread() throws Exception {
+        var machine = UUID.randomUUID();
+        var watched = new Watched(machine, 1);
+        var threads = new Recorded(PrinterThreads.virtualPerPrinter());
+        var refused = new ScriptedDial(Mono.error(() -> new ConnectException("Connection refused")));
+        var reactor = new PrinterReactor(refused, watched, event -> {
+        }, new ConnectionPolicy(2, Duration.ofMillis(1), Duration.ofMillis(5)),
+                threads.aggregateOf(machine), threads.listenersOf(machine), Schedulers.parallel());
+        teardown.add(reactor::stop);
+
+        reactor.handleConnectCmd(new ConnectCmd(true));
+
+        assertTrue(watched.gaveUp.await(10, TimeUnit.SECONDS),
+                "the attempts never ran out, so the retry hooks under test never fired. The "
+                        + "aggregate saw " + watched.touchedBy);
+        assertEquals(Set.of("p3d-printer-" + machine), Set.copyOf(watched.touchedBy),
+                "the retry's own hooks have to reach the aggregate on its thread as well; these "
+                        + "did not: " + watched.touchedBy);
+    }
+
+    /** Runs {@code what} on a named thread of its own and returns it, started. */
+    private Thread onAThreadCalled(String name, Runnable what) {
+        var thread = new Thread(what, name);
+        thread.start();
+        return thread;
+    }
+
+    /** Waits for everything already queued on a single-threaded scheduler to have run. */
+    private static boolean quiet(Scheduler scheduler) throws InterruptedException {
+        var drained = new CountDownLatch(1);
+        scheduler.schedule(drained::countDown);
+        return drained.await(10, TimeUnit.SECONDS);
+    }
+
+    /** A reactor on this machine's own threads, with no manager and no socket in the way. */
+    private PrinterReactor reactorOver(UUID machine, PrinterState aggregate, TerminalManager dial,
+                                       PrinterThreads threads) {
+        var reactor = new PrinterReactor(dial, aggregate, event -> {
+        }, ConnectionPolicy.standard(), threads.aggregateOf(machine),
+                threads.listenersOf(machine), Schedulers.parallel());
+        teardown.add(reactor::stop);
+        return reactor;
+    }
+
+    /**
+     * An aggregate that records which thread touched it. Every public mutator is overridden, plus
+     * {@code wantsToBeConnected()} - the one read {@code connect()} makes before it decides to dial,
+     * and therefore half of the same check-then-act. The three reads deliberately answered from the
+     * caller's thread ({@code blocksInFlight}, {@code linked}, {@code snapshot}) are <em>not</em>
+     * overridden, so recording one would be a failure rather than noise.
+     */
+    private static class Watched extends PrinterState {
+
+        private final List<String> touchedBy = new CopyOnWriteArrayList<>();
+        private final CountDownLatch touches;
+        private final CountDownLatch gaveUp = new CountDownLatch(1);
+
+        private Watched(UUID id, int expected) {
+            super(id);
+            this.touches = new CountDownLatch(expected);
+        }
+
+        private void touched() {
+            touchedBy.add(Thread.currentThread().getName());
+            touches.countDown();
+        }
+
+        @Override
+        public void handle(ConnectCmd cmd) {
+            touched();
+            super.handle(cmd);
+        }
+
+        @Override
+        public void declared(MachineSpec spec) {
+            touched();
+            super.declared(spec);
+        }
+
+        @Override
+        public boolean wantsToBeConnected() {
+            touched();
+            return super.wantsToBeConnected();
+        }
+
+        @Override
+        public void onEvent(Object event) {
+            touched();
+            super.onEvent(event);
+        }
+
+        @Override
+        public void onCommand(GRq<?> command) {
+            touched();
+            super.onCommand(command);
+        }
+
+        @Override
+        public void onOnline(GSender sender) {
+            touched();
+            super.onOnline(sender);
+        }
+
+        @Override
+        public void onOffline(String why) {
+            touched();
+            super.onOffline(why);
+        }
+
+        @Override
+        public void onGaveUp(String why) {
+            touched();
+            super.onGaveUp(why);
+            gaveUp.countDown();
+        }
+    }
+
+    /**
+     * A dial that answers with whatever it is given and counts how many chains are live at once -
+     * {@code TerminalManager} is a class rather than an interface, and its constructor only builds a
+     * {@code TcpClient}, so nothing here opens a socket.
+     */
+    private static final class ScriptedDial extends TerminalManager {
+
+        private final Mono<HostTerminal> answer;
+        private final AtomicInteger live = new AtomicInteger();
+
+        private ScriptedDial(Mono<HostTerminal> answer) {
+            super(new ConnectionDetails("localhost", 1));
+            this.answer = answer;
+        }
+
+        @Override
+        public Mono<HostTerminal> connect() {
+            return answer.doOnSubscribe(subscription -> live.incrementAndGet())
+                    .doFinally(signal -> live.decrementAndGet());
+        }
     }
 
     /**

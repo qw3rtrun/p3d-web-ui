@@ -65,11 +65,19 @@ import java.util.function.Consumer;
 /**
  * The printer aggregate: one machine's connection, firmware/capability profile, declared spec,
  * EEPROM settings, SD card state and last temperature, plus the dispatch that routes every command
- * and reply through it. One instance per printer, touched by that printer's own single thread (see
- * {@link PrinterReactor}) except for {@link #declared}, which arrives on the thread that served the
- * edit; this class itself holds no scheduler. State a reader can be on a different thread from is
- * held behind one {@code volatile} reference - {@link #spec} and {@link #blocksInFlight} here, one
- * immutable value apiece in the four controls.
+ * and reply through it. One instance per printer, holding no scheduler of its own.
+ *
+ * <h3>Threading: every mutator is this machine's thread, and the exceptions are reads</h3>
+ * Every method that <em>changes</em> anything here is reached only from that printer's own
+ * {@code p3d-printer-<uuid>} thread, because {@link PrinterReactor} routes all of them through its
+ * executor (#80 - before it, {@code handle(ConnectCmd)} ran on an HTTP thread and {@link #declared}
+ * on the {@code boundedElastic} worker serving a {@code PUT}, so this paragraph was half true and
+ * nothing said which half). So {@link #spec} and {@link #g} are plain fields, and
+ * {@code connect()}'s "is an attempt already in flight" is serialised rather than merely visible.
+ * Three things are still read off another thread and each is published behind one {@code volatile}
+ * reference, never read-modify-written: {@link #blocksInFlight} (a progress poll),
+ * {@link ConnectionLifecycle}'s transition fields ({@code PrinterReactor.linked()}), and the one
+ * immutable value apiece in the four controls ({@link #snapshot()}, read by a subscriber attaching).
  *
  * <h3>Profile vs spec</h3>
  * {@link #profile} is what the machine <em>reported</em> (seeded from a {@link MachineProfile},
@@ -122,14 +130,15 @@ public class PrinterState implements PrinterAggregate {
 
     private final ConnectionLifecycle connection;
 
-    // volatile: written off this machine's thread by PrinterReactorManager.onSpecDeclared - the
-    // boundedElastic worker serving the edit - and read on it by extruderCount(). A real missing
-    // happens-before edge, and the one field in this class that lacked one. Found while
-    // investigating #93 and not its cause: adding it moved the measured failure rate not at all,
-    // because the write was visible and simply had the wrong value. What #93 actually was is in
-    // MSpecDeclaredEvent's KDoc.
+    // confined to this machine's aggregate thread: PrinterReactor.declared queues the edit there
+    // rather than applying it on the roster's worker (#80). It was volatile for a day, which was
+    // a patch over that - the only edge the field had, bought on the way past while investigating
+    // #93 and admitted at the time not to be its cause (it moved the measured failure rate not at
+    // all, because the write was visible and simply had the wrong value). #93 itself was an
+    // announcement undoing an edit 1.5 ms after it and a command refused and never retried, which
+    // is MSpecDeclaredEvent's KDoc and is not a threading problem at all.
     @Getter
-    private volatile MachineSpec spec;
+    private MachineSpec spec;
 
     public PrinterState(UUID id) {
         this(id, MachineProfile.unknown(), MachineSpec.undeclared());
@@ -155,7 +164,15 @@ public class PrinterState implements PrinterAggregate {
         return profile.get();
     }
 
-    /** A snapshot of the send window: blocks taken and not yet acknowledged - see plan item C4. */
+    /**
+     * A snapshot of the send window: blocks taken and not yet acknowledged - see plan item C4.
+     *
+     * <p>The one field here deliberately left {@code volatile} rather than confined (#80): it is
+     * written only by {@link #on(BlockAcknowledged)} on this machine's thread and read by a
+     * progress timer on another, so it is a value the aggregate <em>publishes</em> rather than a
+     * question asked of it. Routing the read through the executor would put a progress poll behind
+     * every reply queued ahead of it, for a number that is a snapshot either way.
+     */
     @Getter
     private volatile int blocksInFlight;
 
@@ -188,6 +205,11 @@ public class PrinterState implements PrinterAggregate {
     // reactor exists without throwing.
     private Consumer<Object> emitter = event -> {
     };
+
+    // the live link's sender, held only while there is one. Plain, and confined to this machine's
+    // aggregate thread: written by onOnline/onOffline/onGaveUp and read by every command arm, all
+    // of which PrinterReactor now reaches through its executor - including handle(ConnectCmd),
+    // whose M155 S0 used to be read off this field from an HTTP thread (#80).
     private GSender g;
 
     public void onEvent(Object event) {

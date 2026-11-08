@@ -48,14 +48,35 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <h3>Threading</h3>
  * {@code executor} is where the aggregate is touched; {@code listeners} is where whatever its
  * decisions cost (a roster listener's {@code @Transactional} JPA write) is charged, so neither
- * blocks the other. {@code attempts} (the running retry chain) is reached from three threads - an
- * HTTP thread via {@link #handleConnectCmd}, this printer's own executor, and the listener thread
- * (a republished {@code MRegisteredEvent} reaching {@code PrinterReactorManager.onRegistered}) - so
- * it is {@code volatile}; that is the happens-before only, not atomicity, so a concurrent connect
- * and disconnect can still both decide to act (left open; see the skill's known-debt list).
- * {@code streamEnded} is a plain field because {@link Outbox} calls its consumer from one thread at
- * a time, which supplies the happens-before it needs. {@code stopped}, {@code liveSubscribers} and
- * {@code subscribersGone} coordinate shutdown - see below.
+ * blocks the other.
+ *
+ * <p><strong>Everything that moves the aggregate goes through {@code executor}, in both
+ * directions</strong> (#80). Replies take {@code publishOn(executor)} in {@link #gEvent()};
+ * commands take it in {@link #handle(List)}, {@link #handleConnectCmd(Mono)} and - as a scheduled
+ * task, since their callers are listeners that must not wait - {@link #handleConnectCmd(ConnectCmd)},
+ * {@link #declared}, and {@link #stop()}'s own disconnect. {@code connect()} and {@code disconnect()}
+ * are private so that stays true. The retry chain's hooks need nothing extra and that is worth
+ * knowing rather than guessing: {@code filter}, {@code doBeforeRetry} and {@code doOnError} run
+ * inside the retry companion on whichever thread delivered the failure, and
+ * {@code publishOn(executor)} sits between the dial and the {@code retryWhen}, so that thread is
+ * this machine's own ({@code PrinterReactorThreadingTest} asserts it by name).
+ *
+ * <p>So {@code attempts} is a plain field and its "is an attempt already in flight" check-then-act
+ * is serialised rather than merely visible - it was {@code volatile}, which bought the
+ * happens-before and not the atomicity, and a concurrent connect and disconnect could both decide
+ * to act. <strong>Three things are still answered from the caller's thread, deliberately</strong>:
+ * {@link #blocksInFlight()} and {@link #linked()}, both single volatile reads a progress timer and
+ * an upload make often enough that queueing them behind a reply backlog would be the wrong trade,
+ * and {@link #snapshot()}, built from volatile references so a subscriber attaching does not wait
+ * for the machine to be quiet. <strong>And {@code terminal} and {@code commandQueue} have no edge
+ * at all</strong>: their writes are confined to {@code executor}, but {@link #feed},
+ * {@link #uploadToCard} and {@link #interject} read them from whatever thread is feeding a job, so
+ * a reader can see a link that has just gone (or miss one that has just come up) - the same staleness
+ * {@link #linked()} already says it does not cover, and not something this class can close alone.
+ *
+ * <p>{@code streamEnded} is a plain field because {@link Outbox} calls its consumer from one thread
+ * at a time, which supplies the happens-before it needs. {@code stopped}, {@code liveSubscribers}
+ * and {@code subscribersGone} coordinate shutdown - see below.
  *
  * <h3>The update sink</h3>
  * {@code updates} is a safe multicast {@code directBestEffort} sink fed only through
@@ -96,8 +117,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * runs second, and never throws on timeout, so one stuck browser cannot fail a farm-wide shutdown.
  *
  * <h3>Connect and retry</h3>
- * {@link #connect()} and {@link #disconnect()} are both safe to call in any state, including
- * mid-backoff and never-connected. {@link #connect()} wraps the whole conversation -
+ * {@code connect()} and {@code disconnect()} are both safe to call in any state, including
+ * mid-backoff and never-connected, and are private: {@link #handleConnectCmd(ConnectCmd)} is the
+ * only way to either, which is what makes "both decisions are taken on one thread, and the one
+ * taken second stands" true rather than nearly true. {@code connect()} wraps the whole conversation -
  * {@code manager.connect()} through {@code onConnected} - in one {@code retryWhen}, so a dropped
  * link re-enters where a refused connection would. A clean close is turned into a
  * {@link ClosedByPeer} error on purpose, or the chain completes and leaves the printer
@@ -170,7 +193,10 @@ public class PrinterReactor {
         }
     }
 
-    private volatile Disposable attempts;
+    // the running retry chain. Plain, and confined to executor: connect() and disconnect() are
+    // private and the only way to either is through the executor (#80), so the check-then-act on
+    // this field - "is an attempt already in flight" - is serialised rather than merely visible.
+    private Disposable attempts;
 
     private final AtomicBoolean stopped = new AtomicBoolean();
 
@@ -217,13 +243,25 @@ public class PrinterReactor {
         this.printer.setEmitter(this::onEvent);
     }
 
+    /**
+     * Completes once the aggregate has <em>applied</em> the command, not once it is queued - a 200
+     * from the endpoint therefore means the dial or the hang-up is already decided, the same
+     * promise {@link #handle(List)} makes for a {@code GRq}.
+     */
     public Mono<Void> handleConnectCmd(Mono<ConnectCmd> connectCmd) {
-        return connectCmd.
-                doOnSuccess(this::handleConnectCmd)
+        return connectCmd
+                .publishOn(executor)
+                .doOnNext(this::applyConnectCmd)
                 .then();
     }
 
+    /** Fire-and-schedule: a caller already on {@code executor} must never wait for it. */
     public void handleConnectCmd(ConnectCmd cmd) {
+        onExecutor(() -> applyConnectCmd(cmd));
+    }
+
+    // on executor, always: see the class javadoc's Threading section.
+    private void applyConnectCmd(ConnectCmd cmd) {
         printer.handle(cmd);
         if (cmd.connect()) {
             connect();
@@ -232,7 +270,22 @@ public class PrinterReactor {
         }
     }
 
-    public void connect() {
+    /**
+     * Runs {@code task} on this machine's aggregate thread, inline if it is already that thread's
+     * turn ({@code Schedulers.immediate()}, the test seam) and inline as a last resort if the
+     * scheduler has gone - a task refused after {@code stop()} would otherwise be a disconnect or a
+     * spec edit dropped in silence.
+     */
+    private void onExecutor(Runnable task) {
+        try {
+            executor.schedule(task);
+        } catch (RejectedExecutionException alreadyGone) {
+            log.debug("{} has stopped, so its own thread ran nothing; doing it here", printer.getId());
+            task.run();
+        }
+    }
+
+    private void connect() {
         if (!printer.wantsToBeConnected()) {
             log.info("{} has not been asked to be connected, so it is not being dialled",
                     printer.getId());
@@ -257,7 +310,7 @@ public class PrinterReactor {
                 }, cause -> log.warn("gave up on {}: {}", printer.getId(), describe(cause)));
     }
 
-    public void disconnect() {
+    private void disconnect() {
         log.info("disconnecting from {}", printer.getId());
         if (attempts != null) {
             attempts.dispose();
@@ -270,7 +323,7 @@ public class PrinterReactor {
     }
 
     /**
-     * Releases everything this reactor holds, for good - unlike {@link #disconnect()}, which is a
+     * Releases everything this reactor holds, for good - unlike {@code disconnect()}, which is a
      * state the printer can come back from. Completes the sink (a subscriber is typically a
      * browser's SSE connection; {@code Sinks.Many} keeps every subscriber referenced until it
      * terminates) and also completes {@link #subscribersGone} directly when nobody was subscribed,
@@ -281,7 +334,10 @@ public class PrinterReactor {
             return;
         }
         log.info("stop()");
-        disconnect();
+        // queued, not called: disconnect() writes attempts and terminal, which only this machine's
+        // thread may touch. Submitted before the StreamEnd below, so the FIFO executor runs it
+        // ahead of the disposal that marker eventually schedules.
+        onExecutor(this::disconnect);
         emit(new Parked.StreamEnd());
         toFarm.close();
         toRoster.close();
@@ -393,15 +449,30 @@ public class PrinterReactor {
         queue.addPublisher(Priority.REGULAR, Flux.fromIterable(blocks));
     }
 
-    // bounded by the send window; read off the last BlockAcknowledged, since the window itself is
-    // internal to the transport and no subscriber can see it.
+    /**
+     * Blocks taken by the send window and not yet acknowledged - read off the last
+     * {@code BlockAcknowledged}, since the window itself is internal to the transport and no
+     * subscriber can see it.
+     *
+     * <p>One of three members answered from the caller's thread rather than the aggregate's, and
+     * deliberately so: it is a {@code volatile int} the aggregate <em>publishes</em> rather than a
+     * question asked of it, its one caller is {@code JobFeeder.checkpoint} on a progress timer, and
+     * routing it through {@code executor} would put a progress poll behind every reply queued ahead
+     * of it. See the class javadoc's Threading section for the other two.
+     */
     public int blocksInFlight() {
         return printer.getBlocksInFlight();
     }
 
-    /** Passes an edited spec to the aggregate - see {@code PrinterReactorManager.onSpecDeclared}. */
+    /**
+     * Passes an edited spec to the aggregate - see {@code PrinterReactorManager.onSpecDeclared}.
+     * Queued on this machine's thread rather than applied on the roster's, so the edit is ordered
+     * against this machine's commands instead of racing them; the caller is a listener inside a
+     * transaction, so it must not wait, and it does not need to: the executor is single-threaded
+     * and FIFO, so a command issued after the {@code PUT} has answered is queued behind this.
+     */
     public void declared(MachineSpec spec) {
-        printer.declared(spec);
+        onExecutor(() -> printer.declared(spec));
     }
 
     /** The last hotend reading, or empty if nothing has reported yet - not a sentinel. */

@@ -144,9 +144,8 @@ class PrinterReactorManagerTest {
     @Test
     void anEditReachesAMachineThatIsAlreadyRunning() {
         var aggregates = new HashMap<UUID, PrinterState>();
-        var owner = new PrinterReactorManager(directory,
-                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
-        });
+        var owner = inlineFarm(machine -> aggregates.computeIfAbsent(machine, PrinterState::new),
+                ConnectionPolicy.standard());
         theFarmHas(id);
         owner.openReactor(id);
         assertEquals(1, aggregates.get(id).extruderCount(), "nothing declared, nothing reported");
@@ -176,9 +175,8 @@ class PrinterReactorManagerTest {
     @Test
     void aStaleAnnouncementDoesNotUndoAnOperatorsDeclaration() {
         var aggregates = new HashMap<UUID, PrinterState>();
-        var owner = new PrinterReactorManager(directory,
-                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
-        });
+        var owner = inlineFarm(machine -> aggregates.computeIfAbsent(machine, PrinterState::new),
+                ConnectionPolicy.standard());
         theFarmHas(id);
         owner.openReactor(id);
         owner.onSpecDeclared(declaring(2));
@@ -204,10 +202,8 @@ class PrinterReactorManagerTest {
     void aMachineDeclaredBeforeItWasRunningIsSeededWithThatSpec() {
         var aggregates = new HashMap<UUID, PrinterState>();
         var seeding = new CoreConfiguration().aggregates(directory);
-        var owner = new PrinterReactorManager(directory,
-                machine -> aggregates.computeIfAbsent(machine,
-                        it -> (PrinterState) seeding.loadState(it)), event -> {
-        });
+        var owner = inlineFarm(machine -> aggregates.computeIfAbsent(machine,
+                it -> (PrinterState) seeding.loadState(it)), ConnectionPolicy.standard());
         directory.onRegistered(new MRegisteredEvent(id, "a printer", "localhost", 8099,
                 MachineProfile.unknown(), new MachineSpec(null, 2, List.of(), Set.of(), Set.of()),
                 MachineConnectionState.OFFLINE, LocalDateTime.now()));
@@ -265,11 +261,22 @@ class PrinterReactorManagerTest {
         farm.onRegistered(event);
     }
 
+    /**
+     * A farm whose machines all run on {@code Schedulers.immediate()} - the
+     * {@link PrinterThreads#shared} seam. Since #80 a connect command and a spec edit are applied
+     * on the machine's own thread rather than the caller's, so without this seam every assertion
+     * below about an aggregate would be a race; with it the hop is inline and the aggregate can be
+     * read on the next line. Only the tests that hold the aggregate need it.
+     */
+    private PrinterReactorManager inlineFarm(PrinterAggregateManager aggregates, ConnectionPolicy policy) {
+        return new PrinterReactorManager(directory, aggregates, event -> {
+        }, policy, PrinterThreads.shared(Schedulers.immediate()), Schedulers.parallel());
+    }
+
     private PrinterReactorManager aFarmThatDials(Map<UUID, PrinterState> aggregates) {
         directory.onRegistered(announcing(MachineConnectionState.OFFLINE));
-        dialled = new PrinterReactorManager(directory,
-                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
-        }, ONE_SLOW_SERIES);
+        dialled = inlineFarm(machine -> aggregates.computeIfAbsent(machine, PrinterState::new),
+                ONE_SLOW_SERIES);
         return dialled;
     }
 

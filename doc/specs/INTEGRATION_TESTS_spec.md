@@ -292,24 +292,22 @@ Every reply string in `MockPrinter` is a line from
 | `Error:…` | `ErrorRs` |
 | `echo:Unknown command: "…"` | `UnknownCommand` |
 
-**`M28` and `M29` are measured too, and not out of the census.** #53 needed them and neither was in
-the capture, so they were measured with `SdWriteProbe` against MarlinSim bugfix-2.1.x on
-2026-11-01. Verbatim, from the transcript that run printed:
+**`M28` and `M29` are in the census now, and this section no longer holds the only copy** — #66.
+`ReplyCorpusProbe` writes, lists and deletes a `test.gco` as part of its session, so the SD-write
+exchange is a captured block like every other, at `marlin-replies.census.txt:132-148`:
 
 ```
->> N1 M28 test.gco*107  << echo:Now fresh file: test.gco
-                        << Writing to file: test.gco
-                        << //action:notification test.gco
-                        << ok N1 P15 B3
->> G28                  << Error:No Checksum with line number, Last Line: 1
-                        << Resend: 2
-                        << ok
->> N2 G28*17            << ok N2 P15 B3
->> N6 M29*30            << Done saving file.
-                        << ok N6 P15 B3
->> N7 M20*22            << Begin file list
-                        << TEST.GCO 47
-                        << End file list
+SdFreshFile      echo:Now fresh file: test.gco
+SdWritingToFile  Writing to file: test.gco
+ActionRs         //action:notification test.gco
+AdvancedOkRs     ok N1 P15 B3
+AdvancedOkRs     ok N2 P15 B3        <- G28, stored rather than executed, and still acknowledged
+...
+SdDoneSaving     Done saving file.
+AdvancedOkRs     ok N6 P15 B3
+SdFileListBegin  Begin file list
+(none)           TEST.GCO 47
+SdFileListEnd    End file list
 ```
 
 | line | type it decodes to |
@@ -323,7 +321,7 @@ All four are reproduced in `MockPrinter`, rather than only the two the feature r
 busy notices around an `M84` — timing chatter, deliberately left out — these are a fixed part of
 `M28`'s answer.
 
-Three more facts are in that capture and all three are load-bearing:
+Three more facts are in that block and all three are load-bearing:
 
 * **the wire is a file sink and every stored line is still acknowledged.** `N2 G28*17` was answered
   `ok N2 P15 B3` and went into the file. That acknowledgement is why a stray command during a
@@ -331,22 +329,48 @@ Three more facts are in that capture and all three are load-bearing:
 * **the stored line carries no `N` and no `*`.** The four payloads came back as `TEST.GCO 47`, which
   is `G28`, `M117 Created`, `M118 Done` and `M118 P0 Done-P0` plus a `CRLF` each — 5 + 14 + 11 + 17.
   That is what lets a test compare the card's contents against a fixture's blocks directly;
-* **numbering is required while saving** and is not while executing — the bare `G28` above.
+* **numbering is required while saving** and is not while executing. That one is *not* in the
+  census — the corpus probe does not send a line it knows will be refused — and stays where
+  `SdWriteProbe` measured it on 2026-11-01:
 
-**It is deliberately not added to `marlin-replies.census.txt`.** That file is a *derived snapshot*
-of `marlin-replies.txt`, which is one `ReplyCorpusProbe` session; `GReplyCorpusTest` recomputes the
-census from the corpus and compares it line for line, so a line can only be added to the census by
-being added to the capture. Hand-writing one into a capture is forging it. `ReplyCorpusProbe` does
-not send `M28` — `GCodeCorpusProbe` quarantines it for the obvious reason — and teaching it to, then
-recapturing and regenerating, is its own piece of work and churns the whole snapshot. **Measured is
-measured; here is where this measurement lives.**
+  ```
+  >> G28   << Error:No Checksum with line number, Last Line: 1
+           << Resend: 2
+           << ok
+  ```
 
-**UNMEASURED around it, and marked as such in `MockPrinter`:** what a machine with no card answers an
-`M28`, and what an `M29` with no file open answers. Neither could be provoked — the simulator always
-has a card, and the probe never sent a stray `M29` — so the mock acknowledges and says nothing more,
-and no test drives either. `M20` also upcases a name to DOS 8.3 (`test.gco` listed as `TEST.GCO`)
-where the mock stores it verbatim; the upload tests use names already in that form, so nothing
-depends on the difference.
+**Why this took its own piece of work.** `marlin-replies.census.txt` is a *derived snapshot* of
+`marlin-replies.txt`, which is one `ReplyCorpusProbe` session; `GReplyCorpusTest` recomputes the
+census from the corpus and compares it line for line, so a line can only enter the census by
+entering the capture. Hand-writing one into a capture is forging it, which is why #53 left the
+transcript here instead and why #66 was a recapture rather than an edit. The same rule holds for
+whatever is added next: **measure it, or mark it UNMEASURED.**
+
+**A reading is not a measurement**, and #66's recapture is what forced that to be said. The fields
+of a captured line and their order are what the census proves; the numbers in them are whatever the
+machine was doing that afternoon, and the simulator is not rebooted by a disconnect, so it is
+wherever the last session left it. Two rows above are affected and neither is now verbatim in the
+census:
+
+* `ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0` was captured from a machine whose hotend had been
+  left hot; the 2026-11-09 capture of the same reply is `ok T:25.00 /0.00 B:25.00 /0.00 @:0 B@:0`;
+* `X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000` is the same line with `E:20.00` now,
+  because the probe's closing `G1 E10 F100` advances the logical `E` by ten every run even as the
+  firmware answers `echo: cold extrusion prevented`.
+
+`MockPrinter` still sends both as they were, and that is correct: a reply *shape* that is not in
+the census must be measured, and a captured shape whose readings moved does not have to be measured
+again.
+
+**UNMEASURED around it, and marked as such in `MockPrinter`:** what a machine with no card answers
+an `M28`. The simulator always has a card, so it could not be provoked; the mock acknowledges and
+says nothing more, and no test drives it. `M20` also upcases a name to DOS 8.3 (`test.gco` listed
+as `TEST.GCO`) where the mock stores it verbatim; the upload tests use names already in that form,
+so nothing depends on the difference.
+
+**An `M29` with no file open is measured now** and was not before: the probe sends one, at
+`marlin-replies.census.txt:146`, and the firmware answers `ok N8 P15 B3` and nothing else. The
+mock's "acknowledge and say nothing more" is what the machine does rather than a guess.
 
 **Unmeasured, and marked as such in the code:**
 
@@ -355,9 +379,11 @@ depends on the difference.
   wording, and **no test may assert on that text.** The no-card tests assert the *absence* of
   `SdCardOk` and `SdFileList`, which is what the Storage tab actually keys on and is independent of
   the wording.
-* **`File deleted:…` and `open failed, File:…`.** Neither is in the census and nothing decodes
-  either, so they are dropped as unread. Deletion is therefore asserted by listing the card again:
-  "it was deleted" can only honestly mean "it is no longer there".
+* **`open failed, File:…`.** Not in the census and nothing decodes it, so it is dropped as unread.
+  `File deleted:…` is in the census now — `marlin-replies.census.txt:147`, from the `M30` that
+  removes the probe's own `test.gco` again — but still decodes to nothing, so it is just as unread
+  on the bus. Deletion is asserted by listing the card again either way: "it was deleted" can only
+  honestly mean "it is no longer there".
 * **`start`.** Decoded by `StartRs` but absent from the capture, because the probe attaches to an
   already-running simulator. `MockPrinter` does not send a boot banner.
 
@@ -446,8 +472,9 @@ asserts the two different command lists that reach the machine: a byte-identical
 **The census is not changed by this and must not be.** `GReplyCorpusTest` recomputes
 `marlin-replies.census.txt` from the raw capture and compares line for line, so a line can only enter
 it by being captured; hand-writing one would be forging a measurement. Nothing needed adding here —
-both shapes were already in it. What the census still lacks is covered by
-[#66](https://github.com/qw3rtrun/p3d-web-ui/issues/66).
+both shapes were already in it. What it lacked was the `M28`/`M29` pair, and
+[#66](https://github.com/qw3rtrun/p3d-web-ui/issues/66) closed that by recapturing: the 2026-11-09
+corpus has the SD write in it, and §4.2 points at the census rather than at a transcript.
 
 **#53's probe run settles it beyond doubt, and adds the converse.** Every one of the eleven numbered
 blocks in the `SdWriteProbe` transcript above came back as `ok N<n> P15 B3` — `ok N1 P15 B3` through
@@ -803,8 +830,9 @@ companions, and `deregister(id)`, are what closed that; §5.2 and §5.3 are the 
 
 **#53 is done**, and it needed no production change. It needed two things that did not exist:
 `M28`/`M29` measured against the simulator, because `Writing to file: <name>` and
-`Done saving file.` are decoded types that nothing had ever captured — §4.2 holds the transcript —
-and the card itself as an observable, which is §4.5. `stalled(…)` moved up to `FarmIntegrationTest`
+`Done saving file.` are decoded types that nothing had ever captured — #66 has since moved that
+measurement into the reply census, where a measurement belongs, and §4.2 points at it — and the
+card itself as an observable, which is §4.5. `stalled(…)` moved up to `FarmIntegrationTest`
 in the same work, because a second feature now needs it and "how long is long enough" is a question
 to answer once; `number(…)` moved with it, having been privately copied into three classes.
 
@@ -866,7 +894,9 @@ Item 7 is absent from the issue's numbering, which runs 1–6 then 8. Nothing is
    fits, and record it in §5.
 4. **Teach `MockPrinter` to answer** any command the feature sends, using a line from the census. If
    the line is not in the census, measure it with a probe against the simulator first, or mark it
-   UNMEASURED in §4.2 and assert around it.
+   UNMEASURED in §4.2 and assert around it. The probe to reach for is `ReplyCorpusProbe`, because a
+   step added there puts the measurement *in the census* — #66 is what it costs to measure a reply
+   somewhere else and have to come back for it.
 5. **Assert both halves** — the G-code that reached the machine, and the event that reached the
    stream. §3. A feature with no machine in it asserts the one half it has, and says so — §5.1.
    If it needs a file in the store first, upload one; §2.4.

@@ -43,6 +43,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * this farm numbers every block, so the mock spoke a shape production never produces. See
  * {@link #ok()}. Measured is a property of the rule a string is chosen by, not of the string.
  *
+ * <p><strong>And a reading is not a measurement.</strong> What the census proves about a line is
+ * its fields and their order; the numbers in them are what the machine was doing that afternoon.
+ * The {@code M105} and {@code M114} answers below are the 2026-10-29 capture's, from a machine
+ * whose hotend had been left at 210 degrees; #66 recaptured against one sitting at 25 and the same
+ * two replies now read {@code ok T:25.00 /0.00 B:25.00 /0.00 @:0 B@:0} and {@code … E:20.00 …}.
+ * Both are kept as they were. A reply <em>shape</em> that is not in the census still has to be
+ * measured; a captured shape whose readings moved does not.
+ *
  * <h2>Threading</h2>
  * One daemon acceptor thread serves one session at a time, reading lines and writing replies on that
  * thread. {@link #commands()} and {@link #blocks()} copy under the monitor; {@link #push(String)}
@@ -747,7 +755,8 @@ public final class MockPrinter implements AutoCloseable {
 
         switch (word) {
             // Open a file for write. Three lines then the acknowledgement, verbatim from a
-            // SdWriteProbe run against MarlinSim bugfix-2.1.x on 2026-11-01:
+            // SdWriteProbe run against MarlinSim bugfix-2.1.x on 2026-11-01, and in the reply
+            // census since #66 at `marlin-replies.census.txt:132-135`:
             //
             //   >> N1 M28 test.gco*107  << echo:Now fresh file: test.gco
             //                           << Writing to file: test.gco
@@ -778,8 +787,9 @@ public final class MockPrinter implements AutoCloseable {
             // 5 + 14 + 11 + 17. The N word and checksum are stripped before storing, which is why
             // `written` compares directly against a fixture's blocks.
             //
-            // An M29 with no file open is UNMEASURED - the probe never sent one - so it is merely
-            // acknowledged, and no test drives it.
+            // An M29 with no file open is measured since #66: ReplyCorpusProbe sends one, and
+            // `marlin-replies.census.txt:146` is the whole of the answer - `ok N8 P15 B3` and
+            // nothing else. So acknowledging and saying nothing more is what the machine does.
             case "M29" -> {
                 synchronized (card) {
                     if (openFile != null) {
@@ -972,8 +982,9 @@ public final class MockPrinter implements AutoCloseable {
      *
      * <p>{@code M105} does <strong>not</strong> come through here, also measured: Marlin answers it
      * from the gcode handler and returns before {@code ok_to_send}, so a framed {@code N1 M105*…}
-     * gets {@code ok T:210.00 /210.00 …} with neither number nor buffer counts — the census line the
-     * {@code M105} arm replies with verbatim.
+     * gets {@code ok T:210.00 /210.00 …} with neither number nor buffer counts, which is the shape
+     * the {@code M105} arm replies with. The readings are the 2026-10-29 capture's; the census now
+     * holds the same shape at 25 degrees — see the class comment.
      *
      * @see #answering
      */

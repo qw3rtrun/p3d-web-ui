@@ -4,15 +4,20 @@ import org.qw3rtrun.p3d.g.code.core.GEncoder;
 import org.qw3rtrun.p3d.g.code.core.block.XorCheckSum;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
 import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
+import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
 import org.qw3rtrun.p3d.g.marlin.command.EndstopStates;
 import org.qw3rtrun.p3d.g.marlin.command.FinishMoves;
 import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition;
 import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
+import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.ReportPrintTime;
 import org.qw3rtrun.p3d.g.marlin.command.ReportSDPrintStatus;
 import org.qw3rtrun.p3d.g.marlin.command.ReportSettings;
+import org.qw3rtrun.p3d.g.marlin.command.SerialPrint;
 import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber;
 import org.qw3rtrun.p3d.g.marlin.command.SetLCDMessage;
+import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
+import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 
 import java.io.BufferedReader;
@@ -45,9 +50,65 @@ import java.util.List;
  * deliberate checksum failure, and a disconnect - plus the queries whose replies have types here, so
  * the corpus can tell a decoder that stopped claiming a line from one that never did.
  *
+ * <h2>The SD write, and why it has to be in here</h2>
+ *
+ * <p>{@code Writing to file:} and {@code Done saving file.} are the only way {@link
+ * org.qw3rtrun.p3d.g.marlin.event.SdWritingToFile} and {@link
+ * org.qw3rtrun.p3d.g.marlin.event.SdDoneSaving} can be measured, and until
+ * <a href="https://github.com/qw3rtrun/p3d-web-ui/issues/66">issue 66</a> this session never sent
+ * an {@code M28}, so neither could legitimately reach the census - the one file in the repo allowed
+ * to hold a measurement. {@link SdWriteProbe} had measured the exchange and the transcript lived in
+ * {@code INTEGRATION_TESTS_spec.md} instead, which is the wrong resting place for a captured line.
+ *
+ * <p>Three things make that section unlike the rest of the session, all three measured rather than
+ * assumed (MarlinSim bugfix-2.1.x, 2026-11-09, and the same answers {@link SdWriteProbe} got on
+ * 2026-11-01):
+ *
+ * <ul>
+ *   <li><strong>it is framed and numbered throughout.</strong> A stored line must carry a line
+ *       number and a checksum - an unnumbered one is answered
+ *       {@code Error:No Checksum with line number, Last Line: n} and never reaches the file - so
+ *       the section opens with its own {@code M110 N0} rather than depending on where the step
+ *       before it left the counter;</li>
+ *   <li><strong>every stored line is still acknowledged.</strong> {@code N2 G28*17} was answered
+ *       {@code ok N2 P15 B3} and went into the file rather than being executed. The wire is a file
+ *       sink between the {@code M28} and the {@code M29} and reads exactly like a wire that is
+ *       not;</li>
+ *   <li><strong>the file is deleted again at the end</strong>, by {@code M30}. The simulator's card
+ *       outlives a client disconnect, so without that the {@code M20} earlier in this session would
+ *       list a file the <em>previous</em> run wrote, and the capture would differ from itself. That
+ *       is also the one step that measures {@code File deleted:…}, which nothing had captured.</li>
+ * </ul>
+ *
+ * <p>The four stored lines are {@link SdWriteProbe}'s, deliberately, so the two probes corroborate:
+ * they come back as {@code TEST.GCO 47}, which is their payloads plus a {@code CRLF} each
+ * (5 + 14 + 11 + 17) and shows that the stored line keeps neither its {@code N} nor its {@code *}.
+ *
+ * <h2>How reproducible a capture is, measured rather than hoped</h2>
+ *
+ * <p>Three runs back to back on 2026-11-09. The first differs from the two after it, because this
+ * simulator is <em>not</em> rebooted by a disconnect and so starts where the last client left it:
+ * run 1 found the head parked and cold and homed from there with six {@code busy:} notices; runs 2
+ * and 3 found it at {@code X10 Y10 Z5} and homed with three. From run 2 on the capture is a fixed
+ * point - same length, same lines, same claimed type for every one of them - with a single drift:
+ * the logical {@code E} grows by 10 each run, because the closing {@code G1 E10 F100} advances it
+ * even as the firmware answers {@code echo: cold extrusion prevented}. The SD-write block is
+ * identical in all three, which is what the closing {@code M30} is for.
+ *
+ * <p>So a recapture is reviewed by claimed type and not only by line: a reading that moved is the
+ * machine, a <em>type</em> that disappeared is a regression in the capture.
+ *
  * <p>Usage: {@code ReplyCorpusProbe [host] [port]}, defaulting to {@code localhost 8099}.
  */
 public final class ReplyCorpusProbe {
+
+    /**
+     * The file the SD-write section writes, lists and deletes. {@link SdWriteProbe}'s name, kept:
+     * {@code M20} lists only printable extensions and in DOS 8.3 upper case, so this is the one
+     * name whose listing line - {@code TEST.GCO 47} - is also the line {@code MockPrinter} and the
+     * {@code :backend:core} tests use.
+     */
+    private static final String SD_FILE = "test.gco";
 
     private ReplyCorpusProbe() {
     }
@@ -179,6 +240,21 @@ public final class ReplyCorpusProbe {
         s.add(new Step("the resend the error asked for", framed(3, new GetCurrentPosition())));
         s.add(new Step("a line number out of sequence", framed(99, MarlinG.INSTANCE.m105(null))));
 
+        // The SD write - issue 66. Numbered throughout, and from a counter reset of its own: a
+        // stored line without a line number and checksum is refused, and the step above leaves the
+        // counter wherever its rejection left it. See the class comment for the rest.
+        s.add(new Step("reset the counter for the save", enc(new SetGetLineNumber(0))));
+        s.add(new Step("open a file for write", framed(1, new StartSDWrite(SD_FILE))));
+        s.add(new Step("a stored line", framed(2, new AutoHome())));
+        s.add(new Step("a stored LCD message", framed(3, new SetLCDMessage("Created"))));
+        s.add(new Step("a stored host message", framed(4, new SerialPrint(null, "Done"))));
+        s.add(new Step("a stored host message, to all ports", framed(5, new SerialPrint(0, "Done-P0"))));
+        s.add(new Step("close the file", framed(6, new StopSDWrite())));
+        s.add(new Step("list the card, which now holds it", framed(7, new ListSDCard())));
+        // An M29 with no file open: nothing but the acknowledgement comes back, which is the answer.
+        s.add(new Step("a stray close, with no file open", framed(8, new StopSDWrite())));
+        s.add(new Step("delete it, so this session can be run again", framed(9, new DeleteSDFile(SD_FILE))));
+
         // Rejections: both of the echo lines a host must not ignore.
         s.add(new Step("unknown command", "M998"));
         s.add(new Step("unknown command with a subcode", "G998.5"));
@@ -258,6 +334,16 @@ public final class ReplyCorpusProbe {
      * probe lands on a machine that is still starting and drops the first write. Connecting is
      * therefore not enough: this sends an {@code M115} and waits for an answer, and tries again if
      * none comes.
+     *
+     * <p>Then it quiets the machine <em>before</em> the capture starts, and none of that is
+     * recorded. An auto-report outlives the client that asked for it and queues up while nobody is
+     * attached, so a run that simply connected opened its capture with a burst of somebody else's
+     * temperature lines. Measured on 2026-11-09, before this capture: a connection to a simulator
+     * left auto-reporting read 25 lines in its first four seconds - the queued backlog - and about
+     * two a second after that, which is
+     * <a href="https://github.com/qw3rtrun/p3d-web-ui/issues/92">issue 92</a>'s drowning in the
+     * small. The session's own {@code M155 S0}/{@code M154 S0} steps still run and are still
+     * captured; this is what makes them answer for this session rather than mop up the last one.
      */
     private static Socket connect(String host, int port) throws Exception {
         Exception last = null;
@@ -270,8 +356,13 @@ public final class ReplyCorpusProbe {
                         new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
                 drain(in, 2500);                            // the boot banner, if there is one
                 send(socket.getOutputStream(), "M115");
-                if (!drain(in, 2500).isEmpty()) return socket;
-                throw new IllegalStateException("no answer to M115");
+                if (drain(in, 2500).isEmpty()) throw new IllegalStateException("no answer to M115");
+
+                send(socket.getOutputStream(), "M155 S0");
+                drain(in, 5000);
+                send(socket.getOutputStream(), "M154 S0");
+                drain(in, 5000);
+                return socket;
             } catch (Exception notReady) {
                 last = notReady;
                 if (socket != null) socket.close();

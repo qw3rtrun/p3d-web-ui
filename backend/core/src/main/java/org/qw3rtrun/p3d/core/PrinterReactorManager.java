@@ -59,11 +59,13 @@ import java.util.UUID;
  * "does a runtime exist" rather than on the announcement's own persisted state is deliberate: that
  * state lags the live aggregate by whatever is still ahead of it on this printer's single-consumer
  * listener queue, so the copies that read {@code IDLE} for a machine told to disconnect a moment ago
- * are exactly the ones that would do damage. The redial itself goes through
- * {@code PrinterState.handle(ConnectCmd)} rather than {@code PrinterReactor.connect()} directly, so
- * the connection intent is set before the retry's own
- * {@code filter(cause -> wantsToBeConnected())} ever consults it - skipping that used to mean a
- * machine redialled at startup gave up after its first refusal, silently.
+ * are exactly the ones that would do damage. The redial goes through
+ * {@code PrinterReactor.handleConnectCmd}, the only door to a dial there is, so the connection
+ * intent is set before the retry's own {@code filter(cause -> wantsToBeConnected())} ever consults
+ * it - skipping that used to mean a machine redialled at startup gave up after its first refusal,
+ * silently. It is applied on the machine's own thread rather than this listener's (#80) and
+ * therefore returns before the dial starts, which is what this listener wants: it is holding
+ * nothing open and has the rest of the announcement chain behind it.
  */
 @Slf4j
 public class PrinterReactorManager {
@@ -265,10 +267,13 @@ public class PrinterReactorManager {
      * stood up ({@code CoreConfiguration.aggregates}), and building one here would open a reactor
      * per row in the farm.
      *
-     * <p>Runs synchronously on the {@code boundedElastic} worker serving the {@code PUT}, inside the
-     * roster's transaction, so the edit has taken effect by the time the endpoint answers (plan item
-     * B4) - which is why {@code PrinterState.spec} is {@code volatile}: this is the one writer that
-     * is not the machine's own thread.
+     * <p>Called on the {@code boundedElastic} worker serving the {@code PUT}, inside the roster's
+     * transaction, and it must not block there - so since #80 it <em>queues</em> the edit on the
+     * machine's own thread rather than applying it here. That keeps plan item B4's promise without
+     * a second writer of the aggregate: the executor is single-threaded and FIFO, so a command
+     * issued after the {@code PUT} has answered is necessarily behind this edit, which is the only
+     * ordering the endpoint's caller can observe. Nothing on the way out of the {@code PUT} reads
+     * the aggregate - {@code describe()} answers from the roster.
      *
      * <p><strong>Deliberately not driven by {@code MRegisteredEvent}.</strong> That event is an
      * announcement re-published about seven times per connect, each copy carrying the spec as of its

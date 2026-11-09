@@ -273,12 +273,23 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
                         + stateOf(job), () -> "FAILED".equals(stateOf(job)));
 
         assertFalse(printer.sessionOpen(), "the premise is a machine nothing has dialled");
+
+        // Three things can notice a feed against a cold machine, and whichever lands first writes
+        // the sentence: JobFeeder.start finding no runtime at all, PrinterReactor.feed refusing
+        // because there is no link, and watchTheLink seeing OFFLINE. Which one it is turns on
+        // whether a FarmScheduler sweep has opened a runtime for this machine yet - the scheduler
+        // asks every machine where it is, and asking opens one - so it is genuinely not decidable
+        // from here. Enumerated rather than reduced to a substring they happen to share: the first
+        // two name the machine and the third does not, and an earlier version of this test matched
+        // on "connect" and failed once in six loaded runs against the one sentence that says
+        // "nothing could be sent to it" instead.
         var reason = (String) fetch(job).get("reason");
-        // Two things notice a feed against a cold machine - the feed refusing to start, and the
-        // link watcher seeing OFFLINE - and whichever lands first writes the sentence. The subject
-        // is the assertion; the wording is not.
-        assertTrue(reason != null && reason.contains("connect"),
-                "a failed job has to say what went wrong in words an operator can act on: " + reason);
+        assertTrue(reason != null && (reason.contains("no runtime for machine " + id)
+                        || reason.contains("is not connected")
+                        || reason.contains("the connection to the machine went away")),
+                "a failed job has to say what went wrong in words an operator can act on, and this"
+                        + " is none of the three sentences that mean 'nothing could be sent': "
+                        + reason);
     }
 
     /**

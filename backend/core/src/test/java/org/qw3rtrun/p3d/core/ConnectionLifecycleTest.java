@@ -143,6 +143,33 @@ class ConnectionLifecycleTest {
         assertTrue(lifecycle.wanted());
     }
 
+    /**
+     * A socket that comes up after Disconnect does not put the intent back - issue #80's last
+     * question, which was whether {@link ConnectionLifecycle#linkEstablished()} should go on
+     * setting {@code wanted}. It should not: an <em>observation</em> that manufactures an
+     * <em>intent</em> means a disconnect landing while a dial is already in flight silently does
+     * not win, and this is the one interleaving that reaches it - the dial is on the wire before
+     * the disconnect is applied, so cancelling the chain cannot unmake the socket that is already
+     * opening.
+     *
+     * <p>It used to be justified by a caller driving the aggregate with no {@code connectRequested}
+     * first, which would otherwise hold a link nothing would reconnect. That caller no longer
+     * exists: {@code PrinterReactor.connect()} refuses to dial a machine whose aggregate has not
+     * asked for a connection, so every production {@code linkEstablished} has a
+     * {@code connectRequested} in front of it.
+     */
+    @Test
+    void aSocketThatOpensAfterADisconnectDoesNotPutTheIntentBack() {
+        lifecycle.connectRequested();
+        moved(lifecycle.disconnectRequested(), CONNECTING, OFFLINE, 0);
+
+        moved(lifecycle.linkEstablished(), OFFLINE, ONLINE, 0);
+
+        assertFalse(lifecycle.wanted(),
+                "the operator said stop; a socket coming up is not them changing their mind");
+        moved(lifecycle.linkFailed("the socket closed"), ONLINE, OFFLINE, 0);
+    }
+
     /** The identical drop, a moment after Disconnect, rests instead of retrying. */
     @Test
     void aDropAfterADisconnectRests() {

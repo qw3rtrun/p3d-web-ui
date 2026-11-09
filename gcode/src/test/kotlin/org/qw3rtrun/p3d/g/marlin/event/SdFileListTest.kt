@@ -11,11 +11,11 @@ import org.junit.jupiter.params.provider.ValueSource
 /**
  * Cover for `M20`'s listing - the module's first multi-line reply.
  *
- * Both captured shapes are here as fixtures rather than as invented ones: the **empty** listing is
- * from `marlin-replies.txt`, which `ReplyCorpusProbe` took off MarlinSim with a bare card, and the
- * **non-empty** one is what `SdWriteProbe` saw after writing a file through `M28`/`M29`. That probe
- * is also where `TEST.GCO 47` comes from - uppercase 8.3, and a size that is the payloads plus a
- * CRLF each, with the `N` words and checksums stripped.
+ * Both captured shapes are here as fixtures rather than as invented ones, and since #66 both are in
+ * `marlin-replies.txt`: `ReplyCorpusProbe` lists the card once while it is bare and again after
+ * writing a file through `M28`/`M29`, so the **empty** listing and the **non-empty** one are two
+ * steps of one session. `TEST.GCO 47` is that file - uppercase 8.3, and a size that is the payloads
+ * plus a CRLF each, with the `N` words and checksums stripped.
  *
  * The claims: the two literals decode, an entry does **not** decode on its own, the reader
  * assembles only on a terminator, an interrupted listing yields nothing rather than a short one,

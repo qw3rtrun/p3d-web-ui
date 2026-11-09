@@ -113,3 +113,22 @@ tasks.register('probeSettings', JavaExec) {
             (findProperty('probePort') ?: '8099').toString(),
     ]
 }
+
+/**
+ * Recapture `gcode/src/test/resources/marlin-replies.txt` - the reply corpus
+ * `GReplyCorpusTest` censuses - from a running printer. Hand-run, and a deliberate act: it
+ * replaces one session's evidence with another's, so review the diff and then regenerate the
+ * census snapshot beside it.
+ *
+ * It writes `test.gco` to the card on the far end and deletes it again.
+ */
+tasks.register('probeReplyCorpus', JavaExec) {
+    group = 'verification'
+    description = 'Recapture the Marlin reply corpus from a printer (default localhost:8099).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.ReplyCorpusProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

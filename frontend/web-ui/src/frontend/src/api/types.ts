@@ -123,6 +123,26 @@ export interface ConnectionStateChanged {
 }
 
 /**
+ * `type: "SessionStarted"` - a new link to this machine is up, and everything the server knew about
+ * it from the previous session has been forgotten. Carries nothing: the boundary is the whole
+ * content, and the envelope's `id` already says which machine.
+ *
+ * Its scope is the server's, not a list kept here - exactly what the per-printer snapshot holds
+ * (today the settings report and the card state), so a panel added to that snapshot inherits it.
+ *
+ * It does **not** mean the link is up; `ConnectionStateChanged` says that and arrives immediately
+ * after, so a page applying messages in order has let go of the old session before it is told there
+ * is a new one. Exactly one per established link, including the first.
+ *
+ * `useSessionScope` in `src/session.ts` is the only thing that should read this - see it for why a
+ * panel marks rather than blanks, and why no `OFFLINE` ever arrives across a reconnect.
+ */
+export type SessionStarted = Record<string, never>
+
+/** The `type` string {@link SessionStarted} arrives under - matched in one place, `session.ts`. */
+export const SESSION_STARTED = 'SessionStarted'
+
+/**
  * A temperature line, as `:gcode` decoded it.
  *
  * Two type strings, because `ok` is a type and not a flag: `OkTemperatureRs` answers an `M105`,

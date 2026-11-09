@@ -176,6 +176,20 @@ target has not been asked for one; a target of zero is a heater on its way off. 
 flatten the first into the second before the browser saw it and no longer does, so a control that
 renders `target` has to handle null itself.
 
+**A panel showing what the server holds about a session marks itself stale on `SessionStarted`,
+and never re-reads by itself.** That event - empty payload, one per established link, ahead of the
+`ConnectionStateChanged` announcing the link - is the only thing that says the server has forgotten
+the previous session. Do not infer it from a state: a dropped link that is still wanted is retried,
+so the journey across a pulled cable is `IDLE -> CONNECTING -> ONLINE -> IDLE` and `OFFLINE` never
+arrives. The rule and the reasoning live once, in `useSessionScope` (`src/session.ts`), with
+`PreviousSession.vue` as the words it shows; a panel keeps its values rather than blanking them,
+and offers its existing Read/Refresh rather than firing one - `POST /api-printer/**` is
+OPERATOR/ADMIN, so an automatic re-read is a 403 for the viewer who most needs the mark, and N open
+tabs would be N `M503`/`M20` bursts on one serial line. A new such panel writes four lines:
+`useSessionScope(props.uuid, () => ...)` naming what it must discard (a half-typed edit, a request
+whose answer will never come), `observe(message)` at the top of its stream handler, `renewed()`
+where fresh data lands, and `<PreviousSession v-if="stale" what="…"/>`.
+
 ## The controls that exist
 
 `client.ts` carries the whole command surface, and it is the application's vocabulary rather than

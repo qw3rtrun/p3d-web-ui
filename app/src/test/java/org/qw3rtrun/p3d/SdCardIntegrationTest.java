@@ -259,6 +259,42 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         assertFalse(late.saw("SdCardOk"), "the card was released: " + late.types());
     }
 
+    /**
+     * Issue #94, the Storage half. The card has had this property since the tab shipped: a page
+     * watching while the link bounces keeps a listing and a mounted flag from a session that is
+     * over, and {@code StorageTab.vue} handled no connection event at all, so nothing on either
+     * side marked it.
+     *
+     * <p>The same {@code SessionStarted} the Settings tab gets - see
+     * {@code EepromSettingsIntegrationTest.aSubscriberWatchingAcrossAReconnectIsToldThePreviousSessionEnded}
+     * for why it is one event from the aggregate and not a signal per control. This asserts it
+     * lands after the listing it invalidates, and that the aggregate has genuinely dropped the
+     * card: a page opened after the boundary is shown neither the listing nor the mount.
+     */
+    @Test
+    void aSubscriberWatchingAcrossAReconnectIsToldTheCardBelongedToTheOldSession() {
+        var printer = machine(MockPrinter.marlin()).withFile("TEST.GCO", 47);
+        var id = register("card across a bounce", printer);
+        var watching = connectAndSettle(id, printer);
+        command(id, "/sd/list").expectStatus().isOk();
+        watching.await("SdFileList");
+        var listedAt = watching.types().lastIndexOf("SdFileList");
+
+        dropTheLinkAndWait(id, printer);
+
+        watching.await("SessionStarted");
+        assertTrue(watching.types().lastIndexOf("SessionStarted") > listedAt,
+                "the boundary has to arrive after the listing it invalidates: " + watching.types());
+
+        try (var late = watch(id)) {
+            quiet();
+            assertFalse(late.saw("SdFileList"),
+                    "the previous session's listing belonged to it: " + late.types());
+            assertFalse(late.saw("SdCardOk"),
+                    "and so did the knowledge that a card was in: " + late.types());
+        }
+    }
+
     // ---------------------------------------------------------------- writing a file to the card
 
     /**

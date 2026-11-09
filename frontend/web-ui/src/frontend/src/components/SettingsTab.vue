@@ -13,6 +13,8 @@ import type {
     UnknownCommand,
 } from '../api/types'
 import {isUsable} from '../api/types'
+import {useSessionScope} from '../session'
+import PreviousSession from './PreviousSession.vue'
 
 /**
  * The machine's settings: what the firmware holds, and the operations that can be done to it.
@@ -46,6 +48,10 @@ import {isUsable} from '../api/types'
  * this firmware has no `M503` at all (`UnknownCommand` naming it, Marlin's `DISABLE_M503`) - and
  * they are tracked separately (`StorageTab.vue` draws the same distinction for a card listing),
  * since collapsing them would tell an operator something about their machine nobody established.
+ *
+ * Across a reconnect the report is kept and marked rather than blanked, and nothing is re-read
+ * automatically - `useSessionScope` in `src/session.ts` owns that rule for every panel that shows
+ * what the server holds about a session.
  */
 
 const props = withDefaults(defineProps<{
@@ -90,6 +96,19 @@ const answered = ref(false)
 // Driven by UnknownCommand naming M503 and nothing else; the server stops asking once this is true.
 const noReport = ref(false)
 
+// The report is kept across a reconnect and marked instead of blanked (`session.ts` holds the rule
+// and the reasoning). Four things here cannot be: a half-typed edit is an instruction aimed at a
+// session that is over; a read in flight is a question nobody will now answer; `noReport` is a
+// judgement on a firmware that may have just been replaced, and keeping it would leave Read
+// disabled against a machine that does have M503; and M504's verdict is a claim about the EEPROM
+// as it is now. (`notice` stays - "Settings Stored" says a write happened, and it did.)
+const {stale, observe, renewed} = useSessionScope(props.uuid, () => {
+    edits.clear()
+    reading.value = false
+    noReport.value = false
+    verdict.value = null
+})
+
 // Named rather than left to a chain of v-else-if; see the class doc above.
 const nothingReadYet = computed(() =>
     !noReport.value && !answered.value && groups.value.length === 0)
@@ -118,28 +137,19 @@ function addValue(value: Value) {
     groups.value[groups.value.length - 1].values.push(value)
     answered.value = true
     reading.value = false
+    // This line belongs to the session now running, so whatever is on screen does too.
+    renewed()
 }
 
 function onMessage(message: EventMessage) {
     if (message.id !== props.uuid) {
         return
     }
+    observe(message)
     switch (message.type) {
-        case 'ConnectionStateChanged': {
-            const event = message.event as ConnectionStateChanged
-            state.value = event.to
-            if (event.to === 'OFFLINE') {
-                // What comes back on the same address may be a different firmware (a reflash, a
-                // cable moved); holding the old report would show values this machine does not have.
-                groups.value = []
-                answered.value = false
-                reading.value = false
-                noReport.value = false
-                verdict.value = null
-                edits.clear()
-            }
+        case 'ConnectionStateChanged':
+            state.value = (message.event as ConnectionStateChanged).to
             break
-        }
 
         case 'SettingsSection':
             openSection((message.event as SettingsSection).title)
@@ -479,6 +489,10 @@ onUnmounted(() => {
       <span v-else-if="state === 'CONNECTING'">Connecting…</span>
       <span v-else>This machine is not connected, so nothing can be read or changed.</span>
     </div>
+
+    <!-- A mark over a table that has content, not a fifth empty state - the three below are
+         unchanged, and there is nothing to call stale when nothing was ever read. -->
+    <PreviousSession v-if="stale && rows.length" what="These settings"/>
 
     <!-- The three states an empty table can be in. -->
     <p v-if="noReport" class="text-muted">

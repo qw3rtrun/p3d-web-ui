@@ -591,7 +591,18 @@ The rules that follow, each paid for:
   `ProfileControl` and `SdCardControl`, with an `on(report)` and a `snapshot()`, never in a field
   nothing hands out. Whether a repeat is re-announced is the reply's business: a temperature that
   did not move is suppressed, a card reply never is - someone asked for it and is waiting.
-  `SdCardControl` forgets everything on a new session and on `M22`. **The live half is subscribed before the snapshot is read** (`CatchUp`): the other
+  `SdCardControl` forgets everything on a new session and on `M22`.
+  **A snapshot read once at subscribe time needs the aggregate to say when it goes stale**: the
+  aggregate emits `SessionStarted` from `PrinterState.onOnline`, where it forgets, and what that
+  invalidates is *exactly what `PrinterState.snapshot()` carries* - so a control added there is
+  covered with no second signal. It leads the `ONLINE` transition (forget, then be told the link is
+  back) and is emitted before `linkEstablished()`'s early return, because a second `onOnline` on an
+  already-`ONLINE` machine still clears both controls. Issue #94: a subscriber attached before a
+  bounce kept the previous session's EEPROM report and card listing, and the alternative - let the
+  page re-read on `ConnectionStateChanged` - fails twice over, since a `VIEWER` may hold the stream
+  but may not `POST /api-printer/**`, and a dropped-and-retried link never announces `OFFLINE`, only
+  `CONNECTING`.
+  **The live half is subscribed before the snapshot is read** (`CatchUp`): the other
   order loses whatever is emitted between the two, and the cost of this one is at most a repeated
   value. `HostTerminal` keeps a 256-deep replay for the opposite reason: its caller cannot subscribe
   until `start()` has already begun reading the socket.

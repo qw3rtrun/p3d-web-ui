@@ -229,6 +229,96 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
                 "dialling walks CONNECTING, ONLINE, IDLE, and a browser is told each step: " + walk);
     }
 
+    // --------------------------------------------------------------- a link that drops and returns
+
+    /**
+     * The measurement that decided issue #94: <strong>a pulled cable never reads {@code OFFLINE}</strong>.
+     *
+     * <p>{@code ConnectionLifecycle.linkFailed} consults the intent rather than the socket - with a
+     * connection still wanted it goes to {@code CONNECTING} and the reactor redials, and only a
+     * {@code disconnectRequested} or a {@code gaveUp} reaches {@code OFFLINE}. So the journey a
+     * browser is shown across a dropped link is {@code IDLE -> CONNECTING -> ONLINE -> IDLE}, and
+     * anything a page keys off {@code to === 'OFFLINE'} - which {@code SettingsTab.vue} did, to
+     * clear its table - fires on the deliberate disconnect and never on this. That is why #94's fix
+     * is a stated boundary rather than a state the page infers.
+     */
+    @Test
+    void aDroppedLinkThatComesBackNeverAnnouncesOffline() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("cable pulled", printer);
+        var events = connectAndSettle(id, printer);
+        var before = events.allOf("ConnectionStateChanged").size();
+
+        dropTheLinkAndWait(id, printer);
+
+        var walk = events.allOf("ConnectionStateChanged").stream()
+                .skip(before)
+                .map(event -> (String) event.get("to"))
+                .toList();
+        assertFalse(walk.contains("OFFLINE"),
+                "a link that drops while a connection is still wanted is retried, not ended;"
+                        + " a page waiting for OFFLINE waits forever: " + walk);
+        assertTrue(walk.contains("CONNECTING") && walk.contains("ONLINE"),
+                "it does go round again, which is what makes the previous assertion a finding"
+                        + " rather than an absence of events: " + walk);
+    }
+
+    /**
+     * The session boundary is the <em>aggregate's</em>, not either tab's - issue #94's "one fix in
+     * the shared pattern rather than two".
+     *
+     * <p>Asserted on a machine with no EEPROM at all, whose Settings tab is never even rendered
+     * ({@code monitor.html} gates it on {@code profile.hasEeprom()}): {@code SessionStarted} still
+     * arrives, because {@code PrinterState.onOnline} states it beside the forgetting rather than
+     * either control raising its own. That is what makes it hold for the next thing added to
+     * {@code PrinterState.snapshot()} without a second patch.
+     *
+     * <p>Exactly one per established link, and before the {@code ONLINE} that announces the link:
+     * a page applying them in order has forgotten the old session by the time it is told there is a
+     * new one.
+     */
+    @Test
+    void everyNewLinkStatesItsOwnBoundaryWhateverTheMachineCanDo() {
+        var printer = machine(MockPrinter.withoutEeprom());
+        var id = register("no eeprom", printer);
+        var events = connectAndSettle(id, printer);
+        // Counted rather than assumed to be one. This stream is opened before the dial, so it
+        // should carry the first link's boundary too - but whether the server-side subscription
+        // is live by the time onOnline runs is a race this test is not about, and the claim worth
+        // making is the increment.
+        var before = Collections.frequency(events.types(), "SessionStarted");
+
+        dropTheLinkAndWait(id, printer);
+
+        await(() -> "the new link's boundary (the stream carried " + events.types() + ")",
+                () -> Collections.frequency(events.types(), "SessionStarted") > before);
+        quiet();
+        var after = events.types();
+        assertEquals(before + 1, Collections.frequency(after, "SessionStarted"),
+                "one link is one boundary and no more - a redial announcing one per attempt would"
+                        + " blank a page every time a retry failed, and this machine's link was"
+                        + " re-established once: " + after);
+
+        var boundary = after.lastIndexOf("SessionStarted");
+        var online = indexOfState(events, "ONLINE", boundary);
+        assertTrue(online > boundary,
+                "the boundary leads the link it belongs to, so a page is never told it is back"
+                        + " before it is told to let go: " + after);
+    }
+
+    /** Where the first {@code ConnectionStateChanged} reaching {@code state} after {@code from} sits in {@link Events#types()}. */
+    private static int indexOfState(Events events, String state, int from) {
+        var messages = events.all();
+        for (var i = from; i < messages.size(); i++) {
+            var message = messages.get(i);
+            if ("ConnectionStateChanged".equals(message.get("type"))
+                    && state.equals(((Map<?, ?>) message.get("event")).get("to"))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /**
      * From the host, a disconnect that merely cancelled its two halves looked identical to one that
      * closed the connection - the difference being a socket left {@code Established} on every

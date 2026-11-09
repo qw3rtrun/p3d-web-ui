@@ -94,7 +94,9 @@ public class SdCardControl {
      *
      * <p>A link that was down may have been down because the machine was switched off, and a card
      * can be swapped while it is. Nothing the previous session learned survives that, so a new one
-     * starts from "not known" and learns it again from what the machine says.
+     * starts from "not known" and learns it again from what the machine says - which
+     * {@code PrinterState.onOnline} announces as a {@code SessionStarted}, so a subscriber already
+     * watching is told too.
      */
     public void sessionStarted() {
         state = State.UNKNOWN;

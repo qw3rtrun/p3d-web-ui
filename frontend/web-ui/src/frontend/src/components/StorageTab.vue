@@ -3,6 +3,8 @@ import {computed, onMounted, onUnmounted, ref} from 'vue'
 import {files as fileStore, printer, RequestFailed, watchPrinter, type Subscription} from '../api/client'
 import type {EventMessage, FarmRole, GcodeFile, SdFile, SdFileList, SdUploadProgressed} from '../api/types'
 import {estimate, fileSize, filamentUsed, sliceDetail} from '../format'
+import {useSessionScope} from '../session'
+import PreviousSession from './PreviousSession.vue'
 
 /**
  * The machine's SD card: what is on it, and what can be done to it.
@@ -21,6 +23,10 @@ import {estimate, fileSize, filamentUsed, sliceDetail} from '../format'
  *
  * Uploading is two requests: `/api-files` takes the bytes first, so the same stored file can reach a
  * second machine without a second upload, and the second request only names the result to the card.
+ *
+ * Across a reconnect the card state and the listing are kept and marked rather than blanked, and
+ * nothing is re-listed automatically - `useSessionScope` in `src/session.ts` owns that rule for
+ * every panel that shows what the server holds about a session.
  */
 
 const props = withDefaults(defineProps<{
@@ -57,10 +63,30 @@ const sending = ref(false)
 const failure = ref<string | null>(null)
 const api = printer(props.uuid)
 
-const transferring = computed(() => upload.value?.state === 'UPLOADING' || sending.value)
+// A transfer whose link went away. The server's last word was UPLOADING and no terminal event is
+// coming - the session that would have sent one is over - so without this the progress card stays
+// at "Uploading", `transferring` stays true, and every control on the tab is disabled until a
+// reload. Not written as a FAILED progress event: the states are the server's vocabulary, and
+// inventing one here would claim the server said something it did not.
+const abandoned = ref(false)
+
+const transferring = computed(() =>
+    !abandoned.value && (upload.value?.state === 'UPLOADING' || sending.value))
 
 // Everything that drives the machine is unavailable while the wire belongs to a transfer.
 const canAct = computed(() => mayControl.value && !transferring.value)
+
+// The card state and its listing are kept across a reconnect and marked instead of blanked
+// (`session.ts` holds the rule and the reasoning). What cannot be kept is a transfer: `sending`
+// covers a request whose answer will never come, and anything still showing as in flight was cut
+// off by the drop - see `abandoned` above. Nothing is re-listed here; the Refresh button is.
+const {stale, observe, renewed} = useSessionScope(props.uuid, () => {
+    if (transferring.value) {
+        abandoned.value = true
+    }
+    sending.value = false
+    waitingForList.value = false
+})
 
 const percent = computed(() => {
     const progress = upload.value
@@ -74,6 +100,7 @@ function onMessage(message: EventMessage) {
     if (message.id !== props.uuid) {
         return
     }
+    observe(message)
     switch (message.type) {
         case 'SdCardOk':
             card.value = 'mounted'
@@ -85,12 +112,17 @@ function onMessage(message: EventMessage) {
             card.value = 'mounted'
             listed.value = (message.event as SdFileList).files
             waitingForList.value = false
+            // Both of the above belong to the session now running.
+            renewed()
             break
         }
 
         case 'SdUploadProgressed': {
             const progress = message.event as SdUploadProgressed
             upload.value = progress
+            // Progress is proof a transfer is running now, which a transfer cut off by a drop is
+            // not - this is how the card recovers when somebody starts a new one from elsewhere.
+            abandoned.value = false
             if (progress.state !== 'UPLOADING') {
                 sending.value = false
                 // What is on the card changed, whichever way it ended: a cancel leaves a short but
@@ -184,6 +216,7 @@ function send() {
     }
     sending.value = true
     upload.value = null
+    abandoned.value = false
     void guarded(async () => {
         try {
             const held = await fileStore.upload(file)
@@ -202,6 +235,7 @@ function send() {
 function sendStored(file: GcodeFile) {
     sending.value = true
     upload.value = null
+    abandoned.value = false
     void guarded(async () => {
         try {
             await api.uploadToCard(file.id, file.name)
@@ -257,12 +291,17 @@ onUnmounted(() => {
 
     <div v-if="failure" class="alert alert-warning py-2" role="alert">{{ failure }}</div>
 
+    <!-- Nothing to call stale before anything is known about the card. -->
+    <PreviousSession v-if="stale && (listed || card !== 'unknown')"
+                     what="This card and its listing"/>
+
     <!-- "Takes no other commands" is not decoration - it is what M28 does to the wire. -->
-    <div v-if="upload || sending" class="card card-rounded mb-3">
+    <div v-if="upload || sending || abandoned" class="card card-rounded mb-3">
       <div class="card-body py-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
           <strong>
-            <template v-if="transferring">Uploading</template>
+            <template v-if="abandoned">Interrupted</template>
+            <template v-else-if="transferring">Uploading</template>
             <template v-else-if="upload?.state === 'DONE'">Uploaded</template>
             <template v-else-if="upload?.state === 'CANCELLED'">Stopped</template>
             <template v-else>Failed</template>
@@ -284,7 +323,12 @@ onUnmounted(() => {
           {{ upload.blocksSent.toLocaleString() }} blocks sent
         </p>
 
-        <p v-if="transferring" class="text-muted small mb-0">
+        <p v-if="abandoned" class="text-warning small mb-0">
+          The link dropped while this was transferring, so it stopped where the bar left it and
+          nothing will say how it ended. No end-of-file was sent, so the file is most likely still
+          open on the card: reset the machine before deleting it, and do not print it.
+        </p>
+        <p v-else-if="transferring" class="text-muted small mb-0">
           The printer takes no other commands until this finishes.
         </p>
         <p v-else-if="upload?.state === 'CANCELLED'" class="text-muted small mb-0">

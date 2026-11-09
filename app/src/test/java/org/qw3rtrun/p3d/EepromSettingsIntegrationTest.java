@@ -391,31 +391,84 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * A subscriber already watching when the link bounces keeps the old report - <strong>known and
-     * left alone</strong>, not a bug: {@code PrinterReactor.updates()} reads the aggregate's
-     * snapshot once, at subscribe time, and {@code sessionStarted} clears it afterwards without
-     * emitting, since forgetting is not something the machine said. Acceptable because the
-     * reconnect itself is announced ({@code ConnectionStateChanged}), giving the page the signal to
-     * re-read with one {@code M503} - the alternative, an event meaning "forget what I told you", is
-     * a new kind of message in a stream whose every other member is something a machine actually
-     * said. {@code SdCardControl} has had the same property since the Storage tab shipped; worth its
-     * own issue, not this one's.
+     * Issue #94, and the <strong>reversal</strong> of what this test asserted when #88 shipped it.
+     *
+     * <p>It used to pin the opposite - that a live subscriber keeps the old report and is not told
+     * otherwise - on the argument that the reconnect is already announced by
+     * {@code ConnectionStateChanged}, so the page could re-read with one {@code M503}, and that an
+     * event meaning "forget what I told you" would be a new kind of message in a stream whose every
+     * other member is something a machine actually said. Three measurements overturned it:
+     *
+     * <ul>
+     *   <li>the premise is not true of this stream. {@code api.msg}'s own package note calls the
+     *       package "the farm's own messages: the things that happen to a machine which no firmware
+     *       can state", and {@code EventMessage}'s javadoc names six of them already travelling
+     *       here - {@code ConnectionStateChanged}, {@code BlockAcknowledged},
+     *       {@code BlocksAbandoned}, {@code SdUploadProgressed}, {@code MachineJoinedFarm},
+     *       {@code MachineLeftFarm}. A session boundary is one more fact about the host's link, not
+     *       a new kind of thing;</li>
+     *   <li>the fallback cannot work for the reader it matters to. {@code SecurityConfiguration}
+     *       puts {@code POST /api-printer/**} behind {@code OPERATOR}/{@code ADMIN} - "the
+     *       {@code M104 S300} boundary" - while a {@code VIEWER} may hold the stream. A viewer
+     *       cannot ask for {@code M503} or {@code M20}, so under the re-read design a viewer holds
+     *       the previous session's values for as long as the tab is open, with nothing marking
+     *       them;</li>
+     *   <li>the client-side half had already been written and is keyed off the wrong state.
+     *       {@code SettingsTab.vue} cleared its table on {@code to === 'OFFLINE'}, but a link that
+     *       drops while a connection is still wanted reaches {@code ConnectionLifecycle.linkFailed}
+     *       with {@code wanted} set, which moves to {@code CONNECTING} - see
+     *       {@code ConnectivityIntegrationTest.aDroppedLinkThatComesBackNeverAnnouncesOffline}. The
+     *       guard fired only on the deliberate disconnect, which is not this issue's case.</li>
+     * </ul>
+     *
+     * <p>So the aggregate states the boundary instead, as {@code SessionStarted}, at the point it
+     * already forgets ({@code PrinterState.onOnline}). What the page then does with it - blank the
+     * panel or mark it stale - is the page's call; the server's job is only to make the distinction
+     * available.
      */
     @Test
-    void aSubscriberWatchingAcrossAReconnectKeepsTheOldReportAndIsNotToldOtherwise() {
+    void aSubscriberWatchingAcrossAReconnectIsToldThePreviousSessionEnded() {
         var printer = machine(MockPrinter.marlin());
         var id = register("watching across", printer);
         var watching = connectAndSettle(id, printer);
 
         command(id, "/settings/read").expectStatus().isOk();
         await("the report to arrive", () -> watching.allOf("SettingsValue").size() >= 13);
+        var reportEndedAt = watching.types().lastIndexOf("SettingsValue");
 
-        disconnect(id);
-        connectAndWait(id);
-        quiet();
+        dropTheLinkAndWait(id, printer);
 
-        assertFalse(watching.allOf("SettingsValue").isEmpty(),
-                "documented limitation: a live subscriber is not told to forget");
+        watching.await("SessionStarted");
+        assertTrue(watching.types().lastIndexOf("SessionStarted") > reportEndedAt,
+                "the boundary has to arrive after the report it invalidates, or a page applying it"
+                        + " in order would end up marking a report that is current: "
+                        + watching.types());
+    }
+
+    /**
+     * The other half of the same promise, and the reason the fix is an event rather than a cleared
+     * snapshot: the aggregate really has forgotten, so a page that re-reads gets the new session's
+     * answer rather than a cached one, and a page that never re-reads is not quietly re-handed the
+     * old values by a reconnecting stream.
+     */
+    @Test
+    void theAggregateHasActuallyForgottenByTheTimeItSaysSo() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("forgot across", printer);
+        var watching = connectAndSettle(id, printer);
+
+        command(id, "/settings/read").expectStatus().isOk();
+        await("the report to arrive", () -> watching.allOf("SettingsValue").size() >= 13);
+
+        dropTheLinkAndWait(id, printer);
+        watching.await("SessionStarted");
+
+        try (var fresh = watch(id)) {
+            quiet();
+            assertTrue(fresh.allOf("SettingsValue").isEmpty(),
+                    "a stream opened after the boundary must carry nothing from before it: "
+                            + fresh.types());
+        }
     }
 
     // ------------------------------------------------------------------ the move off the Monitor

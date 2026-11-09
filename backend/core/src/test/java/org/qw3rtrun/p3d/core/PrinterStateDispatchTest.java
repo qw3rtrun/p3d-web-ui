@@ -5,6 +5,7 @@ import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
+import org.qw3rtrun.p3d.api.msg.SessionStarted;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
 import org.qw3rtrun.p3d.g.marlin.command.FactoryReset;
 import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
@@ -27,6 +28,7 @@ import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
 import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
+import org.qw3rtrun.p3d.g.marlin.event.SdCardOk;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsSection;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsValue;
 import org.qw3rtrun.p3d.g.marlin.event.UnknownCommand;
@@ -448,6 +450,73 @@ class PrinterStateDispatchTest {
                 "a reflashed machine may well answer M503 now");
         assertFalse(printer.snapshot().contains(new SettingsValue("M92", "M92 X80.00")),
                 "and the last session's settings are not this session's: " + printer.snapshot());
+    }
+
+    /**
+     * Issue #94: the forgetting and its announcement are one action. The controls were already
+     * cleared here and nothing said so, so a subscriber attached before the bounce went on showing
+     * the previous session's EEPROM report and card listing - {@code PrinterReactor.updates()}
+     * reads {@link PrinterState#snapshot()} once, at subscribe time, so only a <em>new</em>
+     * subscriber ever saw the cleared state.
+     *
+     * <p>The order is the contract: the boundary leads the {@code ONLINE} transition, so a page
+     * applying messages in order forgets the old session before it is told there is a new link.
+     */
+    @Test
+    void aNewLinkStatesItsBoundaryBeforeItAnnouncesTheLink() {
+        var printer = online();
+        printer.onEvent(SdCardOk.INSTANCE);
+        printer.onEvent(new SettingsValue("M92", "M92 X80.00"));
+        printer.onOffline("the cable was pulled");
+        emitted.clear();
+
+        printer.onOnline(new GSender(this::capture));
+
+        var boundary = emitted.indexOf(new SessionStarted());
+        assertTrue(boundary >= 0, "nothing told a watching subscriber to forget: " + emitted);
+        assertTrue(indexOfState(MachineConnectionState.ONLINE) > boundary,
+                "the boundary has to lead the link it belongs to: " + emitted);
+        assertFalse(printer.snapshot().contains(SdCardOk.INSTANCE),
+                "and it says so because it has done it: " + printer.snapshot());
+    }
+
+    /**
+     * The {@code change == null} path - a second {@code onOnline} on a machine already {@code ONLINE}
+     * returns early with no transition to announce. It still clears both controls, so it still owes
+     * the boundary; before #94 that path forgot and announced nothing at all, which is the bug in
+     * miniature.
+     */
+    @Test
+    void aLinkEstablishedTwiceStatesTheBoundaryTwice() {
+        var printer = online();
+
+        printer.onOnline(new GSender(this::capture));
+
+        assertEquals(List.of(new SessionStarted()), emitted,
+                "the forgetting and its announcement are one action, transition or no transition: "
+                        + emitted);
+    }
+
+    /** A property of the link, not of what happened to be held: nothing was known and it is still said. */
+    @Test
+    void aMachineWithNothingToForgetStatesTheBoundaryAnyway() {
+        var printer = new PrinterState(UUID.randomUUID());
+        printer.setEmitter(emitted::add);
+
+        printer.onOnline(new GSender(this::capture));
+
+        assertTrue(emitted.contains(new SessionStarted()),
+                "a machine that reported nothing last session still starts a new one: " + emitted);
+    }
+
+    /** Where the transition to {@code state} sits among the events a subscriber received. */
+    private int indexOfState(MachineConnectionState state) {
+        for (var i = 0; i < emitted.size(); i++) {
+            if (emitted.get(i) instanceof ConnectionStateChanged change && change.to() == state) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**

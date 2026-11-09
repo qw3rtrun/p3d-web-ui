@@ -9,6 +9,7 @@ import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
+import org.qw3rtrun.p3d.api.msg.SessionStarted;
 import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
 import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
 import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
@@ -336,6 +337,11 @@ public class PrinterState implements PrinterAggregate {
      * fixed order (connection, profile, card, settings, last temperature); nothing that merely
      * <em>happened</em> - a position, a card listing, an acknowledged or abandoned block - is here,
      * or a late subscriber would see it as having just happened.
+     *
+     * <p><strong>Everything this method carries is invalidated by {@link SessionStarted}</strong>,
+     * which {@link #onOnline} states where it forgets - so a control added here is covered without
+     * further work, and a subscriber that attached before a reconnect is told rather than left
+     * holding the previous session's answers.
      */
     public List<Object> snapshot() {
         var facts = new ArrayList<Object>();
@@ -575,11 +581,21 @@ public class PrinterState implements PrinterAggregate {
         g.send(command);
     }
 
-    /** The socket is up: take the sender and ask what the machine is. Runs once per link, not per reconnect. */
+    /**
+     * The socket is up: take the sender, forget what the last session taught, say so, and ask what
+     * the machine is.
+     *
+     * <p>The clear and its {@link SessionStarted} are one action, before the early return rather
+     * than after it - that return is for a second {@code onOnline} on a machine already
+     * {@code ONLINE}, and that path used to clear both controls and announce nothing at all (#94).
+     * The boundary leads the {@code ONLINE} transition for the same reason: a page applying
+     * messages in order has to forget the old session before it is told there is a new link.
+     */
     public void onOnline(GSender g) {
         this.g = g;
         card.sessionStarted();
         settings.sessionStarted();
+        emitter.accept(new SessionStarted());
         var change = connection.linkEstablished();
         if (change == null) {
             return;

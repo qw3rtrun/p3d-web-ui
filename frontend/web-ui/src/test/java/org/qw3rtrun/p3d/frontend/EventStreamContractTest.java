@@ -7,6 +7,7 @@ import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.MachineJoinedFarm;
 import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
 import org.qw3rtrun.p3d.api.msg.SdUploadProgressed;
+import org.qw3rtrun.p3d.api.msg.SessionStarted;
 import org.qw3rtrun.p3d.api.msg.SdUploadState;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
@@ -158,6 +159,27 @@ class EventStreamContractTest {
                 MachineConnectionState.ONLINE, MachineConnectionState.IDLE, 0, null)));
 
         assertTrue(payload.get("event").get("reason").isNull());
+    }
+
+    /**
+     * Issue #94. The aggregate forgets the previous session's EEPROM report and card listing on a
+     * new link; this is how a browser that was already watching is told, since
+     * {@code PrinterReactor.updates()} reads the snapshot once and only a newly attached subscriber
+     * ever saw the cleared state.
+     *
+     * <p>The payload is an empty object by design - the boundary itself is the whole content, and
+     * which machine it is about travels on {@code id}. Asserted to be an object carrying no fields
+     * so that adding one has to come through here and think about the browser first.
+     */
+    @Test
+    void aSessionBoundaryCarriesItsTypeAndNothingElse() {
+        var payload = mapper.readTree(streamed(new SessionStarted()));
+
+        assertEquals("SessionStarted", payload.get("type").asString());
+        assertTrue(payload.get("event").isObject(), "an object, not a null or a string");
+        assertEquals(0, payload.get("event").size(),
+                "a field here is a field the TypeScript client has to learn: "
+                        + payload.get("event"));
     }
 
     // ErrorRs carries the firmware's own words in message and the resend line in lastLine.

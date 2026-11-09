@@ -412,6 +412,33 @@ public final class MockPrinter implements AutoCloseable {
         return socket != null && !socket.isClosed();
     }
 
+    /**
+     * Drops the open connection from <em>the machine's end</em>, leaving the port listening.
+     *
+     * <p>The difference from {@code disconnect(id)} is the whole of issue #94. A disconnect is an
+     * intent, and {@code ConnectionLifecycle.disconnectRequested()} takes the machine to
+     * {@code OFFLINE}; a cable pulled out while a connection is still wanted reaches
+     * {@code linkFailed}, which with {@code wanted} set goes to {@code CONNECTING} and redials -
+     * so a drop-and-return never announces {@code OFFLINE} at all. Anything keyed off that state
+     * is keyed off the case that does not happen.
+     *
+     * <p>The acceptor loop is a {@code while} around {@code accept()}, so closing the live socket
+     * ends one session and the next dial is served normally: {@link #sessions()} is how a test
+     * waits for the new one, since the host's own state walks {@code ONLINE -> IDLE} twice with
+     * nothing in between to distinguish the runs.
+     */
+    public void hangUp() {
+        var socket = live;
+        if (socket == null) {
+            return;
+        }
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+            // the point is that it is gone; a socket that would not close is gone either way
+        }
+    }
+
     /** Puts a file on the card before anything connects, so a listing has something to list. */
     public MockPrinter withFile(String name, int size) {
         card.put(name, size);

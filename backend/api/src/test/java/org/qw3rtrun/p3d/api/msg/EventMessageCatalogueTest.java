@@ -58,7 +58,8 @@ class EventMessageCatalogueTest {
             "ConnectionStateChanged",
             "MachineJoinedFarm",
             "MachineLeftFarm",
-            "SdUploadProgressed");
+            "SdUploadProgressed",
+            "SessionStarted");
 
     /** Everything else in the package, and the reason it is not one of the above. */
     private static final Map<String, String> DOES_NOT = new LinkedHashMap<>(Map.of(

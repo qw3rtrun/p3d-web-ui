@@ -213,6 +213,8 @@ public class EEPROMSettingsControl {
      * {@link #reportSupported()} - a link that was down may return to a reflashed machine, or one
      * swapped at the same address (see {@link SdCardControl#sessionStarted()}), and a remembered
      * refusal would hide the tab forever on a firmware that now answers {@code M503} fine.
+     * Announced to whoever is watching by {@code PrinterState.onOnline}, as a
+     * {@code SessionStarted}.
      */
     public void sessionStarted() {
         state = State.NOTHING;

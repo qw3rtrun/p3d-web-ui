@@ -345,6 +345,31 @@ abstract class FarmIntegrationTest {
     }
 
     /**
+     * Pulls the cable and waits for the farm to have redialled and settled - issue #94's scenario.
+     *
+     * <p>Not {@link #disconnect(UUID)} followed by {@link #connectAndWait(UUID)}, which is a
+     * different journey: that one passes through {@code OFFLINE}, because a disconnect ends the
+     * intent. A link that fails while a connection is still wanted goes to {@code CONNECTING} and
+     * is redialled, so the machine walks {@code IDLE -> CONNECTING -> ONLINE -> IDLE} and never
+     * reads {@code OFFLINE} at any point a browser could sample. See {@link MockPrinter#hangUp()}.
+     *
+     * <p>Waits on {@link MockPrinter#sessions()} first, because the host's own state ends where it
+     * started and a poll of {@code /connection} can easily never observe the dip. The second wait
+     * is the usual {@code IDLE}: a session is open when the socket is accepted, and the handshake
+     * is still in flight behind it.
+     */
+    protected void dropTheLinkAndWait(UUID id, MockPrinter printer) {
+        var before = printer.sessions();
+        printer.hangUp();
+        await(() -> "the farm to redial machine " + id + " after the link was pulled."
+                        + " The machine has seen " + printer.sessions() + " session(s) and the farm"
+                        + " says " + connectionState(id),
+                () -> printer.sessions() > before);
+        await(() -> "machine " + id + " to settle after the redial. It is " + connectionState(id),
+                () -> "IDLE".equals(connectionState(id)));
+    }
+
+    /**
      * Dials the machine and waits until <strong>the aggregate has taken the firmware report</strong>,
      * handing back the stream it watched. Use this rather than {@link #connectAndWait(UUID)} for
      * anything depending on what the machine said it is - an extruder count, a capability.

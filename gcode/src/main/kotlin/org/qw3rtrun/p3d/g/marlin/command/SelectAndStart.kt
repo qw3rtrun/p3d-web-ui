@@ -6,15 +6,32 @@ import org.qw3rtrun.p3d.g.code.core.command.GParameterWord
 import org.qw3rtrun.p3d.g.code.core.command.GWord
 import org.qw3rtrun.p3d.g.code.core.token.GToken
 import org.qw3rtrun.p3d.g.code.dsl.M
+import org.qw3rtrun.p3d.g.code.dsl.bareString
 import org.qw3rtrun.p3d.g.code.dsl.word
+import org.qw3rtrun.p3d.g.marlin.beforeStringArg
 import org.qw3rtrun.p3d.g.marlin.intOf
+import org.qw3rtrun.p3d.g.marlin.stringArg
 import org.qw3rtrun.p3d.g.protocol.GRq
 import org.qw3rtrun.p3d.g.protocol.GRqDecoder
 
 /**
- * M32 [P<value>] [S<filepos>]
+ * M32 [P<value>] [S<filepos>] [<filename>]
  *
  * Select and Start (sdcard).
+ *
+ * **`filename` is a bare rest-of-line string** (spec 3.4a).
+ * It carries no letter, it is written last because everything to the end of the
+ * line belongs to it, and it cannot contain `;` - every parser reads that as the
+ * start of a comment.
+ *
+ * **The `!<filename>#` form Marlin's own examples use is not modelled.** `!` and `#` are
+ * delimiters a host puts *around* the name rather than part of it, so this class writes and
+ * reads the plain form - the one verified against the firmware: `N8 M32 test.gco*105`
+ * answered `File opened: test.gco Size: 47`, `File selected`, `ok N8 P15 B3`. A wrapped line
+ * still decodes and still re-encodes byte for byte; the delimiters simply come back inside
+ * `filename`, and `SelectAndStart(filename = "!a.gco#")` is how one is written on purpose.
+ * Note that `M32 P !name#`, the doc's own spelling, reads `P !name#` as the whole filename:
+ * `P` is documented as carrying a value, so a bare one is not a parameter here.
  *
  * Build one to send the command, and read one back with the companion's `decode`, which
  * is this command's [GRqDecoder]:
@@ -31,17 +48,20 @@ import org.qw3rtrun.p3d.g.protocol.GRqDecoder
  *
  * @property p `P`
  * @property filepos `S` - filepos
+ * @property filename the rest of the line
  * @see <a href="https://marlinfw.org/docs/gcode/M32.html">MarlinFirmare M32 doc</a>
  */
 data class SelectAndStart(
     val p: Int? = null,
     val filepos: Int? = null,
+    val filename: String? = null,
 ) : GRq<SelectAndStart> {
 
     override fun encode(): GCommand {
-        val words = ArrayList<GWord>(2)
+        val words = ArrayList<GWord>(3)
         if (p != null) words.add(word('P', p))
         if (filepos != null) words.add(word('S', filepos))
+        if (filename != null) words.add(bareString(filename))
         return M(32, *words.toTypedArray())
     }
 
@@ -53,16 +73,18 @@ data class SelectAndStart(
 
         override val letters: Set<Char> = setOf('P', 'S')
 
-        override val bareString: Boolean = false
+        override val bareString: Boolean = true
 
         override fun head(): GParameterWord<*> {
             return M(32).head
         }
 
         override fun decodeParams(tokens: List<GToken>): SelectAndStart {
+            val params = tokens.beforeStringArg('P', 'S')
             return SelectAndStart(
-                p = tokens.intOf('P'),
-                filepos = tokens.intOf('S'),
+                p = params.intOf('P'),
+                filepos = params.intOf('S'),
+                filename = tokens.stringArg('P', 'S'),
             )
         }
     }

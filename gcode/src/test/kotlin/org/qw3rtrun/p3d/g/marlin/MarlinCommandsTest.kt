@@ -865,10 +865,11 @@ class MarlinCommandsTest {
             assertTrue(text.contains(" a tail")) { "M30 missing a tail in $text" }
             assertEquals(it, DeleteSDFile.decodeParams(paramTokens(it.encode()))) { "round trip: $text" }
         }
-        SelectAndStart(p = 1, filepos = 1).let {
+        SelectAndStart(p = 1, filepos = 1, filename = "a tail").let {
             val text = GEncoder.encode(it.encode())
             assertTrue(text.contains(" P")) { "M32 missing P in $text" }
             assertTrue(text.contains(" S")) { "M32 missing S in $text" }
+            assertTrue(text.contains(" a tail")) { "M32 missing a tail in $text" }
             assertEquals(it, SelectAndStart.decodeParams(paramTokens(it.encode()))) { "round trip: $text" }
         }
         GetLongPath(path = "a tail").let {

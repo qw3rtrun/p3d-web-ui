@@ -154,7 +154,7 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
  * The command's bare rest-of-line string (spec 3.4a), or null when it carries none. [letters] are
  * **this command's own parameter letters**, and passing them is not optional.
  *
- * The 22 commands Marlin reads a `string_arg` for - `M117`'s message, `M23`/`M28`/`M30`/`M928`'s
+ * The 23 commands Marlin reads a `string_arg` for - `M117`'s message, `M23`/`M28`/`M30`/`M928`'s
  * filename, `M33`'s path, `M810`-`M819`'s macro - take an argument with **no letter in front of
  * it**, and the token layer cannot see it: it has no idea which command it is lexing, so
  * `M117 Hello World` comes back as one `GLetter` per character. Reassembling those characters is
@@ -214,7 +214,7 @@ internal fun List<GToken>.stringArg(vararg letters: Char): String? {
  * The tokens in front of a command's bare string - the region its **lettered** parameters may be
  * read from, for the same [letters] [stringArg] is given.
  *
- * A decoder for one of the 22 commands reads its letters from this and its string from the whole,
+ * A decoder for one of the 23 commands reads its letters from this and its string from the whole,
  * because a letter inside the string is text and not a parameter: `M118 Hello World P1` carries the
  * message `Hello World P1` and no `P`. Scanning the whole block for `P` instead would find that one,
  * which is how a message comes back having quietly set a parameter the sender never wrote.

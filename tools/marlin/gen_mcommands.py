@@ -121,9 +121,31 @@ NAME_OVERRIDES = {
 # default and is right for the rest.
 BARE_STRING_NAMES = {
     "M23": "filename", "M28": "filename", "M30": "filename", "M928": "filename",
+    "M32": "filename",
     "M33": "path",
     "M810": "gcode", "M811": "gcode", "M812": "gcode", "M813": "gcode", "M814": "gcode",
     "M815": "gcode", "M816": "gcode", "M817": "gcode", "M818": "gcode", "M819": "gcode",
+}
+
+# What else one command's rest-of-line string needs said, appended to the generic spec-3.4a
+# paragraph in its KDoc. Here and not hand-written into the class, because `command/` is emptied on
+# every run and a hand-written note is gone with it.
+#
+# Only M32 has one, and it is here because the question "what about `!name#`?" is otherwise
+# re-derived by everyone who reads the Marlin page. Each claim below is a run, not a reading:
+# the firmware transcript is #31's SdWriteProbe, and the decoder behaviour is
+# `MarlinDecoderTest` / `MarlinGapsTest.SelectAndStartWrappedFilename`.
+BARE_STRING_NOTES = {
+    "M32": [
+        "**The `!<filename>#` form Marlin's own examples use is not modelled.** `!` and `#` are",
+        "delimiters a host puts *around* the name rather than part of it, so this class writes and",
+        "reads the plain form - the one verified against the firmware: `N8 M32 test.gco*105`",
+        "answered `File opened: test.gco Size: 47`, `File selected`, `ok N8 P15 B3`. A wrapped line",
+        "still decodes and still re-encodes byte for byte; the delimiters simply come back inside",
+        "`filename`, and `SelectAndStart(filename = \"!a.gco#\")` is how one is written on purpose.",
+        "Note that `M32 P !name#`, the doc's own spelling, reads `P !name#` as the whole filename:",
+        "`P` is documented as carrying a value, so a bare one is not a parameter here.",
+    ],
 }
 
 
@@ -316,6 +338,10 @@ def gen_class(c, name, src):
         out.append(" * It carries no letter, it is written last because everything to the end of the")
         out.append(" * line belongs to it, and it cannot contain `;` - every parser reads that as the")
         out.append(" * start of a comment.")
+        if c["code"] in BARE_STRING_NOTES:
+            out.append(" *")
+            for line in BARE_STRING_NOTES[c["code"]]:
+                out.append(" * %s" % line)
     if any(not f["optional"] for f in fields):
         req = ", ".join("`%s`" % f["letter"] for f in fields if not f["optional"])
         out.append(" *")

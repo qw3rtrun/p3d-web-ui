@@ -2641,7 +2641,7 @@
       "title": "Select and Start",
       "group": "sdcard",
       "shared": false,
-      "bareString": false,
+      "bareString": true,
       "params": [
         {
           "letter": "P",
@@ -9766,5 +9766,13 @@
       "file": "T-mmu2.md",
       "why": "not a letter+number command: 'Tx'"
     }
-  ]
+  ],
+  "corrections": {
+    "M32": {
+      "why": "M032.md documents only 'M32 [P<value>] [S<filepos>]', then its own examples write 'M32 P !/models/lgbust.gco#' and 'M32 S5022 !/boats/sailboat.gco' - a filename the parameter list never mentions. The firmware does read a filename off the rest of the line - the same shape M23/M28/M30/M928 take - and without it the one command that selects *and* starts a print cannot name the file. Verified against MarlinSim: '>> N8 M32 test.gco*105' answered 'File opened: test.gco Size: 47' / 'File selected' / 'ok N8 P15 B3' (issue #31's SdWriteProbe, issue #37).",
+      "fields": {
+        "bareString": true
+      }
+    }
+  }
 }

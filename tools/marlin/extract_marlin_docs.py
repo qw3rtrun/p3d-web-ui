@@ -14,6 +14,12 @@ Usage:
     tar xzf docs.tar.gz
     python3 tools/marlin/extract_marlin_docs.py MarlinDocumentation-master/_gcode <commit-sha>
 
+    python3 tools/marlin/extract_marlin_docs.py --corrections-only
+
+The second form re-applies CORRECTIONS to the `commands.json` that is already checked in, without
+fetching the docs again. It exists because a correction is not allowed to be a hand edit of the
+JSON -- see CORRECTIONS.
+
 There is no YAML library in the loop on purpose -- this front matter is regular (fixed two-space
 indentation, scalar values, one level of nesting under `parameters`), and a hand-rolled reader keeps
 the tool runnable with a bare Python.
@@ -34,6 +40,77 @@ KOTLIN_KEYWORDS = {
     "interface", "is", "null", "object", "package", "return", "super", "this", "throw", "true",
     "try", "typealias", "typeof", "val", "var", "when", "while",
 }
+
+# Interface facts an upstream page omits, asserted here and applied after parsing.
+#
+# This is the one place where the output deliberately stops being a faithful transcription of the
+# docs, so the bar is a *wire transcript*, not a reading: the evidence below is bytes a real
+# firmware answered, recorded in the `why`, which is copied into `commands.json` so the correction
+# explains itself where it is reviewed. `commands.json` is this script's output and says so in its
+# own header, so a hand-patch of the JSON is destroyed by the next re-extraction -- a correction
+# only survives upstream moving if it lives here.
+#
+# `fields` are merged into every command entry for that code, overwriting what the page said. Keep
+# the table small: a correction is a maintenance burden that has to be re-checked against each new
+# Marlin release, and anything that can be read out of the docs should be read out of the docs.
+CORRECTIONS = {
+    "M32": {
+        "why": "M032.md documents only 'M32 [P<value>] [S<filepos>]', then its own examples write "
+               "'M32 P !/models/lgbust.gco#' and 'M32 S5022 !/boats/sailboat.gco' - a filename the "
+               "parameter list never mentions. The firmware does read a filename off the rest of "
+               "the line - the same shape M23/M28/M30/M928 take - and without it the one command "
+               "that selects *and* starts a print cannot name the file. Verified against MarlinSim: "
+               "'>> N8 M32 test.gco*105' answered 'File opened: test.gco Size: 47' / 'File "
+               "selected' / 'ok N8 P15 B3' (issue #31's SdWriteProbe, issue #37).",
+        "fields": {"bareString": True},
+    },
+}
+
+
+def apply_corrections(commands):
+    """Merge CORRECTIONS into the parsed commands, in place.
+
+    Prints every code it touched and every code it could not find -- a correction that matches
+    nothing means the page was renamed or the gap was fixed upstream, and either way the entry
+    here should go rather than sit there asserting something about a command that no longer exists.
+    """
+    for code in sorted(CORRECTIONS):
+        fields = CORRECTIONS[code]["fields"]
+        matched = 0
+        for c in commands:
+            if c["code"] == code:
+                c.update(fields)
+                matched += 1
+        if matched:
+            print("  corrected %s: %s" % (code, fields))
+        else:
+            print("  WARNING: correction for %s matched no command - drop it or fix the code"
+                  % code)
+
+
+def write_json(out):
+    """Write `doc/marlin-gcode/commands.json`, the one reviewable artifact these tools produce."""
+    dest = os.path.join("doc", "marlin-gcode", "commands.json")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(out, fh, indent=2, sort_keys=False)
+        fh.write("\n")
+    return dest
+
+
+def corrections_only():
+    """Re-apply CORRECTIONS to the checked-in `commands.json` and write it back.
+
+    The correction has to reach the JSON somehow, and a hand edit is not it. Re-running the full
+    extraction needs an upstream docs checkout; this needs nothing, and because the table is
+    applied by the same code either way, the result is what a full re-extraction would produce.
+    """
+    dest = os.path.join("doc", "marlin-gcode", "commands.json")
+    with open(dest, encoding="utf-8") as fh:
+        out = json.load(fh)
+    apply_corrections(out["commands"])
+    out["corrections"] = CORRECTIONS
+    print("wrote %s" % write_json(out))
 
 
 def front_matter(path):
@@ -199,6 +276,9 @@ def examples(path):
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
+    if sys.argv[1] == "--corrections-only":
+        corrections_only()
+        return
     docs_dir = sys.argv[1]
     commit = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 
@@ -283,6 +363,7 @@ def main():
             })
 
     commands.sort(key=lambda c: (c["letter"], float(c["number"])))
+    apply_corrections(commands)
     out = {
         "_comment": "GENERATED by tools/marlin/extract_marlin_docs.py -- do not edit by hand.",
         "source": {
@@ -296,12 +377,9 @@ def main():
         "commands": commands,
         "examples": sorted(set(example_lines)),
         "skipped": skipped,
+        "corrections": CORRECTIONS,
     }
-    dest = os.path.join("doc", "marlin-gcode", "commands.json")
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    with open(dest, "w", encoding="utf-8", newline="\n") as fh:
-        json.dump(out, fh, indent=2, sort_keys=False)
-        fh.write("\n")
+    dest = write_json(out)
 
     kinds = {}
     for c in commands:

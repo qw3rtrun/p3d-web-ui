@@ -22,6 +22,7 @@ import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition
 import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1
 import org.qw3rtrun.p3d.g.marlin.command.MachineName
 import org.qw3rtrun.p3d.g.marlin.command.MoveInMachineCoordinates
+import org.qw3rtrun.p3d.g.marlin.command.SelectAndStart
 import org.qw3rtrun.p3d.g.marlin.command.SelectOrReportToolT0
 import org.qw3rtrun.p3d.g.marlin.command.SelectSDFile
 import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber
@@ -135,6 +136,28 @@ class MarlinDecoderTest {
             assertEquals(
                 SelectSDFile(filename = "/path/to/file.gco"),
                 decode("M23 /path/to/file.gco"),
+            )
+        }
+
+        @Test
+        fun `a bare rest-of-line string starts after the lettered parameters`() {
+            // M32 is the one command that selects *and* starts a print, and one of the five whose
+            // rest-of-line string has lettered parameters in front of it (M0, M1, M118, M550 are
+            // the others). Upstream's page lists `P` and `S` and no filename at all - the
+            // correction is `extract_marlin_docs.py`'s CORRECTIONS, with the transcript behind it.
+            assertEquals(SelectAndStart(filename = "test.gco"), decode("M32 test.gco"))
+
+            // `S5022` is read from the region in front of the string (`beforeStringArg`) and
+            // everything after it is the name - the shape Marlin's own example writes.
+            assertEquals(
+                SelectAndStart(filepos = 5022, filename = "/boats/sailboat.gco"),
+                decode("M32 S5022 /boats/sailboat.gco"),
+            )
+
+            // And a letter *inside* the name is text, not a second reading of `P`.
+            assertEquals(
+                SelectAndStart(p = 1, filename = "/models/P1.gco"),
+                decode("M32 P1 /models/P1.gco"),
             )
         }
     }
@@ -312,6 +335,8 @@ class MarlinDecoderTest {
                 "M117 Hello World",
                 "M220 S50",
                 "M301 P22.2 I1.08 D114",
+                "M32 test.gco",
+                "M32 S5022 /boats/sailboat.gco",
                 "M550 P\"My Printer\"",
                 "M810 G0 X0 Y0|G0 Z10",
                 "T0 F1000",
@@ -331,6 +356,7 @@ class MarlinDecoderTest {
                 "G28 X Y",
                 "M117 Hello World",
                 "M550 My Printer",
+                "M32 S5022 /boats/sailboat.gco",
             ]
         )
         fun `what a block decodes to decodes again the same`(block: String) {

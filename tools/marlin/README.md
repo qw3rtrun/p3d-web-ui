@@ -42,6 +42,27 @@ understanding before it becomes 14,000 lines of Kotlin.
 Both scripts run on a bare Python 3 (no `pip`, no PyYAML): the front matter is regular enough to
 read directly, and a hand-rolled reader keeps the tool usable on a machine with nothing installed.
 
+### Corrections
+
+An interface fact an upstream page **omits** goes in `extract_marlin_docs.py`'s `CORRECTIONS`
+table, which is applied after parsing — so step 2 keeps the correction instead of transcribing the
+omission again. Re-applying the table to the JSON that is already checked in, without fetching the
+docs:
+
+```bash
+python3 tools/marlin/extract_marlin_docs.py --corrections-only
+```
+
+That path exists so that a correction is never a hand edit of `commands.json`, which this script
+generates and which says so in its own header. The table is copied into the JSON under
+`corrections`, evidence included, because the JSON is where the change gets reviewed.
+
+The bar for an entry is a **wire transcript**, not a reading, and the table is meant to stay small:
+each entry has to be re-checked against every new Marlin release. One command has one today — `M32`,
+whose page documents `M32 [P<value>] [S<filepos>]` and not the filename the firmware prints from, so
+the one command that selects *and* starts a card print could not name a file
+([#37](https://github.com/qw3rtrun/p3d-web-ui/issues/37)).
+
 ## What is taken, and what is not
 
 Only **interface facts**: the code, each parameter's letter, its type, whether it is optional, and
@@ -90,7 +111,7 @@ that the extracted letters match what Marlin's own authors write.
 - **A valued parameter sent bare** — `M104 F`, `G61 S0 XY`, `M919 XYZE` — cannot be read back,
   because `null` on a `BigDecimal?` already means absent. Building the valued form always works.
 - **Rest-of-line strings** — `M117 Hello`, `M23 file.gco`, `M810`'s macro bodies — are modelled:
-  each of the 22 commands that takes one gets a letterless `String?` property (`message`, or
+  each of the 23 commands that takes one gets a letterless `String?` property (`message`, or
   `filename`/`path`/`gcode` where that reads better), written last through `bareString()` and read
   back through `stringArg(<the command's letters>)` - where the string starts is a per-command
   question, so the decoder passes its own letters and reads the lettered ones from

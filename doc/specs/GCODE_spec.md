@@ -969,7 +969,7 @@ limit — see B.5, which measures it on the way out — and [§3.4](#34-string-v
 rest-of-line strings. The latter is a layering fact rather than a gap: which commands take one
 depends on the command number, and nothing below a decoder knows it, so the reading is done one
 layer up - `GRqDecoder` is handed the tokens as lexed, and `MarlinWords.stringArg()` reassembles
-the string for the 22 Marlin commands that take one. **Where such a string starts has no universal
+the string for the 23 Marlin commands that take one. **Where such a string starts has no universal
 rule**: it begins at the first field that is not one of *that command's* parameters, so `M117 H1
 ello World` is all message while `M118 P1 ello World` is a `P1` and a message. Each decoder passes
 its own letters, and reads its lettered parameters from `beforeStringArg()` - the region in front -

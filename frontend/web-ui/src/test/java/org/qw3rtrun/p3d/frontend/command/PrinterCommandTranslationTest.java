@@ -281,8 +281,9 @@ class PrinterCommandTranslationTest {
         assertEquals("M30 BENCHY.GCO", one(new DeleteFile("BENCHY.GCO")));
     }
 
-    // Sent as a unit by PrinterControl.send. :gcode's SelectAndStart has carried a filename since
-    // #37, so one M32 would also be expressible; which form a print should take is #109.
+    // Sent as a unit by PrinterControl.send. One M32 is expressible (#37) and is not what a print
+    // takes: M32 parses its line for parameters, so a `p` in the filename means "call as a
+    // subroutine" and a second file prints after this one. #109, and PrintFile carries the capture.
     @Test
     void printingAFileIsSelectThenStart() {
         assertEquals(List.of("M23 BENCHY.GCO", "M24"), wire(new PrintFile("BENCHY.GCO")));

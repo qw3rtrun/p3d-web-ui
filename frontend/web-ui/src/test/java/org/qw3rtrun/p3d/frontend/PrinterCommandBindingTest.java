@@ -310,7 +310,11 @@ class PrinterCommandBindingTest {
         assertEquals("M30 BENCHY.GCO", sent());
     }
 
-    /** Printing is two commands, so this is the one SD request that is not a single line. */
+    /**
+     * Printing is two commands, so this is the one SD request that is not a single line - and two
+     * by choice rather than by accident: #109 and {@code PrintFile} say why one {@code M32} is not
+     * it.
+     */
     @Test
     void thePrintPayloadBecomesSelectThenStart() {
         post("/sd/print", "{\"name\":\"BENCHY.GCO\"}");

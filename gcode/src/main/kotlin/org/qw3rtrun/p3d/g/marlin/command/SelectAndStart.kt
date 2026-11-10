@@ -24,6 +24,23 @@ import org.qw3rtrun.p3d.g.protocol.GRqDecoder
  * line belongs to it, and it cannot contain `;` - every parser reads that as the
  * start of a comment.
  *
+ * **The firmware parses this line for parameters before taking what is left as the
+ * filename** - `M23` is in Marlin's string-argument special case and `M32` is not. So a `p`
+ * *anywhere* in the name is read as a bare `P`, which means "run this file as a
+ * subroutine", and the print that follows is not the one that was asked for:
+ * `M32 cup.gco` answered
+ * `echo:SUBROUTINE CALL target:"cup.gco" parent:"/LIVE.GCO" pos0`, printed `cup.gco`, then
+ * printed `LIVE.GCO`. Varying only the name: `live.gco` and `set.gco` answer
+ * `echo:Now fresh file:`; `prt.gco` and `cup.gco` answer `echo:Now doing file:` - position
+ * is irrelevant, and `s` is harmless because `S` needs a value and `P` does not.
+ * `M32 !cup.gco#` answers `Now fresh file:` and opens `cup.gco`, the delimiters stripped:
+ * the documented wrapping is what suppresses this. `/sd/print` sends `M23`+`M24` and does
+ * not use it, because a name containing `#` could not then be delimited. Note which way the
+ * gap below cuts: the firmware reads a valueless `P` as a flag that an ordinary name
+ * supplies, where this class reads `P !name#` as one filename - a host writes what it meant,
+ * but a caller choosing a name is choosing a parse. `SdPrintProbe` against MarlinSim,
+ * 2026-11-10; github.com/qw3rtrun/p3d-web-ui/issues/109 is the decision this fed.
+ *
  * **The `!<filename>#` form Marlin's own examples use is not modelled.** `!` and `#` are
  * delimiters a host puts *around* the name rather than part of it, so this class writes and
  * reads the plain form - the one verified against the firmware: `N8 M32 test.gco*105`

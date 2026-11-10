@@ -148,9 +148,30 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
 
     /**
      * {@code M23} selects and {@code M24} starts, sent as one unit - an {@code M24} before its
-     * {@code M23} starts somebody else's print. {@code :gcode}'s {@code M32} has carried a filename
-     * since #37, so a single command is expressible too; which form {@code /sd/print} should send
-     * is #109.
+     * {@code M23} starts somebody else's print.
+     *
+     * <p><strong>Two commands by choice, settled in #109 on a measurement.</strong> {@code M32}
+     * has carried a filename since #37, so one block is expressible - and must not be used, because
+     * the firmware parses {@code M32}'s line for parameters before taking the filename, where
+     * {@code M23} takes the rest of its line verbatim. A {@code p} anywhere in the name is read as
+     * {@code P}, which to {@code M32} means "call this file as a subroutine". {@code SdPrintProbe}
+     * against MarlinSim, 2026-11-10, with a file left open but not started:
+     *
+     * <pre>
+     * &gt;&gt; M23 live.gco   &lt;&lt; File opened: live.gco Size: 22   (open, not started)
+     * &gt;&gt; M27            &lt;&lt; SD printing byte 0/22
+     * &gt;&gt; M32 cup.gco    &lt;&lt; echo:SUBROUTINE CALL target:"cup.gco" parent:"/LIVE.GCO" pos0
+     *                   &lt;&lt; echo:END SUBROUTINE
+     *                   &lt;&lt; File opened: LIVE.GCO Size: 22
+     *                   &lt;&lt; RAN-cup.gco
+     *                   &lt;&lt; RAN-live.gco
+     *                   &lt;&lt; Done printing file
+     * </pre>
+     *
+     * <p>One request to print {@code cup.gco} printed {@code cup.gco} and then printed
+     * {@code LIVE.GCO}. So the exact-list assertion below is pinning two things at once now: that
+     * both halves of the pair arrive, and that this never becomes the one command that looks
+     * tidier.
      */
     @Test
     void printingAFileSelectsItAndThenStartsIt() {

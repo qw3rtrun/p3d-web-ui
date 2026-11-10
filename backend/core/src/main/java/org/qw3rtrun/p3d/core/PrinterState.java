@@ -566,15 +566,22 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * {@code M23 <name>} - select a file, half of the pair with {@code M24} that {@code /sd/print}
-     * sends. {@code SelectAndStart} has carried a filename since #37, so one {@code M32} is now
-     * expressible too; which form a print should take is #109.
+     * {@code M23 <name>} - select a file, half of the pair with {@code M24} that a print is, and
+     * the half that carries the name. That is why the pair stands (#109): {@code M23} takes the
+     * rest of its line verbatim, where {@code M32} parses its own for parameters, so a {@code p}
+     * anywhere in a filename reaches it as {@code P} and turns the print into a subroutine call
+     * that runs a second file afterwards.
      */
     public void handle(SelectSDFile select) {
         passThrough(select);
     }
 
-    /** {@code M24} - start or resume printing the selected file. */
+    /**
+     * {@code M24} - start or resume printing the selected file. Measured on a file that is open but
+     * not started, it is a <em>resume</em> - {@code //action:resume}, and a
+     * {@code //action:prompt_begin Resuming SD} prompt sequence - which is cosmetically wrong and
+     * is the price of the pair (#109).
+     */
     public void handle(StartOrResumeSDPrint start) {
         passThrough(start);
     }

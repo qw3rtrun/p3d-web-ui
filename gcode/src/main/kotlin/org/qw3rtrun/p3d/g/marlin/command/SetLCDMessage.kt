@@ -63,7 +63,7 @@ data class SetLCDMessage(
 
         override fun decodeParams(tokens: List<GToken>): SetLCDMessage {
             return SetLCDMessage(
-                message = tokens.stringArg(),
+                message = tokens.stringArg("", ""),
             )
         }
     }

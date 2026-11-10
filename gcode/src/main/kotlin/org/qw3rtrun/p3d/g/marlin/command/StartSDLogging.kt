@@ -63,7 +63,7 @@ data class StartSDLogging(
 
         override fun decodeParams(tokens: List<GToken>): StartSDLogging {
             return StartSDLogging(
-                filename = tokens.stringArg(),
+                filename = tokens.stringArg("", ""),
             )
         }
     }

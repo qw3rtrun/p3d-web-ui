@@ -63,7 +63,7 @@ data class SelectSDFile(
 
         override fun decodeParams(tokens: List<GToken>): SelectSDFile {
             return SelectSDFile(
-                filename = tokens.stringArg(),
+                filename = tokens.stringArg("", ""),
             )
         }
     }

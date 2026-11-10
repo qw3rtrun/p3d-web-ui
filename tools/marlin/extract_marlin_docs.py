@@ -50,9 +50,13 @@ KOTLIN_KEYWORDS = {
 # own header, so a hand-patch of the JSON is destroyed by the next re-extraction -- a correction
 # only survives upstream moving if it lives here.
 #
-# `fields` are merged into every command entry for that code, overwriting what the page said. Keep
-# the table small: a correction is a maintenance burden that has to be re-checked against each new
-# Marlin release, and anything that can be read out of the docs should be read out of the docs.
+# `fields` are merged into every command entry for that code, overwriting what the page said, with
+# one key read specially: `params` is {letter: {field: value}} and retypes the parameters already
+# parsed off the page, by letter. It is not a replacement list, because a replacement list would
+# freeze every *other* parameter of that command at today's reading and diverge silently the next
+# time upstream edits one. Keep the table small: a correction is a maintenance burden that has to
+# be re-checked against each new Marlin release, and anything that can be read out of the docs
+# should be read out of the docs.
 CORRECTIONS = {
     "M32": {
         "why": "M032.md documents only 'M32 [P<value>] [S<filepos>]', then its own examples write "
@@ -61,8 +65,16 @@ CORRECTIONS = {
                "the line - the same shape M23/M28/M30/M928 take - and without it the one command "
                "that selects *and* starts a print cannot name the file. Verified against MarlinSim: "
                "'>> N8 M32 test.gco*105' answered 'File opened: test.gco Size: 47' / 'File "
-               "selected' / 'ok N8 P15 B3' (issue #31's SdWriteProbe, issue #37).",
-        "fields": {"bareString": True},
+               "selected' / 'ok N8 P15 B3' (issue #31's SdWriteProbe, issue #37). The same page "
+               "types P as 'P<value>' and then writes it bare in both of those examples, because "
+               "the firmware reads it as a flag and not as a parameter whose value went missing: "
+               "'M32 cup.gco' answered 'echo:SUBROUTINE CALL target:\"cup.gco\" "
+               "parent:\"/LIVE.GCO\" pos0' and printed two files, where 'M32 live.gco' answered "
+               "'echo:Now fresh file:' and printed one - the 'p' in the name is the only "
+               "difference, and 'pos0' is the firmware recording a resume point, which is a "
+               "behaviour P selected rather than a value P lost (issue #109's SdPrintProbe, "
+               "2026-11-10; issue #114).",
+        "fields": {"bareString": True, "params": {"P": {"kind": "flag"}}},
     },
 }
 
@@ -73,16 +85,29 @@ def apply_corrections(commands):
     Prints every code it touched and every code it could not find -- a correction that matches
     nothing means the page was renamed or the gap was fixed upstream, and either way the entry
     here should go rather than sit there asserting something about a command that no longer exists.
+    A per-letter `params` override that matches no parameter is reported the same way and for the
+    same reason.
     """
     for code in sorted(CORRECTIONS):
-        fields = CORRECTIONS[code]["fields"]
+        fields = dict(CORRECTIONS[code]["fields"])
+        per_letter = fields.pop("params", {})
         matched = 0
         for c in commands:
-            if c["code"] == code:
-                c.update(fields)
-                matched += 1
+            if c["code"] != code:
+                continue
+            c.update(fields)
+            matched += 1
+            for letter in sorted(per_letter):
+                hits = 0
+                for p in c["params"]:
+                    if p["letter"] == letter:
+                        p.update(per_letter[letter])
+                        hits += 1
+                if not hits:
+                    print("  WARNING: correction for %s %s matched no parameter - drop it or fix "
+                          "the letter" % (code, letter))
         if matched:
-            print("  corrected %s: %s" % (code, fields))
+            print("  corrected %s: %s" % (code, CORRECTIONS[code]["fields"]))
         else:
             print("  WARNING: correction for %s matched no command - drop it or fix the code"
                   % code)

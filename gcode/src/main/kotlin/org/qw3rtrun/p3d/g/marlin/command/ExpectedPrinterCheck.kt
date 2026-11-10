@@ -63,7 +63,7 @@ data class ExpectedPrinterCheck(
 
         override fun decodeParams(tokens: List<GToken>): ExpectedPrinterCheck {
             return ExpectedPrinterCheck(
-                message = tokens.stringArg(),
+                message = tokens.stringArg("", ""),
             )
         }
     }

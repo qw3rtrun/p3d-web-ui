@@ -69,10 +69,10 @@ data class MachineName(
         }
 
         override fun decodeParams(tokens: List<GToken>): MachineName {
-            val params = tokens.beforeStringArg('P')
+            val params = tokens.beforeStringArg("P", "")
             return MachineName(
                 name = params.stringOf('P'),
-                message = tokens.stringArg('P'),
+                message = tokens.stringArg("P", ""),
             )
         }
     }

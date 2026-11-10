@@ -2645,7 +2645,7 @@
       "params": [
         {
           "letter": "P",
-          "kind": "int",
+          "kind": "flag",
           "optional": true,
           "name": null
         },
@@ -9769,9 +9769,14 @@
   ],
   "corrections": {
     "M32": {
-      "why": "M032.md documents only 'M32 [P<value>] [S<filepos>]', then its own examples write 'M32 P !/models/lgbust.gco#' and 'M32 S5022 !/boats/sailboat.gco' - a filename the parameter list never mentions. The firmware does read a filename off the rest of the line - the same shape M23/M28/M30/M928 take - and without it the one command that selects *and* starts a print cannot name the file. Verified against MarlinSim: '>> N8 M32 test.gco*105' answered 'File opened: test.gco Size: 47' / 'File selected' / 'ok N8 P15 B3' (issue #31's SdWriteProbe, issue #37).",
+      "why": "M032.md documents only 'M32 [P<value>] [S<filepos>]', then its own examples write 'M32 P !/models/lgbust.gco#' and 'M32 S5022 !/boats/sailboat.gco' - a filename the parameter list never mentions. The firmware does read a filename off the rest of the line - the same shape M23/M28/M30/M928 take - and without it the one command that selects *and* starts a print cannot name the file. Verified against MarlinSim: '>> N8 M32 test.gco*105' answered 'File opened: test.gco Size: 47' / 'File selected' / 'ok N8 P15 B3' (issue #31's SdWriteProbe, issue #37). The same page types P as 'P<value>' and then writes it bare in both of those examples, because the firmware reads it as a flag and not as a parameter whose value went missing: 'M32 cup.gco' answered 'echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0' and printed two files, where 'M32 live.gco' answered 'echo:Now fresh file:' and printed one - the 'p' in the name is the only difference, and 'pos0' is the firmware recording a resume point, which is a behaviour P selected rather than a value P lost (issue #109's SdPrintProbe, 2026-11-10; issue #114).",
       "fields": {
-        "bareString": true
+        "bareString": true,
+        "params": {
+          "P": {
+            "kind": "flag"
+          }
+        }
       }
     }
   }

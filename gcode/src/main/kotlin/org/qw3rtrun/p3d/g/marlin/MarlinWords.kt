@@ -152,7 +152,8 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
 
 /**
  * The command's bare rest-of-line string (spec 3.4a), or null when it carries none. [letters] are
- * **this command's own parameter letters**, and passing them is not optional.
+ * **this command's own parameter letters** and [flags] the subset of those that carry no value;
+ * passing both is not optional.
  *
  * The 23 commands Marlin reads a `string_arg` for - `M117`'s message, `M23`/`M28`/`M30`/`M928`'s
  * filename, `M33`'s path, `M810`-`M819`'s macro - take an argument with **no letter in front of
@@ -169,6 +170,7 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
  * M118 P1 ello World   ->  "ello World"      `P` is M118's, so `P1` is a parameter
  * M118 H1 ello World   ->  "H1 ello World"   `H` is not, so the string starts there
  * M118 Hello World P1  ->  "Hello World P1"  once it has started, everything belongs to it
+ * M32  P !a.gco#       ->  "!a.gco#"         `P` is M32's and is a flag, so a bare one is one
  * ```
  *
  * That is also Marlin's own reading (`GCodeParser::parse` records a letter as a parameter only when
@@ -190,12 +192,18 @@ internal fun List<GToken>.stringOf(letter: Char): String? = when (val v = valueO
  * so `M118 p1 x` reads `p1` as the parameter.
  *
  * ```
- * GTokenizer.parse(" P1 ello World").toList().stringArg('P')    // "ello World"
- * GTokenizer.parse(" Hi (there) ;c").toList().stringArg()       // "Hi (there)"
+ * GTokenizer.parse(" P1 ello World").toList().stringArg("P", "")   // "ello World"
+ * GTokenizer.parse(" P ello World").toList().stringArg("P", "P")   // "ello World"
+ * GTokenizer.parse(" Hi (there) ;c").toList().stringArg("", "")    // "Hi (there)"
  * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letters this command's own parameter letters
+ * @param flags those of [letters] modelled as flags, which may therefore stand alone
+ * @return the bare string, trailing blanks dropped, or null when there is none
  */
-internal fun List<GToken>.stringArg(vararg letters: Char): String? {
-    var i = stringArgStart(letters)
+internal fun List<GToken>.stringArg(letters: String, flags: String): String? {
+    var i = stringArgStart(letters, flags)
 
     val out = StringBuilder()
     while (i < size) {
@@ -212,27 +220,42 @@ internal fun List<GToken>.stringArg(vararg letters: Char): String? {
 
 /**
  * The tokens in front of a command's bare string - the region its **lettered** parameters may be
- * read from, for the same [letters] [stringArg] is given.
+ * read from, for the same [letters] and [flags] [stringArg] is given.
  *
  * A decoder for one of the 23 commands reads its letters from this and its string from the whole,
  * because a letter inside the string is text and not a parameter: `M118 Hello World P1` carries the
  * message `Hello World P1` and no `P`. Scanning the whole block for `P` instead would find that one,
  * which is how a message comes back having quietly set a parameter the sender never wrote.
  *
- * The bare string begins past the run of `<letter><value>` fields spelling one of [letters], and
- * past the whitespace separating it from them (spec 2.1 lets a space sit inside a field, so the
- * pairing is `valueIndex`'s). A letter of this command's that carries **no** value ends the run
- * rather than being skipped - the model has no way to say "present, without a value" for a valued
- * parameter, and guessing would swallow a word of the string. [stringArg] starts at the same index.
+ * The bare string begins past the run of fields spelling one of [letters], and past the whitespace
+ * separating it from them (spec 2.1 lets a space sit inside a field, so the pairing is
+ * `valueIndex`'s). A field is `<letter><value>`, or - for a letter named in [flags] - the letter
+ * alone, **provided nothing is written hard against it**: a value is its own terminator, a flag has
+ * none, so only a blank, a line break, a `;` comment or the end of the tokens can close one. That
+ * is what keeps `M32 Pump.gco` the filename `Pump.gco` rather than the flag `P` and the name
+ * `ump.gco`, and it is why `M32 P !a.gco#` - the form `M032.md` itself writes - reads as the flag
+ * and `!a.gco#`.
+ *
+ * A letter **not** in [flags] that carries no value still ends the run rather than being skipped:
+ * a valued property has no way to say "present, without a value", so skipping one would swallow a
+ * word of the string to record nothing. [flags] is exactly the set for which that is not true.
+ * [stringArg] starts at the same index.
  *
  * ```
- * GTokenizer.parse(" P1 Hello World P1").toList().beforeStringArg('P')   // [GSpace, P, 1, GSpace]
+ * GTokenizer.parse(" P1 Hello P1").toList().beforeStringArg("P", "")  // [GSpace, P, 1, GSpace]
+ * GTokenizer.parse(" P Hello").toList().beforeStringArg("P", "P")     // [GSpace, P, GSpace]
+ * GTokenizer.parse(" Pump.gco").toList().beforeStringArg("P", "P")    // [GSpace]
  * ```
+ *
+ * @receiver the tokens that followed the command's head
+ * @param letters this command's own parameter letters
+ * @param flags those of [letters] modelled as flags, which may therefore stand alone
+ * @return the prefix of the tokens holding this command's lettered parameters
  */
-internal fun List<GToken>.beforeStringArg(vararg letters: Char): List<GToken> =
-    subList(0, stringArgStart(letters))
+internal fun List<GToken>.beforeStringArg(letters: String, flags: String): List<GToken> =
+    subList(0, stringArgStart(letters, flags))
 
-private fun List<GToken>.stringArgStart(letters: CharArray): Int {
+private fun List<GToken>.stringArgStart(letters: String, flags: String): Int {
     var i = 0
     while (i < size) {
         val token = this[i]
@@ -243,15 +266,23 @@ private fun List<GToken>.stringArgStart(letters: CharArray): Int {
         if (token !is GIdentifier) break
         if (!token.isOneOf(letters)) break
         val j = valueIndex(i)
-        if (j < 0) break
-        i = j + 1
+        if (j >= 0) {
+            i = j + 1
+            continue
+        }
+        if (!token.isOneOf(flags)) break
+        val next = if (i + 1 < size) this[i + 1] else null
+        if (next != null && next !is GWhitespace && next !is GLineBreak && next !is GTailComment) {
+            break
+        }
+        i++
     }
     return i
 }
 
-private fun GIdentifier.isOneOf(letters: CharArray): Boolean {
+private fun GIdentifier.isOneOf(letters: String): Boolean {
     var i = 0
-    while (i < letters.size) {
+    while (i < letters.length) {
         if (isChar(letters[i])) return true
         i++
     }

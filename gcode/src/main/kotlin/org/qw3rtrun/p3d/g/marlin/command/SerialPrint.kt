@@ -68,10 +68,10 @@ data class SerialPrint(
         }
 
         override fun decodeParams(tokens: List<GToken>): SerialPrint {
-            val params = tokens.beforeStringArg('P')
+            val params = tokens.beforeStringArg("P", "")
             return SerialPrint(
                 p = params.intOf('P'),
-                message = tokens.stringArg('P'),
+                message = tokens.stringArg("P", ""),
             )
         }
     }

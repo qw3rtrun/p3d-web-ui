@@ -63,7 +63,7 @@ data class DeleteSDFile(
 
         override fun decodeParams(tokens: List<GToken>): DeleteSDFile {
             return DeleteSDFile(
-                filename = tokens.stringArg(),
+                filename = tokens.stringArg("", ""),
             )
         }
     }

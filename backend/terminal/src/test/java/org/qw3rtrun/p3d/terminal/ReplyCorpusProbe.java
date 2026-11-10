@@ -302,13 +302,15 @@ public final class ReplyCorpusProbe {
         s.add(new Step("write the file that will be its parent", framed(13, new StartSDWrite(PARENT_FILE))));
         s.add(new Step("its one line", framed(14, new SerialPrint(0, "RAN-live"))));
         s.add(new Step("close it", framed(15, new StopSDWrite())));
+        // `p` stays false on purpose: what this measures is the firmware reading the `p` out of
+        // the *name*, so the line on the wire has to be the bare `M32 cup.gco` and not `M32 P ...`.
         // Nothing open to return to, so the firmware says only `Now doing file:`.
         s.add(new Step("the p-bearing name through M32, with nothing open",
-                framed(16, new SelectAndStart(null, null, SUB_FILE)), 5000));
+                framed(16, new SelectAndStart(false, null, SUB_FILE)), 5000));
         // M23 leaves a parent open at byte 0, which is what turns the next M32 into a full call.
         s.add(new Step("open the parent and leave it unstarted", framed(17, new SelectSDFile(PARENT_FILE))));
         s.add(new Step("the same M32 again, now that there is a parent",
-                framed(18, new SelectAndStart(null, null, SUB_FILE)), 8000));
+                framed(18, new SelectAndStart(false, null, SUB_FILE)), 8000));
         s.add(new Step("delete the called file", framed(19, new DeleteSDFile(SUB_FILE))));
         s.add(new Step("delete the parent, so this session can be run again",
                 framed(20, new DeleteSDFile(PARENT_FILE))));

@@ -71,8 +71,9 @@ import java.util.UUID;
  * <p><strong>{@code /sd/*} endpoints:</strong> card presence is inferred, not reported - {@code
  * /sd/mount} ({@code M21}) succeeds silently and presence shows up as {@code SdCardOk} on the
  * stream. {@code /sd/list} ({@code M20}) returns Marlin's printable extensions only. {@code
- * /sd/print} sends {@code M23} then {@code M24} as one unit, because {@code :gcode}'s {@code M32}
- * cannot carry a filename. {@code /sd/upload} ({@code M28}, the file, {@code M29}) answers when the
+ * /sd/print} sends {@code M23} then {@code M24} as one unit; {@code :gcode}'s {@code M32} has
+ * carried a filename since #37, so whether this stays a pair is #109. {@code /sd/upload}
+ * ({@code M28}, the file, {@code M29}) answers when the
  * transfer has <em>started</em>: a real file is minutes of round trips inside the send window, and
  * the wire takes nothing else until {@code M29} closes it. Refusals are 404 (unknown machine or
  * file) or 409 (not connected, or already writing) rather than 500; {@link Outcomes} holds that

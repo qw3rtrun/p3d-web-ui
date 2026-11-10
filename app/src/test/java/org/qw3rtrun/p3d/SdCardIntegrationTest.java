@@ -147,8 +147,10 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * {@code M23} selects and {@code M24} starts, because {@code :gcode}'s {@code M32} cannot carry
-     * a filename, and an {@code M24} before its {@code M23} starts somebody else's print.
+     * {@code M23} selects and {@code M24} starts, sent as one unit - an {@code M24} before its
+     * {@code M23} starts somebody else's print. {@code :gcode}'s {@code M32} has carried a filename
+     * since #37, so a single command is expressible too; which form {@code /sd/print} should send
+     * is #109.
      */
     @Test
     void printingAFileSelectsItAndThenStartsIt() {

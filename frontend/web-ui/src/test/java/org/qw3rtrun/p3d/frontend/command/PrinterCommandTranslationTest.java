@@ -281,8 +281,8 @@ class PrinterCommandTranslationTest {
         assertEquals("M30 BENCHY.GCO", one(new DeleteFile("BENCHY.GCO")));
     }
 
-    // A gap, not a preference: M32 would do it in one, but :gcode's SelectAndStart is generated
-    // from a documented signature that omits the filename. Sent as a unit by PrinterControl.send.
+    // Sent as a unit by PrinterControl.send. :gcode's SelectAndStart has carried a filename since
+    // #37, so one M32 would also be expressible; which form a print should take is #109.
     @Test
     void printingAFileIsSelectThenStart() {
         assertEquals(List.of("M23 BENCHY.GCO", "M24"), wire(new PrintFile("BENCHY.GCO")));

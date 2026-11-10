@@ -565,7 +565,11 @@ public class PrinterState implements PrinterAggregate {
         passThrough(delete);
     }
 
-    /** {@code M23 <name>} - select a file, half of a pair with {@code M24} ({@code SelectAndStart} carries no filename, #37). */
+    /**
+     * {@code M23 <name>} - select a file, half of the pair with {@code M24} that {@code /sd/print}
+     * sends. {@code SelectAndStart} has carried a filename since #37, so one {@code M32} is now
+     * expressible too; which form a print should take is #109.
+     */
     public void handle(SelectSDFile select) {
         passThrough(select);
     }

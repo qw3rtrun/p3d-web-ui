@@ -9,10 +9,11 @@ import java.util.List;
 /**
  * Print a file that is already on the card - {@code M23} to select it, {@code M24} to start.
  *
- * <p>Two commands rather than {@code M32} because of a gap, not a preference: {@code :gcode}'s
- * {@code SelectAndStart} is generated from Marlin's documented {@code M32 [P<value>] [S<filepos>]},
- * which omits the {@code !name#} the command actually takes, leaving the generated class nowhere to
- * put a name. Fixing it needs the source document fixed upstream.
+ * <p>Two commands, and no longer because one is impossible: {@code :gcode}'s
+ * {@code SelectAndStart} has carried a filename since #37, so a single {@code M32 <name>} is
+ * expressible. This pair is what {@code /sd/print} sends today; which of the two forms it should
+ * send is <a href="https://github.com/qw3rtrun/p3d-web-ui/issues/109">#109</a>, and is not settled
+ * here.
  *
  * <p>Costs nothing in correctness - {@code PrinterControl.send} takes the list as one unit on the
  * aggregate's thread, so nothing lands between the select and the start - and is arguably the better

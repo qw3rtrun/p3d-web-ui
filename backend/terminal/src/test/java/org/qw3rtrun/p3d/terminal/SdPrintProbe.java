@@ -92,6 +92,21 @@ import java.util.List;
  * took a capture from the running application - which sent {@code M32 LIVE.GCO} and got the
  * <em>other</em> echo - to show that the variable was the name.
  *
+ * <h2>It leaves the card as it found it</h2>
+ *
+ * <p>Every file written is recorded as it is written and deleted in a {@code finally}, so a mode
+ * that returns early or a run that fails mid-print still clears the card. It used to be positional:
+ * {@code names} returned before the one {@code M30} and left {@code probe.gco} behind, where an
+ * unrelated probe's {@code M20} picked it up and contaminated a corpus recapture (#113). A mode
+ * that wants the card clean part-way through - the refusal arm below needs its file provably gone -
+ * calls the same tidy-up, which is idempotent.
+ *
+ * <p>{@code names} no longer writes {@code probe.gco} at all: it writes and prints four files of
+ * its own and never names {@code FILE}, so the prologue's write was six round trips and a file on
+ * the card for nothing. The {@code M20} and the {@code M27} baseline that follow it do not depend
+ * on it - the listing is read by eye, and the baseline answers {@code Not SD printing} either way,
+ * since writing a file does not select one.
+ *
  * <p>Usage: {@code SdPrintProbe [host] [port] [pairfirst|m32first|names]}, defaulting to
  * {@code localhost 8099 pairfirst}; or {@code ./gradlew :backend:terminal:probeSdPrint
  * -PprobeOrder=names}.
@@ -120,6 +135,9 @@ public final class SdPrintProbe {
 
     private static final List<String> transcript = new ArrayList<>();
 
+    /** What this run has put on the card and not yet deleted, in the order it was written. */
+    private static final List<String> onCard = new ArrayList<>();
+
     public static void main(String[] args) throws Exception {
         var host = args.length > 0 ? args[0] : "localhost";
         var port = args.length > 1 ? Integer.parseInt(args[1]) : 8099;
@@ -142,42 +160,46 @@ public final class SdPrintProbe {
             }
             socket.setSoTimeout(12000);
 
-            step(out, in, "=== reset the counter ===", framed("M110 N0"));
-            next = 1;
+            try {
+                step(out, in, "=== reset the counter ===", framed("M110 N0"));
+                next = 1;
 
-            step(out, in, "=== mount the card ===", framed("M21"));
+                step(out, in, "=== mount the card ===", framed("M21"));
 
-            // The file both runs will print. Numbered, because numbering is required while saving.
-            step(out, in, "=== open the file for write ===", framed("M28 " + FILE));
-            for (var line : CONTENT) {
-                step(out, in, "=== content: " + line + " ===", framed(line));
+                // The file the two print runs print. names() prints four of its own and never
+                // names FILE, so in that mode this is a file on the card for nothing.
+                if (!names) {
+                    write(out, in, FILE, CONTENT);
+                }
+                step(out, in, "=== list the card ===", framed("M20"));
+
+                step(out, in, "=== baseline: is it printing before either run? ===", framed("M27"));
+
+                if (names) {
+                    names(out, in, socket);
+                } else {
+                    if (m32First) {
+                        single(out, in, socket, "A");
+                        pair(out, in, socket, "B");
+                    } else {
+                        pair(out, in, socket, "A");
+                        single(out, in, socket, "B");
+                    }
+
+                    tidyUp(out, in);
+
+                    // The refusal arm, measured on a name that is now provably not on the card
+                    // rather than on one invented for the occasion: a mock that guesses what "no
+                    // such file" looks like is a mock that agrees with the guess.
+                    step(out, in, "=== C1: M23 on a file that is not there ===", framed("M23 " + FILE));
+                    step(out, in, "=== C2: M32 on a file that is not there ===", framed("M32 " + FILE));
+                    step(out, in, "=== C3: is it printing after those? ===", framed("M27"));
+                }
+            } finally {
+                // Whatever the run above left, whichever way it ended. The next early return added
+                // to this method does not get to leave a file behind.
+                tidyUp(out, in);
             }
-            step(out, in, "=== close the file ===", framed("M29"));
-            step(out, in, "=== list the card ===", framed("M20"));
-
-            step(out, in, "=== baseline: is it printing before either run? ===", framed("M27"));
-
-            if (names) {
-                names(out, in, socket);
-                return;
-            }
-
-            if (m32First) {
-                single(out, in, socket, "A");
-                pair(out, in, socket, "B");
-            } else {
-                pair(out, in, socket, "A");
-                single(out, in, socket, "B");
-            }
-
-            step(out, in, "=== tidy up: delete the probe file ===", framed("M30 " + FILE));
-
-            // The refusal arm, measured on a name that is now provably not on the card rather than
-            // on one invented for the occasion: a mock that guesses what "no such file" looks like
-            // is a mock that agrees with the guess.
-            step(out, in, "=== C1: M23 on a file that is not there ===", framed("M23 " + FILE));
-            step(out, in, "=== C2: M32 on a file that is not there ===", framed("M32 " + FILE));
-            step(out, in, "=== C3: is it printing after those? ===", framed("M27"));
         }
 
         report();
@@ -205,9 +227,7 @@ public final class SdPrintProbe {
         var files = List.of("live.gco", "prt.gco", "cup.gco", "set.gco");
 
         for (var file : files) {
-            step(out, in, "=== write " + file + " ===", framed("M28 " + file));
-            step(out, in, "=== its one line ===", framed("M118 P0 RAN-" + file));
-            step(out, in, "=== close it ===", framed("M29"));
+            write(out, in, file, List.of("M118 P0 RAN-" + file));
         }
         step(out, in, "=== what is on the card ===", framed("M20"));
 
@@ -238,9 +258,38 @@ public final class SdPrintProbe {
         step(out, in, "=== P4: what is it doing now? ===", framed("M27"));
         quiet(in, socket, "after that M27");
         step(out, in, "=== P5: and now? ===", framed("M27"));
+    }
 
-        for (var file : files) {
-            step(out, in, "=== tidy up ===", framed("M30 " + file));
+    /**
+     * Writes one file to the card and remembers that it is there. Numbered, because numbering is
+     * required while saving. The name is recorded before the {@code M28} goes out, so a write that
+     * dies half way still leaves something for the tidy-up to delete.
+     */
+    private static void write(OutputStream out, BufferedReader in, String file, List<String> content)
+            throws Exception {
+        onCard.add(file);
+        step(out, in, "=== open " + file + " for write ===", framed("M28 " + file));
+        for (var line : content) {
+            step(out, in, "=== content: " + line + " ===", framed(line));
+        }
+        step(out, in, "=== close " + file + " ===", framed("M29"));
+    }
+
+    /**
+     * Deletes everything this run wrote and has not already deleted. Idempotent, so a mode that
+     * needs the card empty part-way through calls it and the {@code finally} then finds nothing
+     * left; a file is forgotten only once its {@code M30} has gone out, so a failure is retried
+     * rather than hidden. It never throws: it runs from a {@code finally} and may not mask what
+     * sent it there.
+     */
+    private static void tidyUp(OutputStream out, BufferedReader in) {
+        for (var file : List.copyOf(onCard)) {
+            try {
+                step(out, in, "=== tidy up: delete " + file + " ===", framed("M30 " + file));
+                onCard.remove(file);
+            } catch (Exception failed) {
+                System.out.println("  !! " + file + " may still be on the card: " + failed);
+            }
         }
     }
 

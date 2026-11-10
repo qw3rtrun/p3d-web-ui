@@ -85,13 +85,19 @@ class MarlinGapsTest {
      * [S<filepos>]` and no filename at all, and `extract_marlin_docs.py`'s `CORRECTIONS` table now
      * says otherwise, with the wire transcript that proves the plain form works. What is left is
      * one correction further on. `M032.md` types `P` as a parameter *with a value* and then sends
-     * it bare in both of its own examples - #37 reports that the firmware reads it as a flag, which
-     * is not checked here - so `P` is an `Int?`, a bare `P` cannot be a valued parameter, and
-     * `stringArg` has nowhere to stop in front of it. The letter falls inside the name.
+     * it bare in both of its own examples - and the firmware does read a bare one as a flag, which
+     * `SdPrintProbe` measured on 2026-11-10 rather than this test: `M32 cup.gco` answered
+     * `echo:SUBROUTINE CALL target:"cup.gco" parent:"/LIVE.GCO" pos0` and printed two files, where
+     * `M32 live.gco` answered `echo:Now fresh file:` and printed one. So `P` is an `Int?`, a bare
+     * `P` cannot be a valued parameter, and `stringArg` has nowhere to stop in front of it. The
+     * letter falls inside the name.
      *
      * Not fixed here because it is a *second* source correction - `P`'s kind, not M32's missing
-     * string - and #37 does not ask for it. The plain `M32 <name>` form, which is what hosts send
-     * and what #31's `SdWriteProbe` verified against the firmware, is unaffected.
+     * string - and #37 does not ask for it. What `M32 <name>` *does* is not unaffected, though: a
+     * name carrying a `p` reaches the firmware as a subroutine call, so `/sd/print` keeps sending
+     * `M23`+`M24` (#109) and the three lines that announce the call are typed (#111). The gap this
+     * class records is narrower than that and is about parsing alone - the firmware takes a bare
+     * `P` as a flag and this class takes it as the first character of a filename.
      */
     @Nested
     inner class SelectAndStartWrappedFilename {

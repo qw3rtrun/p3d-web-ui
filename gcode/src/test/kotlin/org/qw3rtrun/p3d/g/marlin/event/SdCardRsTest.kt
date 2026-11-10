@@ -215,6 +215,106 @@ class SdCardRsTest {
     }
 
     @Test
+    fun `the subroutine lines are part of the family too`() {
+        // SdPrintProbe, MarlinSim bugfix-2.1.x, 2026-11-10. `M32 cup.gco` with live.gco already
+        // open answered the call, the end, and the parent reopening; `M32 cup.gco` on an idle
+        // machine answered `Now doing file:` instead, because there was nothing to return to.
+        for (line in listOf(
+            "echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0",
+            "echo:END SUBROUTINE",
+            "echo:Now doing file: cup.gco",
+        )) {
+            val reply = MarlinRsDecoder.decode(line)
+            assertTrue(reply is SdCardRs<*>) { "not an SdCardRs: $line" }
+            assertTrue(reply is EchoRs<*>) { "not an EchoRs: $line" }
+            assertEquals(line, reply!!.encode()) { "encode differs for: $line" }
+        }
+    }
+
+    @Test
+    fun `the subroutine call carries the three fields the firmware names`() {
+        assertEquals(
+            SdSubroutineCall("cup.gco", "/LIVE.GCO", 0),
+            SdSubroutineCall.decode("echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0"),
+        )
+        // The parent is where the firmware will resume, so the position is the byte it left off at.
+        assertEquals(
+            SdSubroutineCall("sub.gco", "/MAIN.GCO", 4294967295L),
+            SdSubroutineCall.decode("echo:SUBROUTINE CALL target:\"sub.gco\" parent:\"/MAIN.GCO\" pos4294967295"),
+        )
+    }
+
+    @Test
+    fun `a filename with blanks in it survives the subroutine call, because the markers are the fixed points`() {
+        assertEquals(
+            SdSubroutineCall("my little benchy.gcode", "/my parent.gcode", 128),
+            SdSubroutineCall.decode(
+                "echo:SUBROUTINE CALL target:\"my little benchy.gcode\" parent:\"/my parent.gcode\" pos128"
+            ),
+        )
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\"",
+            "echo:SUBROUTINE CALL target:\"cup.gco\" pos0",
+            "echo:SUBROUTINE CALL target:\"\" parent:\"/LIVE.GCO\" pos0",
+            "echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"\" pos0",
+            "echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos",
+            "echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" posx",
+            "echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0 extra",
+            "echo:SUBROUTINE CALL",
+            "SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0",
+        ]
+    )
+    fun `a malformed subroutine call decodes to absence`(line: String) {
+        assertNull(SdSubroutineCall.decode(line), "should not decode: $line")
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["echo:Now doing file:", "echo:Now doing file", "Now doing file: x", "echo:Now doing"])
+    fun `a malformed doing-file line decodes to absence`(line: String) {
+        assertNull(SdDoingFile.decode(line), "should not decode: $line")
+    }
+
+    @Test
+    fun `the subroutine lines are not reached through the card decoder, like the other echoes`() {
+        assertNull(SdCardRsDecoder.decode("echo:END SUBROUTINE"))
+        assertNull(SdCardRsDecoder.decode("echo:Now doing file: cup.gco"))
+        assertNull(SdCardRsDecoder.decode("echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0"))
+    }
+
+    @Test
+    fun `the subroutine lines stop being undifferentiated prose`() {
+        assertNull(EchoMessage.decode("echo:END SUBROUTINE"))
+        assertNull(EchoMessage.decode("echo:Now doing file: cup.gco"))
+        assertNull(EchoMessage.decode("echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0"))
+    }
+
+    @Test
+    fun `doing and fresh are different replies, because they are different events`() {
+        // The one letter of difference is the whole warning: `fresh` is the print that was asked
+        // for, `doing` is a file the firmware is running as a subroutine.
+        assertEquals(SdDoingFile("cup.gco"), MarlinRsDecoder.decode("echo:Now doing file: cup.gco"))
+        assertEquals(SdFreshFile("cup.gco"), MarlinRsDecoder.decode("echo:Now fresh file: cup.gco"))
+        assertNull(SdDoingFile.decode("echo:Now fresh file: cup.gco"))
+        assertNull(SdFreshFile.decode("echo:Now doing file: cup.gco"))
+    }
+
+    @Test
+    fun `no subroutine line is claimed by two decoders`() {
+        for (line in listOf(
+            "echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0",
+            "echo:END SUBROUTINE",
+            "echo:Now doing file: cup.gco",
+        )) {
+            val claimants = MarlinRsDecoder.decoders.filter { it.match(line) }
+            assertEquals(1, claimants.size) { "${claimants.size} decoders claim: $line" }
+        }
+    }
+
+    @Test
     fun `M27's answers are part of the family too`() {
         // Purely additive: SdStatusRs now extends SdCardRs, so a host watching storage is told
         // about print progress on the card without a second subscription.

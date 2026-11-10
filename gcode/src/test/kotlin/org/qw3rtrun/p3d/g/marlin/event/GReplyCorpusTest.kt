@@ -27,16 +27,28 @@ import org.junit.jupiter.api.fail
  * the snapshot where it reads as a diff; a test that pinned it would have to be edited by whoever
  * recaptured, which is the drift it exists to catch.
  *
- * The capture of 2026-11-09 is **156 lines, 148 claimed and 8 unclaimed**, where the one before it
- * was 137, 131 and 6. Six of the eight are the M114 D block - `Logical:`, `Raw:`, `Stepper:`,
- * `FromStp:`, `Diff:` and the empty line it opens with - and none of those has a type here. The
- * other two are unread on purpose rather than by omission: `TEST.GCO 47`, which only
- * [SdFileListReader] may read, and `File deleted:test.gco`, which nothing models yet. Of the
- * seventeen claimed lines gained, sixteen are the `M28`/`M29` section #66 added and the last is a
- * cold extrusion refused, where the earlier capture's machine had been left with a hot hotend and
- * merely acknowledged the same move. **Every type in the 2026-10-29 census is still in this one and
- * no count below it fell**, which is the check a recapture has to pass: it replaces evidence rather
- * than adding to it.
+ * The capture of 2026-11-10 is **200 lines, 187 claimed and 13 unclaimed**, where the one before it
+ * was 156, 148 and 8, and the one before that 137, 131 and 6. Six of the thirteen are the M114 D
+ * block - `Logical:`, `Raw:`, `Stepper:`, `FromStp:`, `Diff:` and the empty line it opens with -
+ * and none of those has a type here. The rest are unread on purpose rather than by omission:
+ * `TEST.GCO 47`, which only [SdFileListReader] may read; three `File deleted:<name>` lines, which
+ * nothing models yet; and `RAN-cup`/`RAN-live`, the `M118` markers the printed files write so that
+ * the capture says on the wire which file actually ran.
+ *
+ * Of the thirty-nine claimed lines gained, thirty-eight are the subroutine section #111 added. Six
+ * types are new to the census with it, and only three of them are new *classes*: [SdSubroutineCall],
+ * [SdSubroutineEnd] and [SdDoingFile] are #111's, while [SdFileOpened], [SdFileSelected] and
+ * [SdDonePrinting] had classes and unit tests since #31 and had simply never been measured - no
+ * session here had ever started a print. That is the census doing its job in the other direction:
+ * it says what is asserted but unmeasured as plainly as it says what is unread.
+ *
+ * **Every type in the 2026-11-09 census is still in this one and no count below it fell**, which is
+ * the check a recapture has to pass: it replaces evidence rather than adding to it. One step exists
+ * only to keep that true - `G92 E0` before the closing `G1 E10 F100`. `E` is absolute, so the second
+ * capture of #111 found the extruder already at 10, moved it nowhere, and lost the
+ * [ColdExtrusionPrevented] the capture before it had. Zeroing the counter first makes that refusal
+ * the machine's answer rather than an artefact of where the last run left it, and with it the
+ * capture is byte-identical across consecutive runs.
  *
  * **Regenerating the snapshot**: delete it from `src/test/resources` and run this test once. It
  * writes the file and fails, so regeneration is always deliberate and always leaves a diff to review
@@ -202,6 +214,49 @@ class GReplyCorpusTest {
             assertTrue(done.isNotEmpty()) { "no `Done saving file.` - M29's answer is not in the capture" }
             assertTrue(census.any { typeOf(it) == "SdFreshFile" }) {
                 "no `echo:Now fresh file:` - the third line of M28's answer"
+            }
+        }
+
+        @Test
+        fun `the subroutine call is in it, all three lines of it`() {
+            // #111. The only lines on the wire that announce a print nobody asked for, and until
+            // the probe sent an `M32` with a p-bearing name while a file was open, none of them
+            // could reach a capture - so all three were types with no measurement behind them.
+            val call = census.filter { typeOf(it) == "SdSubroutineCall" }
+            assertTrue(call.isNotEmpty()) { "no SUBROUTINE CALL - the announcement is not in the capture" }
+            assertEquals(
+                "SdSubroutineCall\techo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0",
+                call.first(),
+            )
+            assertTrue(census.any { typeOf(it) == "SdSubroutineEnd" }) {
+                "no END SUBROUTINE - the parent resuming is not in the capture"
+            }
+            // The same M32 with nothing open says only this, which is why it is a separate send.
+            assertTrue(census.any { typeOf(it) == "SdDoingFile" }) {
+                "no `echo:Now doing file:` - the subroutine open with no parent to return to"
+            }
+            // And the one-letter neighbour is still in it, so the capture holds both readings of
+            // the same command: `M32 live.gco` is a plain start, `M32 cup.gco` is not.
+            assertTrue(census.any { it == "SdFreshFile\techo:Now fresh file: live.gco" }) {
+                "no plain start - without it the capture cannot tell the two M32 readings apart"
+            }
+        }
+
+        @Test
+        fun `a print is in it now, which is how M32's other replies finally got measured`() {
+            // SdFileOpened, SdFileSelected and SdDonePrinting had classes and unit tests from #31
+            // and had never been captured: no session here started a print. #111's section does.
+            assertTrue(census.any { it == "SdFileOpened\tFile opened: cup.gco Size: 17" }) {
+                "no `File opened:` - M32's first reply is not in the capture"
+            }
+            assertTrue(census.any { typeOf(it) == "SdFileSelected" }) { "no `File selected` in the capture" }
+            assertTrue(census.any { typeOf(it) == "SdDonePrinting" }) {
+                "no `Done printing file` - the unbidden end of a job is not in the capture"
+            }
+            // Two prints ran and only one `Done printing file` ended the second: the subroutine and
+            // its parent share it. That is the whole hazard, visible in the census as a count.
+            assertEquals(2, census.count { typeOf(it) == "SdDonePrinting" }) {
+                "three prints ran in this session and two of them ended in one notice"
             }
         }
 

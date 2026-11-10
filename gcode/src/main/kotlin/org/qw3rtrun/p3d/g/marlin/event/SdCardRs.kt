@@ -18,14 +18,15 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * listing types ([SdFileListBegin], [SdFileList]) are under it too, so matching `SdCardRs<*>`
  * catches everything on this subject and nothing else.
  *
- * Two of these are also [EchoRs] - [SdCardOk] and [SdFreshFile] arrive with the `echo:` prefix,
- * because the firmware writes them through `SERIAL_ECHO_MSG`. That is the same both-at-once shape
- * [BusyNotice] has, and for the same reason: *what* a reply reports and *how* it arrives are two
- * different questions, and a type can answer both.
+ * Five of these are also [EchoRs] - [SdCardOk], [SdFreshFile], [SdDoingFile], [SdSubroutineCall]
+ * and [SdSubroutineEnd] arrive with the `echo:` prefix, because the firmware writes them through
+ * `SERIAL_ECHO_MSG`. That is the same both-at-once shape [BusyNotice] has, and for the same reason:
+ * *what* a reply reports and *how* it arrives are two different questions, and a type can answer
+ * both.
  *
- * Every line here was captured from MarlinSim (bugfix-2.1.x) by
+ * Every line here was captured from MarlinSim (bugfix-2.1.x). The first session is
  * `backend/terminal/.../SdWriteProbe.java`, which writes a file with `M28`/`M29`, lists it, and
- * prints it. The full session, in order:
+ * prints it, in order:
  *
  * ```
  * >> M28 test.gco       << echo:Now fresh file: test.gco     SdFreshFile
@@ -41,6 +42,27 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  *    ...while printing  << Done printing file                SdDonePrinting
  * >> M21                << echo:SD card ok                   SdCardOk
  * ```
+ *
+ * **That `M32 test.gco` is the *lucky* reading of the command, not the only one.** `M32` is not in
+ * Marlin's string-argument special case, so its line is parsed for parameters before what is left
+ * is taken as the filename: a `p` anywhere in the name arrives as a bare `P`, which means "call
+ * this file as a subroutine". `test.gco` has no `p`; `cup.gco` has. `SdPrintProbe` sent the same
+ * command with a name that does, on 2026-11-10, with `live.gco` already open from an `M23`:
+ *
+ * ```
+ * >> M32 cup.gco        << echo:SUBROUTINE CALL target:"cup.gco"
+ *                                              parent:"/LIVE.GCO" pos0    SdSubroutineCall
+ *                       << File opened: cup.gco Size: 21                  SdFileOpened
+ *                       << File selected                                  SdFileSelected
+ *    ...cup.gco runs    << echo:END SUBROUTINE                            SdSubroutineEnd
+ *                       << File opened: LIVE.GCO Size: 22                 SdFileOpened
+ *                       << File selected                                  SdFileSelected
+ *    ...live.gco runs   << Done printing file                             SdDonePrinting
+ * ```
+ *
+ * With nothing open to return to, the same command says only `echo:Now doing file: cup.gco`
+ * ([SdDoingFile]) and the rest of the answer is `M23`'s. So two files printed, one `Done printing
+ * file` ended them, and the only warning was an `echo:`.
  *
  * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
@@ -225,6 +247,11 @@ object SdCardOk : SdCardRs<SdCardOk>, EchoRs<SdCardOk>, GRsDecoder<SdCardOk> {
  * behind it says what for. Kept as its own type anyway because it carries the name the firmware
  * resolved, which for a card with short filenames is not always the name that was asked for.
  *
+ * **`M32` writes it only for a name the firmware does not read as a subroutine call.** `fresh` is
+ * `announceOpen()`'s word for the job itself; a name containing a `p` is parsed as `M32 P <name>`
+ * and answered [SdDoingFile] or [SdSubroutineCall] instead. Seeing this line is therefore the
+ * reassuring case - the print that starts is the one that was asked for.
+ *
  * ```
  * SdFreshFile.decode("echo:Now fresh file: test.gco")   // SdFreshFile("test.gco")
  * ```
@@ -249,6 +276,164 @@ data class SdFreshFile(val file: String) : SdCardRs<SdFreshFile>, EchoRs<SdFresh
             return if (name.isEmpty()) null else SdFreshFile(name)
         }
     }
+}
+
+/**
+ * `echo:Now doing file: <name>` - the firmware opened a file **as a subroutine**, not as the print
+ * that was asked for.
+ *
+ * One word apart from [SdFreshFile] and a different event: Marlin's `announceOpen()` writes `doing`
+ * when the file is being run as a procedure and `fresh` when it is the job itself. So this is a
+ * line that says a print nobody asked for is starting - a bare `M32 <name>` whose name contains a
+ * `p` is read as `M32 P <name>`, and `P` means "call this file as a subroutine". When a file was
+ * already open the firmware says so in full, as [SdSubroutineCall]; with nothing to return to, this
+ * is all it says.
+ *
+ * `SdPrintProbe` against MarlinSim (bugfix-2.1.x), 2026-11-10, varying only the name: `live.gco`
+ * and `set.gco` answered `echo:Now fresh file:`, `prt.gco` and `cup.gco` answered this - a `p`
+ * anywhere in the name is the trigger, and `s` is harmless because `S` needs a value and `P` does
+ * not.
+ *
+ * ```
+ * SdDoingFile.decode("echo:Now doing file: cup.gco")   // SdDoingFile("cup.gco")
+ * ```
+ */
+data class SdDoingFile(val file: String) : SdCardRs<SdDoingFile>, EchoRs<SdDoingFile> {
+
+    override fun encode(): String = EchoMessage.PREFIX + BODY + file
+
+    companion object : GRsDecoder<SdDoingFile> {
+
+        private const val BODY = "Now doing file: "
+
+        /** The filename behind the prefix, or null when the line is not this reply. */
+        override fun decode(line: String): SdDoingFile? {
+            val text = line.asciiTrim()
+            if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
+
+            val at = text.blanksEnd(EchoMessage.PREFIX.length)
+            if (!text.startsWithAscii(BODY, at)) return null
+
+            val name = text.substring(at + BODY.length).asciiTrim()
+            return if (name.isEmpty()) null else SdDoingFile(name)
+        }
+    }
+}
+
+/**
+ * `echo:SUBROUTINE CALL target:"<target>" parent:"<parent>" pos<n>` - a second print is starting
+ * inside the one already running, and the firmware will come back to [parent] at byte [position].
+ *
+ * **The only line on the wire that announces a print nobody asked for.** It is what an `M32` whose
+ * filename contains a `p` produces while a file is open: the line is parsed for parameters before
+ * what is left is taken as the filename, a bare `P` means "call as a subroutine", and the firmware
+ * prints the target, writes [SdSubroutineEnd], reopens the parent and prints that too. Both prints
+ * end in one `Done printing file`, so a host counting completions sees one job where two ran.
+ *
+ * Captured by `SdPrintProbe` against MarlinSim (bugfix-2.1.x), 2026-11-10 - `M23 live.gco` to leave
+ * a parent open at byte 0, then `N39 M32 cup.gco*43`:
+ *
+ * ```
+ * << echo:SUBROUTINE CALL target:"cup.gco" parent:"/LIVE.GCO" pos0
+ * << File opened: cup.gco Size: 21
+ * << echo:END SUBROUTINE
+ * << File opened: LIVE.GCO Size: 22
+ * << RAN-cup.gco
+ * << RAN-live.gco
+ * << Done printing file
+ * ```
+ *
+ * The parent is the firmware's own resolved path and the position is where it will resume, so the
+ * three fields together are what a host needs to say what is about to happen. `pos` carries no
+ * separator at all, which is the firmware's spelling and is kept.
+ *
+ * ```
+ * SdSubroutineCall.decode("echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0")
+ * // SdSubroutineCall("cup.gco", "/LIVE.GCO", 0)
+ * ```
+ *
+ * @property target the file being called
+ * @property parent the file it will return to
+ * @property position the byte in [parent] the firmware left off at
+ */
+data class SdSubroutineCall(
+    val target: String,
+    val parent: String,
+    val position: Long,
+) : SdCardRs<SdSubroutineCall>, EchoRs<SdSubroutineCall> {
+
+    override fun encode(): String =
+        EchoMessage.PREFIX + BODY + target + PARENT + parent + POS + position
+
+    companion object : GRsDecoder<SdSubroutineCall> {
+
+        private const val BODY = "SUBROUTINE CALL target:\""
+
+        private const val PARENT = "\" parent:\""
+
+        private const val POS = "\" pos"
+
+        /**
+         * The two names and the position, or null when the line is not one of these.
+         *
+         * Takes the **last** of each marker rather than the first, the rule [SdFileOpened] reads a
+         * size by and for the same reason: with `LONG_FILENAME_HOST_SUPPORT` a name can carry
+         * blanks, so the markers are the only fixed points in the line. Spec 9: a position that is
+         * not digits, or one too wide for a `Long`, is malformed input off the wire, so the line
+         * does not decode rather than throwing.
+         *
+         * @param line one received line
+         * @return the call, or null when [line] is some other kind
+         */
+        override fun decode(line: String): SdSubroutineCall? {
+            val text = line.asciiTrim()
+            if (!text.startsWithAscii(EchoMessage.PREFIX)) return null
+
+            val head = text.blanksEnd(EchoMessage.PREFIX.length)
+            if (!text.startsWithAscii(BODY, head)) return null
+
+            val target = head + BODY.length
+            var parent = -1
+            var pos = -1
+            var at = target
+            while (at < text.length) {
+                if (text.startsWithAscii(PARENT, at)) parent = at
+                else if (text.startsWithAscii(POS, at)) pos = at
+                at++
+            }
+            if (parent <= target || pos <= parent + PARENT.length) return null
+
+            val digits = pos + POS.length
+            val end = text.digitsEnd(digits)
+            if (end == digits || end != text.length) return null
+            val position = text.substring(digits, end).toLongOrNull() ?: return null
+
+            return SdSubroutineCall(
+                text.substring(target, parent),
+                text.substring(parent + PARENT.length, pos),
+                position,
+            )
+        }
+    }
+}
+
+/**
+ * `echo:END SUBROUTINE` - the called file reached its end and the parent print is resuming.
+ *
+ * The closing half of [SdSubroutineCall], and the point from which the file lines that follow -
+ * another `File opened:` and `File selected` - are the *parent* being reopened rather than a new
+ * job starting. Carries nothing, because the names were in the call.
+ *
+ * ```
+ * SdSubroutineEnd.decode("echo:END SUBROUTINE")   // SdSubroutineEnd
+ * ```
+ */
+object SdSubroutineEnd : SdCardRs<SdSubroutineEnd>, EchoRs<SdSubroutineEnd>, GRsDecoder<SdSubroutineEnd> {
+
+    override fun encode(): String = EchoMessage.PREFIX + "END SUBROUTINE"
+
+    override fun decode(line: String): SdSubroutineEnd? =
+        if (line.equalsAscii(EchoMessage.PREFIX + "END SUBROUTINE")) this else null
 }
 
 /**

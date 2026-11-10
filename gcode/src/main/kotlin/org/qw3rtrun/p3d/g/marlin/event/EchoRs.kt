@@ -15,9 +15,10 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  *
  * `serial_echo_start()` writes the prefix, and everything from a settings dump to a busy notice to
  * a rejected command comes out under it. [UnknownCommand] and [BusyNotice] are split out because a
- * host has to act on them; [SdCardOk] and [SdFreshFile] because what they report is the card
- * rather than the echo channel, and they are [SdCardRs] as well for that reason; `M503`'s whole
- * report because it is a [SettingsRs] and not prose; everything else is [EchoMessage].
+ * host has to act on them; [SdCardOk], [SdFreshFile], [SdDoingFile], [SdSubroutineCall] and
+ * [SdSubroutineEnd] because what they report is the card rather than the echo channel, and they are
+ * [SdCardRs] as well for that reason; `M503`'s whole report because it is a [SettingsRs] and not
+ * prose; everything else is [EchoMessage].
  *
  * ```
  * EchoRsDecoder.decode("echo:Unknown command: \"M9999\"")   // UnknownCommand("M9999")
@@ -34,8 +35,9 @@ interface EchoRs<D : EchoRs<D>> : GEventRs<D>
  *
  * Deliberately matches none of the specialisations - [UnknownCommand], [InvalidExtruder],
  * [BusyNotice], [DebugLevelRs], [ColdExtrusionRs], [ColdExtrusionPrevented], [SdCardOk],
- * [SdFreshFile], and the whole [SettingsRs] family - so they partition the prefix between them and
- * no line is claimed by two, the way `DebugRs` and `ActionRs` partition `//`.
+ * [SdFreshFile], [SdDoingFile], [SdSubroutineCall], [SdSubroutineEnd], and the whole [SettingsRs]
+ * family - so they partition the prefix between them and no line is claimed by two, the way
+ * `DebugRs` and `ActionRs` partition `//`.
  *
  * ```
  * EchoMessage.decode("echo:busy")   // EchoMessage("busy")
@@ -72,6 +74,9 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
             if (InvalidExtruder.match(line)) return null
             if (SdCardOk.match(line)) return null
             if (SdFreshFile.match(line)) return null
+            if (SdDoingFile.match(line)) return null
+            if (SdSubroutineCall.match(line)) return null
+            if (SdSubroutineEnd.match(line)) return null
             if (SettingsRsDecoder.match(line)) return null
             return EchoMessage(text.substring(PREFIX.length).asciiTrim())
         }
@@ -261,6 +266,9 @@ object EchoRsDecoder : GRsDecoder<EchoRs<*>> {
         ColdExtrusionPrevented,
         SdCardOk,
         SdFreshFile,
+        SdDoingFile,
+        SdSubroutineCall,
+        SdSubroutineEnd,
         EchoMessage,
     )
 

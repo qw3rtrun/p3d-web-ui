@@ -13,6 +13,8 @@ import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.ReportPrintTime;
 import org.qw3rtrun.p3d.g.marlin.command.ReportSDPrintStatus;
 import org.qw3rtrun.p3d.g.marlin.command.ReportSettings;
+import org.qw3rtrun.p3d.g.marlin.command.SelectAndStart;
+import org.qw3rtrun.p3d.g.marlin.command.SelectSDFile;
 import org.qw3rtrun.p3d.g.marlin.command.SerialPrint;
 import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber;
 import org.qw3rtrun.p3d.g.marlin.command.SetLCDMessage;
@@ -84,6 +86,32 @@ import java.util.List;
  * they come back as {@code TEST.GCO 47}, which is their payloads plus a {@code CRLF} each
  * (5 + 14 + 11 + 17) and shows that the stored line keeps neither its {@code N} nor its {@code *}.
  *
+ * <h2>The subroutine call, and why it needs two files</h2>
+ *
+ * <p>{@code echo:SUBROUTINE CALL target:"…" parent:"…" pos<n>}, {@code echo:END SUBROUTINE} and
+ * {@code echo:Now doing file: <name>} are the only lines on the wire that announce a print nobody
+ * asked for, and until
+ * <a href="https://github.com/qw3rtrun/p3d-web-ui/issues/111">issue 111</a> none of them had a
+ * type - so none could reach the census either. {@link SdPrintProbe} had measured all three on
+ * 2026-11-10; this session reproduces the exchange so they are captured lines like every other.
+ *
+ * <p>Provoking them takes two files and the right name. {@code M32} is not in Marlin's
+ * string-argument special case, so its line is parsed for parameters before what is left is taken
+ * as the filename: a {@code p} <em>anywhere</em> in the name is read as a bare {@code P}, which
+ * means "call this file as a subroutine". {@code cup.gco} has one and {@code live.gco} has not,
+ * which is the whole of the difference - measured, by varying only the name, in
+ * {@link SdPrintProbe}'s {@code names} run.
+ *
+ * <p>So the section sends the same {@code M32 cup.gco} twice. The first time nothing is open, and
+ * the firmware says only {@code echo:Now doing file: cup.gco}. The second time an {@code M23} has
+ * left {@code live.gco} open and unstarted, and the firmware announces the call in full, prints
+ * {@code cup.gco}, writes {@code echo:END SUBROUTINE}, reopens {@code LIVE.GCO} and prints that
+ * too - two prints, one {@code Done printing file}. The {@code M118 P0} line in each file is what
+ * says on the wire which of them actually ran.
+ *
+ * <p>Both files are deleted again at the end, for the same reason {@code test.gco} is: this
+ * simulator's card outlives a disconnect.
+ *
  * <h2>How reproducible a capture is, measured rather than hoped</h2>
  *
  * <p>Three runs back to back on 2026-11-09. The first differs from the two after it, because this
@@ -109,6 +137,16 @@ public final class ReplyCorpusProbe {
      * {@code :backend:core} tests use.
      */
     private static final String SD_FILE = "test.gco";
+
+    /**
+     * The file the subroutine section calls. The {@code p} in it is the whole point: {@code M32}
+     * parses its line before taking the rest as a name, so this one arrives as {@code M32 P cup.gco}
+     * and is run as a subroutine. {@link SdPrintProbe} measured that by varying only the name.
+     */
+    private static final String SUB_FILE = "cup.gco";
+
+    /** The file left open as the subroutine's parent. No {@code p}, so {@code M32} prints it plainly. */
+    private static final String PARENT_FILE = "live.gco";
 
     private ReplyCorpusProbe() {
     }
@@ -255,10 +293,35 @@ public final class ReplyCorpusProbe {
         s.add(new Step("a stray close, with no file open", framed(8, new StopSDWrite())));
         s.add(new Step("delete it, so this session can be run again", framed(9, new DeleteSDFile(SD_FILE))));
 
+        // The subroutine call - issue 111. Continues the save's counter rather than resetting it,
+        // since the files below are written the same way. See the class comment for why it takes
+        // two files and why the same M32 goes out twice.
+        s.add(new Step("write the file a p-bearing name will call", framed(10, new StartSDWrite(SUB_FILE))));
+        s.add(new Step("its one line, so the wire says whether it ran", framed(11, new SerialPrint(0, "RAN-cup"))));
+        s.add(new Step("close it", framed(12, new StopSDWrite())));
+        s.add(new Step("write the file that will be its parent", framed(13, new StartSDWrite(PARENT_FILE))));
+        s.add(new Step("its one line", framed(14, new SerialPrint(0, "RAN-live"))));
+        s.add(new Step("close it", framed(15, new StopSDWrite())));
+        // Nothing open to return to, so the firmware says only `Now doing file:`.
+        s.add(new Step("the p-bearing name through M32, with nothing open",
+                framed(16, new SelectAndStart(null, null, SUB_FILE)), 5000));
+        // M23 leaves a parent open at byte 0, which is what turns the next M32 into a full call.
+        s.add(new Step("open the parent and leave it unstarted", framed(17, new SelectSDFile(PARENT_FILE))));
+        s.add(new Step("the same M32 again, now that there is a parent",
+                framed(18, new SelectAndStart(null, null, SUB_FILE)), 8000));
+        s.add(new Step("delete the called file", framed(19, new DeleteSDFile(SUB_FILE))));
+        s.add(new Step("delete the parent, so this session can be run again",
+                framed(20, new DeleteSDFile(PARENT_FILE))));
+
         // Rejections: both of the echo lines a host must not ignore.
         s.add(new Step("unknown command", "M998"));
         s.add(new Step("unknown command with a subcode", "G998.5"));
         s.add(new Step("a tool this machine does not have", "M104 T5 S100"));
+        // E is absolute, so a run that found the extruder already at 10 moved it nowhere and was
+        // answered a bare ok - the refusal below went missing from the second capture of #111 for
+        // exactly that reason. Zeroing the counter first makes the refusal the machine's answer
+        // rather than an artefact of where the last run left it.
+        s.add(new Step("put the extruder counter back where a fresh machine has it", "G92 E0"));
         s.add(new Step("a cold extrude, refused", "G1 E10 F100"));
 
         return s;

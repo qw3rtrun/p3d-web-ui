@@ -962,7 +962,13 @@ difference, which is why a parameter modelled as a flag is unaffected. Fixing it
 property per valued parameter across 831 of them, and Marlin's own reading is that a seen-but-
 valueless letter is the default (`value_float()` returns 0), so this is recorded rather than fixed.
 `MarlinDocExamplesTest` pins the affected doc examples line by line, and `stringArgStart()` depends
-on this: a bare own-letter has to *end* the lettered run precisely because it cannot be represented.
+on this: a bare own-letter has to *end* the lettered run precisely because it cannot be represented
+— unless the command types that letter as a flag, which is the one case where it can be. `M32`'s
+`P` is the module's only such letter in front of a bare string, so `M32 P !/models/lgbust.gco#` —
+the form `M032.md` itself writes — reads as the flag and the filename rather than as one filename
+beginning `P `. A flag closes its field only against a blank, a line break, a `;` or the end of
+the tokens, because it has no value of its own to close it: `M32 Pump.gco` is therefore still the
+whole filename, and a `P`-initial name does not lose its first letter.
 
 Not covered by either of these layers in the reading direction: [§1.3](#13-line-length)'s length
 limit — see B.5, which measures it on the way out — and [§3.4](#34-string-values)'s bare
@@ -972,7 +978,8 @@ layer up - `GRqDecoder` is handed the tokens as lexed, and `MarlinWords.stringAr
 the string for the 23 Marlin commands that take one. **Where such a string starts has no universal
 rule**: it begins at the first field that is not one of *that command's* parameters, so `M117 H1
 ello World` is all message while `M118 P1 ello World` is a `P1` and a message. Each decoder passes
-its own letters, and reads its lettered parameters from `beforeStringArg()` - the region in front -
+its own letters and the subset of them it models as flags, and reads its lettered parameters from
+`beforeStringArg()` - the region in front -
 so that a `P1` inside a message is text rather than a parameter. The DSL writes one with
 `bareString(text)`, which the encoder emits undelimited and last.
 

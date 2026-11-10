@@ -63,7 +63,7 @@ data class StartSDWrite(
 
         override fun decodeParams(tokens: List<GToken>): StartSDWrite {
             return StartSDWrite(
-                filename = tokens.stringArg(),
+                filename = tokens.stringArg("", ""),
             )
         }
     }

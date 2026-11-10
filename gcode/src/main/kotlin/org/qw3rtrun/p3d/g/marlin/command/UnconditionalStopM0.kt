@@ -71,11 +71,11 @@ data class UnconditionalStopM0(
         }
 
         override fun decodeParams(tokens: List<GToken>): UnconditionalStopM0 {
-            val params = tokens.beforeStringArg('S', 'P')
+            val params = tokens.beforeStringArg("SP", "")
             return UnconditionalStopM0(
                 sec = params.intOf('S'),
                 ms = params.intOf('P'),
-                message = tokens.stringArg('S', 'P'),
+                message = tokens.stringArg("SP", ""),
             )
         }
     }

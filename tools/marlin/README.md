@@ -44,10 +44,12 @@ read directly, and a hand-rolled reader keeps the tool usable on a machine with 
 
 ### Corrections
 
-An interface fact an upstream page **omits** goes in `extract_marlin_docs.py`'s `CORRECTIONS`
-table, which is applied after parsing — so step 2 keeps the correction instead of transcribing the
-omission again. Re-applying the table to the JSON that is already checked in, without fetching the
-docs:
+An interface fact an upstream page **omits or gets wrong** goes in `extract_marlin_docs.py`'s
+`CORRECTIONS` table, which is applied after parsing — so step 2 keeps the correction instead of
+transcribing the omission again. An entry's `fields` are merged into the command, except for
+`params`, which is `{letter: {field: value}}` and retypes parameters the page did name: a whole
+replacement list would freeze every *other* parameter of that command at today's reading.
+Re-applying the table to the JSON that is already checked in, without fetching the docs:
 
 ```bash
 python3 tools/marlin/extract_marlin_docs.py --corrections-only
@@ -59,9 +61,12 @@ generates and which says so in its own header. The table is copied into the JSON
 
 The bar for an entry is a **wire transcript**, not a reading, and the table is meant to stay small:
 each entry has to be re-checked against every new Marlin release. One command has one today — `M32`,
-whose page documents `M32 [P<value>] [S<filepos>]` and not the filename the firmware prints from, so
-the one command that selects *and* starts a card print could not name a file
-([#37](https://github.com/qw3rtrun/p3d-web-ui/issues/37)).
+on two counts. Its page documents `M32 [P<value>] [S<filepos>]` and not the filename the firmware
+prints from, so the one command that selects *and* starts a card print could not name a file
+([#37](https://github.com/qw3rtrun/p3d-web-ui/issues/37)); and it types `P` as carrying a value
+while writing it bare in both of its own examples, where the firmware reads it as a flag — `M32
+cup.gco` answered `echo:SUBROUTINE CALL target:"cup.gco" parent:"/LIVE.GCO" pos0` and printed two
+files ([#114](https://github.com/qw3rtrun/p3d-web-ui/issues/114)).
 
 ## What is taken, and what is not
 
@@ -113,9 +118,9 @@ that the extracted letters match what Marlin's own authors write.
 - **Rest-of-line strings** — `M117 Hello`, `M23 file.gco`, `M810`'s macro bodies — are modelled:
   each of the 23 commands that takes one gets a letterless `String?` property (`message`, or
   `filename`/`path`/`gcode` where that reads better), written last through `bareString()` and read
-  back through `stringArg(<the command's letters>)` - where the string starts is a per-command
-  question, so the decoder passes its own letters and reads the lettered ones from
-  `beforeStringArg()`. `MarlinDocExamplesTest` still skips these lines when counting letters,
+  back through `stringArg(<the command's letters>, <those of them that are flags>)` - where the
+  string starts is a per-command question, so the decoder passes both sets and reads the lettered
+  ones from `beforeStringArg()`. `MarlinDocExamplesTest` still skips these lines when counting letters,
   because the token layer splits them letter by letter and those letters mean nothing.
 - **Dotted quads** — `M552 P192.168.1.55` is not a number and not a quoted string.
 - **Undocumented upstream** — `M569 S`, `M123 S`, `M672 S`, `M919 E` appear in examples but not in

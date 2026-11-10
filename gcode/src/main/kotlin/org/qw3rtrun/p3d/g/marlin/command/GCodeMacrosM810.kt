@@ -63,7 +63,7 @@ data class GCodeMacrosM810(
 
         override fun decodeParams(tokens: List<GToken>): GCodeMacrosM810 {
             return GCodeMacrosM810(
-                gcode = tokens.stringArg(),
+                gcode = tokens.stringArg("", ""),
             )
         }
     }

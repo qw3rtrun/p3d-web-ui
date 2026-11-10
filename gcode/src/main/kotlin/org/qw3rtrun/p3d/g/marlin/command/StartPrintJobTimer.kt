@@ -63,7 +63,7 @@ data class StartPrintJobTimer(
 
         override fun decodeParams(tokens: List<GToken>): StartPrintJobTimer {
             return StartPrintJobTimer(
-                message = tokens.stringArg(),
+                message = tokens.stringArg("", ""),
             )
         }
     }

@@ -63,7 +63,7 @@ data class GetLongPath(
 
         override fun decodeParams(tokens: List<GToken>): GetLongPath {
             return GetLongPath(
-                path = tokens.stringArg(),
+                path = tokens.stringArg("", ""),
             )
         }
     }

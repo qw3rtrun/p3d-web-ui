@@ -25,8 +25,10 @@ import org.qw3rtrun.p3d.g.marlin.command.MoveInMachineCoordinates
 import org.qw3rtrun.p3d.g.marlin.command.SelectAndStart
 import org.qw3rtrun.p3d.g.marlin.command.SelectOrReportToolT0
 import org.qw3rtrun.p3d.g.marlin.command.SelectSDFile
+import org.qw3rtrun.p3d.g.marlin.command.SerialPrint
 import org.qw3rtrun.p3d.g.marlin.command.SetGetLineNumber
 import org.qw3rtrun.p3d.g.marlin.command.SetHotendTemperature
+import org.qw3rtrun.p3d.g.marlin.command.UnconditionalStopM0
 import org.qw3rtrun.p3d.g.protocol.GRq
 import java.math.BigDecimal
 
@@ -156,8 +158,77 @@ class MarlinDecoderTest {
 
             // And a letter *inside* the name is text, not a second reading of `P`.
             assertEquals(
-                SelectAndStart(p = 1, filename = "/models/P1.gco"),
+                SelectAndStart(p = true, filename = "/models/P1.gco"),
                 decode("M32 P1 /models/P1.gco"),
+            )
+        }
+
+        @Test
+        fun `a flag in front of a bare string is a field when a blank closes it`() {
+            // M32's `P` is the module's only valueless letter in front of a bare string, and the
+            // form `M032.md` itself writes is the bare one. A blank closes the field, so the
+            // filename starts past it - delimiters carried, as this class carries them anywhere.
+            assertEquals(
+                SelectAndStart(p = true, filename = "!/models/lgbust.gco#"),
+                decode("M32 P !/models/lgbust.gco#"),
+            )
+
+            // The end of the tokens closes it too, so `P` alone is a flag and not a one-letter
+            // filename. There was no way to express this before `P` was typed as a flag.
+            assertEquals(SelectAndStart(p = true), decode("M32 P"))
+
+            // A valued letter after it is read as usual, and the name still starts past both.
+            assertEquals(
+                SelectAndStart(p = true, filepos = 5022, filename = "/boats/sailboat.gco"),
+                decode("M32 P S5022 /boats/sailboat.gco"),
+            )
+
+            // Nothing closes this one - the name is written hard against the letter - so the
+            // whole of it is the name, which is what keeps a `P`-initial filename readable.
+            assertEquals(SelectAndStart(filename = "Pump.gco"), decode("M32 Pump.gco"))
+        }
+
+        @Test
+        fun `a valueless letter that is not a flag still ends the run`() {
+            // The four other commands with letters in front of a bare string have no flag among
+            // them, so a letter of theirs carrying no value is still the first byte of the string
+            // - a valued property cannot say "present, without a value", and skipping one would
+            // eat a word to record nothing.
+            assertEquals(MachineName(message = "P"), decode("M550 P"))
+            assertEquals(MachineName(message = "P here"), decode("M550 P here"))
+
+            // And the valued forms are untouched by the same change.
+            assertEquals(MachineName(name = "My Printer"), decode("M550 P\"My Printer\""))
+            assertEquals(SerialPrint(p = 0, message = "hi"), decode("M118 P0 hi"))
+            assertEquals(UnconditionalStopM0(sec = 10, message = "wait"), decode("M0 S10 wait"))
+        }
+
+        @Test
+        fun `the forms the flag makes expressible go back out as they came in`() {
+            assertEquals("M32 P", GEncoder.encode(SelectAndStart(p = true).encode()))
+            assertEquals(
+                "M32 P !/models/lgbust.gco#",
+                GEncoder.encode(
+                    SelectAndStart(p = true, filename = "!/models/lgbust.gco#").encode(),
+                ),
+            )
+            assertEquals(
+                "M32 P S5022 /boats/sailboat.gco",
+                GEncoder.encode(
+                    SelectAndStart(p = true, filepos = 5022, filename = "/boats/sailboat.gco")
+                        .encode(),
+                ),
+            )
+
+            // A `P`-initial filename survives the trip with the flag beside it, because the blank
+            // the encoder writes between the two is exactly what the decoder reads as the close.
+            assertEquals(
+                "M32 P Pump.gco",
+                GEncoder.encode(SelectAndStart(p = true, filename = "Pump.gco").encode()),
+            )
+            assertEquals(
+                SelectAndStart(p = true, filename = "Pump.gco"),
+                decode("M32 P Pump.gco"),
             )
         }
     }

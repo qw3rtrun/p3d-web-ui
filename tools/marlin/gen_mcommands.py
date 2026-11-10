@@ -65,8 +65,9 @@ KINDS = {
     # belongs to it. See `bareString` in the DSL and `stringArg` in MarlinWords.
     #
     # Its decode call is the one that is not a function of its own letter: where the string starts
-    # depends on *this command's* letters - `M117 H1 ello` is all message, `M118 P1 ello` is not -
-    # so `l` here is the command's letter list and `gen_class` is what fills it in.
+    # depends on *this command's* letters, and on which of them are flags - `M117 H1 ello` is all
+    # message, `M118 P1 ello` is not, and `M32 P !a.gco#` is a flag and a filename because M32's
+    # `P` carries no value. So `l` here is that pair of letter sets and `gen_class` fills it in.
     "bare":    ("String?",    "null",  lambda l, n: "bareString(%s)" % n,
                 lambda l: "tokens.stringArg(%s)" % l),
 }
@@ -131,29 +132,39 @@ BARE_STRING_NAMES = {
 # paragraph in its KDoc. Here and not hand-written into the class, because `command/` is emptied on
 # every run and a hand-written note is gone with it.
 #
-# Only M32 has one, and it is here because the questions "what about `!name#`?" and "why not one
-# command?" are otherwise re-derived by everyone who reads the Marlin page. Each claim below is a
-# run, not a reading: the firmware transcripts are #31's SdWriteProbe and #109's SdPrintProbe, and
-# the decoder behaviour is `MarlinDecoderTest` / `MarlinGapsTest.SelectAndStartWrappedFilename`.
+# Only M32 has one, and it is here because the questions "what about `!name#`?", "what does `P`
+# do?" and "why not one command?" are otherwise re-derived by everyone who reads the Marlin page.
+# Each claim below is a run, not a reading: the firmware transcripts are #31's SdWriteProbe and
+# #109's SdPrintProbe, and the decoder behaviour is `MarlinDecoderTest` /
+# `MarlinGapsTest.SelectAndStartLetterInAName`.
 # An empty string is a paragraph break; the emitter strips the trailing blank it would leave.
 BARE_STRING_NOTES = {
     "M32": [
         "**The firmware parses this line for parameters before taking what is left as the",
         "filename** - `M23` is in Marlin's string-argument special case and `M32` is not. So a `p`",
-        "*anywhere* in the name is read as a bare `P`, which means \"run this file as a",
-        "subroutine\", and the print that follows is not the one that was asked for:",
-        "`M32 cup.gco` answered",
+        "*anywhere* in the name is read as a bare `P`, and the print that follows is not the one",
+        "that was asked for: `M32 cup.gco` answered",
         "`echo:SUBROUTINE CALL target:\"cup.gco\" parent:\"/LIVE.GCO\" pos0`, printed `cup.gco`, then",
         "printed `LIVE.GCO`. Varying only the name: `live.gco` and `set.gco` answer",
         "`echo:Now fresh file:`; `prt.gco` and `cup.gco` answer `echo:Now doing file:` - position",
         "is irrelevant, and `s` is harmless because `S` needs a value and `P` does not.",
         "`M32 !cup.gco#` answers `Now fresh file:` and opens `cup.gco`, the delimiters stripped:",
         "the documented wrapping is what suppresses this. `/sd/print` sends `M23`+`M24` and does",
-        "not use it, because a name containing `#` could not then be delimited. Note which way the",
-        "gap below cuts: the firmware reads a valueless `P` as a flag that an ordinary name",
-        "supplies, where this class reads `P !name#` as one filename - a host writes what it meant,",
-        "but a caller choosing a name is choosing a parse. `SdPrintProbe` against MarlinSim,",
-        "2026-11-10; github.com/qw3rtrun/p3d-web-ui/issues/109 is the decision this fed.",
+        "not use it, because a name containing `#` could not then be delimited. One divergence is",
+        "left and it is this class's own reading: a letter *inside* the bare string is text here",
+        "and a parameter there, so `M32 cup.gco` decodes with `p = false` while the firmware calls",
+        "a subroutine - a host writes what it meant, but a caller choosing a name is still",
+        "choosing a parse. `SdPrintProbe` against MarlinSim, 2026-11-10;",
+        "github.com/qw3rtrun/p3d-web-ui/issues/109 is the decision this fed.",
+        "",
+        "**`p = true` asks for a subroutine call, which is a different act from printing.**",
+        "Marlin remembers the file it was printing and the position it had reached - `pos0` in the",
+        "transcript above is that resume point - runs the named file, and returns to the parent",
+        "when it ends, which is why one command printed two files. `p = false`, the default, is an",
+        "ordinary print and is what a caller wants unless it means the nesting. `P` carries no",
+        "value: `M032.md` types it `P<value>` and then writes it bare in both of its own examples,",
+        "and `extract_marlin_docs.py`'s CORRECTIONS says so with the transcript",
+        "(github.com/qw3rtrun/p3d-web-ui/issues/114).",
         "",
         "**The `!<filename>#` form Marlin's own examples use is not modelled.** `!` and `#` are",
         "delimiters a host puts *around* the name rather than part of it, so this class writes and",
@@ -161,8 +172,10 @@ BARE_STRING_NOTES = {
         "answered `File opened: test.gco Size: 47`, `File selected`, `ok N8 P15 B3`. A wrapped line",
         "still decodes and still re-encodes byte for byte; the delimiters simply come back inside",
         "`filename`, and `SelectAndStart(filename = \"!a.gco#\")` is how one is written on purpose.",
-        "Note that `M32 P !name#`, the doc's own spelling, reads `P !name#` as the whole filename:",
-        "`P` is documented as carrying a value, so a bare one is not a parameter here.",
+        "`M32 P !/models/lgbust.gco#`, the doc's own spelling, reads as the flag and the filename",
+        "`!/models/lgbust.gco#`: a bare flag closes its field against a blank, so the name starts",
+        "past the `P`. `M32 Pump.gco` does not - nothing separates that `P` from the name, so the",
+        "whole of it is the name.",
     ],
 }
 
@@ -465,6 +478,14 @@ def gen_class(c, name, src):
     out.append("        override fun decodeParams(tokens: List<GToken>): %s {" % name)
     if fields:
         letter_list = ", ".join("'%s'" % f["letter"] for f in fields if f["letter"])
+        # The two letter sets `stringArg` and `beforeStringArg` take: all of this command's
+        # letters, and the subset of them that are flags. A flag is the one kind that can be a
+        # whole field on its own, so it is the one kind the scan may step over without a value -
+        # see `beforeStringArg` for why stepping over any other would eat a word of the string.
+        string_arg_args = '"%s", "%s"' % (
+            "".join(f["letter"] for f in fields if f["letter"]),
+            "".join(f["letter"] for f in fields if f["letter"] and f["kind"] == "flag"),
+        )
         # Nothing is materialised here any more: the interface takes a List precisely because
         # every parameter below is its own scan of it.
         #
@@ -474,11 +495,11 @@ def gen_class(c, name, src):
         # - has no such region, and one with no string reads the lettered ones from the whole.
         lettered = "tokens"
         if bare_string(fields) and letter_list:
-            out.append("            val params = tokens.beforeStringArg(%s)" % letter_list)
+            out.append("            val params = tokens.beforeStringArg(%s)" % string_arg_args)
             lettered = "params"
         out.append("            return %s(" % name)
         for f in fields:
-            arg = letter_list if f["kind"] == "bare" else f["letter"]
+            arg = string_arg_args if f["kind"] == "bare" else f["letter"]
             call = KINDS[f["kind"]][3](arg)
             if f["kind"] != "bare":
                 call = call.replace("params.", lettered + ".", 1)

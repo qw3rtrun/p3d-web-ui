@@ -1,6 +1,6 @@
 ; Marlin reply corpus - every line below is a received line, exactly as it arrived.
 ; Captured by backend/terminal/src/test/java/.../ReplyCorpusProbe.java
-; 2026-11-09T08:35:06.886338100Z  against localhost:8099
+; 2026-11-10T20:10:56.985883900Z  against localhost:8099
 ;
 ; Sent, in order:
 ;   M155 S0   (stop any temperature auto-report still running)
@@ -41,12 +41,24 @@
 ;   N7 M20*22   (list the card, which now holds it)
 ;   N8 M29*16   (a stray close, with no file open)
 ;   N9 M30 test.gco*106   (delete it, so this session can be run again)
+;   N10 M28 cup.gco*43   (write the file a p-bearing name will call)
+;   N11 M118 P0 RAN-cup*109   (its one line, so the wire says whether it ran)
+;   N12 M29*43   (close it)
+;   N13 M28 live.gco*88   (write the file that will be its parent)
+;   N14 M118 P0 RAN-live*24   (its one line)
+;   N15 M29*44   (close it)
+;   N16 M32 cup.gco*38   (the p-bearing name through M32, with nothing open)
+;   N17 M23 live.gco*87   (open the parent and leave it unstarted)
+;   N18 M32 cup.gco*40   (the same M32 again, now that there is a parent)
+;   N19 M30 cup.gco*43   (delete the called file)
+;   N20 M30 live.gco*81   (delete the parent, so this session can be run again)
 ;   M998   (unknown command)
 ;   G998.5   (unknown command with a subcode)
 ;   M104 T5 S100   (a tool this machine does not have)
+;   G92 E0   (put the extruder counter back where a fresh machine has it)
 ;   G1 E10 F100   (a cold extrude, refused)
 ;
-; 156 received lines.
+; 200 received lines.
 ok P15 B3
 echo:Unknown command: "M154 S0"
 ok P15 B3
@@ -91,14 +103,14 @@ Cap:MEATPACK:0
 Cap:CONFIG_EXPORT:0
 ok P15 B3
 ok T:25.00 /0.00 B:25.00 /0.00 @:0 B@:0
-X:10.00 Y:10.00 Z:5.00 E:20.00 Count X:800 Y:800 Z:2000
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
 ok P15 B3
-X:10.00 Y:10.00 Z:5.00 E:20.00 Count X:800 Y:800 Z:2000
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
 
 Logical: X: 10.000 Y: 10.000 Z: 5.000
 Raw:     X: 10.000 Y: 10.000 Z: 5.000
-Stepper: X:800 Y:800 Z:2000 E:10000
-FromStp: X: 10.000 Y: 10.000 Z: 5.000 E: 20.000
+Stepper: X:800 Y:800 Z:2000 E:5000
+FromStp: X: 10.000 Y: 10.000 Z: 5.000 E: 10.000
 Diff:    X: 0.000 Y: 0.000 Z: 0.000 E: 0.000
 ok P15 B3
 Reporting endstop status
@@ -159,20 +171,20 @@ ok P15 B3
 echo:busy: processing
 echo:busy: processing
 echo:busy: processing
-X:0.00 Y:0.00 Z:5.00 E:20.00 Count X:0 Y:0 Z:2000
+X:0.00 Y:0.00 Z:5.00 E:10.00 Count X:0 Y:0 Z:2000
 ok P15 B3
 ok P14 B3
 ok P15 B3
-X:10.00 Y:10.00 Z:5.00 E:20.00 Count X:800 Y:800 Z:2000
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
 ok P15 B3
 ok P15 B3
 ok T:25.00 /0.00 B:25.00 /0.00 @:0 B@:0
-X:10.00 Y:10.00 Z:5.00 E:20.00 Count X:800 Y:800 Z:2000
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
 ok N2 P15 B3
 Error:checksum mismatch, Last Line: 2
 Resend: 3
 ok
-X:10.00 Y:10.00 Z:5.00 E:20.00 Count X:800 Y:800 Z:2000
+X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000
 ok N3 P15 B3
 Error:Line Number is not Last Line Number+1, Last Line: 3
 Resend: 4
@@ -195,11 +207,55 @@ ok N7 P15 B3
 ok N8 P15 B3
 File deleted:test.gco
 ok N9 P15 B3
+echo:Now fresh file: cup.gco
+Writing to file: cup.gco
+//action:notification cup.gco
+ok N10 P15 B3
+ok N11 P15 B3
+Done saving file.
+ok N12 P15 B3
+echo:Now fresh file: live.gco
+Writing to file: live.gco
+//action:notification live.gco
+ok N13 P15 B3
+ok N14 P15 B3
+Done saving file.
+ok N15 P15 B3
+echo:Now doing file: cup.gco
+File opened: cup.gco Size: 17
+File selected
+//action:notification cup.gco
+ok N16 P15 B3
+RAN-cup
+Done printing file
+echo:Now fresh file: live.gco
+File opened: live.gco Size: 18
+File selected
+//action:notification live.gco
+ok N17 P15 B3
+echo:SUBROUTINE CALL target:"cup.gco" parent:"/LIVE.GCO" pos0
+File opened: cup.gco Size: 17
+File selected
+//action:notification cup.gco
+ok N18 P15 B3
+echo:END SUBROUTINE
+File opened: LIVE.GCO Size: 18
+File selected
+//action:notification LIVE.GCO
+RAN-cup
+RAN-live
+Done printing file
+File deleted:cup.gco
+ok N19 P15 B3
+File deleted:live.gco
+ok N20 P15 B3
 echo:Unknown command: "M998"
 ok P15 B3
 echo:Unknown command: "G998.5"
 ok P15 B3
 echo:M104 Invalid extruder 5
+ok P15 B3
+X:10.00 Y:10.00 Z:5.00 E:0.00 Count X:800 Y:800 Z:2000
 ok P15 B3
 echo: cold extrusion prevented
 ok P15 B3

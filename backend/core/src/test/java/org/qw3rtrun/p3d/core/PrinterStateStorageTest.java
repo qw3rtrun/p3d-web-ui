@@ -108,9 +108,10 @@ class PrinterStateStorageTest {
         assertEquals(List.of("M30 BENCHY.GCO"), wire(new DeleteSDFile("BENCHY.GCO")));
     }
 
-    // two commands, both must arrive: M32 would do it in one but :gcode's generated SelectAndStart
-    // carries no filename (#37), so select and start are sent as a pair - exactly the shape that
-    // half-works if one arm is missing.
+    // two commands, both must arrive: select and start are sent as a pair - exactly the shape that
+    // half-works if one arm is missing, and #109 accepts that cost, because one M32 (expressible
+    // since #37) would instead read a `p` anywhere in the filename as a parameter and print a
+    // second file afterwards. The exact-list assertion is what pins the shape.
     @Test
     void printingAFileSelectsItAndThenStarts() {
         assertEquals(List.of("M23 BENCHY.GCO", "M24"),

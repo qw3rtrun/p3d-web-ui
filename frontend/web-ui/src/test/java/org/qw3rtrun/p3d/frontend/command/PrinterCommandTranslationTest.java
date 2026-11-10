@@ -281,8 +281,9 @@ class PrinterCommandTranslationTest {
         assertEquals("M30 BENCHY.GCO", one(new DeleteFile("BENCHY.GCO")));
     }
 
-    // A gap, not a preference: M32 would do it in one, but :gcode's SelectAndStart is generated
-    // from a documented signature that omits the filename. Sent as a unit by PrinterControl.send.
+    // Sent as a unit by PrinterControl.send. One M32 is expressible (#37) and is not what a print
+    // takes: M32 parses its line for parameters, so a `p` in the filename means "call as a
+    // subroutine" and a second file prints after this one. #109, and PrintFile carries the capture.
     @Test
     void printingAFileIsSelectThenStart() {
         assertEquals(List.of("M23 BENCHY.GCO", "M24"), wire(new PrintFile("BENCHY.GCO")));

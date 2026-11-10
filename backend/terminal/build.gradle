@@ -72,6 +72,25 @@ tasks.register('probeResendOnReconnect', JavaExec) {
     ]
 }
 
+/**
+ * Start a print as M23+M24 and as one M32, and vary the filename under M32. Issue #109.
+ *
+ * Hand-run only, like the probes around it: it writes files to the card, prints them and deletes
+ * them again. -PprobeOrder=pairfirst|m32first|names picks the run; `names` is the one that found
+ * why a print is still two commands.
+ */
+tasks.register('probeSdPrint', JavaExec) {
+    group = 'verification'
+    description = 'Compare starting an SD print as M23+M24 against one M32, and measure what M32 does with the filename.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.SdPrintProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+            (findProperty('probeOrder') ?: 'pairfirst').toString(),
+    ]
+}
+
 tasks.register('probeSdUpload', JavaExec) {
     group = 'verification'
     description = 'Upload to the SD card through the real transport with a competing source, and measure what got in.'

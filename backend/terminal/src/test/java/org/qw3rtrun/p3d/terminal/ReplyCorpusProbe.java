@@ -364,7 +364,7 @@ public final class ReplyCorpusProbe {
                 framed(13, new StartSDWrite(PARENT_FILE))).writing(PARENT_FILE));
         s.add(new Step("its one line", framed(14, new SerialPrint(0, "RAN-live"))));
         s.add(new Step("close it", framed(15, new StopSDWrite())));
-        // `p` stays false on purpose: what this measures is the firmware reading the `p` out of
+        // `subroutineCall` stays false on purpose: what this measures is the firmware reading
         // the *name*, so the line on the wire has to be the bare `M32 cup.gco` and not `M32 P ...`.
         // Nothing open to return to, so the firmware says only `Now doing file:`.
         s.add(new Step("the p-bearing name through M32, with nothing open",

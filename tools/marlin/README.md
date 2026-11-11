@@ -61,12 +61,21 @@ generates and which says so in its own header. The table is copied into the JSON
 
 The bar for an entry is a **wire transcript**, not a reading, and the table is meant to stay small:
 each entry has to be re-checked against every new Marlin release. One command has one today — `M32`,
-on two counts. Its page documents `M32 [P<value>] [S<filepos>]` and not the filename the firmware
-prints from, so the one command that selects *and* starts a card print could not name a file
-([#37](https://github.com/qw3rtrun/p3d-web-ui/issues/37)); and it types `P` as carrying a value
-while writing it bare in both of its own examples, where the firmware reads it as a flag — `M32
-cup.gco` answered `echo:SUBROUTINE CALL target:"cup.gco" parent:"/LIVE.GCO" pos0` and printed two
-files ([#114](https://github.com/qw3rtrun/p3d-web-ui/issues/114)).
+on three counts, all three off one transcript. Its page documents `M32 [P<value>] [S<filepos>]` and
+not the filename the firmware prints from, so the one command that selects *and* starts a card print
+could not name a file ([#37](https://github.com/qw3rtrun/p3d-web-ui/issues/37)); it types `P` as
+carrying a value while writing it bare in both of its own examples, where the firmware reads it as a
+flag — `M32 cup.gco` answered `echo:SUBROUTINE CALL target:"cup.gco" parent:"/LIVE.GCO" pos0` and
+printed two files ([#114](https://github.com/qw3rtrun/p3d-web-ui/issues/114)); and it gives `P` no
+value name at all, so the property fell back to the letter and read `p`
+([#117](https://github.com/qw3rtrun/p3d-web-ui/issues/117)).
+
+`name` is the only correction here that is **cosmetic rather than semantic**, and the line it is
+allowed up to is the one the rest of the table keeps: it fills a gap the page left, it does not
+overrule something the page said, and the word it supplies — `subroutineCall`, from the firmware's
+own `SUBROUTINE CALL` — is in the transcript. A correction that renamed a parameter the docs *had*
+named would be churn that upstream re-breaks on its next edit; this one cannot be re-broken, because
+upstream naming `P` would simply replace the fallback the same way.
 
 ## What is taken, and what is not
 
@@ -105,7 +114,8 @@ that the extracted letters match what Marlin's own authors write.
   can only pick one of them and says so — build with the variant you mean.
 - **Property names come from the doc's value name when it is usable and unique, else the letter.**
   `M105 T<index>` gives `index`; `M204`'s four parameters are all named `accel` upstream, so they
-  fall back to `p`, `r`, `t`, `s`.
+  fall back to `p`, `r`, `t`, `s`. One name comes from `CORRECTIONS` instead of from the page —
+  `M32`'s `P`, which the page leaves unnamed; see *Corrections* for why that is allowed.
 - **Four irregular codes are skipped**: `M43 T`, `T?`, `Tc`, `Tx`. None is a letter plus a number,
   so no builder in this project can express one. The extractor prints every skip.
 

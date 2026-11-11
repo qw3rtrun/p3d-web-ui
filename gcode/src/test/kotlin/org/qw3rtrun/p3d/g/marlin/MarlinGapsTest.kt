@@ -110,7 +110,7 @@ class MarlinGapsTest {
         fun `a p inside the filename is text here and the flag there`() {
             val started = decode("M32 cup.gco") as SelectAndStart
 
-            assertEquals(false, started.p)
+            assertEquals(false, started.subroutineCall)
             assertEquals("cup.gco", started.filename)
 
             // Those same bytes answered `SUBROUTINE CALL`. The name is read right and the

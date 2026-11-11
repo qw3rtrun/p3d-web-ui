@@ -8,12 +8,15 @@ import java.util.UUID;
  * dropped, the file could not be read, or the machine was never reachable. {@code jobs} turns
  * this into a {@code FAILED} job with the reason on it.
  *
- * <p>{@code lines} is what C5 builds recovery on, recorded now because it cannot be recovered
- * later: it is an upper bound on what the printer executed, not the exact point - the honest
- * resume point is the last <em>acknowledged</em> line, which C5 reconciles against this.
+ * <p>The reading rides on the event rather than being published separately just before it (#102) -
+ * see {@link JobFeedCompleted} for why that order is load-bearing and what it used to cost.
  *
- * @param lines how many blocks had been sent when it stopped
+ * @param progress how far the feed got when it stopped. {@code progress.blocksSent()} is what C5
+ *                 builds recovery on, recorded now because it cannot be recovered later: it is an
+ *                 upper bound on what the printer executed, not the exact point - the honest
+ *                 resume point is the last <em>acknowledged</em> line, which C5 reconciles against
+ *                 this. Never null; {@link JobProgress#none()} where no feed ever ran.
  */
-public record JobFeedFailed(UUID jobId, UUID machineId, long lines, String reason,
+public record JobFeedFailed(UUID jobId, UUID machineId, JobProgress progress, String reason,
                             LocalDateTime timestamp) {
 }

@@ -1606,8 +1606,9 @@ the source, not suspected.
   roster's `MachineProfile` - firmware and capabilities - but a temperature from before the process
   restarted is not state, it is a stale number that would read as current. A machine starts with no
   reading and says so until it reports one.
-- **A feed outcome is at-most-once, and is now heard off the thread that reported it.**
-  `JobFeedCompleted` and `JobFeedFailed` are published from a reactor-netty event loop with no
+- **A feed outcome is at-most-once, is heard off the thread that reported it, and carries the
+  final `JobProgress` rather than a line count.** `JobFeedCompleted` and `JobFeedFailed` are
+  published from a reactor-netty event loop with no
   transaction, so they cannot go through the event registry - see above - and they used to be heard
   by a plain `@EventListener` + `@Transactional` *on that loop*, which ran a `findById`, a `save`
   and a commit there on every print that finished or failed. `FeedOutcomes` (issue #100) is a bean
@@ -1619,15 +1620,59 @@ the source, not suspected.
   `[boundedElastic-6]` after. At-most-once is unchanged, with the window widened by the length of
   the hop: if the process dies between the last block and the listener, the job is left `RUNNING`
   with nothing feeding it, and C5 has to reconcile that at startup as it already does for a job
-  whose machine went away mid-print.
-- **`JobServiceImpl.onProgress` still opens a transaction on a reactor-netty thread, and that is
-  deliberate until somebody designs the ordering.** A checkpoint usually arrives from `JobFeeder`'s
-  own timer, but the exact reading taken when a feed ends is published *inline* from wherever the
-  feed ended - and it has to be written before the event that moves the job (#62), which is what
-  running inline buys. A scheduler hop would break that order, so closing this needs a design
-  rather than a one-liner. It also means that reading shares the transition's persistence context
-  rather than racing it, which is why excluding the checkpoint columns from the version costs
-  nothing on the path that matters.
+  whose machine went away mid-print. The `long lines` component was replaced by
+  `JobProgress progress` in #102 rather than kept beside it: the two were the same number read from
+  the same `AtomicLong`, and `progress` is what `JobService.complete`/`fail` now write in the
+  transition's own transaction. It is never null - `JobProgress.none()` where no feed ever ran.
+- ~~**`JobServiceImpl.onProgress` still opens a transaction on a reactor-netty thread.**~~
+  **Fixed** by issue #102, and the rule it establishes generalises. `JobProgressed` had three
+  publishers and the measurement - a listener standing beside `onProgress` in a booted `:app`
+  context, recording the thread and whether a transaction was already active - is what separated
+  them:
+
+  | caller | thread | ambient transaction | verdict |
+  |---|---|---|---|
+  | `JobFeeder.reportProgress()`, the `@Scheduled` timer | `scheduling-1` | none; opens one there | fine - a scheduler thread is not an event loop. **8 of 9 publications** |
+  | `stop()` reached from `onJobStopped` (pause/cancel/fail from elsewhere) | `boundedElastic-N` | **yes, the transition's own**, which `onProgress` joins | fine, and load-bearing (#62). Must stay as it is |
+  | `finished()`, and `stop()` reached from the two watchers | **`reactor-tcp-nio-N`** | **none** - `onProgress` opened one on the event loop | **the defect. 1 of 9, exactly once per feed** |
+
+  Rare - about 1 in 21,600 publications on a six-hour print at the default one-second interval -
+  but the cost of blocking JDBC on an event loop is not proportional to its frequency: on a farm
+  sharing an event-loop group, one round trip stalls every other printer's reply processing on that
+  loop.
+
+  **The rule: when an event's ordering against a transition is load-bearing, carry the value on the
+  event the transition is driven by and write both in one transaction - do not publish it
+  separately and rely on being earlier.** The end-of-feed reading now rides on
+  `JobFeedCompleted`/`JobFeedFailed` and `JobService.complete(id, reading)`/`fail(id, why, reading)`
+  writes it beside the terminal `moveTo`. The ordering stops being a timing property and becomes a
+  structural one; the two cannot be observed apart because they are one write. The alternatives
+  both lose here, and neither is a near miss:
+  - **a `boundedElastic` hop of `onProgress`** (#101's shape) defers the write *past* the state it
+    must precede. A feed is removed from `feeding` the moment it ends, so the timer never writes
+    that job again and whatever is on the row then is what it keeps for ever - which is how a live
+    twelve-block job recorded `blocksSent 4` and a three-block one recorded `0` before #62;
+  - **`@TransactionalEventListener(AFTER_COMMIT)`** (#103's shape, the bullet above) defers it
+    further still. It is correct for the *opposite* requirement - #103 needed the transition
+    durable **before** the feed started - and widens exactly the wrong gap here.
+
+  **The trade, stated rather than hidden:** a final reading is now lost **exactly when its
+  transaction is rolled back**. A `move` overtaken at flush takes the reading with it, where before
+  the two were independent transactions; a merely *refused* one still records it, because the
+  entity is managed and Hibernate's dirty check flushes the checkpoint columns even though `apply`
+  returns `Refused` without saving - which is correct, since a reading is a fact about what was
+  sent rather than part of the move. The window is the few milliseconds
+  between a feed ending and `FeedOutcomes`' hopped task running, and losing a transition there is
+  already at-most-once by design. Do not try to close it with a second transaction - that is the
+  thing #102 removed.
+
+  Pinned by **`JobFeedOutcomeTest`** in `:backend:core`: a job at `RUNNING` with a *stale*
+  checkpoint already on the row, then a `JobFeedCompleted`/`JobFeedFailed` carrying the exact one,
+  read back from `PROPAGATION_REQUIRES_NEW` inside an `AFTER_COMMIT` listener on the terminal
+  `JobStateChanged`. Seen to fail under the mutation that writes the transition first and publishes
+  the reading after it - `expected: <12> but was: <4>`, every run, no race - which is what makes it
+  evidence. `PrintJobIntegrationTest.theFirstAnswerThatSaysAJobIsOverAlreadySaysWhereItGotTo` is
+  the same claim over HTTP.
 - **A job is failed when the transport abandons blocks, and the count it is failed on is a lower
   bound.** `BlocksAbandoned` says how many framed blocks the send window was still holding when an
   unanswerable `Resend:` made it renumber the session; `JobFeeder.watchForAbandonedBlocks` turns the
@@ -1689,11 +1734,12 @@ the source, not suspected.
   takes one exact reading when it stops and the checkpoint is monotone rather than state-gated.
   **A "latest wins" checkpoint is a different thing from a "highest wins" one, and only the second
   is safe to resume from.**
-- **Every way a feed ends writes down an exact reading, through one method** - `JobFeeder.checkpoint`,
-  called by the timer, by `stop` and by `finished`. That is a contract callers may rely on: **a job
+- **Every way a feed ends takes an exact reading, through one method** - `JobFeeder.reading`,
+  called by the timer, by `stop` and by `finished`; who *announces* it differs by caller, which is
+  #102 above. That is a contract callers may rely on: **a job
   in a terminal state records the blocks it actually sent, not a timer reading**, and on a
-  `COMPLETED` job that number is the file's block count exactly - the same number
-  `JobFeedCompleted.lines()` carries, because both read the counter the source increments.
+  `COMPLETED` job that number is the file's block count exactly - it is literally the number
+  `JobFeedCompleted.progress().blocksSent()` carries, since that reading is what gets written.
   It took issue #62 to get there, and the shape of the mistake is the thing to remember: the exact
   reading **existed and was correct** and simply was not on the path a job takes when it ends
   *normally*, because `finished` removed the feed before `stop` could have published one. Pause had
@@ -1702,10 +1748,15 @@ the source, not suspected.
   136/136` after. **Nothing read the number, which is why it survived** - a resume reads it and a
   resume only follows a pause - so a field with one reader on one path is a field that is wrong on
   every other path and nobody notices.
-- **The exact reading goes *before* the event that moves the job, on every path.** `JobFeedCompleted`
-  and `JobFeedFailed` are what `jobs` turns into a terminal state, so a checkpoint published after
-  one lands on a row an operator has already been shown as finished. `watchForAbandonedBlocks`
-  stated this for `stop`-before-`fail`; it is the same argument and it now holds in `finished` too.
+- **The exact reading is not published *before* the event that moves the job - it is published
+  *on* it** (#102). `JobFeedCompleted` and `JobFeedFailed` are what `jobs` turns into a terminal
+  state, so a checkpoint published after one lands on a row an operator has already been shown as
+  finished, and one published just before it buys that order with a JDBC transaction on the netty
+  thread the feed ended on. Carrying it means `jobs` writes both in one transaction. The two
+  remaining publishers of `JobProgressed` are the `@Scheduled` timer and `JobFeeder.onJobStopped`,
+  and neither can be on an event loop: `JobStateChanged` is published only from `JobServiceImpl`
+  (inside its `TransactionTemplate`, or from a startup/`@ApplicationModuleListener` path), and every
+  caller of a `JobService` write verb is already off the loop.
 - **`inFlight` on a `COMPLETED` job is routinely non-zero, and that is the field working.** A feed
   ends when the *file* runs out, not when the firmware has caught up, so the last exact reading
   genuinely records a gap - live runs show `blocksSent 12, inFlight 2`. `blocksSent` is blocks this

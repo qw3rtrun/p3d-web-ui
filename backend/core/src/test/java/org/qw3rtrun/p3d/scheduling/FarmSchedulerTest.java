@@ -154,12 +154,12 @@ class FarmSchedulerTest {
             }
 
             @Override
-            public JobOutcome complete(UUID jobId) {
+            public JobOutcome complete(UUID jobId, JobProgress finalReading) {
                 throw new UnsupportedOperationException();
             }
 
             @Override
-            public JobOutcome fail(UUID jobId, String reason) {
+            public JobOutcome fail(UUID jobId, String reason, JobProgress finalReading) {
                 throw new UnsupportedOperationException();
             }
 

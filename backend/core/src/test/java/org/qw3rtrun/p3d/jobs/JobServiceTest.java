@@ -558,7 +558,7 @@ class JobServiceTest {
         announcements.fromAThreadThatCannotBlock.clear();
 
         Schedulers.parallel().schedule(() -> publisher.publishEvent(
-                new JobFeedCompleted(job.id(), machine, 96_152, LocalDateTime.now())));
+                new JobFeedCompleted(job.id(), machine, reading(96_152), LocalDateTime.now())));
 
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertEquals(JobState.COMPLETED,
                 jobs.fetch(job.id()).orElseThrow().state()));
@@ -576,7 +576,7 @@ class JobServiceTest {
         announcements.fromAThreadThatCannotBlock.clear();
 
         Schedulers.parallel().schedule(() -> publisher.publishEvent(new JobFeedFailed(job.id(),
-                machine, 1_204, "the connection went away", LocalDateTime.now())));
+                machine, reading(1_204), "the connection went away", LocalDateTime.now())));
 
         await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
             var after = jobs.fetch(job.id()).orElseThrow();
@@ -585,6 +585,12 @@ class JobServiceTest {
         });
         assertEquals(List.of(), mine(announcements.fromAThreadThatCannotBlock, job),
                 "the transaction that failed the job must not run on the thread that reported it");
+    }
+
+    /** The exact end-of-feed reading a {@code JobFeedCompleted}/{@code JobFeedFailed} carries (#102). */
+    private static JobProgress reading(long blocksSent) {
+        return new JobProgress(blocksSent, 0, blocksSent * 11, blocksSent * 11, null,
+                LocalDateTime.now().minusMinutes(5), LocalDateTime.now());
     }
 
     private static List<JobStateChanged> mine(List<JobStateChanged> all, Job job) {

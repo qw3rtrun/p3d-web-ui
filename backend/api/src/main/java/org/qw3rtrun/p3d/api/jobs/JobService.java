@@ -12,7 +12,8 @@ import java.util.UUID;
  *
  * <p>The verbs are split by who calls them, since each has different authorisation: {@link #queue}
  * and {@link #cancel} are a person; {@link #assign} is a person or D1's scheduler; {@link #start},
- * {@link #complete} and {@link #fail} belong to whatever is actually feeding the machine (C3).
+ * {@link #complete(UUID, JobProgress)} and {@link #fail(UUID, String, JobProgress)} belong to
+ * whatever is actually feeding the machine (C3), and carry the exact reading that feed ended on.
  *
  * <p>Blocking, like the rest of the persistence side; the web layer schedules it off the event loop.
  */
@@ -49,11 +50,27 @@ public interface JobService {
 
     JobOutcome resume(UUID jobId);
 
-    /** It printed to the end. */
-    JobOutcome complete(UUID jobId);
+    /**
+     * It printed to the end, and this is exactly where it got to - the reading
+     * {@link JobFeedCompleted} carried. Written in the same transaction as the transition (#62,
+     * #102), so a job is never visible as over while its checkpoint still says something else: a
+     * feed is removed the moment it ends, so nothing checkpoints that job again and this number is
+     * what it keeps.
+     */
+    JobOutcome complete(UUID jobId, JobProgress finalReading);
 
-    /** Something broke, and the reason is kept on the job for whoever asks next. */
-    JobOutcome fail(UUID jobId, String reason);
+    /** Something broke, and the reason is kept on the job for whoever asks next. The reading is {@link #complete(UUID, JobProgress)}'s, for the same reason. */
+    JobOutcome fail(UUID jobId, String reason, JobProgress finalReading);
+
+    /** For a caller with no reading of its own to record - a state-machine test, or a verb reached from somewhere that never fed anything. */
+    default JobOutcome complete(UUID jobId) {
+        return complete(jobId, JobProgress.none());
+    }
+
+    /** The same, for {@link #fail(UUID, String, JobProgress)}. */
+    default JobOutcome fail(UUID jobId, String reason) {
+        return fail(jobId, reason, JobProgress.none());
+    }
 
     /** An operator stopped it. Refused only when the job has already ended. */
     JobOutcome cancel(UUID jobId, String reason);

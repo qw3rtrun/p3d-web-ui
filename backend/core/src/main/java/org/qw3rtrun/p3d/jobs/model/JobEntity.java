@@ -248,8 +248,17 @@ public class JobEntity {
      * 50.3952 to 46.4220). Comparing the count instead keeps what the state check was for - a stale
      * reading is behind, so it loses - while letting the accurate final one through: plan item C4's
      * "progress never moves backwards" as an invariant of the row.
+     *
+     * <p>A reading with no {@code at()} came from a feed that never ran - {@link JobProgress#none()},
+     * which {@code JobService}'s one-argument {@code complete}/{@code fail} pass for a caller with
+     * nothing of its own to record (#102). It is not a reading and must not land: {@code progressAt
+     * == null} is already how {@link #describe} says "never run", and zeroing a real checkpoint on
+     * the way to a terminal state would throw away the one number a finished job keeps.
      */
     public void progressed(JobProgress progress) {
+        if (progress.at() == null) {
+            return;
+        }
         if (blocksSent != null && progress.blocksSent() < blocksSent) {
             return;
         }

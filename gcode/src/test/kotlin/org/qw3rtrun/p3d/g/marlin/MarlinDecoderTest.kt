@@ -158,7 +158,7 @@ class MarlinDecoderTest {
 
             // And a letter *inside* the name is text, not a second reading of `P`.
             assertEquals(
-                SelectAndStart(p = true, filename = "/models/P1.gco"),
+                SelectAndStart(subroutineCall = true, filename = "/models/P1.gco"),
                 decode("M32 P1 /models/P1.gco"),
             )
         }
@@ -169,17 +169,17 @@ class MarlinDecoderTest {
             // form `M032.md` itself writes is the bare one. A blank closes the field, so the
             // filename starts past it - delimiters carried, as this class carries them anywhere.
             assertEquals(
-                SelectAndStart(p = true, filename = "!/models/lgbust.gco#"),
+                SelectAndStart(subroutineCall = true, filename = "!/models/lgbust.gco#"),
                 decode("M32 P !/models/lgbust.gco#"),
             )
 
             // The end of the tokens closes it too, so `P` alone is a flag and not a one-letter
             // filename. There was no way to express this before `P` was typed as a flag.
-            assertEquals(SelectAndStart(p = true), decode("M32 P"))
+            assertEquals(SelectAndStart(subroutineCall = true), decode("M32 P"))
 
             // A valued letter after it is read as usual, and the name still starts past both.
             assertEquals(
-                SelectAndStart(p = true, filepos = 5022, filename = "/boats/sailboat.gco"),
+                SelectAndStart(subroutineCall = true, filepos = 5022, filename = "/boats/sailboat.gco"),
                 decode("M32 P S5022 /boats/sailboat.gco"),
             )
 
@@ -205,17 +205,17 @@ class MarlinDecoderTest {
 
         @Test
         fun `the forms the flag makes expressible go back out as they came in`() {
-            assertEquals("M32 P", GEncoder.encode(SelectAndStart(p = true).encode()))
+            assertEquals("M32 P", GEncoder.encode(SelectAndStart(subroutineCall = true).encode()))
             assertEquals(
                 "M32 P !/models/lgbust.gco#",
                 GEncoder.encode(
-                    SelectAndStart(p = true, filename = "!/models/lgbust.gco#").encode(),
+                    SelectAndStart(subroutineCall = true, filename = "!/models/lgbust.gco#").encode(),
                 ),
             )
             assertEquals(
                 "M32 P S5022 /boats/sailboat.gco",
                 GEncoder.encode(
-                    SelectAndStart(p = true, filepos = 5022, filename = "/boats/sailboat.gco")
+                    SelectAndStart(subroutineCall = true, filepos = 5022, filename = "/boats/sailboat.gco")
                         .encode(),
                 ),
             )
@@ -224,10 +224,10 @@ class MarlinDecoderTest {
             // the encoder writes between the two is exactly what the decoder reads as the close.
             assertEquals(
                 "M32 P Pump.gco",
-                GEncoder.encode(SelectAndStart(p = true, filename = "Pump.gco").encode()),
+                GEncoder.encode(SelectAndStart(subroutineCall = true, filename = "Pump.gco").encode()),
             )
             assertEquals(
-                SelectAndStart(p = true, filename = "Pump.gco"),
+                SelectAndStart(subroutineCall = true, filename = "Pump.gco"),
                 decode("M32 P Pump.gco"),
             )
         }

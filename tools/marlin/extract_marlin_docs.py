@@ -73,8 +73,16 @@ CORRECTIONS = {
                "'echo:Now fresh file:' and printed one - the 'p' in the name is the only "
                "difference, and 'pos0' is the firmware recording a resume point, which is a "
                "behaviour P selected rather than a value P lost (issue #109's SdPrintProbe, "
-               "2026-11-10; issue #114).",
-        "fields": {"bareString": True, "params": {"P": {"kind": "flag"}}},
+               "2026-11-10; issue #114). Naming it is part of the same correction: the page gives "
+               "P no value name at all, so the generator fell back to the letter and the property "
+               "read 'p', which is correctly typed and says nothing at a call site. The name taken "
+               "is the firmware's own word for what the flag does, off the same transcript - "
+               "'echo:SUBROUTINE CALL target:...' - so this fills a gap the page left rather than "
+               "overriding something it said (issue #117).",
+        "fields": {
+            "bareString": True,
+            "params": {"P": {"kind": "flag", "name": "subroutine call"}},
+        },
     },
 }
 

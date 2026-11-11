@@ -38,19 +38,19 @@ import org.qw3rtrun.p3d.g.protocol.GRqDecoder
  * the documented wrapping is what suppresses this. `/sd/print` sends `M23`+`M24` and does
  * not use it, because a name containing `#` could not then be delimited. One divergence is
  * left and it is this class's own reading: a letter *inside* the bare string is text here
- * and a parameter there, so `M32 cup.gco` decodes with `p = false` while the firmware calls
- * a subroutine - a host writes what it meant, but a caller choosing a name is still
+ * and a parameter there, so `M32 cup.gco` decodes with `subroutineCall = false` while the
+ * firmware calls one - a host writes what it meant, but a caller choosing a name is still
  * choosing a parse. `SdPrintProbe` against MarlinSim, 2026-11-10;
  * github.com/qw3rtrun/p3d-web-ui/issues/109 is the decision this fed.
  *
- * **`p = true` asks for a subroutine call, which is a different act from printing.**
- * Marlin remembers the file it was printing and the position it had reached - `pos0` in the
- * transcript above is that resume point - runs the named file, and returns to the parent
- * when it ends, which is why one command printed two files. `p = false`, the default, is an
- * ordinary print and is what a caller wants unless it means the nesting. `P` carries no
- * value: `M032.md` types it `P<value>` and then writes it bare in both of its own examples,
- * and `extract_marlin_docs.py`'s CORRECTIONS says so with the transcript
- * (github.com/qw3rtrun/p3d-web-ui/issues/114).
+ * **A subroutine call is not a print by another name.** Marlin remembers the file it was
+ * printing and the position it had reached - `pos0` in the transcript above is that resume
+ * point - runs the named file, and returns to the parent when it ends, which is why one
+ * command printed two files. The default is `false`: an ordinary print, and what a caller
+ * wants unless it means the nesting. `P` carries no value - `M032.md` types it `P<value>`
+ * and then writes it bare in both of its own examples - and the page never names it at all,
+ * so both the kind and the property name come from `extract_marlin_docs.py`'s CORRECTIONS,
+ * with the transcript (github.com/qw3rtrun/p3d-web-ui/issues/114, /117).
  *
  * **The `!<filename>#` form Marlin's own examples use is not modelled.** `!` and `#` are
  * delimiters a host puts *around* the name rather than part of it, so this class writes and
@@ -67,7 +67,7 @@ import org.qw3rtrun.p3d.g.protocol.GRqDecoder
  * is this command's [GRqDecoder]:
  *
  * ```
- * GEncoder.encode(SelectAndStart(p = true).encode())   // M32 P
+ * GEncoder.encode(SelectAndStart(subroutineCall = true).encode())   // M32 P
  * SelectAndStart.decode(GTokenizer.parse("M32 P").toList())   // SelectAndStart(M32 P)
  * ```
  *
@@ -76,20 +76,20 @@ import org.qw3rtrun.p3d.g.protocol.GRqDecoder
  * `0856d12b0253378bc8d17a246fb09fc8c5437997`. Do not edit; regenerate.
  * How and why: `tools/marlin/README.md`, github.com/qw3rtrun/p3d-web-ui/issues/13.
  *
- * @property p `P`
+ * @property subroutineCall `P` - subroutine call
  * @property filepos `S` - filepos
  * @property filename the rest of the line
  * @see <a href="https://marlinfw.org/docs/gcode/M32.html">MarlinFirmare M32 doc</a>
  */
 data class SelectAndStart(
-    val p: Boolean = false,
+    val subroutineCall: Boolean = false,
     val filepos: Int? = null,
     val filename: String? = null,
 ) : GRq<SelectAndStart> {
 
     override fun encode(): GCommand {
         val words = ArrayList<GWord>(3)
-        if (p) words.add(flag('P'))
+        if (subroutineCall) words.add(flag('P'))
         if (filepos != null) words.add(word('S', filepos))
         if (filename != null) words.add(bareString(filename))
         return M(32, *words.toTypedArray())
@@ -112,7 +112,7 @@ data class SelectAndStart(
         override fun decodeParams(tokens: List<GToken>): SelectAndStart {
             val params = tokens.beforeStringArg("PS", "P")
             return SelectAndStart(
-                p = params.hasWord('P'),
+                subroutineCall = params.hasWord('P'),
                 filepos = params.intOf('S'),
                 filename = tokens.stringArg("PS", "P"),
             )

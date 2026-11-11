@@ -112,6 +112,38 @@ import java.util.List;
  * <p>Both files are deleted again at the end, for the same reason {@code test.gco} is: this
  * simulator's card outlives a disconnect.
  *
+ * <h2>Deleting is a measurement here, and the failure path has to work around that</h2>
+ *
+ * <p>{@link SdPrintProbe} deletes from a {@code finally} and that is right for it: its deletions are
+ * housekeeping and nothing reads them. Here they are the opposite. Steps 9, 19 and 20 are numbered
+ * steps inside the captured session, their {@code File deleted:…} answers are in the corpus and in
+ * the census, and {@code M30} is the <em>only</em> step that measures that line. Moving them into a
+ * {@code finally} would take three lines out of the capture, so they stay exactly where they are.
+ *
+ * <p>What was missing is what happens when the run does not reach them. The driver only closed its
+ * socket, and a failure injected at step 12 - measured on 2026-11-11 - left worse behind than a
+ * file: the card was still <em>open for write</em>, so the next client to connect had every
+ * unnumbered line answered {@code Error:No Checksum with line number, Last Line: 11} and
+ * {@code Resend: 12}, and once an {@code M29} had closed it by hand the {@code M20} read
+ * {@code CUP.GCO 17}. That is <a href="https://github.com/qw3rtrun/p3d-web-ui/issues/113">issue
+ * 113</a> again, reached by a timeout rather than by an early return, with a jammed save on top.
+ * So each step now says which file it puts on the card and which it takes off again, the driver
+ * keeps the difference, and {@link #tidyUp} deletes whatever is still outstanding. The same
+ * injected failure then ended {@code File deleted:cup.gco} and an empty card. On a clean run
+ * nothing is outstanding and not a byte goes out, which is why the capture is unchanged by this.
+ *
+ * <p>Which is also the answer to the shared-deletion-helper question <a
+ * href="https://github.com/qw3rtrun/p3d-web-ui/issues/115">issue 115</a> deferred and <a
+ * href="https://github.com/qw3rtrun/p3d-web-ui/issues/117">issue 117</a> closed: <strong>there is
+ * nothing worth sharing.</strong> The two probes agree on one sentence - "delete what you wrote and
+ * do not throw doing it" - and on nothing underneath it. {@code SdPrintProbe} deletes framed and
+ * numbered off a counter it owns, from a mode that may return early, and prints the exchange into
+ * its transcript; this one deletes unnumbered because a failure leaves the counter anywhere, has to
+ * send an {@code M29} first because the likeliest place to die is inside a write, and must keep the
+ * exchange <em>out</em> of what it records. A common helper would take a sink, a numbering policy
+ * and a flag for the {@code M29} - three parameters to share six lines, and the parameters are the
+ * design. The duplicated part is the loop; the part that differs is all of the reasoning.
+ *
  * <h2>How reproducible a capture is, measured rather than hoped</h2>
  *
  * <p>Three runs back to back on 2026-11-09. The first differs from the two after it, because this
@@ -158,11 +190,27 @@ public final class ReplyCorpusProbe {
      * @param wire   the line to send
      * @param listen how long to keep reading after the answer, for a step that starts an
      *               auto-report; zero for a step whose answer ends at its {@code ok}
+     * @param puts   the file this step leaves on the card, or null - see {@link #tidyUp}
+     * @param takes  the file this step takes off the card again, or null
      */
-    private record Step(String label, String wire, long listen) {
+    private record Step(String label, String wire, long listen, String puts, String takes) {
 
         Step(String label, String wire) {
-            this(label, wire, 0);
+            this(label, wire, 0, null, null);
+        }
+
+        Step(String label, String wire, long listen) {
+            this(label, wire, listen, null, null);
+        }
+
+        /** The same step, marked as the one that puts {@code file} on the card. */
+        Step writing(String file) {
+            return new Step(label, wire, listen, file, takes);
+        }
+
+        /** The same step, marked as the one that takes {@code file} off the card again. */
+        Step deleting(String file) {
+            return new Step(label, wire, listen, puts, file);
         }
     }
 
@@ -174,6 +222,7 @@ public final class ReplyCorpusProbe {
         var header = new ArrayList<String>();
         var steps = session();
         var silent = new ArrayList<String>();
+        var outstanding = new ArrayList<String>();
 
         header.add("; Marlin reply corpus - every line below is a received line, exactly as it arrived.");
         header.add("; Captured by backend/terminal/src/test/java/.../ReplyCorpusProbe.java");
@@ -190,17 +239,27 @@ public final class ReplyCorpusProbe {
             socket.setSoTimeout(1500);
             received.addAll(drain(in, 3000));
 
-            for (var step : steps) {
-                header.add(";   " + step.wire() + "   (" + step.label() + ")");
-                socket.setSoTimeout(12000);
-                send(out, step.wire());
+            try {
+                for (var step : steps) {
+                    header.add(";   " + step.wire() + "   (" + step.label() + ")");
+                    socket.setSoTimeout(12000);
+                    // Before the write goes out, so a step that dies half way still leaves the
+                    // name behind for the tidy-up - a half-written file is on the card too.
+                    if (step.puts() != null) outstanding.add(step.puts());
+                    send(out, step.wire());
 
-                var answer = drain(in, 20000);
-                if (step.listen() > 0) answer.addAll(listen(in, socket, step.listen()));
-                if (answer.isEmpty()) silent.add(step.wire());
-                received.addAll(answer);
+                    var answer = drain(in, 20000);
+                    if (step.listen() > 0) answer.addAll(listen(in, socket, step.listen()));
+                    if (answer.isEmpty()) silent.add(step.wire());
+                    received.addAll(answer);
+                    // Only once the delete has been answered, so a refused M30 is retried rather
+                    // than forgotten.
+                    if (step.takes() != null) outstanding.remove(step.takes());
 
-                System.out.printf("  %-34s %3d lines%n", step.wire(), answer.size());
+                    System.out.printf("  %-34s %3d lines%n", step.wire(), answer.size());
+                }
+            } finally {
+                tidyUp(out, in, socket, outstanding);
             }
         }
 
@@ -282,7 +341,7 @@ public final class ReplyCorpusProbe {
         // stored line without a line number and checksum is refused, and the step above leaves the
         // counter wherever its rejection left it. See the class comment for the rest.
         s.add(new Step("reset the counter for the save", enc(new SetGetLineNumber(0))));
-        s.add(new Step("open a file for write", framed(1, new StartSDWrite(SD_FILE))));
+        s.add(new Step("open a file for write", framed(1, new StartSDWrite(SD_FILE))).writing(SD_FILE));
         s.add(new Step("a stored line", framed(2, new AutoHome())));
         s.add(new Step("a stored LCD message", framed(3, new SetLCDMessage("Created"))));
         s.add(new Step("a stored host message", framed(4, new SerialPrint(null, "Done"))));
@@ -291,18 +350,21 @@ public final class ReplyCorpusProbe {
         s.add(new Step("list the card, which now holds it", framed(7, new ListSDCard())));
         // An M29 with no file open: nothing but the acknowledgement comes back, which is the answer.
         s.add(new Step("a stray close, with no file open", framed(8, new StopSDWrite())));
-        s.add(new Step("delete it, so this session can be run again", framed(9, new DeleteSDFile(SD_FILE))));
+        s.add(new Step("delete it, so this session can be run again",
+                framed(9, new DeleteSDFile(SD_FILE))).deleting(SD_FILE));
 
         // The subroutine call - issue 111. Continues the save's counter rather than resetting it,
         // since the files below are written the same way. See the class comment for why it takes
         // two files and why the same M32 goes out twice.
-        s.add(new Step("write the file a p-bearing name will call", framed(10, new StartSDWrite(SUB_FILE))));
+        s.add(new Step("write the file a p-bearing name will call",
+                framed(10, new StartSDWrite(SUB_FILE))).writing(SUB_FILE));
         s.add(new Step("its one line, so the wire says whether it ran", framed(11, new SerialPrint(0, "RAN-cup"))));
         s.add(new Step("close it", framed(12, new StopSDWrite())));
-        s.add(new Step("write the file that will be its parent", framed(13, new StartSDWrite(PARENT_FILE))));
+        s.add(new Step("write the file that will be its parent",
+                framed(13, new StartSDWrite(PARENT_FILE))).writing(PARENT_FILE));
         s.add(new Step("its one line", framed(14, new SerialPrint(0, "RAN-live"))));
         s.add(new Step("close it", framed(15, new StopSDWrite())));
-        // `p` stays false on purpose: what this measures is the firmware reading the `p` out of
+        // `subroutineCall` stays false on purpose: what this measures is the firmware reading
         // the *name*, so the line on the wire has to be the bare `M32 cup.gco` and not `M32 P ...`.
         // Nothing open to return to, so the firmware says only `Now doing file:`.
         s.add(new Step("the p-bearing name through M32, with nothing open",
@@ -311,9 +373,10 @@ public final class ReplyCorpusProbe {
         s.add(new Step("open the parent and leave it unstarted", framed(17, new SelectSDFile(PARENT_FILE))));
         s.add(new Step("the same M32 again, now that there is a parent",
                 framed(18, new SelectAndStart(false, null, SUB_FILE)), 8000));
-        s.add(new Step("delete the called file", framed(19, new DeleteSDFile(SUB_FILE))));
+        s.add(new Step("delete the called file",
+                framed(19, new DeleteSDFile(SUB_FILE))).deleting(SUB_FILE));
         s.add(new Step("delete the parent, so this session can be run again",
-                framed(20, new DeleteSDFile(PARENT_FILE))));
+                framed(20, new DeleteSDFile(PARENT_FILE))).deleting(PARENT_FILE));
 
         // Rejections: both of the echo lines a host must not ignore.
         s.add(new Step("unknown command", "M998"));
@@ -327,6 +390,51 @@ public final class ReplyCorpusProbe {
         s.add(new Step("a cold extrude, refused", "G1 E10 F100"));
 
         return s;
+    }
+
+    /**
+     * Deletes whatever this run put on the card and has not already taken off it again, and records
+     * none of it.
+     *
+     * <p>On a run that reached its last numbered step there is nothing outstanding and nothing is
+     * sent, which is what keeps the capture the capture: the {@code M30}s that matter are numbered
+     * steps 9, 19 and 20, their {@code File deleted:…} lines are measurements, and this does not
+     * duplicate them. On a run that died at step 12 there is, and the card would otherwise hold
+     * {@code cup.gco} until somebody else's {@code M20} found it -
+     * <a href="https://github.com/qw3rtrun/p3d-web-ui/issues/113">issue 113</a> in the other probe,
+     * reached by a timeout instead of an early return.
+     *
+     * <p>Unnumbered, and opened by an unnumbered {@code M29}, both measured against MarlinSim
+     * bugfix-2.1.x on 2026-11-11. A failure lands wherever it lands, so the line counter is wherever
+     * it left it and a numbered line would have to guess; and the likeliest place to die is between
+     * an {@code M28} and its {@code M29}, where the card is a file sink. There an unnumbered
+     * {@code M30 zz.gco} was answered {@code Error:No Checksum with line number, Last Line: 2} and
+     * {@code Resend: 3}, while the unnumbered {@code M29} - the one command Marlin exempts from that
+     * check while saving - was answered {@code Done saving file.}, after which the same {@code M30}
+     * answered {@code File deleted:zz.gco} and {@code M20} listed an empty card. Both are harmless
+     * when there is nothing to do: a stray {@code M29} answers a bare {@code ok}, and an
+     * {@code M30} on a name that is gone answers {@code Deletion failed, File: zz.gco.} and
+     * {@code ok}.
+     *
+     * <p>It never throws: it runs from a {@code finally} and may not mask what sent it there.
+     */
+    private static void tidyUp(OutputStream out, BufferedReader in, Socket socket,
+                               List<String> outstanding) {
+        if (outstanding.isEmpty()) return;
+        System.out.println("  tidy-up: " + outstanding + " still on the card");
+        try {
+            socket.setSoTimeout(12000);
+            send(out, "M29");
+            drain(in, 20000);
+            for (var file : List.copyOf(outstanding)) {
+                send(out, "M30 " + file);
+                for (var reply : drain(in, 20000)) System.out.println("  tidy-up: << " + reply);
+                outstanding.remove(file);
+            }
+        } catch (Exception failed) {
+            System.out.println("  !! tidy-up stopped, " + outstanding
+                    + " may still be on the card: " + failed);
+        }
     }
 
     private static String enc(GRq<?> rq) {

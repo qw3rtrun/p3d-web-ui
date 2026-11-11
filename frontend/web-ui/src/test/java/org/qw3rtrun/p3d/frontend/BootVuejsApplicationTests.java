@@ -9,6 +9,7 @@ import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.identity.FarmUserDirectory;
 import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
+import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobService;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
@@ -236,12 +237,12 @@ class BootVuejsApplicationTests {
                 }
 
                 @Override
-                public JobOutcome complete(UUID jobId) {
+                public JobOutcome complete(UUID jobId, JobProgress finalReading) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 
                 @Override
-                public JobOutcome fail(UUID jobId, String reason) {
+                public JobOutcome fail(UUID jobId, String reason, JobProgress finalReading) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 

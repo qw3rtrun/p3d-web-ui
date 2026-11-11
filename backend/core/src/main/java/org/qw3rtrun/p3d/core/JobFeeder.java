@@ -49,22 +49,30 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code M110 N0} and drops what it held - would otherwise let the feed finish {@code COMPLETED}
  * having silently skipped real blocks (a dropped {@code G28} homes nowhere); {@link #watchForAbandonedBlocks}
  * fails it instead, because what was lost cannot be replayed from a checkpoint that only records
- * what was <em>sent</em>. Both watchers call {@link #stop} before publishing the failure, since
- * {@code stop} takes the one exact reading a resume needs and {@code jobs} turns the failure event
- * into the state change that would otherwise race it. Since #85 {@link PrinterReactor#updates()}
- * opens with a snapshot rather than a replay, so a new feed's {@link #watchTheLink} can no longer be
- * handed a previous feed's stale {@link BlocksAbandoned} as if it had just happened.
+ * what was <em>sent</em>. Both watchers take their reading from {@link #stop} and put it on the
+ * failure event, so the reading and the state change it causes are one write rather than two.
+ * Since #85 {@link PrinterReactor#updates()} opens with a snapshot rather than a replay, so a new
+ * feed's {@link #watchTheLink} can no longer be handed a previous feed's stale
+ * {@link BlocksAbandoned} as if it had just happened.
  *
- * <h3>Every way a feed ends takes one exact checkpoint, before the event that moves the job (#62)</h3>
- * {@link #checkpoint} is the only place {@code blocksSent}/{@code inFlight} are written, called by
- * the progress timer, by {@link #stop} and by {@link #finished} - and only the first of those is
- * approximate. Before this, a job's checkpoint on every terminal path was whatever the once-a-second
- * timer last held, because {@link #finished} removed the feed before {@link #stop} got a chance to
- * record one: a measured twelve-block job completed reading {@code blocksSent 4}, and a shorter one
- * read {@code 0}. A completed job's {@code blocksSent} is now the file's block count exactly, and
+ * <h3>Every way a feed ends takes one exact reading, and who announces it differs (#62, #102)</h3>
+ * {@link #reading} is the only place {@code blocksSent}/{@code inFlight} are read, by the progress
+ * timer, by {@link #stop} and by {@link #finished} - and only the timer's is approximate. Before
+ * this, a job's checkpoint on every terminal path was whatever the once-a-second timer last held,
+ * because {@link #finished} removed the feed before {@link #stop} got a chance to record one: a
+ * measured twelve-block job completed reading {@code blocksSent 4}, and a shorter one read
+ * {@code 0}. A completed job's {@code blocksSent} is now the file's block count exactly, and
  * {@code inFlight} routinely stays non-zero on a {@code COMPLETED} job (measured {@code 12, inFlight 2}) -
  * a feed ends when the file runs out, not when the firmware has caught up, and the field says so
  * rather than hiding it.
+ *
+ * <p><strong>Only two things publish a {@link JobProgressed}: the {@code @Scheduled} timer and
+ * {@link #onJobStopped}</strong>, neither of which can be on a reactor-netty thread. The end-of-feed
+ * reading goes on {@link JobFeedCompleted}/{@link JobFeedFailed} instead, so {@code jobs} writes it
+ * in the terminal transition's own transaction and the two cannot be observed apart - an ordering
+ * that used to be bought by publishing the reading inline, on the event loop the feed ended on,
+ * which is a blocking JDBC transaction there once per feed (#102; measured as
+ * {@code JobProgressed reactor-tcp-nio-6 txn=false} against the timer's {@code scheduling-1}).
  *
  * <h3>A start waits for the commit; a stop must not (#93)</h3>
  * One listener split in two, not rewritten - the three branches were already mutually exclusive on
@@ -84,8 +92,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@link JobStateChanged} with no transaction, and without it those starts would be dropped in
  * silence.
  *
- * <p>{@link #onJobStopped} stays inline for the opposite reason: {@link #stop} takes the one exact
- * checkpoint a resume reads and publishes it from inside the transition's own transaction, so
+ * <p>{@link #onJobStopped} stays inline for the opposite reason: it publishes the one exact
+ * checkpoint a resume reads from inside the transition's own transaction, so
  * {@code JobServiceImpl.onProgress} shares that persistence context rather than racing it (#62).
  * After the commit it would be a second transaction an {@code OptimisticLockingFailureException}
  * may legitimately drop, and a resume would seek to the timer's stale number instead.
@@ -121,7 +129,7 @@ public class JobFeeder {
     }
 
     private Disposable watchTheLink(JobStateChanged event, PrinterReactor reactor,
-                                    AtomicLong sent, AtomicBoolean cancelled) {
+                                    AtomicBoolean cancelled) {
         return reactor.updates()
                 .map(EventMessage::event)
                 .filter(ConnectionStateChanged.class::isInstance)
@@ -132,16 +140,16 @@ public class JobFeeder {
                     if (!feeding.containsKey(event.jobId())) {
                         return;
                     }
-                    stop(event.jobId(), JobState.FAILED);
+                    var reading = stop(event.jobId(), JobState.FAILED);
                     cancelled.set(true);
-                    fail(event, sent.get(), "the connection to the machine went away while it was"
+                    fail(event, reading, "the connection to the machine went away while it was"
                             + " printing (" + lost.to()
                             + (lost.reason() == null ? "" : ": " + lost.reason()) + ")");
                 });
     }
 
     private Disposable watchForAbandonedBlocks(JobStateChanged event, PrinterReactor reactor,
-                                               AtomicLong sent, AtomicBoolean cancelled) {
+                                               AtomicBoolean cancelled) {
         return reactor.updates()
                 .map(EventMessage::event)
                 .filter(BlocksAbandoned.class::isInstance)
@@ -151,9 +159,9 @@ public class JobFeeder {
                     if (!feeding.containsKey(event.jobId())) {
                         return;
                     }
-                    stop(event.jobId(), JobState.FAILED);
+                    var reading = stop(event.jobId(), JobState.FAILED);
                     cancelled.set(true);
-                    fail(event, sent.get(), abandoned.blocks() + " block(s) this host had already"
+                    fail(event, reading, abandoned.blocks() + " block(s) this host had already"
                             + " framed were abandoned and never reached the machine: the printer"
                             + " asked to resend line " + abandoned.lineNumber() + ", which is not a"
                             + " block the send window still held, so the session had to be"
@@ -175,12 +183,24 @@ public class JobFeeder {
         }
     }
 
+    /**
+     * The one place a {@link JobProgressed} is published from anything but the timer, and it is
+     * published <em>here</em> rather than inside {@link #stop} on purpose (#102): this runs inside
+     * the transition's own transaction, so {@code JobServiceImpl.onProgress} joins it rather than
+     * racing it, and a resume reads the exact block the feed stopped at instead of the timer's
+     * up-to-a-second-stale one (#62). The two watchers and {@link #finished} also call
+     * {@link #stop}, from a reactor-netty thread and with no transaction - they put the same
+     * reading on their outcome event instead.
+     */
     @EventListener
     public void onJobStopped(JobStateChanged event) {
         if (event.from() != JobState.RUNNING) {
             return;
         }
-        stop(event.jobId(), event.to());
+        var reading = stop(event.jobId(), event.to());
+        if (reading != null) {
+            events.publishEvent(new JobProgressed(event.jobId(), event.machineId(), reading));
+        }
         if (event.to() == JobState.CANCELLED || event.to() == JobState.FAILED) {
             coolDown(event.machineId());
         }
@@ -193,13 +213,13 @@ public class JobFeeder {
     private void start(JobStateChanged event, long skip) {
         var reactor = reactors.runtimeOf(event.machineId());
         if (reactor == null) {
-            fail(event, 0, "there is no runtime for machine " + event.machineId()
-                    + ", so nothing could be sent to it");
+            fail(event, JobProgress.none(), "there is no runtime for machine "
+                    + event.machineId() + ", so nothing could be sent to it");
             return;
         }
         var file = files.fetch(event.fileId()).orElse(null);
         if (file == null) {
-            fail(event, 0, "there is no file " + event.fileId() + " to print");
+            fail(event, JobProgress.none(), "there is no file " + event.fileId() + " to print");
             return;
         }
 
@@ -225,8 +245,8 @@ public class JobFeeder {
                 error -> finished(event, sent.get(), cancelled.get(), error),
                 () -> finished(event, sent.get(), cancelled.get(), null));
 
-        var watchingTheLink = watchTheLink(event, reactor, sent, cancelled);
-        var watchingForAbandonment = watchForAbandonedBlocks(event, reactor, sent, cancelled);
+        var watchingTheLink = watchTheLink(event, reactor, cancelled);
+        var watchingForAbandonment = watchForAbandonedBlocks(event, reactor, cancelled);
 
         feeding.put(event.jobId(), new Feed(event.jobId(), event.machineId(), stop, sent,
                 cancelled, subscription, watchingTheLink, watchingForAbandonment, progress));
@@ -278,23 +298,24 @@ public class JobFeeder {
     /** On a timer rather than per block: a page asks about once a second, so that is fast enough and nothing finer is worth an event and a write per block. */
     @Scheduled(fixedDelayString = "${p3d.jobs.progress-interval:1000}")
     public void reportProgress() {
-        feeding.values().forEach(this::checkpoint);
+        feeding.values().forEach(feed -> events.publishEvent(
+                new JobProgressed(feed.jobId(), feed.machineId(), reading(feed))));
     }
 
     /**
-     * Writes down where a feed has got to, right now - see the class javadoc's checkpoint section.
-     * {@code inFlight} is re-read from the aggregate here, not left at the timer's value, because
-     * {@link JobProgress#blocksAccepted()} is {@code blocksSent - inFlight} and a fresh count paired
-     * with a stale gap would be a third number that was never true. Both callers that end a feed
-     * remove it from {@link #feeding} before checkpointing, so a feed is checkpointed exactly once.
+     * Where a feed has got to, right now - see the class javadoc's checkpoint section. Takes the
+     * reading and publishes nothing: who announces it differs by caller, which is the whole of
+     * #102. {@code inFlight} is re-read from the aggregate here, not left at the timer's value,
+     * because {@link JobProgress#blocksAccepted()} is {@code blocksSent - inFlight} and a fresh
+     * count paired with a stale gap would be a third number that was never true. Every caller that
+     * ends a feed removes it from {@link #feeding} first, so a feed is read exactly once at the end.
      */
-    private void checkpoint(Feed feed) {
+    private JobProgress reading(Feed feed) {
         var reactor = reactors.runtimeOf(feed.machineId());
         if (reactor != null) {
             feed.progress().acknowledged(reactor.blocksInFlight());
         }
-        events.publishEvent(new JobProgressed(feed.jobId(), feed.machineId(),
-                feed.progress().snapshot()));
+        return feed.progress().snapshot();
     }
 
     /**
@@ -303,18 +324,21 @@ public class JobFeeder {
      * the queue hands its demand on instead of being torn out from under the drain loop - then takes
      * one exact reading, since the timer's own checkpoints are up to a second stale and a resumed
      * job starts from whatever was written down here.
+     *
+     * @return that exact reading, for the caller to put wherever it belongs, or null when there was
+     *         no feed to stop
      */
-    private void stop(UUID jobId, JobState to) {
+    private JobProgress stop(UUID jobId, JobState to) {
         var feed = feeding.remove(jobId);
         if (feed == null) {
-            return;
+            return null;
         }
         log.info("job {} stopped after {} blocks ({})", jobId, feed.sent().get(), to);
         feed.cancelled().set(true);
         feed.stop().tryEmitEmpty();
         feed.watchingTheLink().dispose();
         feed.watchingForAbandonment().dispose();
-        checkpoint(feed);
+        return reading(feed);
     }
 
     /**
@@ -355,37 +379,41 @@ public class JobFeeder {
     }
 
     /**
-     * What the end of a feed means, reported as the fact {@code jobs} acts on. The checkpoint goes
-     * first, exactly as in {@link #stop} and for the same reason: {@link JobFeedCompleted}/
-     * {@link JobFeedFailed} is what moves the job, and the row must already show the right
-     * checkpoint by the time an operator can see the state that says it is over.
-     * {@code JobFeederTest.aJobThatFinishesWritesDownEveryBlockItSent} asserts {@code blocksSent}
-     * against {@link JobFeedCompleted#lines()} rather than a plausible figure, since both are read
-     * from the same counter.
+     * What the end of a feed means, reported as the fact {@code jobs} acts on. This is the one
+     * caller that runs on a reactor-netty thread - the file running out arrives through
+     * {@code PublisherQueue} on the connection's own loop - so the exact reading rides on
+     * {@link JobFeedCompleted}/{@link JobFeedFailed} rather than being published ahead of it as a
+     * {@link JobProgressed} (#102): {@code jobs} writes it in the same transaction as the terminal
+     * transition, which is a structural guarantee of the ordering #62 bought with a JDBC
+     * transaction on an event loop. No timer ever reads this feed again - it has just been removed
+     * from {@link #feeding} - so that number is what the job keeps.
      */
     private void finished(JobStateChanged event, long sent, boolean cancelled, Throwable error) {
         var feed = feeding.remove(event.jobId());
+        var reading = JobProgress.none();
         if (feed != null) {
             feed.watchingTheLink().dispose();
             feed.watchingForAbandonment().dispose();
-            checkpoint(feed);
+            reading = reading(feed);
         }
         if (cancelled) {
             log.info("job {} stopped after {} blocks, which was asked for", event.jobId(), sent);
             return;
         }
         if (error != null) {
-            fail(event, sent, error.toString());
+            fail(event, reading, error.toString());
             return;
         }
         log.info("job {} sent its last block ({} in all)", event.jobId(), sent);
-        events.publishEvent(new JobFeedCompleted(event.jobId(), event.machineId(), sent,
+        events.publishEvent(new JobFeedCompleted(event.jobId(), event.machineId(), reading,
                 LocalDateTime.now()));
     }
 
-    private void fail(JobStateChanged event, long sent, String reason) {
-        log.warn("job {} failed after {} blocks: {}", event.jobId(), sent, reason);
-        events.publishEvent(new JobFeedFailed(event.jobId(), event.machineId(), sent, reason,
+    /** @param reading where the feed got to, or null when there was no feed to take one from */
+    private void fail(JobStateChanged event, JobProgress reading, String reason) {
+        var got = reading == null ? JobProgress.none() : reading;
+        log.warn("job {} failed after {} blocks: {}", event.jobId(), got.blocksSent(), reason);
+        events.publishEvent(new JobFeedFailed(event.jobId(), event.machineId(), got, reason,
                 LocalDateTime.now()));
     }
 

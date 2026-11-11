@@ -35,10 +35,13 @@ import reactor.core.scheduler.Schedulers;
  * widens that window by however long the task waits to be scheduled, and changes nothing else about
  * it.
  *
- * <p>The hop does not disturb the checkpoint ordering {@code JobFeeder} depends on (#62): the exact
- * {@code JobProgressed} is published synchronously, inline, immediately <em>before</em> either of
- * these events, so it has already been written by the time the hopped task runs. Deferring the
- * state change can only widen that gap, never close it.
+ * <p><strong>The hop cannot disturb the checkpoint ordering {@code JobFeeder} depends on (#62),
+ * because there is no longer an ordering to disturb</strong> (#102). The exact end-of-feed reading
+ * arrives <em>on</em> the event rather than as a {@code JobProgressed} published just ahead of it,
+ * and is handed to {@code JobService} to write in the terminal transition's own transaction - one
+ * write, so a job cannot be visible as over while its checkpoint still says something else. That
+ * also empties the netty thread entirely: it publishes the outcome and nothing else, where before
+ * it opened a JDBC transaction for the reading first.
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -49,14 +52,16 @@ public class FeedOutcomes {
     @EventListener
     public void onFeedCompleted(JobFeedCompleted event) {
         Schedulers.boundedElastic().schedule(() -> {
-            log.info("job {} was fed {} blocks and is done", event.jobId(), event.lines());
-            jobs.complete(event.jobId());
+            log.info("job {} was fed {} blocks and is done", event.jobId(),
+                    event.progress().blocksSent());
+            jobs.complete(event.jobId(), event.progress());
         });
     }
 
     @EventListener
     public void onFeedFailed(JobFeedFailed event) {
-        Schedulers.boundedElastic().schedule(() ->
-                jobs.fail(event.jobId(), event.reason() + " (after " + event.lines() + " blocks)"));
+        Schedulers.boundedElastic().schedule(() -> jobs.fail(event.jobId(),
+                event.reason() + " (after " + event.progress().blocksSent() + " blocks)",
+                event.progress()));
     }
 }

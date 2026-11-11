@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -560,6 +561,65 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
         assertEquals("COMPLETED", fetch(job).get("state"),
                 "the window held the block the firmware asked for and replayed it, so nothing was"
                         + " lost and the job is not a failure: " + printer.commands());
+    }
+
+    /**
+     * The first answer that says a job is over already says where it got to - #62's end-of-feed
+     * half, over HTTP, and the acceptance criterion of #102.
+     *
+     * <p>A feed ending is the one checkpoint that cannot be taken again: the timer's once-a-second
+     * readings stop when the feed is removed, so whatever is on the row when the job goes
+     * {@code COMPLETED} is what it keeps for ever. Before #102 that number was bought by writing
+     * the reading <em>inline, on the reactor-netty thread the feed ended on</em>, before the
+     * outcome event was even published - correct, and a blocking JDBC transaction on an event loop.
+     * It is now carried on {@link org.qw3rtrun.p3d.api.jobs.JobFeedCompleted} itself and written in
+     * the same transaction as the transition, so the two cannot be observed apart.
+     *
+     * <p><strong>What this test can and cannot see.</strong> It keeps the very first body that
+     * reports a terminal state, because the window a deferred checkpoint would open is only between
+     * that transition committing and the reading landing - a re-read afterwards finds the right
+     * number either way. {@code await} polls every 25ms, so what this catches is a regression wider
+     * than that: a scheduler hop onto a busy {@code boundedElastic}, a second transaction queued
+     * behind the first. The deterministic form of the same claim - the row read from
+     * {@code PROPAGATION_REQUIRES_NEW} at the instant the terminal transition becomes visible - is
+     * {@code JobFeedOutcomeTest} in {@code :backend:core}, and that is the one that fails every
+     * time if the checkpoint and the transition swap order.
+     *
+     * <p>Asserted against {@link MockPrinter#commands()} rather than a literal: {@code blocksSent}
+     * and the blocks that reached the machine are the two numbers #62 is about, and a figure that
+     * agrees with a constant but not with the wire is exactly the bug (a live twelve-block job
+     * recorded {@code 4}, a three-block one recorded {@code 0}).
+     */
+    @Test
+    void theFirstAnswerThatSaysAJobIsOverAlreadySaysWhereItGotTo() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("final reading", printer);
+        var file = GcodeFixture.unsliced("reading").named("reading.gcode").withBodyLines(12);
+
+        var job = startOn(id, printer, file);
+
+        var firstTerminalAnswer = new AtomicReference<Map<String, Object>>();
+        await(() -> "job " + job + " to finish. It is " + stateOf(job)
+                        + " and the machine received " + printer.commands(),
+                () -> {
+                    var now = fetch(job);
+                    if (!isOver((String) now.get("state"))) {
+                        return false;
+                    }
+                    firstTerminalAnswer.compareAndSet(null, now);
+                    return true;
+                });
+
+        var over = firstTerminalAnswer.get();
+        assertEquals("COMPLETED", over.get("state"),
+                "the file ran out against a machine answering every block: " + printer.commands());
+        assertEquals((long) printer.commands().size(), number(progressOf(over).get("blocksSent")),
+                "the first answer that reported the job finished reported a checkpoint that is not"
+                        + " the blocks that actually went out, so the exact end-of-feed reading"
+                        + " landed after the state that says it is over - which is the number the"
+                        + " job keeps, because nothing checkpoints it again: " + over);
+        assertEquals(file.blocks().size(), printer.commands().size(),
+                "the premise is a whole file on the wire: " + printer.commands());
     }
 
     /** Whether a job has reached a state it can never leave - {@code JobState.isTerminal}. */

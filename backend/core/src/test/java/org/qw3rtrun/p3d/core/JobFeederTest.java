@@ -7,6 +7,7 @@ import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobFeedCompleted;
 import org.qw3rtrun.p3d.api.jobs.JobFeedFailed;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
+import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobProgressed;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobService;
@@ -31,7 +32,6 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -148,18 +148,22 @@ class JobFeederTest {
         assertEquals(List.of("G21", "G90", "G28"), onTheWire);
         assertEquals(List.of(), publishedOf(JobFeedFailed.class), "published " + published);
         assertEquals(1, publishedOf(JobFeedCompleted.class).size(), "published " + published);
-        assertEquals(3L, publishedOf(JobFeedCompleted.class).getFirst().lines());
+        assertEquals(3L, publishedOf(JobFeedCompleted.class).getFirst().progress().blocksSent());
     }
 
     /**
      * A job that reaches the end of its file writes down every block it sent - issue #62, the
      * {@code 0} case exactly as measured live: no {@code @Scheduled} timer runs here, making this
      * the shortest job imaginable (three blocks, over before the first tick), and before the fix
-     * this published no checkpoint at all, recording {@code blocksSent = 0} on a {@code COMPLETED}
-     * job (a live twelve-block job recorded {@code 4} - the same bug, one tick in). Two separate
-     * claims: {@code blocksSent} on the last reading must equal {@link JobFeedCompleted#lines()}
-     * exactly, and that reading must be published before the completion that moves the job to
-     * {@code COMPLETED}, or the exact number lands on a row already shown as finished.
+     * this recorded no checkpoint at all, leaving {@code blocksSent = 0} on a {@code COMPLETED}
+     * job (a live twelve-block job recorded {@code 4} - the same bug, one tick in).
+     *
+     * <p>Two claims, and since #102 the second is about the <em>absence</em> of an event rather
+     * than the order of two. The reading is carried on {@link JobFeedCompleted} itself and written
+     * by {@code JobService} in the terminal transition's own transaction, so there is nothing left
+     * to get into the wrong order; what there must not be is a {@link JobProgressed} on this path
+     * at all, because the only thread that can publish one here is the reactor-netty loop the feed
+     * ended on and the only thing that listens to it opens a JDBC transaction wherever it is told.
      */
     @Test
     void aJobThatFinishesWritesDownEveryBlockItSent() {
@@ -167,22 +171,19 @@ class JobFeederTest {
         theFileSays("G21\nG90\nG28\n");
         file.tryEmitComplete();
 
-        var readings = publishedOf(JobProgressed.class);
-        assertFalse(readings.isEmpty(),
-                "a job that ended before the progress timer ever ticked still has to write down"
-                        + " where it got to; published " + published);
-        var last = readings.getLast();
-        assertEquals(jobId, last.jobId());
-        assertEquals(machineId, last.machineId());
-        assertEquals(3L, last.progress().blocksSent(),
-                "the last reading written down is the exact count, not a stale timer reading");
-        assertEquals(publishedOf(JobFeedCompleted.class).getFirst().lines(),
-                last.progress().blocksSent(),
-                "the checkpoint and the completion are the same number or one of them is lying");
-        assertTrue(published.indexOf(last) < published.indexOf(publishedOf(JobFeedCompleted.class).getFirst()),
-                "the exact reading goes before the completion that moves the job to COMPLETED,"
-                        + " or the record is briefly wrong where an operator reads it; published "
-                        + published);
+        var completed = publishedOf(JobFeedCompleted.class);
+        assertEquals(1, completed.size(), "published " + published);
+        assertEquals(jobId, completed.getFirst().jobId());
+        assertEquals(machineId, completed.getFirst().machineId());
+        assertEquals(3L, completed.getFirst().progress().blocksSent(),
+                "the reading the completion carries is the exact count, not a stale timer reading"
+                        + " - and no timer will ever read this feed again, so it is the number the"
+                        + " job keeps; published " + published);
+        assertEquals(List.of(), publishedOf(JobProgressed.class),
+                "a JobProgressed on this path could only be published from the reactor-netty"
+                        + " thread the feed ended on, which makes JobServiceImpl.onProgress open a"
+                        + " JDBC transaction there (#102); the reading belongs on the outcome event"
+                        + " instead; published " + published);
     }
 
     /**
@@ -193,9 +194,15 @@ class JobFeederTest {
      * but not provably run. No honest number for what was lost exists at this layer, so none is
      * invented: {@code BlocksAbandoned.blocks} is only a lower bound (#68), and subtracting it would
      * produce a figure that is neither sent nor accepted, which a resume would wrongly seek to. So
-     * the checkpoint keeps saying "sent" and the job is {@code FAILED} rather than resumable. One
-     * reading, not two: {@code stop} checkpoints and removes the feed, so the {@code finished} that
-     * follows finds nothing left to checkpoint.
+     * the checkpoint keeps saying "sent" and the job is {@code FAILED} rather than resumable.
+     *
+     * <p>One reading, carried on the failure rather than published ahead of it (#102): the watcher
+     * takes it from {@code stop}, which removes the feed, so the {@code finished} behind it finds
+     * nothing left to read - and {@code jobs} writes it in the same transaction as
+     * {@code RUNNING -> FAILED}, so the number can never land on a row already showing
+     * {@code FAILED}. A {@link JobProgressed} here would be published from whichever thread
+     * delivered the {@link BlocksAbandoned}, which in production is the machine's own aggregate
+     * thread and in the netty case the event loop.
      */
     @Test
     void aJobFailedByAbandonedBlocksWritesDownWhatItSentRatherThanWhatArrived() {
@@ -204,17 +211,15 @@ class JobFeederTest {
 
         printer.onEvent(new BlocksAbandoned(15, 3));
 
-        var readings = publishedOf(JobProgressed.class);
-        assertEquals(1, readings.size(),
-                "one exact reading when the feed stops, and the finished() behind it must not add"
-                        + " a second; published " + published);
-        assertEquals(3L, readings.getFirst().progress().blocksSent(),
+        assertEquals(List.of(), publishedOf(JobProgressed.class),
+                "the reading rides on the failure that moves the job, so nothing separate is"
+                        + " published and nothing opens a transaction on the thread that reported"
+                        + " the abandonment (#102); published " + published);
+        var failed = publishedOf(JobFeedFailed.class);
+        assertEquals(1, failed.size(), "published " + published);
+        assertEquals(3L, failed.getFirst().progress().blocksSent(),
                 "all three blocks were sent - the window dropping them afterwards does not unsend"
                         + " them, and nothing here can say how many the machine actually ran");
-        var failed = publishedOf(JobFeedFailed.class).getFirst();
-        assertTrue(published.indexOf(readings.getFirst()) < published.indexOf(failed),
-                "the reading goes before the failure that moves the job, or the number lands on a"
-                        + " row already showing FAILED; published " + published);
     }
 
     // ------------------------------------------------------------------ the collaborators
@@ -291,12 +296,12 @@ class JobFeederTest {
         }
 
         @Override
-        public JobOutcome complete(UUID jobId) {
+        public JobOutcome complete(UUID jobId, JobProgress finalReading) {
             throw notAsked();
         }
 
         @Override
-        public JobOutcome fail(UUID jobId, String reason) {
+        public JobOutcome fail(UUID jobId, String reason, JobProgress finalReading) {
             throw notAsked();
         }
 

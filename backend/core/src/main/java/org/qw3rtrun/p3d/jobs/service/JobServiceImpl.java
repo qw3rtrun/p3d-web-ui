@@ -6,6 +6,7 @@ import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.jobs.JobOutcome;
+import org.qw3rtrun.p3d.api.jobs.JobProgress;
 import org.qw3rtrun.p3d.api.jobs.JobProgressed;
 import org.qw3rtrun.p3d.api.jobs.JobRequirements;
 import org.qw3rtrun.p3d.api.jobs.JobService;
@@ -43,12 +44,18 @@ import java.util.UUID;
  * {@code @Transactional} goes on the listener rather than only on the verb it calls, since that call
  * is a self-invocation and would otherwise skip the proxy.
  *
- * <p>{@link #onProgress} is therefore the one listener left here that can open a transaction on a
- * reactor-netty thread: a checkpoint usually arrives from {@code JobFeeder}'s own timer, but the
- * exact reading taken when a feed ends is published inline from wherever the feed ended. That is
- * deliberate for now - the reading must be written before the event that moves the job, and running
- * inline is what buys that order - so moving it needs a design for keeping the order rather than a
- * scheduler hop.
+ * <p>{@link #onProgress} has two callers and neither is an event loop (#102): {@code JobFeeder}'s
+ * once-a-second timer, on a scheduler thread with no transaction, and its {@code onJobStopped},
+ * inside the transition's own transaction, which the checkpoint therefore joins rather than races
+ * (#62). The exact reading taken when a feed <em>ends</em> no longer arrives as an event at all -
+ * it rides on {@code JobFeedCompleted}/{@code JobFeedFailed} and is written by
+ * {@link #complete(UUID, JobProgress)}/{@link #fail(UUID, String, JobProgress)} in the same
+ * transaction as the terminal transition, so the two cannot be observed apart. <strong>The trade is
+ * that such a reading is lost exactly when its transaction is rolled back</strong>: an overtaken
+ * {@link #move} takes it with it, where before it landed in one of its own. A merely <em>refused</em>
+ * one still records it - a reading is a fact about what was sent rather than part of the move. The
+ * window is the few milliseconds between a feed ending and {@code FeedOutcomes}' hopped task
+ * running, and losing a transition there is already at-most-once by design.
  *
  * <p><strong>Every write path that can be overtaken owns its transaction explicitly</strong>
  * (#100), with a {@link TransactionTemplate} rather than {@code @Transactional}. Since
@@ -127,13 +134,13 @@ public class JobServiceImpl implements JobService {
     }
 
     @Override
-    public JobOutcome complete(UUID jobId) {
-        return move(jobId, JobState.COMPLETED, null, null);
+    public JobOutcome complete(UUID jobId, JobProgress finalReading) {
+        return move(jobId, JobState.COMPLETED, null, null, finalReading);
     }
 
     @Override
-    public JobOutcome fail(UUID jobId, String reason) {
-        return move(jobId, JobState.FAILED, null, reason);
+    public JobOutcome fail(UUID jobId, String reason, JobProgress finalReading) {
+        return move(jobId, JobState.FAILED, null, reason, finalReading);
     }
 
     @Override
@@ -195,7 +202,7 @@ public class JobServiceImpl implements JobService {
      * rather than refused to anybody: the timer writes again a second later, and the one reading
      * that has to land - the exact one taken when a feed stops - is published from inside the
      * transition's own transaction and therefore shares its persistence context rather than racing
-     * it.
+     * it. A feed that <em>ends</em> does not come through here at all; see the class javadoc.
      */
     @EventListener
     public void onProgress(JobProgressed event) {
@@ -212,13 +219,26 @@ public class JobServiceImpl implements JobService {
     }
 
     private JobOutcome move(UUID jobId, JobState next, UUID machineId, String reason) {
+        return move(jobId, next, machineId, reason, JobProgress.none());
+    }
+
+    /**
+     * The same, writing the reading the caller ended a feed on before the transition (#102). One
+     * transaction, so the order within it decides nothing about visibility; it is written first
+     * because that is the order the facts happened in.
+     */
+    private JobOutcome move(UUID jobId, JobState next, UUID machineId, String reason,
+                            JobProgress reading) {
         try {
             return transactions.execute(status -> {
                 Optional<JobEntity> found = repo.findById(jobId);
                 if (found.isEmpty()) {
                     return new JobOutcome.Refused(jobId, null, next, "there is no job " + jobId);
                 }
-                return apply(found.get(), next, machineId, reason);
+                var job = found.get();
+                // lands even when apply refuses: job is managed, and a reading is a fact about the feed rather than part of the transition
+                job.progressed(reading);
+                return apply(job, next, machineId, reason);
             });
         } catch (OptimisticLockingFailureException lost) {
             return overtaken(jobId, next);

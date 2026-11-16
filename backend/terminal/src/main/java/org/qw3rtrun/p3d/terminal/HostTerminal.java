@@ -4,6 +4,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.g.code.core.session.GSendWindow;
+import org.qw3rtrun.p3d.g.marlin.binary.MbpRs;
+import org.qw3rtrun.p3d.g.marlin.binary.MbpRsDecoder;
 import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileListBegin;
@@ -28,7 +30,10 @@ import reactor.core.publisher.FluxOperator;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.publisher.SynchronousSink;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
@@ -37,11 +42,13 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 import static java.lang.Math.min;
 import static java.lang.String.format;
+import static java.nio.charset.StandardCharsets.US_ASCII;
 
 /**
  * One terminal session, two coupled pipelines. {@link CommandProcessor} pulls G-code from a source,
@@ -60,14 +67,38 @@ import static java.lang.String.format;
  * <p>{@link #messageFlux()} ends only when the connection does; a firmware error is a value on it
  * (see {@link ReplaySubscriber#onNext}). {@link #stop()} cancels both halves and disposes the
  * connection, because cancelling alone does not close the socket.
+ *
+ * <p><strong>There is a third thing on the wire.</strong> {@link #binaryTransfer} drives Marlin's
+ * Binary Protocol over the same socket: packets out through {@link CommandProcessor#writeRaw} and
+ * replies in through the same {@link ReplyFlux}, which decodes them with {@code MbpRsDecoder} while
+ * {@link #binaryMode} is on. It is a third drain loop ({@link MbpTransferDriver}) and not a third
+ * pipeline - the outbound carries {@code byte[]} for exactly this reason.
  */
 @Slf4j
 public class HostTerminal {
 
     private static final Logger TRAFFIC_LOGGER = LoggerFactory.getLogger(HostTerminal.class.getName() + "#traffic");
 
+    /** A packet as the traffic log shows it, since a packet has no printable form of its own. */
+    static String hex(byte[] bytes) {
+        var text = new StringBuilder(bytes.length * 3);
+        for (byte b : bytes) {
+            text.append(text.isEmpty() ? "" : " ").append(format("%02X", b));
+        }
+        return text.toString();
+    }
+
     private final Supplier<Flux<String>> inbound;
-    private final Function<Publisher<String>, Mono<Void>> outbound;
+
+    /**
+     * Where a framed block goes. <strong>Bytes, not text</strong> - a Marlin Binary Protocol packet
+     * starts {@code AD B5}, and the {@code sendString} this used to be built on encodes UTF-8, which
+     * turns every byte above {@code 0x7F} into two. Carrying packets as {@code String}s abused as
+     * byte holders would be an invariant no compiler and no {@code trim()} respects, so the one
+     * writer in this class hands over {@code byte[]} and encodes its own ASCII (see
+     * {@link CommandProcessor#write0}).
+     */
+    private final Function<Publisher<byte[]>, Mono<Void>> outbound;
 
     /**
      * How to close the socket, since cancelling the two halves does not. Needed once {@code cancel()}
@@ -80,13 +111,13 @@ public class HostTerminal {
     private final Runnable disposeConnection;
 
     public HostTerminal(Supplier<Flux<String>> inbound,
-                        Function<Publisher<String>, Mono<Void>> outbound) {
+                        Function<Publisher<byte[]>, Mono<Void>> outbound) {
         this(inbound, outbound, () -> {
         });
     }
 
     public HostTerminal(Supplier<Flux<String>> inbound,
-                        Function<Publisher<String>, Mono<Void>> outbound,
+                        Function<Publisher<byte[]>, Mono<Void>> outbound,
                         Runnable disposeConnection) {
         this.inbound = inbound;
         this.outbound = outbound;
@@ -143,6 +174,132 @@ public class HostTerminal {
     private ReplaySubscriber inSide;
 
     /**
+     * Whether the printer is reading packets rather than ASCII, which decides <em>which decoder</em>
+     * {@link ReplyFlux#decode} tries first. Written by {@link MbpTransferDriver} (through
+     * {@link #enterBinaryMode}/{@link #leaveBinaryMode}), read on the netty inbound loop, so
+     * {@code volatile} and nothing more - a boolean write is atomic and a snapshot is all a decode
+     * needs.
+     *
+     * <p><strong>Why a mode flag at all:</strong> {@code rs<n>} belongs to both protocols.
+     * {@code MarlinRsDecoder.decode("rs7")} answers {@code ResendRs(lineNumber = 7)} - a
+     * base-protocol <em>line</em> resend - while in binary mode {@code rs7} is a <em>packet</em>
+     * resend, and nothing in the text tells them apart: only the host knows which mode it put the
+     * printer in. {@code :gcode} keeps the two registries apart for exactly this reason
+     * ({@code MbpRsTest$NotInTheMainRegistry} pins it). Without the gate a packet resend reaches the
+     * ASCII send window, matches nothing it holds, triggers {@link CommandProcessor#resynchronise},
+     * restarts the line numbering and publishes a {@link BlocksAbandoned} - a healthy ASCII session
+     * destroyed over a reply that was never about it.
+     *
+     * <p><strong>Set eagerly, cleared lazily</strong> - before {@code M28 B1}'s {@code ok} could
+     * arrive, and only after the {@code CONTROL CLOSE}'s {@code ok}. Both are safe because
+     * {@code MbpRsDecoder} claims {@code ok<digits>} only: measured,
+     * {@code MbpOk.decode("ok P15 B3")} declines, since {@code digitsEnd} hits a blank right after
+     * {@code ok}, and Marlin writes its numbered ASCII acknowledgement {@code ok N3 P15 B3} and
+     * never {@code ok3}. So an ASCII {@code ok} crossing the boundary in either direction still
+     * falls through to {@code MarlinRsDecoder} and still credits the ASCII window.
+     */
+    private volatile boolean binaryMode;
+
+    /** The transfer in progress, or null. One at a time: the protocol's window is one packet deep
+     * and the caller holds the wire exclusively while it runs. */
+    private volatile MbpTransferDriver binaryDriver;
+
+    void enterBinaryMode(MbpTransferDriver driver) {
+        binaryDriver = driver;
+        binaryMode = true;
+        log.info("IN: reading replies as binary-protocol replies first");
+    }
+
+    void leaveBinaryMode(MbpTransferDriver driver) {
+        if (binaryDriver != driver) {
+            return;
+        }
+        binaryMode = false;
+        binaryDriver = null;
+        log.info("IN: back to reading replies as the ASCII protocol's");
+    }
+
+    /**
+     * Writes one file to the printer's card over Marlin's Binary Protocol, reporting progress as the
+     * cumulative count of payload bytes the firmware has acknowledged - one {@code Long} per
+     * acknowledged write block, which jumps to the file's full size on the last block so that 100%
+     * is exact. Not a percentage, not a delta. An empty file reports nothing and completes.
+     *
+     * <p><strong>Cold.</strong> Nothing happens until subscribe: no mode change, no packet.
+     *
+     * <p><strong>Two things the caller owes, and neither can be arranged from here.</strong>
+     * <ol>
+     * <li><strong>Exclusive hold of the wire</strong> -
+     * {@code PublisherQueue.addExclusivePublisher(Priority.REALTIME, ...)}, whose publisher emits
+     * nothing more while this flux runs. An ASCII line injected mid-packet lands inside a packet the
+     * firmware is already reading a header for, and corrupts it. No mode gate is added to
+     * {@link CommandProcessor#canProcess()} for this: the queue already provides the exclusion, and
+     * a second mechanism would be two half-mechanisms. (The transient {@code rawPackets} term in
+     * {@code canProcess()} is a different thing and stays.)</li>
+     * <li><strong>The {@code M28 B1} itself</strong>, as an ordinary ASCII block through that same
+     * exclusive publisher. It is a numbered block and its {@code ok N4 P15 B3} is ASCII window
+     * credit like any other; this flux does not write it, because an unnumbered copy poked at the
+     * wire from here would be credit the send window never counted.</li>
+     * </ol>
+     *
+     * <p>The two together are one source that emits {@code M28 B1} and then stays alive emitting
+     * nothing - a {@code Mono.just("M28 B1")} would <em>complete</em>, release the exclusivity and
+     * let another source write an ASCII line into the middle of a packet. {@code MbpTransferProbe}
+     * runs exactly this against a printer:
+     *
+     * <pre>
+     * var transferred = Sinks.&lt;Void&gt;empty();
+     * queue.addExclusivePublisher(Priority.REALTIME,
+     *         Flux.concat(Mono.just("M28 B1"), Flux.&lt;String&gt;never())
+     *                 .takeUntilOther(transferred.asMono()));
+     * terminal.binaryTransfer(name, data, cancel).doFinally(s -&gt; transferred.tryEmitEmpty())
+     * </pre>
+     *
+     * <p>On subscribe the mode flag goes on (see {@link #binaryMode}) and then the driver
+     * <strong>waits for {@code echo:Switching to Binary Protocol}</strong> before writing a single
+     * packet. That wait is not optional: Marlin reads serial into a command queue and executes
+     * {@code M28 B1} later, out of that queue, so bytes written in between are consumed by the
+     * <em>ASCII</em> reader and become garbage commands. The echo is written from the execution
+     * stage, which makes it the one signal the mode really changed - and measured, it arrives
+     * <em>before</em> the {@code ok}, which is why waiting on it beats waiting on the {@code ok}. It
+     * is timed, so an incapable printer fails rather than hangs.
+     *
+     * <p><strong>A cancellation completes, it does not error.</strong> {@code cancel} firing drives
+     * {@code MbpTransfer.abort}, which still leaves binary mode through a {@code CONTROL CLOSE} and
+     * then completes - the caller tells cancelled from failed with a flag it set before firing
+     * {@code cancel}, exactly as the ASCII path does, and an {@code onError} would show the operator
+     * a failure when they asked for a stop. Any other give-up is an
+     * {@link MbpTransferDriver.Failed} carrying {@code MbpTransfer.reason} verbatim.
+     *
+     * <p>The measured session, the two chosen numbers and the thread discipline are all in
+     * {@link MbpTransferDriver}'s javadoc.
+     *
+     * @param cardName the file to create on the card
+     * @param data     the whole file; sliced into blocks of the buffer size the firmware reports
+     * @param cancel   fires to stop the transfer; {@code Mono.never()} for one that cannot be stopped
+     * @return the acknowledged byte counts, completing when the file is closed on the card
+     */
+    public Flux<Long> binaryTransfer(String cardName, byte[] data, Mono<Void> cancel) {
+        return binaryTransfer(cardName, data, cancel, Schedulers.parallel(),
+                MbpTransferDriver.REPLY_TIMEOUT, MbpTransferDriver.ATTEMPTS);
+    }
+
+    /** The same, with the retry clock handed in - what lets a test drive the timeout on a
+     * {@code VirtualTimeScheduler} instead of waiting two real seconds. */
+    Flux<Long> binaryTransfer(String cardName, byte[] data, Mono<Void> cancel,
+                              Scheduler scheduler, Duration timeout, int attempts) {
+        return Flux.defer(() -> {
+            CommandProcessor out = outSide;
+            if (out == null) {
+                return Flux.<Long>error(new IllegalStateException(
+                        "start() has not been called, so there is nowhere to write a packet"));
+            }
+            return new MbpTransferDriver(this, out::writeRaw, cardName, data,
+                    scheduler, timeout, attempts).run(cancel);
+        });
+    }
+
+    /**
      * Opens the session: the socket is read from this call, the writing waits for a subscriber. The
      * asymmetry is deliberate - subscribing the inbound side here, not inside the returned
      * {@code Mono}, means a reply can arrive before the caller subscribes {@link #messageFlux()} (it
@@ -152,8 +309,7 @@ public class HostTerminal {
     public Mono<Void> start(Publisher<String> gcodes) {
         this.inSide = new ReplaySubscriber();
         this.outSide = new CommandProcessor(gcodes);
-        inbound.get()
-                .as(ReplyFlux::new)
+        new ReplyFlux(inbound.get(), () -> binaryMode)
                 .subscribe(inSide);
         return outbound.apply(outSide);
     }
@@ -174,9 +330,16 @@ public class HostTerminal {
      * is gone: this farm drives Marlin, so what Marlin said is what a subscriber gets.)
      *
      * <p>What drives the protocol is consumed rather than published: a bare/advanced {@code ok},
-     * {@code wait}, {@code Resend}. A line no decoder claims is dropped with a {@code #traffic}
-     * debug line. {@code M20}'s multi-line answer arrives as one {@link SdFileList}, assembled by
-     * {@link ReplyFlux#listing}.
+     * {@code wait}, {@code Resend}, and every {@link MbpRs} - a packet-stream reply belongs to
+     * {@link MbpTransferDriver}, and an {@code MbpOk} published as a reply would read as an
+     * acknowledgement of something it has nothing to do with. A line no decoder claims is dropped
+     * with a {@code #traffic} debug line. {@code M20}'s multi-line answer arrives as one
+     * {@link SdFileList}, assembled by {@link ReplyFlux#listing}.
+     *
+     * <p>A transfer's ordinary traffic still arrives here: measured mid-transfer,
+     * {@code echo:SD card ok}, {@code echo:Now fresh file:}, {@code Writing to file:},
+     * {@code //action:notification} and {@code echo:SD card released} all fall through the binary
+     * decoder to {@code MarlinRsDecoder} and onto this bus.
      *
      * <p>Two values on this flux are not replies at all, both facts about the send window a
      * subscriber cannot otherwise see: {@link BlockAcknowledged} for an {@code ok} that released a
@@ -322,13 +485,18 @@ public class HostTerminal {
     }
 
     /**
-     * Frames reply lines off the wire and decodes each once through {@code MarlinRsDecoder}. Built
-     * once per session, in {@link #start}, on the netty inbound loop, which is the only thread that
-     * ever touches it.
+     * Frames reply lines off the wire and decodes each once - through {@code MbpRsDecoder} then
+     * {@code MarlinRsDecoder} while binary mode is on, through {@code MarlinRsDecoder} alone
+     * otherwise. Built once per session, in {@link #start}, on the netty inbound loop, which is the
+     * only thread that ever touches it.
      */
     public static class ReplyFlux extends FluxOperator<String, GRs<?>> {
 
         private final Flux<GRs<?>> flux;
+
+        /** Whether to try the packet protocol's decoder first - see {@link HostTerminal#binaryMode}.
+         * A supplier and not a copy: the mode changes under a live subscription. */
+        private final BooleanSupplier binaryMode;
 
         /**
          * {@code M20}'s listing, being assembled - the one stateful thing on this side, and it has
@@ -339,8 +507,12 @@ public class HostTerminal {
          */
         private final SdFileListReader listing = new SdFileListReader();
 
-        public ReplyFlux(Flux<String> source) {
+        // The firmware never sends a *packet* to the host - every reply in both modes is an ASCII
+        // line - so the inbound .asString() needs no change and :gcode's MbpPacketReader has no
+        // place in this pipeline.
+        public ReplyFlux(Flux<String> source, BooleanSupplier binaryMode) {
             super(source);
+            this.binaryMode = binaryMode;
             this.flux = source
                     .flatMap(s -> Flux.fromStream(s.chars().mapToObj(i -> (char) i).map(Object::toString)))
                     .bufferUntil("\n"::equals)
@@ -366,7 +538,7 @@ public class HostTerminal {
                 sink.next(files);
                 return;
             }
-            GRs<?> reply = MarlinRsDecoder.INSTANCE.decode(line);
+            GRs<?> reply = claim(line);
             if (reply == null) {
                 // Not "unread" while a list is open: an entry is a line this host understands
                 // perfectly well and has just put into the listing being assembled.
@@ -377,6 +549,31 @@ public class HostTerminal {
                 return;
             }
             sink.next(reply);
+        }
+
+        /**
+         * Whichever decoder claims the line, binary first while the mode is on.
+         *
+         * <p><strong>The order is forced, not a preference.</strong> {@code rs<n>} is a line of both
+         * protocols and only the host knows which one is live - see {@link HostTerminal#binaryMode}
+         * for the session a wrong answer destroys. {@code :gcode} keeps the two registries apart so
+         * that this decision has to be made here, where the mode is known, rather than guessed
+         * inside a registry.
+         *
+         * <p>The fallback is what keeps a transfer legible: measured, {@code echo:SD card ok},
+         * {@code echo:Now fresh file: mbp.gco}, {@code Writing to file: mbp.gco},
+         * {@code //action:notification mbp.gco} and {@code echo:SD card released} all arrive
+         * mid-transfer, and swallowing them would blind the Storage tab for the length of every
+         * upload.
+         */
+        private GRs<?> claim(String line) {
+            if (binaryMode.getAsBoolean()) {
+                GRs<?> packetReply = MbpRsDecoder.INSTANCE.decode(line);
+                if (packetReply != null) {
+                    return packetReply;
+                }
+            }
+            return MarlinRsDecoder.INSTANCE.decode(line);
         }
 
         @Override
@@ -407,7 +604,7 @@ public class HostTerminal {
      * sequence that has drifted past the window (see {@link #opening}, {@link #resynchronise}); before
      * that, a host reconnecting to a printer that had not been power-cycled could not send anything.
      */
-    public class CommandProcessor implements Processor<String, String>, Subscription {
+    public class CommandProcessor implements Processor<String, byte[]>, Subscription {
 
         /**
          * One thing the printer said about the send window, parked for the drain loop. A record
@@ -433,7 +630,7 @@ public class HostTerminal {
 
         Publisher<String> gcode;
         Subscription subscription;
-        Subscriber<? super String> subscriber;
+        Subscriber<? super byte[]> subscriber;
         private final Requested subscriptionRequested = new Requested();
         private final Requested requestedFromGCode = new Requested();
         /**
@@ -483,6 +680,11 @@ public class HostTerminal {
         /** Blocks a {@code Resend:} asked for, framed already, waiting for downstream demand.
          * Touched only from the drain loop, so a plain {@link ArrayDeque} is enough. */
         private final Deque<String> replaying = new ArrayDeque<>();
+
+        /** Binary packets parked by {@link #writeRaw}, waiting for demand. Holds at most one in
+         * practice - the Marlin Binary Protocol's window is one packet deep - but a queue rather
+         * than a slot so a second can only ever be late, never lost. */
+        private final Queue<byte[]> rawPackets = new ConcurrentLinkedQueue<>();
 
         /**
          * The block that opens the session - {@code M110 N0}, framed - until it has been written.
@@ -579,11 +781,13 @@ public class HostTerminal {
          * slot the moment it arrives. The window term is what makes a refused {@code send} impossible:
          * a block stays in the window until acknowledged, so the host may never hold more outstanding
          * than it can replay. Zero while a replay is waiting for demand (nothing newer may jump ahead
-         * of blocks the firmware is sitting on) or while the session's {@code M110} is owed (no agreed
-         * sequence yet for a block to take a place in - see {@link #opening}).
+         * of blocks the firmware is sitting on), while the session's {@code M110} is owed (no agreed
+         * sequence yet for a block to take a place in - see {@link #opening}), or while a binary
+         * packet is parked (the firmware is reading packets, so an ASCII block pulled now would be
+         * swallowed as packet bytes - see {@link #writeRaw}).
          */
         long canProcess() {
-            if (!replaying.isEmpty() || opening != null) {
+            if (!replaying.isEmpty() || opening != null || !rawPackets.isEmpty()) {
                 return 0;
             }
             long spokenFor = requestedFromGCode.get() + awaitingFrame.get();
@@ -720,8 +924,10 @@ public class HostTerminal {
 
         /**
          * Writes what is owed: the session's {@code M110} first (nothing may go out ahead of it, or
-         * the firmware rejects the gap), then replay (its blocks carry numbers the firmware is
-         * waiting for), then what was pulled since. A replayed block spends a fresh unit of the
+         * the firmware rejects the gap), then a parked binary packet (the firmware is reading packets
+         * and an ASCII block between two of them is bytes inside a packet), then replay (its blocks
+         * carry numbers the firmware is waiting for), then what was pulled since. A replayed block or
+         * a packet spends a fresh unit of the
          * subscriber's demand - the unit it spent when first written is gone, and no {@code onNext}
          * goes out unasked even for a retransmission - which is why each of the three stages returns
          * rather than falling through once demand runs out. See {@link #opening}.
@@ -736,6 +942,13 @@ public class HostTerminal {
                 String reset = opening;
                 opening = null;
                 write0(reset);
+            }
+            while (!rawPackets.isEmpty() && subscriptionRequested.get() > 0) {
+                subscriptionRequested.dec();
+                writeRaw0(rawPackets.poll());
+            }
+            if (!rawPackets.isEmpty()) {
+                return;
             }
             while (!replaying.isEmpty() && subscriptionRequested.get() > 0) {
                 subscriptionRequested.dec();
@@ -757,12 +970,44 @@ public class HostTerminal {
             }
         }
 
+        /** One framed ASCII block, terminated and encoded. {@code US_ASCII} and not the platform
+         * default: spec 3 makes a block seven-bit, so a payload that is not is a bug upstream rather
+         * than something to re-encode. */
         private void write0(String block) {
             if (terminated.get()) {
                 return;
             }
             TRAFFIC_LOGGER.debug("-> {}", block);
-            subscriber.onNext(block + "\n");
+            subscriber.onNext((block + "\n").getBytes(US_ASCII));
+        }
+
+        /** One binary packet, verbatim - no {@code N}, no checksum, no terminator, and nothing told
+         * to {@link #window}; see {@link #writeRaw}. */
+        private void writeRaw0(byte[] packet) {
+            if (terminated.get()) {
+                return;
+            }
+            TRAFFIC_LOGGER.debug("-> {}", hex(packet));
+            subscriber.onNext(packet);
+        }
+
+        /**
+         * Parks one Marlin Binary Protocol packet for the drain loop and nothing else - no
+         * {@code N}, no {@code *}, no terminator, and not a word to {@link #window} or
+         * {@link #sentWithoutAck}, because a packet is not a numbered block and crediting one
+         * against the ASCII window would desynchronise the session the moment binary mode ends.
+         *
+         * <p>It does spend a unit of the subscriber's demand, like any other {@code onNext}: Reactive
+         * Streams has no exemption for a packet, and an unasked write is the exact failure the send
+         * window exists to prevent.
+         *
+         * <p>Called from the netty inbound loop (a reply drove the state machine on) or from the
+         * retry timer's scheduler thread, neither of which may write - so it parks and leaves, the
+         * same shape as {@link #onNext} and {@link #rewind}.
+         */
+        void writeRaw(byte[] packet) {
+            rawPackets.add(packet);
+            processRequest();
         }
 
         /**
@@ -777,7 +1022,7 @@ public class HostTerminal {
         }
 
         @Override
-        public void subscribe(Subscriber<? super String> s) {
+        public void subscribe(Subscriber<? super byte[]> s) {
             gcode.subscribe(this);
             subscriber = s;
             subscriber.onSubscribe(this);
@@ -867,7 +1112,7 @@ public class HostTerminal {
             if (!sourceComplete.get() || terminated.get()) {
                 return;
             }
-            if (opening != null || !replaying.isEmpty() || !pending.isEmpty()) {
+            if (opening != null || !replaying.isEmpty() || !pending.isEmpty() || !rawPackets.isEmpty()) {
                 return;
             }
             if (!terminated.compareAndSet(false, true)) {
@@ -922,7 +1167,17 @@ public class HostTerminal {
         @Override
         public void onNext(GRs<?> reply) {
             log.info("IN: onNext({})", reply);
+            MbpTransferDriver driver = binaryDriver;
+            if (driver != null) {
+                // Every reply, not only the MbpRs ones: the signal that the mode really changed is
+                // BinaryModeSwitched, an echo line, and only the driver is waiting for it.
+                driver.onReply(reply);
+            }
             switch (reply) {
+                // Consumed by the driver above. Packet-stream traffic the transport owns, like an
+                // advanced ok or a Resend:, and an MbpOk must never credit the ASCII window.
+                case MbpRs<?> _ -> {
+                }
                 case OkRs<?> ok -> onOk(ok);
                 case BusyRs<?> busy -> onBusy(busy);
                 case WaitRs _ -> onWait();

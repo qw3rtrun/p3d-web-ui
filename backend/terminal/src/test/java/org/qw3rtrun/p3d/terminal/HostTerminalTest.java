@@ -20,6 +20,7 @@ import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -70,6 +71,10 @@ class HostTerminalTest {
     /** Every {@code request(n)} the send window made of the G-code source. */
     private final List<Long> pulled = new ArrayList<>();
 
+    /** The outbound side as handed to the outbound function - {@code byte[]}, which
+     * {@link #blocks()} decodes for the assertions that are about ASCII. */
+    private final AtomicReference<Publisher<byte[]>> written = new AtomicReference<>();
+
     /** Whatever terminated the reply bus, which in a healthy session is nothing. */
     private final AtomicReference<Signal<Object>> busEnd = new AtomicReference<>();
 
@@ -91,15 +96,25 @@ class HostTerminalTest {
      * keeps the {@link org.reactivestreams.Processor} instead of draining it, so the test owns the
      * demand itself; {@code doOnRequest} records what {@code canProcess()} asked the source for. */
     private Publisher<String> sendWindow() {
-        var captured = new AtomicReference<Publisher<String>>();
         terminal = new HostTerminal(wire::asFlux, out -> {
-            captured.set(out);
+            written.set(out);
             return Mono.empty();
         });
         subscribeToBus();
         Flux<String> gcode = Flux.range(1, 100).map(i -> "G1 X" + i).doOnRequest(pulled::add);
         terminal.start(gcode).subscribe();
-        return captured.get();
+        return blocks();
+    }
+
+    /**
+     * What the terminal wrote, as the ASCII it is. The outbound side carries {@code byte[]} now - a
+     * binary packet starts {@code AD B5} and {@code sendString}'s UTF-8 would mangle it - so the
+     * assertions below decode the bytes back with {@code US_ASCII} rather than being relaxed:
+     * the bytes written are still asserted to be exactly these bytes. {@code map} passes demand
+     * through one for one, so every {@code thenRequest} still measures the send window.
+     */
+    private Flux<String> blocks() {
+        return Flux.from(written.get()).map(bytes -> new String(bytes, StandardCharsets.US_ASCII));
     }
 
     /** The same outbound side, with the printer answering from inside the emission of {@code line} -
@@ -107,9 +122,8 @@ class HostTerminalTest {
      * while the producer is still writing the next command), which a single-threaded test otherwise
      * never reaches. */
     private Publisher<String> sendWindowAcking(String line, String reply) {
-        var captured = new AtomicReference<Publisher<String>>();
         terminal = new HostTerminal(wire::asFlux, out -> {
-            captured.set(out);
+            written.set(out);
             return Mono.empty();
         });
         subscribeToBus();
@@ -121,19 +135,18 @@ class HostTerminalTest {
                     }
                 });
         terminal.start(gcode).subscribe();
-        return captured.get();
+        return blocks();
     }
 
     /** The same outbound side, over a source that emits exactly {@code payloads} and then ends. */
     private Publisher<String> sendWindowOf(String... payloads) {
-        var captured = new AtomicReference<Publisher<String>>();
         terminal = new HostTerminal(wire::asFlux, out -> {
-            captured.set(out);
+            written.set(out);
             return Mono.empty();
         });
         subscribeToBus();
         terminal.start(Flux.fromArray(payloads).doOnRequest(pulled::add)).subscribe();
-        return captured.get();
+        return blocks();
     }
 
     private void receive(String line) {

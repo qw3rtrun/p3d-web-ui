@@ -11,6 +11,7 @@ import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
 import reactor.netty.tcp.TcpClient;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -73,7 +74,7 @@ public final class TerminalRecoveryProbe {
 
         var terminal = new HostTerminal(
                 () -> conn.inbound().receive().asString(),
-                out -> conn.outbound().sendString(Flux.from(out).map(TerminalRecoveryProbe::tap)).then());
+                out -> conn.outbound().sendByteArray(Flux.from(out).map(TerminalRecoveryProbe::tap)).then());
 
         var queue = new PublisherQueue<String, Priority>();
         Consumer<String> sink = gcode -> queue.addPublisher(Priority.REGULAR, Mono.just(gcode));
@@ -124,20 +125,21 @@ public final class TerminalRecoveryProbe {
     /** The wire tap: records what the window framed, and breaks one block's checksum on request. The
      * body is left exactly as it was so the firmware's sequence check still passes and only the
      * checksum fails - a {@code Resend:} for this block, not a gap no replay can repair. */
-    private static String tap(String block) {
+    private static byte[] tap(byte[] bytes) {
+        var block = new String(bytes, StandardCharsets.US_ASCII);
         written.add(block);
         if (!corruptNext.compareAndSet(true, false)) {
-            return block;
+            return bytes;
         }
         int star = block.lastIndexOf('*');
         if (star < 0) {
             System.out.println("  !! nothing to corrupt in " + block.trim());
-            return block;
+            return bytes;
         }
         int checksum = Integer.parseInt(block.substring(star + 1).trim());
         var broken = block.substring(0, star) + "*" + ((checksum + 1) & 0xFF) + "\n";
         System.out.printf("  !! corrupting %s -> %s", block, broken);
-        return broken;
+        return broken.getBytes(StandardCharsets.US_ASCII);
     }
 
     /** Whether some block framed after {@code from} was written twice, which is the replay. */

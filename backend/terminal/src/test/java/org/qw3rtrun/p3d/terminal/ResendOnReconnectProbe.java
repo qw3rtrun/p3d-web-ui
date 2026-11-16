@@ -8,6 +8,7 @@ import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
 import reactor.netty.tcp.TcpClient;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -96,11 +97,11 @@ public final class ResendOnReconnectProbe {
             Objects.requireNonNull(conn, "no connection to " + host + ":" + port);
             this.terminal = new HostTerminal(
                     () -> conn.inbound().receive().asString().doOnNext(this::tapIn),
-                    o -> conn.outbound().sendString(Flux.from(o).doOnNext(this::tapOut)).then());
+                    o -> conn.outbound().sendByteArray(Flux.from(o).doOnNext(this::tapOut)).then());
         }
 
-        private void tapOut(String block) {
-            var text = block.replace("\n", "");
+        private void tapOut(byte[] written) {
+            var text = new String(written, StandardCharsets.US_ASCII).replace("\n", "");
             out.add(text);
             wire.add("-> " + text);
         }

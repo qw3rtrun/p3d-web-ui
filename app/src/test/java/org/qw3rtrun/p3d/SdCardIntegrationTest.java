@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -735,14 +736,213 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         return body;
     }
 
+    // ------------------------------------------------- writing a file to the card as packets
+
+    /**
+     * The binary transfer, and the assertion is what is <em>not</em> on the wire: two commands, the
+     * switch and the remount, with the whole file in between as packets that never become blocks.
+     *
+     * <p>Four observables, because the three features that shipped dead here each passed everything
+     * but one of them - the commands, the bytes on the card, the event the browser got, and the
+     * card still being readable afterwards.
+     *
+     * <p>The card's copy is compared <strong>byte for byte</strong>, which the ASCII path cannot
+     * promise and this one can: it is the same array that was uploaded, not a re-assembly of the
+     * G-code lines the host parsed out of it. Measured against MarlinSim on 2026-11-16 - 250 bytes
+     * sent, {@code MBP.GCO 250} listed.
+     */
+    @Test
+    void writingAFileAsPacketsPutsItOnTheCardByteForByte() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("takes packets", printer);
+        var file = GcodeFixture.unsliced("mbp-upload").named("mbp.gcode").withBodyLines(12);
+        var events = connectAndSettle(id, printer);
+        printer.forget();
+
+        writeToCard(id, file, "BINARY.GCO", true);
+
+        var done = awaitTransfer(events, "DONE");
+
+        assertEquals(List.of("M28 B1", "M21"), printer.commands(),
+                "the switch and the remount are the only two blocks a binary transfer writes;"
+                        + " everything else was packets");
+
+        assertArrayEquals(file.bytes(), printer.binaryWritten("BINARY.GCO"),
+                "a binary transfer is a copy, so the card's file has to be the uploaded bytes");
+        assertTrue(printer.written("BINARY.GCO").isEmpty(),
+                "the ASCII file sink must never have opened: " + printer.written("BINARY.GCO"));
+
+        assertEquals(Boolean.TRUE, done.get("binary"),
+                "the browser is told which protocol actually ran, not which was asked for");
+        assertEquals("BINARY.GCO", done.get("file"));
+        assertEquals(file.sizeBytes(), number(done.get("bytesTotal")));
+        assertEquals(file.sizeBytes(), number(done.get("bytesSent")),
+                "a cumulative byte count has to arrive at the file's size exactly, and once");
+
+        assertFalse(printer.inBinaryMode(),
+                "the stream was left in binary mode, so every later command is packet noise");
+        assertEquals(0, printer.packetsBeforeSwitch(),
+                "a packet was written before the machine said it had switched - on a real Marlin"
+                        + " those bytes are read as ASCII and become garbage commands");
+    }
+
+    /**
+     * The {@code M21} the transfer sends last, and the only test that can tell it apart from
+     * ceremony: the firmware <em>releases</em> the card when a binary transfer closes, so without
+     * the remount every later {@code M20} answers {@code echo:No media} and the Storage tab stops
+     * listing for the rest of the session. Measured 2026-11-16; see {@code MockPrinter.cardMounted}.
+     */
+    @Test
+    void theCardIsStillListableAfterABinaryTransferBecauseTheTransferRemountsIt() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("remounts after packets", printer);
+        var file = GcodeFixture.unsliced("mbp-remount").named("remount.gcode").withBodyLines(4);
+        var events = connectAndSettle(id, printer);
+
+        writeToCard(id, file, "REMOUNT.GCO", true);
+        awaitTransfer(events, "DONE");
+
+        assertTrue(printer.cardMounted(),
+                "the transfer released the card and never put it back");
+
+        command(id, "/sd/list").expectStatus().isOk();
+
+        var listing = events.await("SdFileList");
+        assertTrue(names(listing).contains("REMOUNT.GCO"),
+                "the file is on the card and the card cannot be read: " + names(listing));
+    }
+
+    /**
+     * Asking for a protocol the firmware never reported is <strong>refused</strong>, not quietly
+     * downgraded to ASCII: the server is the authority on what an operator may do, and answering
+     * 200 for a mode nobody asked for would hide a client that ignored its own disabled checkbox.
+     *
+     * <p>The pair with {@link #writingAFileAsPacketsPutsItOnTheCardByteForByte} is the point - the
+     * same request, the same flag, accepted by one machine and refused by the other, which is the
+     * only shape that proves the capability is read rather than assumed.
+     *
+     * <p>And nothing may be left behind: the last assertions are that no transfer was started and
+     * that an ASCII upload still works afterwards, because a refusal that had already claimed the
+     * one-at-a-time slot would block the machine's uploads for the rest of its life.
+     */
+    @Test
+    void aMachineThatNeverReportedBinaryTransferIsRefusedRatherThanDowngraded() {
+        var printer = machine(MockPrinter.withoutBinaryTransfer());
+        var id = register("no binary transfer", printer);
+        var file = GcodeFixture.unsliced("mbp-refused").named("refused.gcode").withBodyLines(4);
+        var events = connectAndSettle(id, printer);
+        printer.forget();
+
+        var stored = idOf(upload(file));
+        var refusal = json(uploadStored(id, stored, "REFUSED.GCO", true)
+                .expectStatus().isEqualTo(HttpStatus.CONFLICT));
+
+        assertEquals("WRONG_STATE", refusal.get("refusal"));
+        assertTrue(((String) refusal.get("reason")).contains("BINARY_FILE_TRANSFER"),
+                "the refusal has to name the capability the operator is missing: " + refusal);
+
+        quiet();
+        assertFalse(printer.sent("M28"),
+                "a refused transfer must not have touched the machine: " + printer.commands());
+        assertNull(transferIn(events, "UPLOADING"),
+                "a refused transfer must not draw a progress bar: " + transferStates(events));
+
+        // The slot is clean, so the machine can still take the file the way it does support.
+        writeToCard(id, file, "ASCII.GCO", false);
+        var done = awaitTransfer(events, "DONE");
+        assertEquals(Boolean.FALSE, done.get("binary"));
+        assertEquals(file.blocks(), printer.written("ASCII.GCO"));
+    }
+
+    /**
+     * The ASCII path is untouched by the new branch, event field included. Worth its own test rather
+     * than trusting the older ones: they predate the flag and would pass with the branch inverted,
+     * since none of them looks at {@code binary}.
+     */
+    @Test
+    void anAsciiTransferStillSaysItWasAsciiAndStillWritesBlocks() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("still ascii", printer);
+        var file = GcodeFixture.unsliced("mbp-ascii").named("ascii.gcode").withBodyLines(6);
+        var events = connectAndSettle(id, printer);
+        printer.forget();
+
+        writeToCard(id, file, "PLAIN.GCO", false);
+        var done = awaitTransfer(events, "DONE");
+
+        assertEquals(Boolean.FALSE, done.get("binary"));
+        assertFalse(printer.sent("M28 B1"), "the ASCII path must not switch protocol");
+        assertNull(printer.binaryWritten("PLAIN.GCO"), "nothing was written as packets");
+        assertEquals(file.blocks(), printer.written("PLAIN.GCO"));
+    }
+
+    /**
+     * Exclusivity, in the packet phase. The ASCII transfer has this test already and the mechanism
+     * is shared - {@code addExclusivePublisher} - but the risk is new and specific: during a binary
+     * transfer the exclusive publisher emits <strong>nothing at all</strong>, and a queue that
+     * handed its demand on while the head was merely quiet would let an {@code M105} from the
+     * temperature poller land between two packets, where the firmware is mid-header and reads it as
+     * payload. Nothing on either end would report it.
+     *
+     * <p>Nothing here is timed: {@link MockPrinter#holdPacketsAfter(int)} stops the machine
+     * answering once the file is open on the card and none of it written, and the protocol's window
+     * is one packet deep, so the transfer <em>cannot</em> proceed until the machine is released.
+     */
+    @Test
+    void theMachineTakesNothingElseWhileAFileGoesOntoTheCardAsPackets() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("exclusive packets", printer);
+        var file = GcodeFixture.unsliced("mbp-exclusive").named("exclusive.gcode").withBodyLines(12);
+        // SYNC, QUERY and OPEN answered, then silence - the file is open and the first block is
+        // waiting for an acknowledgement that will not come until answerFreely().
+        printer.holdPacketsAfter(3);
+        var events = connectAndSettle(id, printer);
+        printer.forget();
+
+        writeToCard(id, file, "EXCLUSIVE.GCO", true);
+
+        await("the transfer to stall with the file open on the card",
+                () -> printer.parkedReplies() > 0);
+
+        command(id, "/sd/mount").expectStatus().isOk();
+        quiet();
+
+        assertFalse(printer.sent("M21"),
+                "a command reached the machine in the middle of a binary transfer, where its bytes"
+                        + " are read as packet payload: " + printer.commands());
+
+        printer.answerFreely();
+        awaitTransfer(events, "DONE");
+
+        var commands = printer.commands();
+        assertEquals("M28 B1", commands.getFirst());
+        assertTrue(commands.indexOf("M21") < commands.lastIndexOf("M21"),
+                "the transfer's own remount and the operator's held M21 should both be there,"
+                        + " the operator's last: " + commands);
+    }
+
     // ---------------------------------------------------------------- driving one transfer
 
     /** Puts a file in the store and asks the machine to write it to its card, as a browser does. */
     private void writeToCard(UUID id, GcodeFixture file, String cardName) {
+        writeToCard(id, file, cardName, false);
+    }
+
+    /**
+     * The same, naming the protocol. Spelled out at every call site rather than defaulted, because
+     * which protocol ran is the one thing these tests are about and a default would hide it.
+     */
+    private void writeToCard(UUID id, GcodeFixture file, String cardName, boolean binary) {
         var stored = idOf(upload(file));
-        command(id, "/sd/upload",
-                "{\"fileId\":\"" + stored + "\",\"name\":\"" + cardName + "\"}")
-                .expectStatus().isOk();
+        uploadStored(id, stored, cardName, binary).expectStatus().isOk();
+    }
+
+    /** The request itself, unasserted - for the tests whose subject is the refusal. */
+    private WebTestClient.ResponseSpec uploadStored(UUID id, UUID stored, String cardName,
+                                                    boolean binary) {
+        return command(id, "/sd/upload",
+                "{\"fileId\":\"" + stored + "\",\"name\":\"" + cardName
+                        + "\",\"binary\":" + binary + "}");
     }
 
     /**

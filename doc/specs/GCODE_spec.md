@@ -708,6 +708,10 @@ lexer walks. Framing is an adjective on a block (`GFramedBlock`), and direction 
 distinction the types do keep: a block that was **read** is a `GBlock` and carries its tokens, a
 block being **built** is a `GBlockDraft` and carries its parts.
 
+One thing in the module is **outside this spec entirely** — Marlin's binary file-transfer protocol,
+which is packets rather than lines. [B.6](#b6-what-this-spec-does-not-govern--marlinbinary) says where
+the boundary is and the three places the two protocols touch.
+
 ### B.1 Tokens — `token/GTokens.kt`
 
 | Spec token ([§2](#2-lexical-structure-tokens)) | Type |
@@ -1082,6 +1086,36 @@ that path, because waiting will not shorten it. It also cannot simply be sent:
 truncated once is truncated identically on every resend and the session stops making progress. **It
 is the one error class a resend cannot repair.** So the check is offered and the decision belongs to a
 caller that can fail a command rather than queue it — which, in this repo, is the transport.
+
+### B.6 What this spec does *not* govern — `marlin/binary/**`
+
+The module also carries Marlin's **Binary Protocol Mark II**, in
+`gcode/src/main/kotlin/org/qw3rtrun/p3d/g/marlin/binary/`. **None of the syntax above applies to it**,
+and the boundary is worth stating because the two share a link: that protocol replaces the text
+format entirely with length-prefixed packets — a `0xB5AD` start token, an 8-bit sync id, a 4+4-bit
+protocol/type byte, a 16-bit size, and two Fletcher-16 checksums. No `N` word, no `*` field, no
+[§8](#8-checksum-and-crc) algorithm, no line at all. The authority for it is
+`Marlin/src/feature/binary_stream.h` (bugfix-2.1.x) and
+[MarlinFirmware/Marlin#14817](https://github.com/MarlinFirmware/Marlin/pull/14817), with the Python
+`transfer.py` in [charleswillis3/marlin-binary-protocol](https://github.com/charleswillis3/marlin-binary-protocol)
+as the reference host implementation the golden vectors in `Fletcher16Test` and `MbpCodecTest` were
+generated from.
+
+Three places the two protocols do touch:
+
+* **getting in is a G-code command.** `M28 B1` switches the printer over, and it is read as ASCII with
+  this spec's rules. Marlin takes the `B` flag from the *start* of `M28`'s string argument, so the flag
+  cannot follow a filename — which the generated `StartSDWrite`, whose model reads everything after
+  `M28` as one [§3.4](#34-string-values)a bare string, cannot express. `MbpSendWindow.enterBinaryMode()`
+  builds the command instead;
+* **the replies stay ASCII lines.** The packets travel host to printer only; `ok<n>`, `rs<n>`,
+  `ss<n>,<buffer>,<version>`, `fe<n>` and the `PFT:` family come back as text, and are modelled as
+  ordinary `GRs` types (`marlin/binary/MbpRs.kt`);
+* **and one of them collides.** `rs7` is a well-formed [§8.5](#85-failure-handling-and-the-resend-protocol)
+  resend request for *line* 7 as well as a binary resend request for *packet* 7, and no property of the
+  text separates them — only knowing which mode the printer is in does. So the binary replies are a
+  separate registry (`MbpRsDecoder`) and are deliberately **not** in `MarlinRsDecoder`, whose
+  decoders partition the ASCII reply space.
 
 ---
 

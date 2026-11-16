@@ -57,9 +57,18 @@ public interface PrinterControl {
      * act from sending it to a card, so one file can go to several machines); {@code M28} turns
      * the wire into a file sink until the transfer ends, holding the connection exclusively.
      *
+     * <p>Two modes, chosen by the caller and refused rather than downgraded: {@code binary} asks
+     * for Marlin's Binary Protocol ({@code M28 B1}, packets, then a remount), which copies the
+     * file byte-for-byte and needs {@code Cap:BINARY_FILE_TRANSFER}
+     * ({@link org.qw3rtrun.p3d.api.model.MachineProfile#hasBinaryFileTransfer()}); a machine that
+     * never reported it is {@link ControlOutcome.Refusal#WRONG_STATE}, because silently falling
+     * back would report success for something the operator did not ask for. There is no overload:
+     * one way to ask means no caller can get the other mode by accident.
+     *
      * @param cardName what to call the file on the card - what will be listed, printed and deleted
+     * @param binary   whether to use the binary protocol rather than the ASCII write loop
      */
-    Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName);
+    Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName, boolean binary);
 
     /**
      * Stops a running transfer, leaving a short but closed file on the card - a stop, not a

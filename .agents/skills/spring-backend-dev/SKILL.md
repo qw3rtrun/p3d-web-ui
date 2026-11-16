@@ -893,6 +893,54 @@ show.
 - **Bulk bytes go on a filesystem, not in a column.** Content-addressed by SHA-256, two levels of
   fan-out, which also makes storing idempotent: the same bytes produce the same path, so the dedupe
   is the naming rather than a check.
+- **There is exactly one `byte[]` on a bulk path, it is stated rather than hidden, and it has a
+  configured ceiling.** A *binary* SD-card transfer (#122) hands the whole file to `MbpTransfer` in
+  `:gcode`, which does no I/O and so cannot be fed a block at a time; `SdUploader.wholeOf` collects
+  it with `reduce` - unbounded demand, deliberately, since the destination *is* the heap - on
+  `boundedElastic`, and anything over `p3d.sd.binary-max-bytes` (64 MiB) is refused as
+  `ControlOutcome.wrongState` naming both the size and the limit **before** the one-at-a-time map is
+  touched, so a refusal cannot leave the machine marked busy. The ASCII path is unchanged and
+  streams. **An exception to this rule is only an exception if the signature says so**: the ceiling
+  is checked against `GcodeFile.sizeBytes()` from the store's own record, which is known before a
+  byte is read, so the refusal costs no I/O at all. A second one wants the streaming entry point in
+  `:gcode` rather than a second ceiling.
+
+### IMPORTANT - a transport method that starts listening at subscribe must be subscribed before the block it is listening for
+
+Issue #122, and the shape generalises to anything in `:backend:terminal` that waits for a reply.
+
+**`PrinterReactor.uploadToCard` and `feed` are not lazy.** They are
+`PublisherQueue.addExclusivePublisher`/`addPublisher`, which take the connection and begin draining
+**when they are called**; the `Mono` handed back is only the completion. So in a method that both
+registers a publisher and subscribes a listener, **the statement order is the wire order** - and
+`Mono.when`, whose documented subscription order looks like it should fix this, does not, because
+the side effect happened while its arguments were being evaluated.
+
+`HostTerminal.binaryTransfer` starts waiting for `echo:Switching to Binary Protocol` at subscribe.
+Composing it as the middle of a `concat` that begins with `M28 B1` - which reads as the obvious
+shape, since the packets really do belong between the switch and the remount - subscribes it only
+*after* that block has gone out. Measured on one trace: `-> N3 M28 B1*73` at `.546`,
+`BinaryModeSwitched` delivered at `.548`, the driver beginning to listen at `.551`, then
+`gave up: the printer did not switch to binary mode within 10000ms` ten seconds later. Every run
+against `MockPrinter`, which answers instantly; on a slow link it would be a flake instead.
+
+**The part worth remembering is that no unit test in this module could see it.** `SdUploaderTest`
+drives `binaryTransferOf` with a `TestPublisher`, which stands in for the very thing whose
+*subscribe time* is the bug, so both shapes pass identically - 339 tests green in `:backend:core`
+with the feature dead on every real printer. `SdCardIntegrationTest` in `:app` is the only guard,
+which is the fourth instance of this layer's standing lesson: **a stub cannot test when something
+subscribed.**
+
+Two smaller rules fell out and are now contracts:
+
+- **An exclusive publisher's middle must stay alive, not complete.** `Flux.never()` gated by a sink
+  that fires when the transfer ends, never `Mono.just("M28 B1")` followed by a completion - a
+  completed source releases the exclusivity and lets a temperature poll write an ASCII line into
+  the middle of a packet.
+- **The gate fires from `doFinally`, so a failure and a cancellation reach it too.** Fire it on
+  success only and a failed transfer holds the wire for ever and the machine takes no further
+  command of any kind. Verified on the same trace: the driver gave up and `-> N4 M21*20` still went
+  out.
 
 ## REST, SSE and WebSocket
 
@@ -1197,9 +1245,23 @@ broken.
   change - and one had already happened silently, with `/auto-report-temp` binding a `seconds` field
   while the browser sent `period`. The payload records live in the web module and translate
   themselves; everything behind `PrinterControl` is `GRq`.
+- **IMPORTANT - an optional field on a request-body record is a boxed type, never a primitive.**
+  This build is on Jackson 3 (`tools.jackson`), where `DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES`
+  is **on by default**, so a record component declared `boolean`/`int` does *not* default to
+  `false`/`0` when the browser omits the field - the whole request is **400** with
+  *"Cannot map `null` into type `boolean`"*. Measured on #122: `UploadToCard(UUID, String, boolean)`
+  made every existing `/sd/upload` body - the ones with no `binary` field at all - a bad request,
+  and five tests in `PrinterCommandBindingTest` caught it in one run. The fix is `Boolean` plus one
+  line in the compact constructor (`binary = binary != null && binary;`), which is also why
+  `HomeAxes` and `MoveAxes` carry `Boolean` rather than `boolean`: it keeps the accessor non-null,
+  so nothing downstream has to know. **Do not reach for `FAIL_ON_NULL_FOR_PRIMITIVES = false`
+  instead** - that is a `JsonMapper` bean, which would become the whole application's and let one
+  endpoint decide how every other one binds.
 - **The browser's contracts are pinned by test, because the build does not compile the browser.**
   `PrinterCommandBindingTest` for what it posts and `EventStreamContractTest` for what it reads. A
-  renamed field or event name on this side fails there rather than in a browser.
+  renamed field or event name on this side fails there rather than in a browser. Both halves of a
+  *new optional* field need a case each: one body that sets it and one that omits it, because the
+  second is the one that fails.
 
 ## The command model, end to end
 
@@ -1813,6 +1875,22 @@ the source, not suspected.
 - **An upload has no size limit.** Nothing stops a client filling the disk; the memory is bounded
   and the storage is not. A limit wants to be a configured maximum checked while streaming, which
   is a few lines in `GcodeBlobStore.write` and a decision about what the number should be.
+- **A binary SD-card transfer cannot carry a file larger than the heap, so it refuses one instead.**
+  `MbpTransfer` in `:gcode` holds the whole file by construction - it does no I/O, which is what
+  keeps `:gcode` portable - so `SdUploader` collects a `byte[]` and caps it at
+  `p3d.sd.binary-max-bytes` (64 MiB). A 200 MiB sliced part is therefore a 409 naming the limit, and
+  the operator's only route is the ASCII path, which streams and takes it. The real fix is a
+  block-at-a-time entry point in `:gcode` - named as future work in `MbpTransfer`'s own javadoc -
+  after which the ceiling and the collector both go away rather than being raised. Deliberately out
+  of scope for #122: raising the number would make the failure mode an out-of-memory error on a
+  farm instead of a refusal on one request, which is the worse of the two.
+- **A binary transfer that is refused is refused by the server, and the UI's checkbox is advice.**
+  `hasBinaryFileTransfer()` is read from the machine's own `Cap:BINARY_FILE_TRANSFER`, so a machine
+  nothing has ever asked `M115` reads as incapable and a binary request to it is a 409 rather than a
+  silent ASCII run. That is correct - reporting success for a mode nobody asked for would hide a
+  client bug - but it means a page that renders its controls before the handshake lands can offer a
+  checkbox the next request refuses. The snapshot `updates()` opens with carries the profile, so a
+  page that waits for it is right; one that does not sees a refusal it could have predicted.
 - **The slicer metadata windows are bounded to 64 KiB at each end of a file.** A slicer that writes
   its summary somewhere in the middle of a large file is not read. That is the price of not
   tokenizing two hundred megabytes of motion commands to find four numbers, and it is the right

@@ -24,6 +24,17 @@ import PreviousSession from './PreviousSession.vue'
  * Uploading is two requests: `/api-files` takes the bytes first, so the same stored file can reach a
  * second machine without a second upload, and the second request only names the result to the card.
  *
+ * Which protocol that second request asks for is the Binary Transfer checkbox, enabled from
+ * `data-binary-transfer` - the firmware's `BINARY_FILE_TRANSFER` capability, rendered into the mount
+ * point by the server, since props here come from `data-` attributes rather than a fetch for
+ * something the page already knew when it rendered (`main.ts`), exactly as `data-role` arrives.
+ * Unlike the `SDCARD` gate above, this capability does **not** decide whether the island mounts: a
+ * machine without it uploads perfectly well over ASCII, so the island always mounts and only the
+ * checkbox goes dead - the two gates look alike and are not. And like every gate in this layer the
+ * attribute is a hint: the server refuses a binary request from a machine that never reported the
+ * capability (409, naming it) whatever the browser sends, which is why the checkbox may be wrong
+ * about a machine and may not be wrong about the wire.
+ *
  * Across a reconnect the card state and the listing are kept and marked rather than blanked, and
  * nothing is re-listed automatically - `useSessionScope` in `src/session.ts` owns that rule for
  * every panel that shows what the server holds about a session.
@@ -32,9 +43,16 @@ import PreviousSession from './PreviousSession.vue'
 const props = withDefaults(defineProps<{
     uuid: string
     role?: FarmRole
-}>(), {role: 'VIEWER'})
+    // A `data-` attribute, so a string: Thymeleaf writes a Java boolean as `true`/`false` and the
+    // comparison below is exact. A truthiness check would read the string 'false' as yes.
+    binaryTransfer?: string
+}>(), {role: 'VIEWER', binaryTransfer: 'false'})
 
 const mayControl = computed(() => props.role === 'OPERATOR' || props.role === 'ADMIN')
+
+// Defaulting to off rather than on: a page that forgot the attribute must not offer a mode the
+// machine may not have.
+const mayUseBinary = computed(() => props.binaryTransfer === 'true')
 
 // How long to wait for an answer before concluding there is not one.
 const ANSWER_MS = 4000
@@ -59,6 +77,13 @@ const storedKnown = ref(false)
 const upload = ref<SdUploadProgressed | null>(null)
 const chosen = ref<File | null>(null)
 const sending = ref(false)
+
+// Binary is the better transfer where it exists, so it is ticked by default - but the tick is only
+// half the answer. What gets sent is this computed, never the ref: the input is disabled on an
+// incapable machine while the ref underneath it stays true, and a call site reading the ref would
+// ask for binary anyway. There are two such call sites, which is one more than wants remembering.
+const binary = ref(true)
+const useBinary = computed(() => mayUseBinary.value && binary.value)
 
 const failure = ref<string | null>(null)
 const api = printer(props.uuid)
@@ -223,7 +248,7 @@ function send() {
             // Awaited rather than fired off, so this cannot clear the failure the next line may
             // be about to report.
             await loadStored()
-            await api.uploadToCard(held.id, file.name)
+            await api.uploadToCard(held.id, file.name, useBinary.value)
         } catch (error) {
             sending.value = false
             throw error
@@ -238,7 +263,7 @@ function sendStored(file: GcodeFile) {
     abandoned.value = false
     void guarded(async () => {
         try {
-            await api.uploadToCard(file.id, file.name)
+            await api.uploadToCard(file.id, file.name, useBinary.value)
         } catch (error) {
             sending.value = false
             throw error
@@ -318,9 +343,13 @@ onUnmounted(() => {
           </div>
         </div>
 
+        <!-- Which protocol the server actually ran, not which one was asked for. -->
         <p v-if="upload" class="text-muted small mb-0 mt-2">
           {{ fileSize(upload.bytesSent) }} of {{ fileSize(upload.bytesTotal) }},
           {{ upload.blocksSent.toLocaleString() }} blocks sent
+          <span class="badge ms-1" :class="upload.binary ? 'bg-info' : 'bg-light text-dark'">
+            {{ upload.binary ? 'binary' : 'ASCII' }}
+          </span>
         </p>
 
         <p v-if="abandoned" class="text-warning small mb-0">
@@ -437,6 +466,18 @@ onUnmounted(() => {
         <label for="storage-upload" class="form-label mb-1">Upload a file to the card</label>
         <input id="storage-upload" type="file" class="form-control form-control-sm"
                accept=".gcode,.gco,.g" :disabled="!canAct" @change="choose"/>
+      </div>
+      <!-- The title hangs on the wrapper, not the input: a disabled control fires no events, the
+           same reason the monitor page's dead tab wraps its anchor. Native rather than a Bootstrap
+           tooltip, since startTheme() constructs those once before any island has rendered. -->
+      <div class="col-auto">
+        <div class="form-check mb-2"
+             :title="mayUseBinary ? undefined
+                     : 'Unavailable: this firmware did not report BINARY_FILE_TRANSFER.'">
+          <input id="storage-binary" v-model="binary" class="form-check-input" type="checkbox"
+                 :disabled="!canAct || !mayUseBinary"/>
+          <label class="form-check-label" for="storage-binary">Binary Transfer</label>
+        </div>
       </div>
       <div class="col-auto">
         <button type="button" class="btn btn-sm btn-primary text-white"

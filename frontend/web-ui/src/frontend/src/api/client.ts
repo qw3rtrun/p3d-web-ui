@@ -236,8 +236,14 @@ export function printer(uuid: string) {
         // something uploaded to /api-files first (see files.upload); an extension is not required,
         // since the server adds one if missing and the first progress event names what it became.
         // The machine takes nothing else until M29 - disable other controls while it runs.
-        uploadToCard: (fileId: string, name: string) =>
-            send(at('/sd/upload'), {fileId, name}),
+        //
+        // `binary` asks for Marlin's binary file transfer instead of the ASCII M28 stream, and is
+        // required rather than defaulted: a caller that has not thought about which protocol it
+        // wants is a caller picking one by accident. The server answers 409 if the firmware did not
+        // report BINARY_FILE_TRANSFER, so it is the authority and the browser's capability check is
+        // only courtesy; the mode that actually ran comes back on SdUploadProgressed.binary.
+        uploadToCard: (fileId: string, name: string, binary: boolean) =>
+            send(at('/sd/upload'), {fileId, name, binary}),
 
         // A stop, not a cancel: the content ends but M29 still goes out, leaving a short closed file
         // (safe to delete, not to print). Expect state: 'CANCELLED'.

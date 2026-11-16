@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -242,7 +243,7 @@ class EventStreamContractTest {
     @Test
     void anUploadProgressReportCarriesBothCountsAndTheNameOnTheCard() {
         var payload = mapper.readTree(streamed(new SdUploadProgressed(
-                "BENCHY.GCO", SdUploadState.UPLOADING, 1_200_000, 2_847_561, 31_006, null)));
+                "BENCHY.GCO", SdUploadState.UPLOADING, 1_200_000, 2_847_561, 31_006, null, false)));
 
         assertEquals("SdUploadProgressed", payload.get("type").asString());
         assertEquals("BENCHY.GCO", payload.get("event").get("file").asString());
@@ -251,6 +252,19 @@ class EventStreamContractTest {
         assertEquals(2_847_561, payload.get("event").get("bytesTotal").asLong());
         assertEquals(31_006, payload.get("event").get("blocksSent").asLong());
         assertTrue(payload.get("event").get("reason").isNull());
+        assertFalse(payload.get("event").get("binary").asBoolean(),
+                "the ASCII mode has to be visible as such - which mode ran is only provable here");
+    }
+
+    // The one place the choice of mode can be proved rather than inferred: the page offers a
+    // checkbox and the server may refuse it, so a browser showing "binary" has to be reading what
+    // actually ran instead of what was asked for.
+    @Test
+    void anUploadProgressReportSaysWhichModeRan() {
+        var binary = mapper.readTree(streamed(new SdUploadProgressed(
+                "MBP.GCO", SdUploadState.DONE, 250, 250, 3, null, true)));
+
+        assertTrue(binary.get("event").get("binary").asBoolean());
     }
 
     // How a transfer ended decides what is on the card: a cancel sends M29, leaving a short but
@@ -260,12 +274,12 @@ class EventStreamContractTest {
     void theUploadStatesReachTheBrowserByName() {
         for (var state : SdUploadState.values()) {
             var payload = mapper.readTree(streamed(
-                    new SdUploadProgressed("B.GCO", state, 1, 2, 3, null)));
+                    new SdUploadProgressed("B.GCO", state, 1, 2, 3, null, false)));
             assertEquals(state.name(), payload.get("event").get("state").asString());
         }
 
         var failed = mapper.readTree(streamed(new SdUploadProgressed(
-                "B.GCO", SdUploadState.FAILED, 1, 2, 3, "the connection went away")));
+                "B.GCO", SdUploadState.FAILED, 1, 2, 3, "the connection went away", false)));
         assertEquals("the connection went away", failed.get("event").get("reason").asString());
     }
 

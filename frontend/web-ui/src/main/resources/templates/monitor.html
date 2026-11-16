@@ -66,12 +66,17 @@
                     <!-- The connection badge and buttons are part of PrinterMonitor now. -->
                 </div>
                 <div class="tab-content tab-content-basic">
-                    <!-- An island, since everything in it changes while you watch it; gated as above. -->
+                    <!-- An island, since everything in it changes while you watch it; gated as above.
+                         data-binary-transfer is a third capability and NOT a third gate: a machine
+                         without BINARY_FILE_TRANSFER still uploads over ASCII, so it keeps the tab
+                         and the island and loses only the checkbox. Rendered here rather than
+                         fetched, like data-role, because the server already knew it. -->
                     <div class="tab-pane fade" id="storage" role="tabpanel" aria-labelledby="storage-tab"
                          th:if="${printer.profile.hasSdCard()}">
                         <div data-p3d="storage-tab"
                              th:attr="data-uuid=${printer.uuid},
-                                      data-role=${currentRole}"></div>
+                                      data-role=${currentRole},
+                                      data-binary-transfer=${printer.profile.hasBinaryFileTransfer()}"></div>
                     </div>
 
                     <!-- An island: the settings report arrives on the event stream one line at a time

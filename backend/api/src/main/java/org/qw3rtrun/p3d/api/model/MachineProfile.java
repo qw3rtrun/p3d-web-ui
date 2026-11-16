@@ -90,6 +90,24 @@ public record MachineProfile(Map<String, String> firmware,
         return Boolean.TRUE.equals(capabilities.get("EEPROM"));
     }
 
+    /**
+     * Whether the firmware said it can take a file over Marlin's Binary Protocol - Marlin's
+     * {@code Cap:BINARY_FILE_TRANSFER}, which decides whether {@code M28 B1} and the packet
+     * stream behind it are offered instead of the ASCII write loop.
+     *
+     * <p>Like {@link #hasSdCard()} and {@link #hasEeprom()}, a question about the
+     * <em>firmware</em> rather than about a card being in the slot: a build without
+     * {@code BINARY_FILE_TRANSFER} answers {@code M28 B1} as a plain {@code M28} and then reads
+     * every packet byte as G-code. Measured value {@code 1} on MarlinSim
+     * ({@code Marlin bugfix-2.1.x}, compiled Oct 29 2026), among 40 {@code Cap:} lines.
+     *
+     * <p>Absent is false, covering both "never reported" and "firmware does not know the
+     * capability"; {@link #isKnown()} tells those apart.
+     */
+    public boolean hasBinaryFileTransfer() {
+        return Boolean.TRUE.equals(capabilities.get("BINARY_FILE_TRANSFER"));
+    }
+
     public String firmwareName() {
         return firmware.get("FIRMWARE_NAME");
     }

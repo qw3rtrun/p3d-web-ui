@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.core;
 import org.qw3rtrun.p3d.api.control.FarmView;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.jobs.JobService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -66,10 +67,17 @@ public class CoreConfiguration {
      * Writes a stored file onto a machine's SD card - the other half of {@code JobFeeder}'s job,
      * same two collaborators, except the transfer holds the connection exclusively (between
      * {@code M28} and {@code M29} every line goes into the file rather than being executed).
+     *
+     * <p>{@code p3d.sd.binary-max-bytes} is the ceiling on a <em>binary</em> transfer only, which is
+     * held in memory because {@code MbpTransfer} in {@code :gcode} does no I/O; the default is
+     * spelled once, in {@link SdUploader#DEFAULT_BINARY_MAX_BYTES}, and concatenated into the
+     * placeholder so the two cannot drift.
      */
     @Bean
-    public SdUploader sdUploader(PrinterReactorManager reactors, GcodeFileService files) {
-        return new SdUploader(reactors, files);
+    public SdUploader sdUploader(PrinterReactorManager reactors, GcodeFileService files,
+                                 @Value("${p3d.sd.binary-max-bytes:"
+                                         + SdUploader.DEFAULT_BINARY_MAX_BYTES + "}") long binaryMaxBytes) {
+        return new SdUploader(reactors, files, binaryMaxBytes);
     }
 
     /**

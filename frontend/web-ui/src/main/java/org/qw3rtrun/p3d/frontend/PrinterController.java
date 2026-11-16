@@ -80,7 +80,14 @@ import java.util.UUID;
  * file) or 409 (not connected, or already writing) rather than 500; {@link Outcomes} holds that
  * mapping. Accepted is 200 with an empty body, not 202 - the existing browser/test contract, kept
  * deliberately. A name that would corrupt the block is a 400 raised by {@link UploadToCard}'s
- * compact constructor, before {@code Outcomes} ever sees it. {@code /sd/upload/cancel} is not a
+ * compact constructor, before {@code Outcomes} ever sees it. <strong>{@code binary} on that body
+ * asks for Marlin's Binary Protocol instead</strong> ({@code M28 B1}, packets, then an {@code M21}
+ * because the firmware releases the card when the transfer closes); it defaults to {@code false}
+ * when omitted, and a machine that never reported {@code Cap:BINARY_FILE_TRANSFER} - or a file over
+ * {@code p3d.sd.binary-max-bytes}, since a binary transfer is held in memory - is a 409 rather than
+ * a silent fall back to ASCII: the page disables the checkbox for an incapable machine, but a client
+ * that ignored that is told so instead of being given a mode it did not ask for. Which mode actually
+ * ran is observable on the stream as {@code SdUploadProgressed.binary}. {@code /sd/upload/cancel} is not a
  * Reactive Streams cancel: the content stops but {@code M29} still goes out, closing a short but
  * valid file; it answers 200 whether or not anything was running, and its only refusal is 404.
  */
@@ -258,7 +265,7 @@ public class PrinterController {
     // are posted to /api-files first and only named here (see UploadToCard).
     @PostMapping("/sd/upload")
     public Mono<ResponseEntity<?>> uploadToCard(@PathVariable UUID id, @RequestBody Mono<UploadToCard> command) {
-        return command.flatMap(c -> Mono.from(printers.uploadToCard(id, c.fileId(), c.name())))
+        return command.flatMap(c -> Mono.from(printers.uploadToCard(id, c.fileId(), c.name(), c.binary())))
                 .map(Outcomes::of);
     }
 

@@ -301,6 +301,11 @@ export type SdUploadState = 'UPLOADING' | 'DONE' | 'CANCELLED' | 'FAILED'
  * `file` is the name on the card, which may differ from what was asked for if the server had to add
  * a printable extension (`M20` lists nothing else) - this is how the page learns what it became.
  *
+ * `binary` is which transfer the server actually ran, not what was asked for: a request for the
+ * binary protocol on a machine that does not report `BINARY_FILE_TRANSFER` is refused rather than
+ * downgraded, so this says ASCII only when ASCII was asked for. The states below mean the same
+ * thing either way.
+ *
  * Arrives about once a second while running, and once more, exact, when it ends.
  */
 export interface SdUploadProgressed {
@@ -310,6 +315,7 @@ export interface SdUploadProgressed {
     bytesTotal: number
     blocksSent: number
     reason: string | null
+    binary: boolean
 }
 
 /**

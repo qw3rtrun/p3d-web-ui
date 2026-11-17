@@ -118,6 +118,42 @@ class MachineProfileTest {
         assertFalse(unknown.isKnown(), "the page must be able to say 'not reported yet' instead");
     }
 
+    // ------------------------------------------------------------- the binary file transfer
+
+    /**
+     * {@code Cap:BINARY_FILE_TRANSFER:1} is what a build with Marlin's Binary Protocol writes -
+     * measured off MarlinSim ({@code Marlin bugfix-2.1.x}, compiled Oct 29 2026) on 2026-11-16,
+     * among its 40 {@code Cap:} lines and beside {@code Cap:SDCARD:1} and {@code Cap:SD_WRITE:1}.
+     */
+    @Test
+    void aFirmwareReportingTheBinaryProtocolHasIt() {
+        assertTrue(reported(Map.of("BINARY_FILE_TRANSFER", true)).hasBinaryFileTransfer());
+    }
+
+    @Test
+    void aFirmwareReportingNoBinaryProtocolHasNone() {
+        assertFalse(reported(Map.of("BINARY_FILE_TRANSFER", false)).hasBinaryFileTransfer());
+    }
+
+    /**
+     * A card reader is not the binary protocol. Most builds have the first and not the second, so
+     * a machine answering the Storage tab's question must not be assumed to answer this one.
+     */
+    @Test
+    void theCardAndTheBinaryProtocolAreSeparateCapabilities() {
+        assertFalse(reported(Map.of("SDCARD", true, "SD_WRITE", true)).hasBinaryFileTransfer());
+        assertFalse(reported(Map.of("BINARY_FILE_TRANSFER", true)).hasSdCard());
+    }
+
+    /** Never reported and "firmware does not know the capability" are both false; {@code isKnown} tells them apart. */
+    @Test
+    void aMachineNothingHasAskedIsNotKnownAndHasNoBinaryFileTransfer() {
+        var unknown = MachineProfile.unknown();
+
+        assertFalse(unknown.hasBinaryFileTransfer());
+        assertFalse(unknown.isKnown(), "the checkbox must be able to say 'not reported yet' instead");
+    }
+
     /** The capability map is the firmware's own, so an unusual key is carried rather than dropped. */
     @Test
     void theCapabilityMapIsKeptAsReported() {

@@ -30,8 +30,11 @@ public class TerminalManager {
                 .map(conn -> new HostTerminal(
                         () -> conn.inbound().receive()
                                 .asString(),
+                        // sendByteArray, not sendString: the writer hands over bytes so a binary
+                        // packet reaches the wire as itself - sendString encodes UTF-8 and would
+                        // turn the AD B5 packet token into four bytes.
                         (p) -> conn.outbound()
-                                .sendString(p).then(),
+                                .sendByteArray(p).then(),
                         // The terminal cancels its two halves; only the thing that opened the
                         // connection can close it, and that is here.
                         conn::dispose

@@ -47,6 +47,9 @@ class PrinterCommandBindingTest {
     /** What the upload endpoint asked for, as {@code fileId -> name on the card}. */
     private final AtomicReference<String> uploaded = new AtomicReference<>();
 
+    /** Which mode the upload endpoint asked for - null until it has been asked at all, so a test can tell "bound false" from "never reached". */
+    private final AtomicReference<Boolean> uploadBinary = new AtomicReference<>();
+
     private final AtomicBoolean cancelled = new AtomicBoolean();
 
     // What the stubbed runtime answers an upload with (accepted unless a test says otherwise) - a
@@ -86,8 +89,9 @@ class PrinterCommandBindingTest {
             }
 
             @Override
-            public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName) {
+            public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName, boolean binary) {
                 uploaded.set(fileId + " -> " + cardName);
+                uploadBinary.set(binary);
                 var answer = uploadAnswers.get();
                 return Mono.just(answer == null ? ControlOutcome.accepted(id) : answer);
             }
@@ -348,6 +352,31 @@ class PrinterCommandBindingTest {
 
         assertEquals(fileId + " -> BENCHY.GCO", uploaded.get());
         assertEquals(List.of(), received.get(), "an upload is not a command on the send path");
+    }
+
+    // The mode is the browser's choice and the server's to refuse, so it has to bind - a flag that
+    // looked bound and was dropped on the way through would run the ASCII path while the page said
+    // binary, which only SdUploadProgressed.binary would ever have disagreed with.
+    @Test
+    void theUploadPayloadCarriesTheChoiceOfMode() {
+        var fileId = UUID.randomUUID();
+
+        post("/sd/upload", "{\"fileId\":\"" + fileId + "\",\"name\":\"MBP.GCO\",\"binary\":true}");
+
+        assertEquals(Boolean.TRUE, uploadBinary.get());
+    }
+
+    // A body with no "binary" binds false, which is the server default on purpose: the capable path
+    // is opt-in over the wire even though the page ticks the box, so a client written against the
+    // older contract keeps getting the mode it was written for rather than a silently different one.
+    @Test
+    void anUploadThatSaysNothingAboutTheModeIsAscii() {
+        var fileId = UUID.randomUUID();
+
+        post("/sd/upload", "{\"fileId\":\"" + fileId + "\",\"name\":\"BENCHY.GCO\"}");
+
+        assertEquals(Boolean.FALSE, uploadBinary.get(),
+                "an omitted flag must not bind as \"whatever the server prefers\"");
     }
 
     // Not required of the browser - the server adds one, since M20 lists only printable

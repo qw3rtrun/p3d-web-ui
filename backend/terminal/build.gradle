@@ -151,3 +151,21 @@ tasks.register('probeReplyCorpus', JavaExec) {
             (findProperty('probePort') ?: '8099').toString(),
     ]
 }
+
+/**
+ * Write one file to the card over Marlin's Binary Protocol through the whole transport stack and
+ * measure whether it landed byte-exact - issue #122.
+ *
+ * Hand-run only, like the probes above: it needs a printer with
+ * `Cap:BINARY_FILE_TRANSFER:1` and it writes to the card, deleting the file again on the way out.
+ */
+tasks.register('probeMbpTransfer', JavaExec) {
+    group = 'verification'
+    description = 'Transfer a file over the Marlin Binary Protocol and verify the byte count on the card.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.MbpTransferProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

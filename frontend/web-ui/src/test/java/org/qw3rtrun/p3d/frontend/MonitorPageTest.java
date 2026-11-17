@@ -42,6 +42,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * disabled tab would silently open an event stream to a machine nobody can drive from there - a
  * {@code th:if} decision no type checker or unit test can see.
  *
+ * <p>A third capability, {@code Cap:BINARY_FILE_TRANSFER}, is rendered onto the Storage island as
+ * {@code data-binary-transfer} and is deliberately <em>not</em> a gate: a machine without it still
+ * uploads over ASCII, so it keeps the tab, keeps the island, and loses only the checkbox. The tests
+ * below assert that difference, because the three look alike in the template and the wrong one
+ * copied would take the Storage tab away from every older firmware.
+ *
  * <p>Renders the real page through the real filter chain, as
  * {@code FarmSecurityTest.theProfilePageRendersWithAndWithoutAResult} argues: a controller
  * returning a view name is not the view working.
@@ -124,8 +130,13 @@ class MonitorPageTest {
     // The two capabilities are independent, and the tests below prove they are read independently:
     // a gate reading the wrong key would still pass every test that set both the same.
     private static MachineProfile reporting(boolean sdCard, boolean eeprom) {
+        return reporting(sdCard, eeprom, false);
+    }
+
+    private static MachineProfile reporting(boolean sdCard, boolean eeprom, boolean binary) {
         return new MachineProfile(Map.of("FIRMWARE_NAME", "Marlin"),
-                Map.of("SDCARD", sdCard, "EEPROM", eeprom), LocalDateTime.now());
+                Map.of("SDCARD", sdCard, "EEPROM", eeprom, "BINARY_FILE_TRANSFER", binary),
+                LocalDateTime.now());
     }
 
     private String monitorPage() {
@@ -195,6 +206,67 @@ class MonitorPageTest {
 
         assertTrue(page.contains("data-bs-toggle=\"tooltip\""),
                 "without this attribute startTheme() has nothing to attach a tooltip to");
+    }
+
+    // ---------------------------------------------------------------- binary file transfer
+
+    /*
+     * Cap:BINARY_FILE_TRANSFER reaches the Storage island as data-binary-transfer, which enables its
+     * Binary Transfer checkbox. Rendered rather than fetched for the same reason as data-role: the
+     * server knew it already. The values are asserted as the strings "true"/"false" on purpose -
+     * StorageTab compares the prop exactly, since a `data-` attribute is a string and 'false' is
+     * truthy, so a page writing anything else would silently enable the mode everywhere.
+     */
+    @Test
+    void aMachineReportingBinaryTransferTellsTheIslandSo() {
+        PROFILE.set(reporting(true, false, true));
+
+        var page = monitorPage();
+
+        assertTrue(page.contains("data-binary-transfer=\"true\""),
+                "the island should be told the firmware can take a binary transfer");
+    }
+
+    // The claim this page gets wrong most easily: this capability is NOT a gate. The Storage tab
+    // and its island are decided by SDCARD alone, because a machine without binary transfer uploads
+    // perfectly well over ASCII - only the checkbox goes dead. A copy of the SDCARD gate here would
+    // take the whole tab away from every machine with an older firmware.
+    @Test
+    void aMachineWithoutBinaryTransferKeepsTheTabAndTheIslandAndLosesOnlyTheCheckbox() {
+        PROFILE.set(reporting(true, false, false));
+
+        var page = monitorPage();
+
+        assertTrue(page.contains("href=\"#storage\""), "the tab must stay live");
+        assertTrue(page.contains("data-p3d=\"storage-tab\""),
+                "ASCII upload still works, so the island must still mount");
+        assertTrue(page.contains("data-binary-transfer=\"false\""),
+                "and the checkbox must be told it cannot be used");
+    }
+
+    // An unreached machine has no Storage tab at all, so the attribute cannot be read from one -
+    // this covers the other way the capability can be absent: reported, with the key missing.
+    @Test
+    void aCapabilityNobodyMentionedIsFalseRatherThanAbsent() {
+        PROFILE.set(new MachineProfile(Map.of("FIRMWARE_NAME", "Marlin"),
+                Map.of("SDCARD", true), LocalDateTime.now()));
+
+        var page = monitorPage();
+
+        assertTrue(page.contains("data-binary-transfer=\"false\""),
+                "a missing capability must render false, not an absent attribute the prop defaults");
+    }
+
+    // The same independence check the two tab gates get: all three capabilities are read from their
+    // own keys, so a gate reading SDCARD for the binary flag would not pass both halves of this.
+    @Test
+    void theBinaryCapabilityIsReadFromItsOwnKey() {
+        PROFILE.set(reporting(true, false, false));
+        assertTrue(monitorPage().contains("data-binary-transfer=\"false\""),
+                "a card reader does not imply binary transfer");
+
+        PROFILE.set(reporting(true, true, true));
+        assertTrue(monitorPage().contains("data-binary-transfer=\"true\""));
     }
 
     // ---------------------------------------------------------------- the Settings tab

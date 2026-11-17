@@ -83,7 +83,7 @@ class BootVuejsApplicationTests {
                 }
 
                 @Override
-                public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName) {
+                public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName, boolean binary) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 

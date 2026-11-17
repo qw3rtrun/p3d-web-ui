@@ -36,6 +36,7 @@ import org.qw3rtrun.p3d.g.protocol.BaseRsDecoder
  * echo:SUBROUTINE CALL target:"cup.gco"
  *       parent:"/LIVE.GCO" pos0         SdSubroutineCall - the same, with a file already open
  * echo:END SUBROUTINE                   SdSubroutineEnd - the parent print resuming
+ * echo:Switching to Binary Protocol     BinaryModeSwitched - M28 B1, the mode actually changing
  * echo:; Steps per unit:                SettingsSection - M503, a heading
  * echo:  M92 X80.00 Y80.00              SettingsValue   - M503, one setting
  *   M92 X80.00 Y80.00                   SettingsValue   - M503 S0, the unprefixed shape

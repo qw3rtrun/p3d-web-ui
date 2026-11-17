@@ -748,6 +748,37 @@ class MarlinRsTest {
         }
 
         @Test
+        fun `the switch into binary mode is its own notice`() {
+            // #122. Captured off MarlinSim on 2026-11-16: `M28 B1` answers this line and then an
+            // `ok`, so the echo is the only place the firmware says the mode has actually changed.
+            // Undifferentiated prose until now, which left a host string-matching in its transport.
+            assertEquals(BinaryModeSwitched, BinaryModeSwitched.decode("echo:Switching to Binary Protocol"))
+            assertEquals(BinaryModeSwitched, EchoRsDecoder.decode("echo:Switching to Binary Protocol"))
+            assertNull(EchoMessage.decode("echo:Switching to Binary Protocol"))
+        }
+
+        @Test
+        fun `the registry answers the binary-mode notice with its own type, not prose`() {
+            // The assertion the type exists for: EchoMessage is greedy over the prefix, so a
+            // registry that reached it first would be green and useless.
+            assertEquals(BinaryModeSwitched, MarlinRsDecoder.decode("echo:Switching to Binary Protocol"))
+            assertEquals("echo:Switching to Binary Protocol", BinaryModeSwitched.encode())
+            assertEquals(BinaryModeSwitched, MarlinRsDecoder.decode(BinaryModeSwitched.encode()))
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = [
+            "echo:Switching to ASCII Protocol",
+            "Switching to Binary Protocol",
+            "echo:Switching to Binary Protocol and back",
+            "echo:",
+            "",
+        ])
+        fun `a line that is not the binary-mode notice decodes to absence`(line: String) {
+            assertNull(BinaryModeSwitched.decode(line), "should not decode: $line")
+        }
+
+        @Test
         fun `the echo specialisations still partition the prefix`() {
             val claimed = listOf(
                 "echo:Unknown command: \"M9999\"",
@@ -757,6 +788,7 @@ class MarlinRsTest {
                 "echo:DEBUG:INFO,ERRORS",
                 "echo:Cold extrudes are enabled (min temp 170C)",
                 "echo:cold extrusion prevented",
+                "echo:Switching to Binary Protocol",
             )
             for (line in claimed) {
                 assertNull(EchoMessage.decode(line)) { "EchoMessage should not claim: $line" }
@@ -772,7 +804,7 @@ class MarlinRsTest {
                                 BusyNotice("processing"), DebugLevelRs(emptySet()),
                                 DebugLevelRs(setOf("INFO", "ERRORS")), ColdExtrusionRs(true, 170),
                                 ColdExtrusionRs(false, 0), ColdExtrusionPrevented,
-                                InvalidExtruder("M104", 5))) {
+                                InvalidExtruder("M104", 5), BinaryModeSwitched)) {
                 assertEquals(echo, EchoRsDecoder.decode(echo.encode()))
             }
         }
@@ -811,6 +843,7 @@ class MarlinRsTest {
             "echo:SD card ok" to SdCardOk,
             "Done saving file." to SdDoneSaving,
             "echo:Unknown command: \"M9999\"" to UnknownCommand("M9999"),
+            "echo:Switching to Binary Protocol" to BinaryModeSwitched,
             "ok" to SimpleOkRs,
         )
 

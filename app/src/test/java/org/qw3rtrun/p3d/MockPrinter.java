@@ -1,8 +1,15 @@
 package org.qw3rtrun.p3d;
 
-import java.io.BufferedReader;
+import org.qw3rtrun.p3d.g.marlin.binary.MbpControlType;
+import org.qw3rtrun.p3d.g.marlin.binary.MbpFrame;
+import org.qw3rtrun.p3d.g.marlin.binary.MbpPacket;
+import org.qw3rtrun.p3d.g.marlin.binary.MbpPacketReader;
+import org.qw3rtrun.p3d.g.marlin.binary.MbpProtocol;
+import org.qw3rtrun.p3d.g.marlin.binary.MbpTransferType;
+
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.UncheckedIOException;
 import java.io.Writer;
@@ -76,6 +83,14 @@ public final class MockPrinter implements AutoCloseable {
      *                     wording. Assert on the <em>absence</em> of {@code SdCardOk}/
      *                     {@code SdFileList}, which is what the Storage tab keys on, never on the
      *                     echo string
+     * @param binaryTransfer built with {@code BINARY_FILE_TRANSFER}, which is what
+     *                     {@code Cap:BINARY_FILE_TRANSFER} reports and what gates the Storage tab's
+     *                     Binary Transfer checkbox. True is MarlinSim, measured 2026-11-16:
+     *                     {@code Cap:BINARY_FILE_TRANSFER:1}, and {@code M28 B1} really does switch
+     *                     the stream. <strong>UNMEASURED when false</strong> — the simulator cannot
+     *                     be built without it, so a machine that reports {@code 0} here simply never
+     *                     reaches the binary path: the server refuses the request before anything is
+     *                     written. Assert the refusal, never a reply string
      * @param advancedOk   built with {@code ADVANCED_OK}. True is MarlinSim: {@code ok N2 P15 B3}
      *                     numbered, {@code ok P15 B3} unnumbered — see {@link #ok()}. False is a
      *                     bare {@code ok} to everything, which holds the send window at one block
@@ -94,6 +109,7 @@ public final class MockPrinter implements AutoCloseable {
                           String firmware,
                           Map<String, Boolean> capabilities,
                           boolean sdCard,
+                          boolean binaryTransfer,
                           boolean advancedOk,
                           boolean answers,
                           boolean reportsSettings) {
@@ -106,7 +122,7 @@ public final class MockPrinter implements AutoCloseable {
         public Profile withExtruders(String label, int count) {
             return new Profile(label,
                     firmware.replaceAll("EXTRUDER_COUNT:\\d+", "EXTRUDER_COUNT:" + count),
-                    capabilities, sdCard, advancedOk, answers, reportsSettings);
+                    capabilities, sdCard, binaryTransfer, advancedOk, answers, reportsSettings);
         }
 
         @Override
@@ -129,14 +145,19 @@ public final class MockPrinter implements AutoCloseable {
                     + "UUID:00000000-0000-0000-0000-000000000000";
 
     /** The subset of the census's forty-odd {@code Cap:} lines that anything in this farm reads. */
-    private static Map<String, Boolean> simCapabilities(boolean sdCard) {
+    private static Map<String, Boolean> simCapabilities(boolean sdCard, boolean binaryTransfer) {
         var caps = new LinkedHashMap<String, Boolean>();
         caps.put("AUTOREPORT_TEMP", true);
         caps.put("EEPROM", true);
         caps.put("SDCARD", sdCard);
         caps.put("SD_WRITE", sdCard);
+        caps.put("BINARY_FILE_TRANSFER", binaryTransfer);
         caps.put("EMERGENCY_PARSER", true);
         return caps;
+    }
+
+    private static Map<String, Boolean> simCapabilities(boolean sdCard) {
+        return simCapabilities(sdCard, sdCard);
     }
 
     // ------------------------------------------------------------------ the configuration matrix
@@ -144,13 +165,27 @@ public final class MockPrinter implements AutoCloseable {
     /** A MarlinSim with a card in it: the baseline every feature is proved against first. */
     public static Profile marlin() {
         return new Profile("marlin-sd", MARLIN_SIM_M115, simCapabilities(true),
-                true, true, true, true);
+                true, true, true, true, true);
     }
 
     /** The same firmware with an empty reader - the Storage tab's other state. */
     public static Profile withoutCard() {
         return new Profile("marlin-no-sd", MARLIN_SIM_M115, simCapabilities(false),
-                false, true, true, true);
+                false, false, true, true, true);
+    }
+
+    /**
+     * A card reader, {@code SD_WRITE}, and no {@code BINARY_FILE_TRANSFER} - the configuration that
+     * must still upload, over ASCII, and must refuse a binary request rather than downgrade it.
+     *
+     * <p>The pair this and {@link #marlin()} make is the point: the same request with the same
+     * {@code binary} flag has to be accepted by one and refused by the other, which is the only way
+     * to prove the capability is read rather than assumed. A single capable profile would pass with
+     * the check deleted.
+     */
+    public static Profile withoutBinaryTransfer() {
+        return new Profile("marlin-no-binary", MARLIN_SIM_M115, simCapabilities(true, false),
+                true, false, true, true, true);
     }
 
     /** Two tools, so that a command for tool 1 is a command the aggregate may let through. */
@@ -174,7 +209,7 @@ public final class MockPrinter implements AutoCloseable {
      */
     public static Profile legacyOk() {
         return new Profile("legacy-bare-ok", MARLIN_SIM_M115, simCapabilities(true),
-                true, false, true, true);
+                true, true, false, true, true);
     }
 
     /**
@@ -185,7 +220,7 @@ public final class MockPrinter implements AutoCloseable {
      */
     public static Profile mute() {
         return new Profile("mute", MARLIN_SIM_M115, simCapabilities(true),
-                true, true, false, true);
+                true, true, true, false, true);
     }
 
     /**
@@ -203,7 +238,7 @@ public final class MockPrinter implements AutoCloseable {
     public static Profile withoutEeprom() {
         var caps = new LinkedHashMap<>(simCapabilities(true));
         caps.put("EEPROM", false);
-        return new Profile("marlin-no-eeprom", MARLIN_SIM_M115, caps, true, true, true, true);
+        return new Profile("marlin-no-eeprom", MARLIN_SIM_M115, caps, true, true, true, true, true);
     }
 
     /**
@@ -215,7 +250,7 @@ public final class MockPrinter implements AutoCloseable {
      */
     public static Profile withoutSettingsReport() {
         return new Profile("marlin-no-m503", MARLIN_SIM_M115, simCapabilities(true),
-                true, true, true, false);
+                true, true, true, true, false);
     }
 
     // ------------------------------------------------------------------ state
@@ -315,6 +350,105 @@ public final class MockPrinter implements AutoCloseable {
 
     /** The lines that have gone into {@link #openFile} so far. */
     private List<String> openLines = new ArrayList<>();
+
+    // ------------------------------------------------- the binary protocol, measured 2026-11-16
+
+    /**
+     * The firmware's payload buffer as its {@code ss} handshake reports it.
+     *
+     * <p><strong>96, not the 512 the reference implementation and {@code MbpSendWindow}'s default
+     * assume.</strong> Measured against MarlinSim (Marlin bugfix-2.1.x, compiled Oct 29 2026) on
+     * 2026-11-16:
+     *
+     * <pre>
+     * &gt;&gt; AD B5 00 01 00 00 01 03     (SYNC, sync=0)
+     * &lt;&lt; ss1,96,0.1.0
+     * </pre>
+     *
+     * Reproduced rather than rounded up because it is the number that exercises
+     * {@code MbpSendWindow}'s clamp: a host that kept 512 would slice blocks the firmware cannot
+     * hold, and a mock that reported 512 would never catch it. A 250-byte file is three blocks here.
+     */
+    private static final int MBP_BUFFER = 96;
+
+    /** The version string the {@code ss} and {@code PFT:version:} replies carry, measured. */
+    private static final String MBP_VERSION = "0.1.0";
+
+    /**
+     * The line that both answers {@code M28 B1} and <em>is</em> the mode change - see
+     * {@link #write(String)}. Measured 2026-11-16, and decoded by {@code :gcode}'s
+     * {@code BinaryModeSwitched}, which is the typed signal the transport waits for.
+     */
+    private static final String BINARY_MODE_ECHO = "echo:Switching to Binary Protocol";
+
+    /**
+     * Whether the stream is reading packets rather than lines. Set when {@code M28 B1} is answered,
+     * cleared by a {@code CONTROL}/{@code CLOSE} packet.
+     *
+     * <p>The mock switches the moment it has written its answer, which is the <em>lenient</em>
+     * ordering: a real Marlin reads serial into a command queue and executes {@code M28 B1} later,
+     * so bytes written in between are consumed by the ASCII reader and become garbage. That race
+     * cannot be reproduced here, so {@link #packetsBeforeSwitch} counts the host's mistake instead -
+     * see its javadoc.
+     */
+    private volatile boolean binaryMode;
+
+    /**
+     * How many packet tokens arrived while the stream was still reading lines.
+     *
+     * <p>Zero is the assertion: a host that started writing packets before the firmware confirmed
+     * the switch would be relying on an ordering a real Marlin does not give it. The count exists
+     * because the mock itself cannot fail that way (see {@link #binaryMode}), so the only way to
+     * prove the host waited is to notice if it did not.
+     */
+    private final AtomicInteger packetsBeforeSwitch = new AtomicInteger();
+
+    /** How many packets to answer before the gate shuts; -1 for never. See holdPacketsAfter. */
+    private int holdAfterPackets = -1;
+
+    /** How many packets have been answered this session, counted from the SYNC. */
+    private int packetsAnswered;
+
+    /** The sync id the firmware expects next. Global and surviving a reconnect, measured: three
+     * consecutive sessions answered {@code ss1}, {@code ss8} and {@code ss0} rather than always 0. */
+    private int mbpSync;
+
+    /** The binary file being written, or null; {@code OPEN} sets it and {@code CLOSE} stores it. */
+    private String mbpOpenFile;
+
+    private ByteArrayOutputStream mbpOpenBytes = new ByteArrayOutputStream();
+
+    /**
+     * What each binary transfer put on the card, byte for byte. Kept apart from {@link #stored},
+     * which holds <em>lines</em>: the ASCII path re-assembles G-code and strips each block's
+     * {@code N} and {@code *} fields, so a file that went up over ASCII is not a copy of the one
+     * that was uploaded, while a binary one is. That difference is the feature.
+     */
+    private final Map<String, byte[]> binaryStored =
+            Collections.synchronizedMap(new LinkedHashMap<>());
+
+    /**
+     * Whether a card is mounted, as distinct from {@link Profile#sdCard} - whether the machine has a
+     * reader at all.
+     *
+     * <p>Modelled because the firmware releases the card when a binary transfer closes, and an
+     * {@code M20} after that answers {@code echo:No media} until an {@code M21} re-mounts it.
+     * Measured 2026-11-16:
+     *
+     * <pre>
+     * &gt;&gt; PFT CLOSE   &lt;&lt; ok6
+     *                &lt;&lt; echo:SD card released
+     *                &lt;&lt; PFT:success
+     * &gt;&gt; M20         &lt;&lt; echo:No media
+     * &gt;&gt; M21         &lt;&lt; echo:SD card ok
+     * &gt;&gt; M20         &lt;&lt; Begin file list ... MBP.GCO 250 ... End file list
+     * </pre>
+     *
+     * Without this the {@code M21} the upload sends afterwards would be untested ceremony that a
+     * later tidy-up could delete, and the Storage tab would silently stop listing after every
+     * binary upload.
+     */
+    private volatile boolean cardMounted = true;
 
     private final AtomicInteger sessions = new AtomicInteger();
 
@@ -462,6 +596,40 @@ public final class MockPrinter implements AutoCloseable {
     }
 
     /**
+     * The bytes a binary transfer put into {@code name}, or null if nothing did.
+     *
+     * <p>The counterpart of {@link #written(String)} and deliberately a different type: that one
+     * returns the <em>lines</em> an ASCII upload stored, because the ASCII path re-assembles G-code
+     * through {@code GcodeLines} and the firmware strips each block's {@code N} and {@code *}
+     * fields, so what lands is not a copy of what was uploaded. A binary upload is byte for byte,
+     * so asserting anything less than the exact array would miss the feature's whole claim.
+     */
+    public byte[] binaryWritten(String name) {
+        synchronized (card) {
+            var bytes = binaryStored.get(name);
+            return bytes == null ? null : bytes.clone();
+        }
+    }
+
+    /** Whether the stream is reading packets right now - true only inside a binary transfer. */
+    public boolean inBinaryMode() {
+        return binaryMode;
+    }
+
+    /** Whether a card is mounted, which a binary transfer's close releases - see {@code cardMounted}. */
+    public boolean cardMounted() {
+        return cardMounted;
+    }
+
+    /**
+     * How many packet tokens arrived while the stream was still reading lines - zero unless the host
+     * started writing packets before being told the mode had changed. See {@code packetsBeforeSwitch}.
+     */
+    public int packetsBeforeSwitch() {
+        return packetsBeforeSwitch.get();
+    }
+
+    /**
      * Whether a command starting with {@code prefix} has reached the machine. A prefix, not an
      * equality, because a command carries its parameters: {@code sent("M104")} is "the hotend was
      * set", {@code sent("M104 S210")} is "to 210".
@@ -556,6 +724,30 @@ public final class MockPrinter implements AutoCloseable {
         return this;
     }
 
+    /**
+     * Stops answering once {@code packets} binary packets have been answered.
+     *
+     * <p>The binary counterpart of {@link #holdRepliesFrom(String)}, and it needs a different
+     * trigger because a packet is not a command: nothing a binary transfer sends reaches
+     * {@link #commands()}, so there is no prefix to name. Determinism comes from the same place -
+     * the protocol's window is <strong>one packet deep</strong>, so a machine that stops
+     * acknowledging halts the transfer at the next packet and for good, until {@link #answerOne()}
+     * or {@link #answerFreely()}.
+     *
+     * <p>Counted from the {@code SYNC}, so {@code holdPacketsAfter(3)} withholds the reply to the
+     * first {@code WRITE}: the file is open on the card and the host is waiting on a block it cannot
+     * get an answer for, which is the state an exclusivity claim has to be tested in. The packet is
+     * still <em>processed</em> before its reply is parked, which is what a firmware does too - the
+     * reply is what goes missing, not the write.
+     */
+    public MockPrinter holdPacketsAfter(int packets) {
+        synchronized (writing) {
+            holdAfterPackets = packets;
+            holding = false;
+        }
+        return this;
+    }
+
     // -------------------------------------------------------------- the line-number continuity check
 
     /**
@@ -630,6 +822,9 @@ public final class MockPrinter implements AutoCloseable {
     public void answerFreely() {
         synchronized (writing) {
             holdFrom = null;
+            // Disarmed too, or the next packet past the threshold would shut the gate again and
+            // the transfer released here would stall for good - the window is one packet deep.
+            holdAfterPackets = -1;
             holding = false;
             for (List<String> lines; (lines = parked.pollFirst()) != null; ) {
                 lines.forEach(this::write);
@@ -639,20 +834,25 @@ public final class MockPrinter implements AutoCloseable {
 
     // ------------------------------------------------------------------ the session
 
+    /**
+     * One session, read a byte at a time.
+     *
+     * <p>A byte loop rather than a {@code BufferedReader.readLine()} one because a binary packet is
+     * not a line: it carries {@code AD B5} and arbitrary payload bytes, and a reader that cut at
+     * {@code \n} and decoded US-ASCII would split and mangle it. In line mode the bytes are
+     * accumulated here instead, which is the same behaviour the reader had.
+     */
     private void serve() {
         while (!closed) {
             try (var socket = server.accept()) {
                 sessions.incrementAndGet();
                 live = socket;
-                var reader = new BufferedReader(
-                        new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+                var in = socket.getInputStream();
                 var writer = new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.US_ASCII);
                 synchronized (writing) {
                     out = writer;
                 }
-                for (String line; (line = reader.readLine()) != null; ) {
-                    receive(line);
-                }
+                read(in);
             } catch (IOException e) {
                 if (closed) {
                     return;
@@ -664,6 +864,174 @@ public final class MockPrinter implements AutoCloseable {
                 live = null;
             }
         }
+    }
+
+    /**
+     * The session's read loop: lines until {@code M28 B1}, packets until a {@code CONTROL}/
+     * {@code CLOSE}, lines again.
+     *
+     * <p>{@code MbpPacketReader} is {@code :gcode}'s own, so the mock reads exactly what the
+     * encoder writes and the two cannot agree on a wrong layout - and it is built with
+     * {@link #MBP_BUFFER} as its limit, so a host that ignored the handshake's 96 and sent a
+     * 512-byte block gets {@code MbpPayloadTooLarge} here rather than a silently accepted packet.
+     */
+    private void read(InputStream in) throws IOException {
+        var line = new StringBuilder();
+        var packets = new MbpPacketReader(MBP_BUFFER);
+        for (int b; (b = in.read()) >= 0; ) {
+            if (binaryMode) {
+                var frame = packets.read(b);
+                if (frame != null) {
+                    receive(frame);
+                }
+                continue;
+            }
+            if (b == '\n') {
+                receive(line.toString());
+                line.setLength(0);
+                continue;
+            }
+            if (b == '\r') {
+                continue;
+            }
+            // The low byte of the packet token. In line mode it can only mean the host started
+            // writing packets before the firmware said it had switched - see packetsBeforeSwitch.
+            if (b == 0xAD) {
+                packetsBeforeSwitch.incrementAndGet();
+            }
+            line.append((char) (b & 0xff));
+        }
+    }
+
+    /**
+     * One binary frame as the lines a Marlin answers it with.
+     *
+     * <p>Measured against MarlinSim (Marlin bugfix-2.1.x, compiled Oct 29 2026) on 2026-11-16,
+     * a 250-byte file as three 96-byte blocks:
+     *
+     * <pre>
+     * &gt;&gt; SYNC            &lt;&lt; ss1,96,0.1.0                     (no ok for this one, ever)
+     * &gt;&gt; QUERY  (sync=1) &lt;&lt; ok1
+     *                    &lt;&lt; PFT:version:0.1.0:compression:heatshrink,8,4
+     * &gt;&gt; OPEN   (sync=2) &lt;&lt; ok2
+     *                    &lt;&lt; echo:SD card ok
+     *                    &lt;&lt; echo:Now fresh file: mbp.gco
+     *                    &lt;&lt; Writing to file: mbp.gco
+     *                    &lt;&lt; //action:notification mbp.gco
+     *                    &lt;&lt; PFT:success
+     * &gt;&gt; WRITE  (sync=3) &lt;&lt; ok3                               (and nothing else, ever)
+     * &gt;&gt; PFT CLOSE       &lt;&lt; ok6, echo:SD card released, PFT:success
+     * &gt;&gt; CONTROL CLOSE   &lt;&lt; ok7
+     * &gt;&gt; OPEN again      &lt;&lt; ok10, PFT:busy                   (a second open while one is held)
+     * </pre>
+     *
+     * <p>Two orderings in there are the protocol and not incidental. The {@code ok} comes
+     * <em>before</em> the {@code PFT:} line because the firmware acknowledges a packet before it
+     * dispatches it - which is why an {@code ok} is block progress only while writing. And
+     * {@code SYNC} is answered by {@code ss} alone, so a host that waited for an {@code ok} for it
+     * would retransmit until it gave up.
+     *
+     * <p>A corrupt or over-wide frame is answered {@code rs<sync>}, which is what the firmware does
+     * and what {@code MbpSendWindow.retransmit} exists for.
+     */
+    private void receive(MbpFrame frame) {
+        var lines = answerTo(frame);
+        synchronized (writing) {
+            packetsAnswered++;
+            if (holdAfterPackets >= 0 && packetsAnswered > holdAfterPackets) {
+                holding = true;
+            }
+            if (holding) {
+                parked.addLast(lines);
+                return;
+            }
+            lines.forEach(this::write);
+        }
+    }
+
+    /** One frame's reply lines, in the order the firmware writes them. */
+    private List<String> answerTo(MbpFrame frame) {
+        var lines = new ArrayList<String>();
+        if (!(frame instanceof MbpPacket packet)) {
+            lines.add("rs" + mbpSync);
+            return lines;
+        }
+        if (packet.getProtocol() == MbpProtocol.CONTROL) {
+            if (packet.getType() == MbpControlType.SYNC) {
+                // Answered while the header is still being read, before the sync id is checked,
+                // so it is the one packet that works on a desynchronised stream.
+                lines.add("ss" + mbpSync + "," + MBP_BUFFER + "," + MBP_VERSION);
+                return lines;
+            }
+            lines.add("ok" + packet.getSync());
+            mbpSync = (packet.getSync() + 1) & 0xff;
+            binaryMode = false;
+            return lines;
+        }
+
+        lines.add("ok" + packet.getSync());
+        mbpSync = (packet.getSync() + 1) & 0xff;
+
+        switch (packet.getType()) {
+            case MbpTransferType.QUERY ->
+                // heatshrink is what the simulator advertises; nothing here compresses, and
+                // MbpTransfer opens with the flag clear regardless, which the measured run proves.
+                    lines.add("PFT:version:" + MBP_VERSION + ":compression:heatshrink,8,4");
+            case MbpTransferType.OPEN -> {
+                if (mbpOpenFile != null) {
+                    lines.add("PFT:busy");
+                    return lines;
+                }
+                // dummy(1) | compression(1) | name | NUL
+                var payload = packet.getPayload();
+                var end = 2;
+                while (end < payload.length && payload[end] != 0) {
+                    end++;
+                }
+                var name = new String(payload, 2, end - 2, StandardCharsets.US_ASCII);
+                mbpOpenFile = name;
+                mbpOpenBytes = new ByteArrayOutputStream();
+                cardMounted = true;
+                lines.add("echo:SD card ok");
+                lines.add("echo:Now fresh file: " + name);
+                lines.add("Writing to file: " + name);
+                lines.add("//action:notification " + name);
+                lines.add("PFT:success");
+            }
+            // An ok and nothing more: the one packet type with no PFT: line of its own, which is
+            // what makes an ok mean "one block is on the card" while writing and nothing elsewhere.
+            case MbpTransferType.WRITE -> {
+                if (mbpOpenFile == null) {
+                    lines.add("PFT:invalid");
+                    return lines;
+                }
+                mbpOpenBytes.writeBytes(packet.getPayload());
+            }
+            case MbpTransferType.CLOSE -> {
+                if (mbpOpenFile == null) {
+                    lines.add("PFT:invalid");
+                    return lines;
+                }
+                var bytes = mbpOpenBytes.toByteArray();
+                synchronized (card) {
+                    card.put(mbpOpenFile, bytes.length);
+                    binaryStored.put(mbpOpenFile, bytes);
+                }
+                mbpOpenFile = null;
+                mbpOpenBytes = new ByteArrayOutputStream();
+                // The firmware lets the card go here, which is why an upload sends M21 afterwards.
+                cardMounted = false;
+                lines.add("echo:SD card released");
+                lines.add("PFT:success");
+            }
+            case MbpTransferType.ABORT -> {
+                mbpOpenFile = null;
+                mbpOpenBytes = new ByteArrayOutputStream();
+                lines.add("PFT:success");
+            }
+            default -> lines.add("PTF:invalid");
+        }
+        return lines;
     }
 
     private void receive(String framed) {
@@ -795,6 +1163,28 @@ public final class MockPrinter implements AutoCloseable {
             // answer, and all three decode - SdFreshFile, SdWritingToFile, ActionRs.
             case "M28" -> {
                 var name = argument(command);
+                // M28 B1 is the opposite command: it opens no file, it switches the wire to
+                // packets. Measured 2026-11-16:
+                //
+                //   >> M28 B1   << echo:Switching to Binary Protocol
+                //               << ok P15 B3
+                //
+                // The flag has to come first - the firmware reads it off the start of the string
+                // argument, so `M28 test.gco B1` is a file called "test.gco B1". That is also why
+                // :gcode builds this through the DSL rather than through StartSDWrite, whose
+                // generated model reads everything after M28 as one bare filename.
+                if ("B1".equals(name)) {
+                    if (!profile.binaryTransfer()) {
+                        // UNMEASURED: the simulator cannot be built without the capability. The
+                        // server refuses before anything is written, so nothing should reach here.
+                        lines.add("echo:Unknown command: \"" + command + "\"");
+                        lines.add(ok());
+                        return lines;
+                    }
+                    lines.add(BINARY_MODE_ECHO);
+                    lines.add(ok());
+                    return lines;
+                }
                 synchronized (card) {
                     openFile = name;
                     openLines = new ArrayList<>();
@@ -844,16 +1234,25 @@ public final class MockPrinter implements AutoCloseable {
                 lines.add(ok());
             }
             case "M21" -> {
+                if (profile.sdCard()) {
+                    // Re-mounts a card a binary transfer released - see cardMounted.
+                    cardMounted = true;
+                }
                 lines.add(profile.sdCard() ? "echo:SD card ok" : "echo:No SD card");
                 lines.add(ok());
             }
             case "M20" -> {
-                if (profile.sdCard()) {
+                if (profile.sdCard() && cardMounted) {
                     lines.add("Begin file list");
                     synchronized (card) {
                         card.forEach((name, size) -> lines.add(name + " " + size));
                     }
                     lines.add("End file list");
+                } else if (profile.sdCard()) {
+                    // A reader with a released card. Measured 2026-11-16, straight after a binary
+                    // transfer closed: `echo:No media`, which is a different line from the
+                    // `echo:No SD card` a machine with no reader answers.
+                    lines.add("echo:No media");
                 } else {
                     lines.add("echo:No SD card");
                 }
@@ -1022,11 +1421,23 @@ public final class MockPrinter implements AutoCloseable {
         return answering == null ? "ok P15 B3" : "ok N" + answering + " P15 B3";
     }
 
+    /**
+     * One reply line, and the one place the stream turns binary.
+     *
+     * <p>The mode flips when the host is <em>told</em>, not when {@link #respond(String)} decides -
+     * because {@link #holdRepliesFrom(String)} can park that answer, and a mock that had already
+     * switched would read the host's next ASCII block as packet noise. It is also what the firmware
+     * does: {@code echo:Switching to Binary Protocol} is written from the G-code execution stage, as
+     * the mode changes, which is exactly why it is the signal a host may rely on.
+     */
     private void write(String line) {
         synchronized (writing) {
             var writer = out;
             if (writer == null) {
                 return;
+            }
+            if (BINARY_MODE_ECHO.equals(line)) {
+                binaryMode = true;
             }
             try {
                 writer.write(line);

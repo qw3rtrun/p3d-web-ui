@@ -8,6 +8,7 @@ import org.qw3rtrun.p3d.g.protocol.SimpleBusyRs
 import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
 import org.qw3rtrun.p3d.g.protocol.digitsEnd
+import org.qw3rtrun.p3d.g.protocol.equalsAscii
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
@@ -17,8 +18,9 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * a rejected command comes out under it. [UnknownCommand] and [BusyNotice] are split out because a
  * host has to act on them; [SdCardOk], [SdFreshFile], [SdDoingFile], [SdSubroutineCall] and
  * [SdSubroutineEnd] because what they report is the card rather than the echo channel, and they are
- * [SdCardRs] as well for that reason; `M503`'s whole report because it is a [SettingsRs] and not
- * prose; everything else is [EchoMessage].
+ * [SdCardRs] as well for that reason; [BinaryModeSwitched] because it is the only line that says the
+ * wire has stopped being ASCII; `M503`'s whole report because it is a [SettingsRs] and not prose;
+ * everything else is [EchoMessage].
  *
  * ```
  * EchoRsDecoder.decode("echo:Unknown command: \"M9999\"")   // UnknownCommand("M9999")
@@ -35,9 +37,9 @@ interface EchoRs<D : EchoRs<D>> : GEventRs<D>
  *
  * Deliberately matches none of the specialisations - [UnknownCommand], [InvalidExtruder],
  * [BusyNotice], [DebugLevelRs], [ColdExtrusionRs], [ColdExtrusionPrevented], [SdCardOk],
- * [SdFreshFile], [SdDoingFile], [SdSubroutineCall], [SdSubroutineEnd], and the whole [SettingsRs]
- * family - so they partition the prefix between them and no line is claimed by two, the way
- * `DebugRs` and `ActionRs` partition `//`.
+ * [SdFreshFile], [SdDoingFile], [SdSubroutineCall], [SdSubroutineEnd], [BinaryModeSwitched], and the
+ * whole [SettingsRs] family - so they partition the prefix between them and no line is claimed by
+ * two, the way `DebugRs` and `ActionRs` partition `//`.
  *
  * ```
  * EchoMessage.decode("echo:busy")   // EchoMessage("busy")
@@ -77,6 +79,7 @@ data class EchoMessage(val text: String) : EchoRs<EchoMessage> {
             if (SdDoingFile.match(line)) return null
             if (SdSubroutineCall.match(line)) return null
             if (SdSubroutineEnd.match(line)) return null
+            if (BinaryModeSwitched.match(line)) return null
             if (SettingsRsDecoder.match(line)) return null
             return EchoMessage(text.substring(PREFIX.length).asciiTrim())
         }
@@ -243,6 +246,40 @@ data class BusyNotice(override val reason: String) : BusyRs<BusyNotice>, EchoRs<
 }
 
 /**
+ * `echo:Switching to Binary Protocol` - the firmware has left ASCII and is reading packets now.
+ *
+ * `M28 B1` writes it, from the G-code execution stage, and that is what makes it the host's signal
+ * that the mode has actually *changed* rather than merely been requested: the `ok` behind it
+ * acknowledges the request, while this line is the firmware saying the switch has happened.
+ * `:backend:terminal` waits for it to know when it may start writing packets.
+ *
+ * Captured against MarlinSim (`Marlin bugfix-2.1.x`, `echo: Compiled: Oct 29 2026`) on
+ * `localhost:8099` over a raw TCP socket, 2026-11-16. The echo arrives **before** the `ok`, on its
+ * own line, and there is no blank after the colon:
+ *
+ * ```
+ * >> M28 B1
+ * << echo:Switching to Binary Protocol
+ * << ok P15 B3
+ * ```
+ *
+ * Carries nothing, because the line is the whole event.
+ *
+ * ```
+ * BinaryModeSwitched.decode("echo:Switching to Binary Protocol")   // BinaryModeSwitched
+ * ```
+ */
+object BinaryModeSwitched : EchoRs<BinaryModeSwitched>, GRsDecoder<BinaryModeSwitched> {
+
+    private const val LINE = EchoMessage.PREFIX + "Switching to Binary Protocol"
+
+    override fun encode(): String = LINE
+
+    override fun decode(line: String): BinaryModeSwitched? =
+        if (line.equalsAscii(LINE)) this else null
+}
+
+/**
  * Any `echo:` line, tried most specific first.
  *
  * The order is the partition: [EchoMessage] excludes what the specialisations claim, so no two ever
@@ -269,6 +306,7 @@ object EchoRsDecoder : GRsDecoder<EchoRs<*>> {
         SdDoingFile,
         SdSubroutineCall,
         SdSubroutineEnd,
+        BinaryModeSwitched,
         EchoMessage,
     )
 

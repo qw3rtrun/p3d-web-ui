@@ -366,6 +366,124 @@ a bus that never ends.
 agreed with the bug for exactly that reason: every test in `HostTerminalTest` but the three named
 below subscribes the bus before `start()`, which no caller can do.
 
+### A binary transfer is a third writer on the same wire
+
+`HostTerminal.binaryTransfer(String cardName, byte[] data, Mono<Void> cancel)` returns a cold
+`Flux<Long>` that drives Marlin's Binary Protocol - `:gcode`'s `MbpSendWindow` and `MbpTransfer`
+state machines, with the clock and the thread discipline they deliberately do not have, in
+`MbpTransferDriver`. Seven things callers depend on:
+
+- **The outbound carries `byte[]`, not `String`.** `CommandProcessor implements
+  Processor<String, byte[]>`, `write0` encodes `US_ASCII` itself, and `TerminalManager` uses
+  `sendByteArray`. A packet starts `AD B5`, and `sendString` encodes UTF-8 - every byte above `0x7F`
+  becomes two. A `String` abused as a byte holder is an invariant no compiler and no `trim()`
+  respects, so the boundary carries bytes and the ASCII encoding happens in the one place that
+  writes. `HostTerminal.hex(byte[])` is what the traffic log shows.
+
+- **The progress `Long` is the cumulative count of payload bytes the firmware has acknowledged** -
+  `MbpTransfer.bytesWritten` after each accepted block, one per block. Not a percentage and not a
+  delta. It jumps to the file's full size on the final block, which is what makes 100% exact, and
+  `:backend:core` keeps exactly this for the ASCII path so it maps straight on. **An empty file
+  reports nothing and completes**, because there is no block to acknowledge. The readings are
+  buffered and the transfer never waits on the subscriber's demand for them: the firmware times a
+  silent stream out in ten seconds, so a packet held for a slow progress subscriber would fail the
+  transfer.
+
+- **The caller holds the wire exclusively, and it cannot be arranged from here.**
+  `PublisherQueue.addExclusivePublisher(Priority.REALTIME, …)` with a source that emits `M28 B1` and
+  then stays alive emitting nothing until the flux ends - a `Mono.just("M28 B1")` *completes*,
+  releases the exclusivity, and lets another source write an ASCII line into the middle of a packet
+  the firmware is mid-header on. **No mode gate was added to `canProcess()` for this**: the queue
+  already provides the exclusion and a second mechanism would be two half-mechanisms. (The transient
+  `rawPackets` term in `canProcess()` is a different thing and stays - it keeps an ASCII block from
+  being pulled while a packet is parked.)
+
+- **The `M28 B1` is the caller's to send, as an ordinary numbered block.** Its `ok N4 P15 B3` is
+  ASCII window credit like any other. The driver cannot send it: there is no path from here into the
+  send window, and an unnumbered copy poked at the wire would be credit the window never counted.
+
+- **Nothing is written until `BinaryModeSwitched` arrives.** Marlin reads serial into a command
+  queue and executes `M28 B1` later, out of that queue; bytes written in between are eaten by the
+  *ASCII* reader and become garbage commands. `echo:Switching to Binary Protocol` is written from
+  the execution stage, so it is the one signal the mode really changed - and measured, it arrives
+  *before* the `ok`, which is why waiting on it beats waiting on the `ok`. The wait is timed, so an
+  incapable printer fails rather than hangs.
+
+- **A cancellation completes; it does not error.** `cancel` firing drives `MbpTransfer.abort`, which
+  still leaves binary mode through a `CONTROL CLOSE` and then *completes*. The caller tells cancelled
+  from failed with a flag it set before firing `cancel`, exactly as the ASCII path does; an
+  `onError` would show the operator a failure when they asked for a stop. Any other give-up is an
+  `MbpTransferDriver.Failed` carrying `MbpTransfer.reason` **verbatim** - `:gcode`'s reason strings
+  are the diagnosis, and no resynchronise-and-retry is added on top of `MbpTransfer`'s documented
+  decision not to.
+
+- **`messageFlux()` does not carry `MbpRs`.** A packet-stream reply is protocol traffic the transport
+  owns, like an advanced `ok` or a `Resend:`; an `MbpOk` published as a reply would read as an
+  acknowledgement of something it has nothing to do with. Everything else a transfer produces does
+  reach the bus - measured mid-transfer: `echo:SD card ok`, `echo:Now fresh file:`,
+  `Writing to file:`, `//action:notification`, `echo:SD card released`.
+
+**The decoder order is mode-gated, and the order is forced.** `ReplyFlux.claim` tries
+`MbpRsDecoder` first while `HostTerminal.binaryMode` is on, then `MarlinRsDecoder` for whatever it
+declines. `rs<n>` is a line of **both** protocols: `MarlinRsDecoder.decode("rs7")` answers
+`ResendRs(lineNumber = 7)`, a base-protocol *line* resend, while in binary mode `rs7` is a *packet*
+resend, and nothing in the text distinguishes them - only the host knows which mode it put the
+printer in. `:gcode` keeps the two registries apart for exactly this reason
+(`MbpRsTest$NotInTheMainRegistry` pins it); registering both would give one line two claimants.
+
+Without the gate a packet resend reaches the ASCII send window, matches nothing it holds, triggers
+`CommandProcessor.resynchronise`, restarts the line numbering and publishes a `BlocksAbandoned` -
+**a healthy ASCII session destroyed over a reply that was never about it.**
+`aPacketResendInBinaryModeLeavesTheAsciiSessionAlone` is that test, and removing the gate also
+breaks two others.
+
+The flag is **set eagerly** (before `M28 B1`'s `ok` could arrive) and **cleared lazily** (after the
+`CONTROL CLOSE`'s `ok`), and both are safe for one measured reason: `MbpRsDecoder` claims
+`ok<digits>` only - `MbpOk.decode("ok P15 B3")` declines, `digitsEnd` hitting a blank right after
+`ok` - and Marlin writes its numbered ASCII acknowledgement `ok N4 P15 B3`, never `ok3`. So an ASCII
+`ok` crossing the boundary either way falls through to `MarlinRsDecoder` and still credits the ASCII
+window. `MbpTransferProbe` measured that exact ordering: the `ok N4 P15 B3` for `M28 B1` arrived
+*after* the echo and after the host had already written its `SYNC` packet.
+
+**Two measured numbers and two chosen ones.**
+
+| | value | |
+|---|---|---|
+| the firmware's payload buffer | **96 bytes**, not the stock 512 | measured, `<< ss1,96,0.1.0` |
+| the sync id across sessions | **not reset** by connecting or by `M28 B1` | measured: `ss1`, `ss8`, `ss0`, then `ss15`, `ss22`, `ss29` on consecutive runs |
+| reply timeout | 2000 ms | **chosen** |
+| attempts per packet | 5, the first transmission included | **chosen** |
+
+The 96 is what forces the construction order: `MbpTransfer` reads `MbpSendWindow.blockSize` *at
+construction* and `MbpSendWindow.on(MbpStreamSync)` is what clamps it, so the sequence is
+`SYNC` -> `ss` -> `new MbpTransfer(...)` -> `start()`. Build the transfer first and it slices
+512-byte blocks and `window.send` throws
+`payload of 512 bytes exceeds the negotiated block size of 96` on the first write;
+`theFirmwaresBufferSizeIsAdoptedFromTheHandshake` is the test that catches it, and it does fail when
+the order is reversed. The sync id being session-sticky is why it must be adopted from the `ss`
+rather than assumed to be zero.
+
+The two chosen numbers are **not** measurements - every reply in the capture came back inside a 1.2 s
+read window. What fixes them is the firmware, which times a stuck transfer out itself after ten
+seconds (`:gcode`'s `MbpTransferBusy` javadoc), so 5 x 2 s lines the host's budget up with the
+firmware's rather than fighting it. Both are constructor arguments on `MbpTransferDriver`, and the
+`Scheduler` is too - which is what lets `anUnansweredPacketIsSentAgainAndThenGivenUpOn` drive the
+timeout on a `VirtualTimeScheduler` instead of waiting ten real seconds.
+
+**And it is a third drain loop, not a third pipeline.** `MbpSendWindow` and `MbpTransfer` are
+portable Kotlin with no atomics and are explicitly not thread-safe - the same contract as
+`GSendWindow`, for the same reason: they port to C. Three threads arrive at the driver (a reply on
+the netty inbound loop, the retry timeout on a scheduler thread, a cancellation on a caller's
+thread); all three park an intent and run the loop, and only the thread inside it touches the state
+machines, the timer, or `CommandProcessor.writeRaw`. The `AtomicInteger` guard carries the
+happens-before their plain fields need. `writeRaw` then parks the packet for the *other* drain loop,
+so the driver never writes to a socket either.
+
+A throw out of `:gcode` is contained in that loop rather than let out. `:gcode` answers a bad
+*reply* with a value and throws only on a call the driver got wrong (a payload wider than the
+negotiated block, which is exactly what the construction-order bug produces); letting it unwind
+would go through the netty inbound subscriber and take the whole session's reply stream with it.
+
 ## The layering rule
 
 | Layer | Where | May depend on |
@@ -600,12 +718,27 @@ the default for anything with demand in it.
   to prove the code survives a badly-behaved upstream.
 - **`VirtualTimeScheduler`** for anything with a timeout - never a real sleep.
 - **Sinks for the wire.** `HostTerminalTest` constructs `HostTerminal` over
-  `Sinks.many().multicast().onBackpressureBuffer()` and feeds it lines. That is the right shape for
-  a protocol-level test: no socket, no sleep, deterministic.
+  `Sinks.many().multicast().onBackpressureBuffer()` and feeds it lines, and
+  `HostTerminalBinaryTest` does the same for the packet stream, replaying the measured session line
+  by line. That is the right shape for a protocol-level test: no socket, no sleep, deterministic.
+- **A packet assertion reads the bytes back; it does not re-encode them.** `HostTerminalBinaryTest`
+  decodes what was written with `:gcode`'s `MbpPacketReader` - a different piece of code from the
+  `MbpCodec` that produced them - rather than comparing against `MbpCodec.encode`, which would
+  recompute the expectation the way the code under test does and pass by construction. The one
+  literal is the `SYNC` packet's `AD B5 00 01 00 00 01 03`, which `MbpSendWindow`'s javadoc states
+  independently.
+- **A `StepVerifier` that can hang is a build that hangs.** `verifyComplete()` blocks for ever when
+  the completion never comes, which is exactly the failure a binary-protocol test produces when a
+  reply goes unrouted - use `.expectComplete().verify(TIMEOUT)` so it reports in seconds instead.
 - **The probes are not tests.** `EmulatorTemperatureProbe`, `GCodeLiveProbe`, `GCodeCorpusProbe` and
   `TerminalRecoveryProbe` need a printer on `localhost:8099` and must never be wired into `check`.
   They exist because the unit tests cannot catch a reply shape the firmware actually sends - which
   is how the `ok N…` bug was found. Run one when you change reply handling.
+- **`MbpTransferProbe` is the one for the binary protocol**, and the only thing that exercises the
+  arrangement `:backend:core` has to build: an ASCII `M28 B1` and a packet stream as two writers on
+  one wire, with the first still holding the queue's exclusivity while the second runs. It writes a
+  250-byte file, checks the card reports 250 byte-exact, and deletes it again. No unit test can make
+  the claim, because the byte count only exists on the far end.
 - **`TerminalRecoveryProbe` is the one for the send window**, and the only thing that measures the
   resend loop end to end: it taps the wire between the processor and the socket, breaks one framed
   block's checksum, and checks that the firmware rejects it, that the host sends the same bytes
@@ -738,7 +871,27 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
 - **`GFlux` captures its `FluxSink` from `Flux.create` into a field**, so `onG` NullPointers if
   anything emits before the first subscribe, and a second subscriber overwrites the field.
 - **There is no written spec for this module.** `:gcode` has `doc/specs/GCODE_spec.md` and its
-  Appendix B; the transport has this skill and nothing else. Two contracts are written down now -
-  the send window and what a terminal signal on `messageFlux()` means, both under *The contracts
-  callers depend on* above - and anything else callers come to rely on goes in the same place, in
-  the change that establishes it.
+  Appendix B; the transport has this skill and nothing else. Three contracts are written down now -
+  the send window, what a terminal signal on `messageFlux()` means, and the binary transfer, all
+  under *The contracts callers depend on* above - and anything else callers come to rely on goes in
+  the same place, in the change that establishes it.
+- **A binary packet parked by `writeRaw` with no downstream demand can be retransmitted into a
+  second copy of itself.** `canProcess()` returns 0 while a packet is parked, but the driver's retry
+  timer does not know the packet has not been *written* yet - it only knows no reply came back - so
+  after two seconds of zero demand it parks the same bytes again and both go out when demand
+  arrives. Harmless in practice (the firmware re-acknowledges a packet it has already processed, and
+  `reactor-netty`'s send requests unbounded, so zero demand means a send that has stalled anyway)
+  and not worth a "written yet?" flag across the two drain loops today. Worth knowing before
+  `rawPackets` is made a single slot.
+- **`HostTerminal.stop()` does not stop a transfer in progress.** It cancels the two halves and
+  disposes the connection; the `MbpTransferDriver` hears nothing, waits out its 5 x 2 s, and then
+  fails its flux into a socket that is already gone. The `cancel` `Mono` is the way to stop one, and
+  `:backend:core` holds it - but a disconnect that races a transfer leaves a scheduler task alive for
+  up to ten seconds. Closing it means `stop()` knowing about `binaryDriver`, which is a wiring change
+  rather than a field change.
+- **Nothing proves what happens if two `binaryTransfer` fluxes are subscribed at once.** The second
+  `enterBinaryMode` overwrites `binaryDriver`, so the first stops receiving replies and times out
+  while its packets still reach the wire, interleaved with the second's. The caller's exclusivity
+  contract rules it out and `:backend:core` honours it, but nothing here enforces it and no test
+  pins the behaviour. A `compareAndSet` on the driver slot that failed the second subscriber loudly
+  would be the honest version.

@@ -22,13 +22,22 @@ package org.qw3rtrun.p3d.api.msg;
  * @param bytesTotal the whole file, from the stored record; never zero for a real transfer
  * @param blocksSent lines handed to the send window - not a position in the file, see above
  * @param reason     why it ended; null while running and null when it finished cleanly
+ * @param binary     whether this went over Marlin's Binary Protocol ({@code M28 B1} and packets)
+ *                   rather than the ASCII {@code M28}/write-loop/{@code M29}. A field rather than
+ *                   a second record because the browser already has one {@code case} for upload
+ *                   progress keyed on this type's simple name, and because it makes which mode
+ *                   actually ran observable at the SSE boundary - the only place the choice can be
+ *                   proved rather than inferred. The two modes differ in what ends up on the card:
+ *                   a binary transfer is a byte-for-byte copy, while the ASCII one re-assembles
+ *                   G-code lines and stores them stripped of their {@code N} and {@code *} fields
  */
 public record SdUploadProgressed(String file,
                                  SdUploadState state,
                                  long bytesSent,
                                  long bytesTotal,
                                  long blocksSent,
-                                 String reason) {
+                                 String reason,
+                                 boolean binary) {
 
     /**
      * How much of the file has gone, between 0 and 1. Zero when there is nothing to divide by;

@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
+import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
@@ -70,7 +71,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * and {@link #snapshot()}, built from volatile references so a subscriber attaching does not wait
  * for the machine to be quiet. <strong>And {@code terminal} and {@code commandQueue} have no edge
  * at all</strong>: their writes are confined to {@code executor}, but {@link #feed},
- * {@link #uploadToCard} and {@link #interject} read them from whatever thread is feeding a job, so
+ * {@link #uploadToCard}, {@link #binaryTransfer} and {@link #interject} read them from whatever
+ * thread is feeding a job or an upload, so
  * a reader can see a link that has just gone (or miss one that has just come up) - the same staleness
  * {@link #linked()} already says it does not cover, and not something this class can close alone.
  *
@@ -433,6 +435,37 @@ public class PrinterReactor {
                     "printer " + printer.getId() + " is not connected, so nothing can be written to its card"));
         }
         return queue.addExclusivePublisher(Priority.REALTIME, transfer);
+    }
+
+    /**
+     * Hands a whole file to the transport's Marlin Binary Protocol writer and reports back how much
+     * of it the printer has acknowledged - <strong>cumulative payload bytes</strong>, not a delta,
+     * so a reader sets rather than adds. Cold, completes on success or on {@code cancel}, errors
+     * with the transfer's own reason text.
+     *
+     * <p>Not part of {@link #uploadToCard}'s queue and must be composed inside one: packets bypass
+     * the numbered ASCII path entirely, so the only thing keeping an {@code M105} out of the middle
+     * of a packet is the exclusive publisher this stream sits in the middle of (see
+     * {@code SdUploader.binaryTransferOf}).
+     *
+     * @param data the entire file, held in memory - see {@code SdUploader}'s ceiling
+     */
+    public Flux<Long> binaryTransfer(String cardName, byte[] data, Mono<Void> cancel) {
+        var host = terminal;
+        if (host == null) {
+            return Flux.error(new IllegalStateException(
+                    "printer " + printer.getId() + " is not connected, so nothing can be written to its card"));
+        }
+        return host.binaryTransfer(cardName, data, cancel);
+    }
+
+    /**
+     * What this machine reported itself to be - the roster's seed until an {@code M115} replaces it,
+     * never null. A volatile read from the caller's thread, like {@link #linked()}, so a capability
+     * check costs nothing and can go in front of a blocking store lookup.
+     */
+    public MachineProfile profile() {
+        return printer.getProfile();
     }
 
     /** Puts a host-side fact (not an aggregate event) on this machine's own stream, e.g. upload progress. */

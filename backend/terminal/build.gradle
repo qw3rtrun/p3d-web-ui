@@ -169,3 +169,24 @@ tasks.register('probeMbpTransfer', JavaExec) {
             (findProperty('probePort') ?: '8099').toString(),
     ]
 }
+
+/**
+ * Measure the connect/disconnect handshake of issue #127: which `Cap:` lines this firmware
+ * advertises, whether `M155 S<n>`/`M154 S<n>`/`M27 S<n>` really auto-report and whether `S0`
+ * really stops them, what a one-shot state read answers, and how an unsupported command is
+ * refused.
+ *
+ * Hand-run only, like the probes above: it needs a listener on the far end, so it is deliberately
+ * not wired into `check`. It changes nothing on the machine except the auto-report periods it sets,
+ * and it sets every one of those back to 0 before it ends.
+ */
+tasks.register('probeHandshake', JavaExec) {
+    group = 'verification'
+    description = 'Measure the on-connect handshake and auto-report capabilities of a printer (default localhost:8099).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.HandshakeProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

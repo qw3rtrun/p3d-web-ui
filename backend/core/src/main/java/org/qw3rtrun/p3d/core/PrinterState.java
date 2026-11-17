@@ -20,10 +20,12 @@ import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition;
 import org.qw3rtrun.p3d.g.marlin.command.InitSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
 import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
+import org.qw3rtrun.p3d.g.marlin.command.PositionAutoReport;
 import org.qw3rtrun.p3d.g.marlin.command.PrintTravelMoveLimits;
 import org.qw3rtrun.p3d.g.marlin.command.RelativePositioning;
 import org.qw3rtrun.p3d.g.marlin.command.ReleaseSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.ReportHotendTemperature;
+import org.qw3rtrun.p3d.g.marlin.command.ReportSDPrintStatus;
 import org.qw3rtrun.p3d.g.marlin.command.ReportSettings;
 import org.qw3rtrun.p3d.g.marlin.command.RestoreSettings;
 import org.qw3rtrun.p3d.g.marlin.command.SaveSettings;
@@ -65,8 +67,16 @@ import java.util.function.Consumer;
 
 /**
  * The printer aggregate: one machine's connection, firmware/capability profile, declared spec,
- * EEPROM settings, SD card state and last temperature, plus the dispatch that routes every command
- * and reply through it. One instance per printer, holding no scheduler of its own.
+ * EEPROM settings, SD card state, last temperature and the auto-reports this session started, plus
+ * the dispatch that routes every command and reply through it. One instance per printer, holding no
+ * scheduler of its own.
+ *
+ * <h3>The conversation it opens and closes</h3>
+ * {@link #onOnline} sends the two blocks that need no permission ({@code M115}, {@code M155 S1}) and
+ * {@link #on(CapabilityRs)} sends the rest as each {@code Cap:} line decides it - so the handshake's
+ * tail is a property of the machine rather than a constant, with no "is the handshake over yet"
+ * state anywhere. {@link #quiesce()} is the other end of it, and is deliberately separate from the
+ * disconnect intent; both are documented where they are declared (#127).
  *
  * <h3>Threading: every mutator is this machine's thread, and the exceptions are reads</h3>
  * Every method that <em>changes</em> anything here is reached only from that printer's own
@@ -78,7 +88,10 @@ import java.util.function.Consumer;
  * Three things are still read off another thread and each is published behind one {@code volatile}
  * reference, never read-modify-written: {@link #blocksInFlight} (a progress poll),
  * {@link ConnectionLifecycle}'s transition fields ({@code PrinterReactor.linked()}), and the one
- * immutable value apiece in the four controls ({@link #snapshot()}, read by a subscriber attaching).
+ * immutable value apiece in the four controls that {@link #snapshot()} reads, which a subscriber
+ * attaching does on its own thread. {@link AutoReportControl} is the fifth control and is
+ * <em>not</em> one of them: nothing reads it off this thread, so it is a plain field - see its own
+ * javadoc.
  *
  * <h3>Profile vs spec</h3>
  * {@link #profile} is what the machine <em>reported</em> (seeded from a {@link MachineProfile},
@@ -128,6 +141,8 @@ public class PrinterState implements PrinterAggregate {
     private final SdCardControl card = new SdCardControl();
 
     private final EEPROMSettingsControl settings = new EEPROMSettingsControl();
+
+    private final AutoReportControl autoReports = new AutoReportControl();
 
     private final ConnectionLifecycle connection;
 
@@ -272,6 +287,11 @@ public class PrinterState implements PrinterAggregate {
             case ReportHotendTemperature c -> handle(c);
             case TemperatureAutoReport c -> handle(c);
 
+            // the other two auto-reports (#127). Named rather than left to the pass-through so a
+            // log of what this host asked for reads the same for all three.
+            case PositionAutoReport c -> handle(c);
+            case ReportSDPrintStatus c -> handle(c);
+
             // motion, fan, position: no decision yet (see handle(LinearMoveG1) for the bed-volume
             // check that is missing).
             case AutoHome c -> handle(c);
@@ -395,6 +415,16 @@ public class PrinterState implements PrinterAggregate {
     public void handle(TemperatureAutoReport report) {
         log.info("{}", report);
         g.m155(report.getSeconds());
+    }
+
+    /** {@code M154} - position auto-report. */
+    public void handle(PositionAutoReport report) {
+        passThrough(report);
+    }
+
+    /** {@code M27} - print status, bare as a read or with an {@code S} period as a subscription. */
+    public void handle(ReportSDPrintStatus report) {
+        passThrough(report);
     }
 
     // ------------------------------------------------------------------ motion, fans, settings
@@ -593,19 +623,30 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * The socket is up: take the sender, forget what the last session taught, say so, and ask what
-     * the machine is.
+     * The socket is up: take the sender, forget what the last session taught, say so, and open the
+     * conversation - {@code M115}, then {@code M155 S1}.
      *
      * <p>The clear and its {@link SessionStarted} are one action, before the early return rather
      * than after it - that return is for a second {@code onOnline} on a machine already
      * {@code ONLINE}, and that path used to clear both controls and announce nothing at all (#94).
      * The boundary leads the {@code ONLINE} transition for the same reason: a page applying
      * messages in order has to forget the old session before it is told there is a new link.
+     * {@link AutoReportControl#sessionStarted()} is cleared here with the rest and therefore
+     * strictly before anything records into it.
+     *
+     * <p><strong>{@code M155 S1} is ungated, and that is a trade rather than an oversight.</strong>
+     * {@code AUTOREPORT_TEMP} cannot be known until the {@code M115} answer arrives, so gating it
+     * would cost a round trip on every machine in the farm and would lose temperature entirely on a
+     * firmware that reports no {@code Cap:} lines at all - and temperature is the one reading the UI
+     * cannot work without. The price is one command a pre-1.1.9 firmware answers
+     * {@code echo:Unknown command}, which is benign, measured, and republished to the page. The rest
+     * of the handshake is capability-gated and sent from {@link #on(CapabilityRs)}.
      */
     public void onOnline(GSender g) {
         this.g = g;
         card.sessionStarted();
         settings.sessionStarted();
+        autoReports.sessionStarted();
         emitter.accept(new SessionStarted());
         var change = connection.linkEstablished();
         if (change == null) {
@@ -613,22 +654,55 @@ public class PrinterState implements PrinterAggregate {
         }
         log.info("{} is online", id);
         g.firmwareInfo(); //M115
-        g.autoReportTemp(1); //M105
+        g.autoReportTemp(1); //M155 S1
+        autoReports.temperatureStarted();
         emitter.accept(change);
     }
 
     /**
-     * Connect/disconnect intent - the socket work is {@link PrinterReactor}'s. Turns
-     * auto-reporting off before releasing, so a reconnect does not find a backlog instead of a
-     * conversation.
+     * Turns off every auto-report this session started, and touches nothing else.
+     *
+     * <p><strong>It deliberately moves no connection state.</strong> A voluntary disconnect ends the
+     * <em>intent</em> to be connected, {@code printer_entity.connection_state} records that, and
+     * {@code PrinterReactorManager.onRegistered} dials at startup only what the roster says was
+     * linked - so a farm shut down by sending every machine a {@code ConnectCmd(false)} would come
+     * back up with every machine offline and nothing redialling it, losing the whole of the
+     * restart-recovery feature to a shutdown tidy-up. That is why this is a separate operation from
+     * {@link #handle(ConnectCmd)} rather than a step inside it, and
+     * {@code GracefulShutdownIntegrationTest.aFarmThatSaidGoodbyeStillDialsTheMachineAgainWhenItComesBack}
+     * is the test that would catch the shortcut.
+     *
+     * <p>Idempotent, and a no-op without a link: an involuntary loss ({@link #onOffline},
+     * {@link #onGaveUp}) reaches this state, and a block enqueued there would sit in a queue nothing
+     * will drain. Sent through {@link #onCommand} so each off-switch goes out by its own named
+     * handler and is logged like every other command.
+     *
+     * @return whether anything was sent
+     */
+    public boolean quiesce() {
+        if (!connection.linked() || g == null) {
+            return false;
+        }
+        var off = autoReports.teardown();
+        off.forEach(this::onCommand);
+        autoReports.sessionStarted();
+        return !off.isEmpty();
+    }
+
+    /**
+     * Connect/disconnect intent - the socket work is {@link PrinterReactor}'s.
+     *
+     * <p>The goodbye used to be an inline {@code g.m155(0)} here and has moved to
+     * {@link #quiesce()}, which the reactor calls <em>before</em> this: it is two or three commands
+     * now rather than one, it has to be the same operation the shutdown path uses, and the socket
+     * must not close until it has reached the wire - which is a decision about the transport and
+     * therefore the reactor's. Nothing is sent from here, which also keeps this honest about what it
+     * does: once {@code disconnectRequested()} has run, {@link #onCommand} refuses everything.
      */
     public void handle(ConnectCmd cmd) {
         if (cmd.connect()) {
             transition(connection.connectRequested());
             return;
-        }
-        if (connection.linked() && g != null) {
-            g.m155(0);
         }
         transition(connection.disconnectRequested());
     }
@@ -728,6 +802,68 @@ public class PrinterState implements PrinterAggregate {
     public void on(CapabilityRs report) {
         if (profile.on(report)) {
             emitter.accept(report);
+        }
+        startReportsFor(report);
+    }
+
+    /**
+     * The capability-gated tail of the opening handshake: one {@code Cap:} line in, the block it
+     * permits out. The precondition of each block is exactly the fact that permits it, so there is
+     * no "is the handshake finished yet" state and no timer.
+     *
+     * <p><strong>Driven by the line arriving, never by {@code profile.on(report)} returning
+     * true.</strong> {@link ProfileControl#on(CapabilityRs)} answers false for a capability whose
+     * value has not changed, and a {@link MachineProfile} is seeded from the roster, which persisted
+     * every capability the first session reported - so from the second connect onwards, and after
+     * every restart, no capability line is news. A gate inside that condition would send nothing at
+     * all in production while passing a first-connect test.
+     *
+     * <p>Two of the four decisions need their reason beside them:
+     * <ul>
+     *   <li>{@code AUTOREPORT_POS:1} <em>replaces</em> the {@code M114} rather than adding to it - a
+     *       report every second supersedes a single read. One second, because a toolhead moves as
+     *       fast as a hotend heats;</li>
+     *   <li>{@code AUTOREPORT_SD_STATUS:1} <em>adds</em> {@code M27 S3} and does <em>not</em>
+     *       suppress the one-shot {@code M27}. Measured: {@code Cap:SDCARD} is line 22 of the
+     *       simulator's answer and {@code Cap:AUTOREPORT_SD_STATUS} is line 26, so the card is
+     *       announced before the auto-report that would supersede polling it, and a rule that
+     *       suppressed the read would have to know a fact that has not arrived. One extra
+     *       {@code Not SD printing} on a machine with both is the price of a rule that does not
+     *       depend on the order Marlin happens to write its capabilities in. Three seconds, because
+     *       a percentage does not move at 1 Hz and every report is a message on every open SSE
+     *       stream.</li>
+     * </ul>
+     *
+     * <p>A one-shot read records nothing in {@link AutoReportControl}: a read is not a subscription
+     * and has no off-switch. {@link #onCommand} refuses when the link is down, which is right here -
+     * a {@code Cap:} line can only arrive over a live one.
+     */
+    private void startReportsFor(CapabilityRs report) {
+        switch (report.getCapability()) {
+            case "AUTOREPORT_POS" -> {
+                if (report.getEnabled()) {
+                    onCommand(new PositionAutoReport(1));
+                    autoReports.positionStarted();
+                } else {
+                    onCommand(new GetCurrentPosition());
+                }
+            }
+            case "AUTOREPORT_SD_STATUS" -> {
+                if (report.getEnabled()) {
+                    onCommand(new ReportSDPrintStatus(3, false));
+                    autoReports.sdStatusStarted();
+                }
+            }
+            case "SDCARD" -> {
+                if (report.getEnabled()) {
+                    onCommand(new ReportSDPrintStatus());
+                }
+            }
+            default -> {
+                // the other thirty-five Cap: lines of a MarlinSim M115 answer start nothing. The
+                // vocabulary has exactly three auto-reports; Cap:PROGRESS and Cap:BUILD_PERCENT are
+                // about M73, which is progress travelling host -> printer.
+            }
         }
     }
 

@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.qw3rtrun.p3d.api.model.ConnectionDetails;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
@@ -11,6 +12,7 @@ import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.api.msg.MSpecDeclaredEvent;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
+import org.qw3rtrun.p3d.terminal.TerminalManager;
 import org.reactivestreams.Subscription;
 import reactor.core.publisher.BaseSubscriber;
 import reactor.core.publisher.Flux;
@@ -19,12 +21,14 @@ import reactor.test.StepVerifier;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -495,7 +499,7 @@ class PrinterReactorManagerTest {
         var testManager = new PrinterReactorManager(directory,
                 machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
         }, ConnectionPolicy.standard(), PrinterThreads.virtualPerPrinter(), Schedulers.parallel(),
-                releaseBudget);
+                Duration.ofMillis(200), releaseBudget);
         theFarmHas(id);
         var reactor = testManager.openReactor(id);
 
@@ -562,5 +566,131 @@ class PrinterReactorManagerTest {
                 "the concurrent call took " + answeredWithin.toMillis() + "ms, as long as "
                         + "releaseAll()'s own budget - it was almost certainly blocked behind the "
                         + "monitor rather than answered directly");
+    }
+
+    // ---------------------------------------------------------------- the goodbye - issue #127
+
+    /**
+     * A machine that records being asked to say goodbye, and can be made not to answer.
+     *
+     * <p>Overriding {@code quiesce()} rather than driving a real handshake is deliberate here: what
+     * these tests are about is <em>whether and when the manager asks</em>. What the aggregate
+     * actually writes when it is asked is {@code PrinterStateHandshakeTest}'s claim, asserted on the
+     * blocks a {@code GSender} received, and what reaches a real machine is
+     * {@code GracefulShutdownIntegrationTest}'s.
+     */
+    private static class Goodbye extends PrinterState {
+
+        private final List<String> log;
+        private final CountDownLatch holdUp;
+
+        Goodbye(UUID id, List<String> log, CountDownLatch holdUp) {
+            super(id);
+            this.log = log;
+            this.holdUp = holdUp;
+        }
+
+        @Override
+        public boolean quiesce() {
+            log.add("goodbye");
+            if (holdUp != null) {
+                try {
+                    // far longer than any budget here: a release at the end of the test frees it.
+                    holdUp.await(30, TimeUnit.SECONDS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return false;
+        }
+    }
+
+    /**
+     * <strong>The goodbye goes out before the socket is shut, not after.</strong> Killing the farm
+     * used to reach {@code PrinterReactor.stop()} directly, so every connected machine was left
+     * auto-reporting into a closed socket until it was power-cycled.
+     *
+     * <p>The order is the claim, so it is asserted as an order: the aggregate appends when it is
+     * asked and this subscriber appends when the stream it was watching ends, which is what
+     * {@code stop()} causes. {@code Schedulers.immediate()} is the seam that makes both inline and
+     * therefore deterministic.
+     */
+    @Test
+    void releaseAllSaysGoodbyeBeforeItStopsThePrinter() {
+        var log = new ArrayList<String>();
+        var farm = inlineFarm(machine -> new Goodbye(machine, log, null), ConnectionPolicy.standard());
+        theFarmHas(id);
+        farm.openReactor(id).updates().subscribe(message -> {
+        }, failure -> log.add("stopped"), () -> log.add("stopped"));
+
+        farm.releaseAll();
+
+        assertEquals(List.of("goodbye", "stopped"), log,
+                "a farm that shuts the socket first has nothing left to say goodbye over");
+    }
+
+    /**
+     * A machine that will not take its goodbye is logged and left, and the whole farm's goodbye is
+     * bounded by <em>one shared budget</em> - two printers that never answer must not cost two
+     * budgets, for the same reason {@code releaseBudget} is shared: forty of them would be forty
+     * times the figure, on the one code path whose whole job is to be quick.
+     *
+     * <p>Real schedulers, because the point is that a stuck machine holds its own thread and not the
+     * shutdown thread.
+     */
+    @Test
+    void releaseAllIsBoundedByOneSharedBudgetWhenNobodyTakesTheirGoodbye() throws InterruptedException {
+        var stuck = new CountDownLatch(1);
+        var log = new CopyOnWriteArrayList<String>();
+        var budget = Duration.ofMillis(400);
+        var farm = new PrinterReactorManager(directory,
+                machine -> new Goodbye(machine, log, stuck), event -> {
+        }, ConnectionPolicy.standard(), PrinterThreads.virtualPerPrinter(), Schedulers.parallel(),
+                budget, budget);
+        var first = UUID.randomUUID();
+        var second = UUID.randomUUID();
+        theFarmHas(first);
+        theFarmHas(second);
+        farm.openReactor(first);
+        farm.openReactor(second);
+
+        var started = System.nanoTime();
+        farm.releaseAll();
+        var took = Duration.ofNanos(System.nanoTime() - started);
+        stuck.countDown();
+
+        assertEquals(2, log.size(),
+                "both machines must have been asked before any wait began; one budget spent per "
+                        + "machine in turn is what the shared one exists to prevent");
+        assertTrue(took.compareTo(budget.multipliedBy(4)) < 0,
+                "releaseAll() took " + took.toMillis() + "ms against a " + budget.toMillis()
+                        + "ms budget, so it is waiting per printer rather than for the farm");
+    }
+
+    /**
+     * A reactor whose own thread has already gone answers its goodbye by <em>completing</em>, never
+     * by erroring: {@code releaseAll()} is reached from {@code SmartLifecycle.stop()} and a failed
+     * goodbye there would come out of a shutdown as an exception, for a machine that by definition
+     * has nothing left to say.
+     */
+    @Test
+    void aGoodbyeOnAReactorWhoseThreadHasGoneCompletesRatherThanFailing() {
+        var executor = Schedulers.newSingle("gone");
+        var reactor = new PrinterReactor(new TerminalManager(new ConnectionDetails("localhost", 1)),
+                new PrinterState(id), event -> {
+        }, ConnectionPolicy.standard(), executor, Schedulers.parallel());
+        executor.dispose();
+
+        StepVerifier.create(reactor.quiesce(Duration.ofMillis(200)))
+                .verifyComplete();
+    }
+
+    /** An {@code OFFLINE} machine has no link to say anything over, and that is not an error either. */
+    @Test
+    void aGoodbyeToAMachineThatWasNotConnectedCompletesWithoutSendingAnything() {
+        theFarmHas(id);
+
+        StepVerifier.create(manager.openReactor(id).quiesce(Duration.ofMillis(200)))
+                .verifyComplete();
     }
 }

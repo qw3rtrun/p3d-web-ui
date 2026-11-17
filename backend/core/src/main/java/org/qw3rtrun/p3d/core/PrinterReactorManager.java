@@ -10,6 +10,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
@@ -32,20 +33,29 @@ import java.util.UUID;
  * and {@link #runtimeOf} differ only in what they do when there is none yet - throw, build one, or
  * answer null - and none of them dials a socket.
  *
- * <h3>Shutdown (#87)</h3>
- * {@link #releaseAll()} stops every reactor first and only then waits for each one's update stream
- * to actually finish, against <strong>one shared budget for the whole farm</strong>
- * ({@link #RELEASE_BUDGET}, five seconds - comfortably under Boot's default thirty-second
- * shutdown-phase timeout, since this runs inside that phase alongside other beans and spending the
- * whole thirty here would only move the hang issue #87 fixes rather than close it). Waiting on each
- * reactor in turn, instead of stopping all of them up front, could cost up to forty times that
- * budget on a farm of forty. {@link #shuttingDown} then refuses every new
+ * <h3>Shutdown (#87, #127)</h3>
+ * {@link #releaseAll()} runs three phases, each against <strong>one shared budget for the whole
+ * farm</strong> rather than one per printer, because waiting on forty machines in turn would cost
+ * forty times the figure:
+ * <ol>
+ *   <li><strong>say goodbye</strong> - every running machine turns off the auto-reports it started,
+ *       bounded by {@link #QUIESCE_BUDGET} (one second). See {@link #sayGoodbye}, which also says
+ *       why this is not a disconnect;</li>
+ *   <li><strong>stop</strong> every reactor, which disconnects it, parks completion on its update
+ *       sink and disposes its two schedulers;</li>
+ *   <li><strong>wait</strong> for each of those streams to have actually finished at its
+ *       subscribers, bounded by {@link #RELEASE_BUDGET} (five seconds).</li>
+ * </ol>
+ * Total cost is therefore {@code QUIESCE_BUDGET + RELEASE_BUDGET} = 6 s, comfortably under Boot's
+ * default thirty-second shutdown-phase timeout - this runs inside that phase alongside other beans,
+ * and spending the whole thirty here would only move the hang issue #87 fixes rather than close it.
+ * {@link #shuttingDown} then refuses every new
  * {@link #openReactorIfKnown}, so a request arriving in the gap before the web server itself starts
  * refusing connections cannot dial a machine the farm is already saying goodbye to.
  * {@code shuttingDown} and {@link #running} are both read and written only inside the narrow
- * {@code synchronized} block at the top of {@link #releaseAll()} - never across the wait that
- * follows, which would otherwise block every concurrent {@link #openReactorIfKnown}/
- * {@link #runtimeOf} caller for the length of the budget. Blocking inside {@link #releaseAll()}
+ * {@code synchronized} block at the top of {@link #releaseAll()} - never across either of the waits
+ * that follow, which would otherwise block every concurrent {@link #openReactorIfKnown}/
+ * {@link #runtimeOf} caller for the length of both budgets. Blocking inside {@link #releaseAll()}
  * itself is correct here: its only caller is {@code SmartLifecycle.stop()} on the shutdown thread,
  * never a WebFlux event loop.
  *
@@ -88,6 +98,17 @@ public class PrinterReactorManager {
 
     private static final Duration RELEASE_BUDGET = Duration.ofSeconds(5);
 
+    /**
+     * One second for the whole farm to say goodbye - the same shared-budget argument
+     * {@link #RELEASE_BUDGET} makes, and the same figure {@code PrinterReactor}'s own goodbye budget
+     * uses: two or three short blocks per machine, delayed only by a send window draining as each
+     * {@code ok} comes back. Total shutdown cost is {@code QUIESCE_BUDGET + RELEASE_BUDGET} = 6 s
+     * against Boot's thirty-second phase timeout.
+     */
+    private static final Duration QUIESCE_BUDGET = Duration.ofSeconds(1);
+
+    private final Duration quiesceBudget;
+
     private final Duration releaseBudget;
 
     public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
@@ -111,19 +132,22 @@ public class PrinterReactorManager {
     public PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
                                  ApplicationEventPublisher roster, ConnectionPolicy policy,
                                  PrinterThreads threads, Scheduler retries) {
-        this(directory, aggregateManager, roster, policy, threads, retries, RELEASE_BUDGET);
+        this(directory, aggregateManager, roster, policy, threads, retries,
+                QUIESCE_BUDGET, RELEASE_BUDGET);
     }
 
-    /** Takes {@link #releaseBudget} itself, so a test can prove {@link #releaseAll()} is bounded without waiting out a real five seconds. Package-private: nothing in production picks its own budget. */
+    /** Takes {@link #releaseAll()}'s two budgets itself, so a test can prove each phase is bounded without waiting out the real figures. Package-private: nothing in production picks its own. */
     PrinterReactorManager(PrinterDirectory directory, PrinterAggregateManager aggregateManager,
                           ApplicationEventPublisher roster, ConnectionPolicy policy,
-                          PrinterThreads threads, Scheduler retries, Duration releaseBudget) {
+                          PrinterThreads threads, Scheduler retries,
+                          Duration quiesceBudget, Duration releaseBudget) {
         this.directory = directory;
         this.aggregateManager = aggregateManager;
         this.roster = roster;
         this.policy = policy;
         this.threads = threads;
         this.retries = retries;
+        this.quiesceBudget = quiesceBudget;
         this.releaseBudget = releaseBudget;
     }
 
@@ -196,6 +220,7 @@ public class PrinterReactorManager {
             released = List.copyOf(running.entrySet());
             running.clear();
         }
+        sayGoodbye(released);
         for (var entry : released) {
             log.info("releasing the runtime of {}", entry.getKey());
             entry.getValue().stop();
@@ -208,6 +233,47 @@ public class PrinterReactorManager {
                         + "than holding up the rest of the farm's shutdown", entry.getKey(), releaseBudget);
             }
         }
+    }
+
+    /**
+     * Turns off every auto-report every running machine started, before any socket is shut - issue
+     * #127. Killing the farm used to go straight to {@code PrinterReactor.stop()}, so each connected
+     * printer went on emitting an unsolicited temperature a second into a closed socket until
+     * somebody power-cycled it or another host happened to send {@code M155 S0}.
+     *
+     * <p>Every machine's goodbye is <strong>started before any wait begins</strong> ({@code Mono.when}
+     * subscribes to all of them) and the whole farm shares {@link #quiesceBudget}, for the same
+     * reason {@link #releaseBudget} is shared: waiting on each printer in turn could cost forty
+     * times the figure on a farm of forty. A machine that will not take its goodbye is logged and
+     * left rather than holding up the rest of the shutdown.
+     *
+     * <p><strong>This is not a disconnect, and must never become one.</strong> The cheap version of
+     * this is a {@code ConnectCmd(false)} per reactor, which already runs the teardown - and which
+     * would silently cost the restart-recovery feature, because a voluntary disconnect ends the
+     * <em>intent</em> to be connected, {@code printer_entity.connection_state} records it, and
+     * {@link #onRegistered} dials at startup only what the roster says was linked. So a farm shut
+     * down that way comes back with every machine offline and nothing redialling it.
+     * {@code PrinterState.quiesce()} exists as an operation that touches no connection state for
+     * exactly this, and
+     * {@code GracefulShutdownIntegrationTest.aFarmThatSaidGoodbyeStillDialsTheMachineAgainWhenItComesBack}
+     * is what catches the shortcut.
+     *
+     * <p>Blocking here is correct for the same reason the wait below is: the only caller is
+     * {@code SmartLifecycle.stop()} on the shutdown thread.
+     */
+    private void sayGoodbye(List<Map.Entry<UUID, PrinterReactor>> released) {
+        if (released.isEmpty()) {
+            return;
+        }
+        Mono.when(released.stream()
+                        .map(entry -> entry.getValue().quiesce(quiesceBudget))
+                        .toList())
+                .timeout(quiesceBudget)
+                .doOnError(cause -> log.info("not every one of the {} machine(s) being released took"
+                        + " its goodbye within {}; leaving them rather than holding up the rest of"
+                        + " the farm's shutdown ({})", released.size(), quiesceBudget, cause.toString()))
+                .onErrorComplete()
+                .block();
     }
 
     /**

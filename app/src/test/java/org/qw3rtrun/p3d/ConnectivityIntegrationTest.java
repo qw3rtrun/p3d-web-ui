@@ -43,10 +43,19 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
     }
 
     /**
-     * Three blocks, each load-bearing: {@code M110 N0} (spec 7.2 - without it a reconnection to a
-     * printer that was never power-cycled is rejected from its first block, so only the first
-     * session after power-on ever worked), {@code M115} (what the machine is, which the roster
-     * keeps), then {@code M155 S1} (auto-reporting, so a healthy machine speaks within a round trip).
+     * Three blocks that are the same for every machine, each load-bearing: {@code M110 N0} (spec 7.2 -
+     * without it a reconnection to a printer that was never power-cycled is rejected from its first
+     * block, so only the first session after power-on ever worked), {@code M115} (what the machine
+     * is, which the roster keeps), then {@code M155 S1} (auto-reporting, so a healthy machine speaks
+     * within a round trip).
+     *
+     * <p><strong>The list grew with #127 and the two blocks on the end are a different kind of
+     * thing.</strong> {@code M114} and {@code M27} are capability-gated: they are sent because this
+     * machine answered {@code Cap:AUTOREPORT_POS:0} and {@code Cap:SDCARD:1}, so they vary by machine
+     * where the first three do not. The old three-element assertion here was right about the old
+     * handshake and is kept as the opening of this one; what each gated block means, and why the
+     * gate reads a capability rather than asking the firmware, is
+     * {@code HandshakeIntegrationTest}'s subject and not restated here.
      */
     @Test
     void connectingReachesIdleAndSendsTheOpeningHandshake() {
@@ -55,8 +64,9 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         connectAndWait(id);
 
-        await("the handshake to be on the wire", () -> printer.sent("M155 S1"));
-        assertEquals(List.of("M110 N0", "M115", "M155 S1"), printer.commands(),
+        await(() -> "the handshake to be on the wire. The machine received " + printer.commands(),
+                () -> printer.commands().contains("M27"));
+        assertEquals(List.of("M110 N0", "M115", "M155 S1", "M114", "M27"), printer.commands(),
                 "the session must open with M110, then ask what the machine is, then start reports");
         assertTrue(printer.sessionOpen(), "the socket should still be open");
     }
@@ -98,8 +108,11 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         connectAndWait(id);
 
-        await("the handshake to be on the wire", () -> printer.sent("M155 S1"));
-        assertEquals(List.of("M110 N0", "M115", "M155 S1"), printer.commands());
+        await(() -> "the handshake to be on the wire. The machine received " + printer.commands(),
+                () -> printer.commands().contains("M27"));
+        assertEquals(List.of("M110 N0", "M115", "M155 S1", "M114", "M27"), printer.commands(),
+                "the whole handshake still gets out through a window of one, one block per"
+                        + " acknowledgement - which is the point of this profile");
     }
 
     // ------------------------------------------------------- how an acknowledgement names a block

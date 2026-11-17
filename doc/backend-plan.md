@@ -535,7 +535,7 @@ What it is now:
 | | holds | because |
 |---|---|---|
 | `:gcode` `GRq`/`GRs` | everything a Marlin can be told or can say | it is the protocol, and it depends on nothing |
-| `api.msg` | only what no firmware has a word for: `ConnectionStateChanged`, `BlockAcknowledged`, `MachineJoinedFarm`/`LeftFarm`, `ConnectCmd`, the `M`-prefixed roster events | they are facts about the host, which `:gcode` cannot state |
+| `api.msg` | only what no firmware has a word for - the set that travels to the browser as an `EventMessage.event` is enumerated in `EventMessageCatalogueTest.TRAVELS_AS_AN_EVENT_MESSAGE` (`:backend:api`), which the build checks against the compiled package, plus `ConnectCmd` and the `M`-prefixed roster events, which live in the package but do not travel that way | they are facts about the host, which `:gcode` cannot state |
 | `frontend/command` | the shape a browser posts, each record with a `toMarlin()` | an HTTP contract is not a command set, and it belongs to the surface that receives it |
 
 `api` now has `api project(':gcode')`, `PrinterControl.send` takes `List<GRq<?>>`, `state` answers a

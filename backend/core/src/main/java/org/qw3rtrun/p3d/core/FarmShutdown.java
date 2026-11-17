@@ -32,13 +32,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * thirty-second hang comes back silently - no test that skips a real web server and a real shutdown
  * will ever notice.
  *
- * <p>{@link #stop()}, in order: {@link PrinterReactorManager#releaseAll()} stops every printer
- * (disconnects it, parks completion on its update sink, disposes its two schedulers), closes the
- * manager's gate against opening another, and then <strong>waits, bounded, for every one of those
- * streams to have actually finished</strong> at its subscribers before returning; then
+ * <p>{@link #stop()}, in order: {@link PrinterReactorManager#releaseAll()} closes the manager's gate
+ * against opening another runtime, has every printer <strong>say goodbye</strong> - turning off the
+ * auto-reports its session started, while its socket is still open and against one shared budget
+ * for the farm (#127; a {@code Ctrl+C} used to leave every connected machine reporting into a closed
+ * socket) - then <strong>stops</strong> every one of them (disconnects it, parks completion on its
+ * update sink, disposes its two schedulers), and finally <strong>waits, bounded, for every one of
+ * those streams to have actually finished</strong> at its subscribers before returning; then
  * {@link FarmEvents#close()} ends the farm-wide stream, synchronously and with no scheduler of its
  * own to wait on. Both are independently idempotent, and {@link #running} is a third guard so a
  * second {@link #stop()} does not even reach them.
+ *
+ * <p>The goodbye deliberately does <strong>not</strong> end any machine's intent to be connected -
+ * see {@link PrinterReactorManager#releaseAll()} - so a farm restarted after this dials again
+ * whatever was linked when it went down.
  *
  * <p><strong>The wait is a blocking call, and correct here precisely because of where it runs.</strong>
  * This repository's rule against blocking is about the netty event-loop threads a request shares;

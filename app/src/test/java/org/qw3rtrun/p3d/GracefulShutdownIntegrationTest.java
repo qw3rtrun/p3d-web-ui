@@ -17,12 +17,14 @@ import reactor.core.publisher.BaseSubscriber;
 import reactor.core.publisher.Flux;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -174,6 +176,95 @@ class GracefulShutdownIntegrationTest {
         }
     }
 
+    /**
+     * <strong>Killing the farm used to leave every connected machine still talking to nobody</strong> -
+     * issue #127's third item.
+     *
+     * <p>{@code PrinterState.handle(ConnectCmd)} has turned the temperature report off before a
+     * <em>voluntary</em> disconnect for a long time, but {@code FarmShutdown} never took that path:
+     * it called {@code PrinterReactorManager.releaseAll()}, which stopped each reactor directly.
+     * {@code PrinterReactor.stop()} disconnects and closes the socket, and nothing in between asked
+     * the aggregate to say goodbye. So a {@code Ctrl+C} left every printer in the farm emitting an
+     * unsolicited {@code  T:25.00 /0.00 ...} once a second into a closed socket until someone
+     * power-cycled it or another host connected and happened to send {@code M155 S0}.
+     *
+     * <p>The observable is the machine's own command log, read after the context has closed - the
+     * same far boundary {@code HandshakeIntegrationTest} uses, and the only one that can tell
+     * "the host decided to send it" from "the bytes arrived".
+     *
+     * <p>Two auto-reports and not one, deliberately: {@code withPositionAutoReport()} is started
+     * {@code M154 S1} as well as {@code M155 S1}, so the assertion is that the teardown undoes
+     * <em>what this session started</em> rather than one hard-coded off-switch.
+     */
+    @Test
+    void aFarmShutdownTurnsOffTheAutoReportsItStarted() throws Exception {
+        try (var printer = MockPrinter.listening(MockPrinter.withPositionAutoReport())) {
+            var context = boot(freshDatabase());
+            var port = ((WebServerApplicationContext) context).getWebServer().getPort();
+            var client = signIn(port).farm();
+
+            var id = register(client, "still reporting when we stopped", printer.port());
+            connectAndWait(client, id);
+            await("the opening handshake to finish",
+                    () -> printer.commands().contains("M154 S1"));
+            printer.forget();
+
+            context.close();
+
+            await(() -> "the farm to have turned its reports off before closing the socket."
+                            + " The machine received " + printer.commands(),
+                    () -> printer.commands().containsAll(List.of("M155 S0", "M154 S0")));
+            assertEquals(List.of("M155 S0", "M154 S0"), printer.commands(),
+                    "a shutdown turns off exactly what the session turned on");
+            await("the socket to be shut", () -> !printer.sessionOpen());
+        }
+    }
+
+    /**
+     * <strong>And the goodbye must not be mistaken for a decision.</strong>
+     *
+     * <p>The cheap way to fix the test above is to have {@code releaseAll()} send every reactor a
+     * {@code ConnectCmd(false)}, which already runs the teardown. It would pass, and it would break
+     * something else silently: a voluntary disconnect ends the <em>intent</em> to be connected,
+     * {@code printer_entity.connection_state} records that, and
+     * {@code PrinterReactorManager.onRegistered} dials at startup only what the roster says was
+     * linked. So a farm shut down that way comes back up with every machine offline and nothing
+     * redialling it - the whole of the restart-recovery feature, lost to a shutdown tidy-up.
+     *
+     * <p>Hence {@code PrinterState.quiesce()} deliberately touches no connection state. This is that
+     * claim, stated the only way it can honestly be stated: a second farm, booted on the same
+     * database, must dial the machine again on its own. The mock's session count is the evidence,
+     * because it is the one thing neither context can fake.
+     */
+    @Test
+    void aFarmThatSaidGoodbyeStillDialsTheMachineAgainWhenItComesBack() throws Exception {
+        try (var printer = MockPrinter.listening(MockPrinter.marlin())) {
+            var database = freshDatabase();
+            var first = boot(database);
+            var port = ((WebServerApplicationContext) first).getWebServer().getPort();
+            var client = signIn(port).farm();
+            var id = register(client, "connected across a restart", printer.port());
+            connectAndWait(client, id);
+            await("the first session's handshake", () -> printer.sent("M155 S1"));
+
+            first.close();
+            await("the first session to end", () -> !printer.sessionOpen());
+            printer.forget();
+
+            var second = boot(database);
+            try {
+                await(() -> "the restarted farm to dial the machine again. It has seen "
+                                + printer.sessions() + " session(s) and received "
+                                + printer.commands(),
+                        () -> printer.sessions() == 2 && printer.sent("M155 S1"));
+                assertEquals("M110 N0", printer.commands().getFirst(),
+                        "the second farm's session must open its own numbering");
+            } finally {
+                second.close();
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ the farm, booted here
 
     /**
@@ -183,12 +274,23 @@ class GracefulShutdownIntegrationTest {
      * connection-pool churn and is discarded when the JVM exits.
      */
     private static ConfigurableApplicationContext boot() {
+        return boot(freshDatabase());
+    }
+
+    /**
+     * The same, on a named database - so two contexts in sequence can be the <em>same farm</em>
+     * restarted, which is what {@link #aFarmThatSaidGoodbyeStillDialsTheMachineAgainWhenItComesBack()}
+     * needs. {@code DB_CLOSE_DELAY=-1} is what makes the rows outlive the first context.
+     */
+    private static ConfigurableApplicationContext boot(String datasourceUrl) {
         return new SpringApplicationBuilder(StandaloneApp.class)
                 .profiles("test")
-                .properties(
-                        "server.port=0",
-                        "spring.datasource.url=jdbc:h2:mem:shutdown-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1")
+                .properties("server.port=0", "spring.datasource.url=" + datasourceUrl)
                 .run();
+    }
+
+    private static String freshDatabase() {
+        return "jdbc:h2:mem:shutdown-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1";
     }
 
     /**
@@ -362,6 +464,11 @@ class GracefulShutdownIntegrationTest {
     // ------------------------------------------------------------------ plumbing
 
     private static void await(String what, BooleanSupplier condition) {
+        await(() -> what, condition);
+    }
+
+    /** The same, with the description built only when the wait fails - the evidence is the point. */
+    private static void await(Supplier<String> what, BooleanSupplier condition) {
         var deadline = System.nanoTime() + PATIENCE.toNanos();
         while (System.nanoTime() < deadline) {
             if (condition.getAsBoolean()) {
@@ -371,10 +478,10 @@ class GracefulShutdownIntegrationTest {
                 Thread.sleep(50);
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
-                fail("interrupted while waiting for " + what);
+                fail("interrupted while waiting for " + what.get());
             }
         }
-        fail("waited " + PATIENCE.toSeconds() + "s for " + what);
+        fail("waited " + PATIENCE.toSeconds() + "s for " + what.get());
     }
 
     @SuppressWarnings("unchecked")

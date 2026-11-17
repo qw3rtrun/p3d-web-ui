@@ -118,6 +118,21 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link #stop()} (nobody was watching) or the last subscriber's {@code doFinally} (somebody was)
  * runs second, and never throws on timeout, so one stuck browser cannot fail a farm-wide shutdown.
  *
+ * <h3>The goodbye (#127)</h3>
+ * A session that started auto-reports has to turn them off <em>before</em> the socket shuts, or the
+ * machine goes on emitting a temperature a second into a closed socket until it is power-cycled.
+ * {@link #sayGoodbye(Duration)} asks the aggregate ({@link PrinterState#quiesce()}) and hands back a
+ * bounded, never-failing wait for the last block to have reached the send window;
+ * {@link #quiesce(Duration)} is the same thing callable from any thread. The waiting is what was
+ * missing: {@code applyConnectCmd} used to enqueue {@code M155 S0} and call {@code disconnect()} in
+ * the same task, with nothing in between, and no test ever asserted the block arrived.
+ *
+ * <p>Both callers send the goodbye while the link is still up and before the connection state moves,
+ * because {@link PrinterState#onCommand} refuses everything once the aggregate is no longer linked.
+ * {@link PrinterState#quiesce()} itself moves no connection state, deliberately - a shutdown that
+ * ended every machine's <em>intent</em> to be connected would come back up with the whole farm
+ * offline and nothing redialling it.
+ *
  * <h3>Connect and retry</h3>
  * {@code connect()} and {@code disconnect()} are both safe to call in any state, including
  * mid-backoff and never-connected, and are private: {@link #handleConnectCmd(ConnectCmd)} is the
@@ -212,6 +227,15 @@ public class PrinterReactor {
 
     private PublisherQueue<String, Priority> commandQueue = new PublisherQueue<>();
 
+    // the completion of the most recent block the aggregate handed to the queue, or null.
+    // PublisherQueue.addPublisher's Mono "completes when the source is exhausted", i.e. when the
+    // queue has taken the block and handed it to the send window - the flush signal sayGoodbye()
+    // waits on, and which this used to discard. Plain, and confined to executor: enqueue() is
+    // reached only from the aggregate's GSender and the aggregate is only ever touched on this
+    // machine's own thread (#80). feed/uploadToCard/interject use commandQueue directly and never
+    // pass through here.
+    private Mono<Void> lastEnqueued;
+
     public PrinterReactor(TerminalManager manager, PrinterState printer) {
         this(manager, printer, event -> {
         });
@@ -264,12 +288,102 @@ public class PrinterReactor {
 
     // on executor, always: see the class javadoc's Threading section.
     private void applyConnectCmd(ConnectCmd cmd) {
-        printer.handle(cmd);
         if (cmd.connect()) {
+            printer.handle(cmd);
             connect();
-        } else {
-            disconnect();
+            return;
         }
+        // The order is the design. The goodbye goes first, while the link is still up and the
+        // aggregate will still send it - printer.handle(cmd) takes the connection to OFFLINE and
+        // onCommand refuses everything after that, so a goodbye sent later is a WARN and no bytes.
+        // Then the intent comes down, before this returns, because handleConnectCmd(Mono) promises
+        // the endpoint's 200 means the hang-up is already decided. Then the socket closes, once the
+        // goodbye is on the wire or the budget has run out - which is a task of its own on this
+        // thread rather than the end of this one, so "the hang-up is decided" and "the socket is
+        // shut" are now two observable moments where they used to be one.
+        var flush = sayGoodbye(GOODBYE_BUDGET);
+        printer.handle(cmd);
+        flush.doFinally(signal -> onExecutor(this::closeUnlessWantedAgain))
+                // an error arm like connect()'s, rather than the no-argument subscribe() whose
+                // default routes a failure through onErrorDropped. doFinally has already queued the
+                // close by then, so the socket shuts either way.
+                .subscribe(ignored -> {
+                }, cause -> log.info("the goodbye of {} ended in {}", printer.getId(), cause.toString()));
+    }
+
+    /**
+     * Shuts the socket, unless somebody asked for this machine again while it was saying goodbye.
+     *
+     * <p>The gate is the same one {@code connect()} makes before it dials, for the mirror-image
+     * reason: closing the socket is now a task queued behind the goodbye's flush rather than part of
+     * the same one, so a connect applied in that window would have its brand-new dial disposed by
+     * the previous disconnect catching up. The window is at most {@link #GOODBYE_BUDGET}.
+     */
+    private void closeUnlessWantedAgain() {
+        if (printer.wantsToBeConnected()) {
+            log.info("{} was asked for again while it was saying goodbye, so the socket stays",
+                    printer.getId());
+            return;
+        }
+        disconnect();
+    }
+
+    /**
+     * How long a hang-up or a shutdown will wait for this machine's goodbye to reach the wire.
+     *
+     * <p>One second: the goodbye is two or three short blocks, and the only thing that can delay it
+     * is a send window full of a print job's blocks, which drains as each {@code ok} returns. A
+     * machine that cannot manage it in a second is a machine whose socket is already useless, and
+     * holding a disconnect open for longer buys nothing.
+     */
+    private static final Duration GOODBYE_BUDGET = Duration.ofSeconds(1);
+
+    /**
+     * Sends this session's goodbye and answers with a bounded, never-failing wait for it to have
+     * reached the wire. <strong>Must be called on this machine's own thread</strong> - it reads and
+     * writes {@link #lastEnqueued} and drives the aggregate; {@link #quiesce(Duration)} is the form
+     * for any other caller.
+     *
+     * <p>Waiting on the <em>last</em> block is enough because {@link PublisherQueue} is FIFO within
+     * one priority, so the earlier off-switches are necessarily ahead of it. A timeout is swallowed:
+     * a machine that will not take its goodbye must not fail a disconnect or a shutdown.
+     */
+    private Mono<Void> sayGoodbye(Duration limit) {
+        lastEnqueued = null;
+        printer.quiesce();
+        var flush = lastEnqueued;
+        lastEnqueued = null;
+        if (flush == null) {
+            return Mono.empty();
+        }
+        return flush.timeout(limit)
+                .onErrorResume(cause -> {
+                    log.info("{} did not take its goodbye within {}; closing anyway",
+                            printer.getId(), limit);
+                    return Mono.empty();
+                });
+    }
+
+    /**
+     * The same, from any thread - schedules the goodbye on this machine's own thread first. The
+     * shutdown path, where the caller is {@code PrinterReactorManager.releaseAll()} on the shutdown
+     * thread and every printer's goodbye is started before any wait begins.
+     *
+     * <p>Never errors, including when this machine's thread has already been disposed: a goodbye
+     * from a {@code SmartLifecycle.stop()} that came out as an exception would be a shutdown failing
+     * over a machine that by definition has nothing left to say.
+     */
+    public Mono<Void> quiesce(Duration limit) {
+        // defer, so printer.quiesce() runs where subscribeOn puts the subscription - this machine's
+        // own thread - rather than on the shutdown thread that composed this.
+        return Mono.defer(() -> sayGoodbye(limit))
+                .subscribeOn(executor)
+                .onErrorResume(cause -> {
+                    // a disposed scheduler refuses the subscription outright; a queue that will take
+                    // no more blocks errors the flush. Neither is worth failing a shutdown over.
+                    log.info("{} said no goodbye: {}", printer.getId(), cause.toString());
+                    return Mono.empty();
+                });
     }
 
     /**
@@ -403,7 +517,7 @@ public class PrinterReactor {
     // a method reference, not a lambda: GSender also has a Kotlin (String)->Unit constructor, and
     // an implicitly-typed lambda is ambiguous between the two.
     private void enqueue(String gcode) {
-        commandQueue.addPublisher(Priority.REGULAR, Mono.just(gcode));
+        lastEnqueued = commandQueue.addPublisher(Priority.REGULAR, Mono.just(gcode));
     }
 
     private Mono<Void> gEvent() {

@@ -465,6 +465,97 @@ it leaves:
   `NullPointerException`: the `GSender` is held only while a link is up and every arm dereferences
   it, so the stack trace pointed at the aggregate instead of at the machine being unreachable.
 
+### The handshake's tail is capability-gated, and the gate is arrival and not change
+
+Issue #127. `PrinterState.onOnline` sends only what needs no permission - `M115`, then `M155 S1` -
+and **each remaining block is sent by the arrival of the `Cap:` line that decides it**, in
+`PrinterState.on(CapabilityRs)`. So the handshake is a property of the machine rather than a
+constant, there is no "is the handshake over yet" state and no timer, and the precondition of every
+block is exactly the fact that permits it. `MockPrinter.Profile.lastHandshakeBlock()` is how a test
+knows which block is last, and `HandshakeIntegrationTest` is the specification.
+
+| `Cap:` line | what goes out | recorded as started |
+|---|---|---|
+| `AUTOREPORT_POS:1` | `M154 S1` | yes |
+| `AUTOREPORT_POS:0` | `M114` | no - a read is not a subscription |
+| `AUTOREPORT_SD_STATUS:1` | `M27 S3` | yes |
+| `SDCARD:1` | `M27` | no |
+| anything else | nothing | |
+
+Five rules fall out, each paid for by a measurement:
+
+- **IMPORTANT - the gate is the line *arriving*, never `profile.on(report)` returning true.**
+  `ProfileControl.on` answers false for a capability whose value has not changed, and a
+  `MachineProfile` is **seeded from the roster**, which persisted every capability the first session
+  reported. So from the second connect onwards - and after every application restart - no capability
+  line is news, and a gate written as `if (profile.on(report)) { ...send... }` **sends nothing at all
+  in production while passing every first-connect test**.
+  `HandshakeIntegrationTest.aSecondSessionAsksEverythingTheFirstOneDid` is that case.
+- **The capability must be read, because for `M27` there is nothing to learn from the reply.**
+  Probed 2026-11-17 against `Marlin bugfix-2.1.x (Oct 29 2026 10:28:56)` on `localhost:8099`:
+  `M154 S1` on a firmware without it is **refused** (`echo:Unknown command: "M154 S1"`), so
+  send-and-see would have worked for position; `M27 S1` on a firmware without it is **accepted**,
+  byte-identical to a bare `M27` (`Not SD printing`, `ok P15 B3`), and then reports nothing, ever.
+  No signal on the wire at all. That one measurement is why this feature reads `Cap:` lines instead
+  of asking, and it is recorded in `AutoReportControl`'s javadoc.
+- **The spelling on the wire is `AUTOREPORT_POS`.** Marlin's build macro is `AUTOREPORT_POSITION`
+  and the G-code is `M154`; no line under any longer spelling appears among the simulator's 38, so a
+  host keyed on the macro name finds nothing and says nothing.
+- **`M155 S1` is ungated, and that is a stated trade.** `AUTOREPORT_TEMP` cannot be known before the
+  `M115` answer arrives, so gating it would cost a round trip on every machine and lose temperature
+  entirely on a firmware that reports no `Cap:` lines - and temperature is the one reading the UI
+  cannot work without. The price is one command a pre-1.1.9 firmware answers `echo:Unknown command`,
+  which is benign and republished to the page.
+- **A rule must not depend on the order a firmware happens to write its capabilities in.**
+  `AUTOREPORT_POS:1` *replaces* the `M114` (a report every second supersedes one read) but
+  `AUTOREPORT_SD_STATUS:1` *adds* `M27 S3` without suppressing `SDCARD:1`'s one-shot `M27`, because
+  `Cap:SDCARD` is line 22 of the simulator's answer and `Cap:AUTOREPORT_SD_STATUS` is line 26 - the
+  card is announced before the report that would supersede polling it, so a suppressing rule would
+  have to know a fact that has not arrived. One extra `Not SD printing` is the price.
+  Periods: 1 s for position (it moves as fast as temperature), 3 s for print status (a percentage
+  does not move at 1 Hz, and every report is a message on every open SSE stream).
+
+### The goodbye is an operation of its own, and it moves no connection state
+
+**`PrinterState.quiesce()` turns off every auto-report this session started and touches nothing
+else.** It is deliberately *not* part of `handle(ConnectCmd)`, and the reason is a feature that would
+otherwise be lost in silence: a voluntary disconnect ends the **intent** to be connected,
+`printer_entity.connection_state` records it, and `PrinterReactorManager.onRegistered` dials at
+startup only what the roster says was linked - so a farm shut down by sending every machine a
+`ConnectCmd(false)` comes back up with every machine offline and nothing redialling it.
+`GracefulShutdownIntegrationTest.aFarmThatSaidGoodbyeStillDialsTheMachineAgainWhenItComesBack` boots
+a second farm on the same database and is what catches that shortcut.
+
+- **`AutoReportControl` records what was started so the teardown undoes exactly that**, in the order
+  it was started, and nothing else. An off-switch for a report that was never on is a block for
+  nothing at the one moment the farm has a budget, and a capability can flip mid-session on a
+  reflashed machine at the same address. It is the one control with **no `snapshot()`**: whether
+  auto-reports are running is not a fact a page needs, and adding it would put a new message type on
+  every SSE stream. It is also the one control that is a **plain field** rather than `volatile`,
+  because nothing reads it off the aggregate's thread - a `volatile` there would be copied from the
+  neighbours rather than needed.
+- **`quiesce()` is idempotent and a no-op without a link.** An involuntary loss (`onOffline`,
+  `onGaveUp`) reaches it, and a block enqueued there would sit in a queue nothing will drain.
+- **The goodbye must be *waited for*, which is why it is the reactor's and not the aggregate's.**
+  `applyConnectCmd` used to enqueue `M155 S0` and call `disconnect()` - `terminal.stop()`, the socket
+  shut - in the same task, with nothing between them, and no test ever asserted the block arrived.
+  The flush signal already existed and was being discarded: `PublisherQueue.addPublisher` returns a
+  `Mono<Void>` that completes when the queue has taken the block. `PrinterReactor` keeps the last one
+  (`lastEnqueued`) and `sayGoodbye(Duration)` waits on it, bounded by `GOODBYE_BUDGET` (one second)
+  and never failing. Waiting on the *last* block is enough because `PublisherQueue` is FIFO within
+  one priority.
+- **The order inside a disconnect is the design**: goodbye, then the intent, then the socket. The
+  goodbye must precede `printer.handle(cmd)` because `onCommand` refuses everything once the
+  aggregate is not linked; the intent must still come down before `applyConnectCmd` returns, because
+  `handleConnectCmd(Mono)` promises the endpoint's 200 means the hang-up is already decided.
+- **"the hang-up is decided" and "the socket is shut" are now two moments, not one.** The close is a
+  task of its own, queued behind the flush, so anything observing the aggregate's thread needs one
+  more drain than it used to (`PrinterReactorThreadingTest.aDisconnectThatRacesAConnectLeavesNoDialRunning`
+  takes a second barrier for exactly that). The window is bounded by `GOODBYE_BUDGET`, and
+  `closeUnlessWantedAgain` gates it the way `connect()` gates a dial: a connect applied while a
+  machine is saying goodbye keeps its socket rather than having its new dial disposed by the old
+  disconnect catching up.
+
 ### Two halves describe a machine, and neither may write the other
 
 `MachineProfile` is what a machine **reported** - `M115`'s key-values and the `Cap:` lines after it.
@@ -1017,14 +1108,27 @@ not a browser was actually watching - because nothing released a printer's runti
 context closed (`PrinterReactorManager.release` was reached only from `MDeletedEvent`) and
 `FarmEvents`'s stream had no end-of-stream marker at all.
 
-- **`FarmShutdown`, a `SmartLifecycle` bean, is what lets the farm go.** Its `stop()` does two
-  things: `PrinterReactorManager.releaseAll()` stops every running printer (which disconnects it,
-  parks completion on that machine's `PrinterReactor.updates()` sink and disposes its two
-  schedulers) and closes the manager's gate against opening another - and then **waits, with one
-  shared bounded budget for the whole farm, for confirmation that every one of those streams has
-  actually finished at its subscribers**, through `PrinterReactor.awaitSubscribersGone(Duration)`,
-  before returning; `FarmEvents.close()` ends the farm-wide stream, which needs no such wait because
-  it owns no scheduler and completes synchronously. Both are idempotent and neither builds anything.
+- **`FarmShutdown`, a `SmartLifecycle` bean, is what lets the farm go.** Its `stop()` calls
+  `PrinterReactorManager.releaseAll()` and then `FarmEvents.close()`, which ends the farm-wide
+  stream and needs no wait because it owns no scheduler and completes synchronously. Both are
+  idempotent and neither builds anything.
+- **`releaseAll()` is three phases, each against one shared budget for the whole farm.** It closes
+  the manager's gate against opening another runtime, and then: every machine **says goodbye**
+  (`PrinterReactor.quiesce(Duration)` - the auto-reports its session started, turned off while its
+  socket is still open, `QUIESCE_BUDGET`, one second); every reactor is **stopped** (disconnected,
+  completion parked on its `PrinterReactor.updates()` sink, its two schedulers disposed); and then it
+  **waits for confirmation that every one of those streams has actually finished at its
+  subscribers**, through `PrinterReactor.awaitSubscribersGone(Duration)` (`RELEASE_BUDGET`, five
+  seconds). Total 6 s against Boot's thirty-second phase timeout.
+  **The budgets are shared rather than per machine**, and the phases are therefore separate passes:
+  starting every goodbye before waiting on any, and stopping every reactor before awaiting any,
+  is what keeps a farm of forty from costing forty times each figure. A machine that will not take
+  its goodbye is logged and left.
+  **The quiesce phase is not a disconnect and must never become one** - see *The goodbye is an
+  operation of its own* above; `GracefulShutdownIntegrationTest.aFarmShutdownTurnsOffTheAutoReportsItStarted`
+  and `...StillDialsTheMachineAgainWhenItComesBack` are the pair that pins both halves. Before #127
+  this phase did not exist, so killing the application left every connected printer emitting an
+  unsolicited temperature a second into a closed socket until it was power-cycled.
   Blocking inside `releaseAll()` is correct here and not the rule this module otherwise enforces -
   see *Letting go is not the same as having ended* below for why.
 - **`getPhase()` must answer `SmartLifecycle.DEFAULT_PHASE` (`Integer.MAX_VALUE`), and staying above
@@ -1624,6 +1728,14 @@ regression, not a cleanup: move it into the class block before deleting the para
 Live examples of what this skill rules out, so nobody copies them as precedent. Each is verified in
 the source, not suspected.
 
+- **`release(UUID)` does not say goodbye, so deleting a connected printer leaves it auto-reporting
+  into a closed socket.** The single-printer path (reached from `MDeletedEvent`) has exactly the leak
+  `releaseAll()` closed in #127, and it is left deliberately rather than overlooked: its caller is an
+  event listener that **must not block**, so it cannot take `releaseAll()`'s bounded wait, and
+  firing the goodbye and returning would race `stop()` closing the socket - the race #127 exists to
+  remove. It wants its own issue, and the shape is probably for `PrinterReactor` to own "flush, then
+  stop" as one asynchronous operation the listener starts and nobody waits on. The cost today is one
+  machine per delete, where the shutdown bug was the whole farm per `Ctrl+C`.
 - **A client that is not reading its socket while the server is torn down may see the connection
   reset rather than finished, and that is where #87 deliberately stopped.** `releaseAll()` now waits,
   bounded, for each `PrinterReactor`'s `updates()` Flux to have delivered its terminal signal before

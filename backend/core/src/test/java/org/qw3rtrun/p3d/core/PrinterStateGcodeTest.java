@@ -151,12 +151,23 @@ class PrinterStateGcodeTest {
         assertEquals(List.of("M155 S1", "M155 S0", "M155"), sent);
     }
 
+    /**
+     * A voluntary disconnect still turns auto-reporting off, in the order {@code PrinterReactor}
+     * performs it: the goodbye while the link is still up, then the intent.
+     *
+     * <p>It moved out of {@code handle(ConnectCmd)} and into {@code PrinterState.quiesce()} in #127,
+     * because it is now two or three commands rather than one, the shutdown path needs the same
+     * operation, and the socket must not close until it has reached the wire - which only the
+     * reactor can arrange. {@code PrinterStateHandshakeTest} holds the whole of that contract; this
+     * stays because the bytes a hang-up writes were always the point.
+     */
     @Test
     void disconnectingTurnsAutoReportingOff() {
         PrinterState printer = online();
         printer.handle(new ConnectCmd(true));
         sent.clear();
 
+        printer.quiesce();
         printer.handle(new ConnectCmd(false));
 
         assertEquals(List.of("M155 S0"), sent);

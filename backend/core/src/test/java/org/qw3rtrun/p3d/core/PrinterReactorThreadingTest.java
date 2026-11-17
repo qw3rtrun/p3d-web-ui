@@ -451,6 +451,12 @@ class PrinterReactorThreadingTest {
         connector.join(TimeUnit.SECONDS.toMillis(15));
         assertTrue(quiet(threads.aggregateOf(machine)),
                 "the aggregate's thread never drained what this test put on it");
+        // a second barrier, because since #127 shutting the socket is a task of its own: the
+        // disconnect sends this session's goodbye first and queues the close behind the flush, so
+        // the close is submitted while the first barrier is already ahead of it in the queue. One
+        // thread, FIFO, so a second barrier is strictly after it - no sleep and no hoping.
+        assertTrue(quiet(threads.aggregateOf(machine)),
+                "the aggregate's thread never drained the close the disconnect queued");
 
         assertEquals(0, dial.live.get(),
                 "a dial was still running after the operator said disconnect - the connect that "

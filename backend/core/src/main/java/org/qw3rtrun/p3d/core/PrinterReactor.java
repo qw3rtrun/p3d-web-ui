@@ -229,11 +229,18 @@ public class PrinterReactor {
 
     // the completion of the most recent block the aggregate handed to the queue, or null.
     // PublisherQueue.addPublisher's Mono "completes when the source is exhausted", i.e. when the
-    // queue has taken the block and handed it to the send window - the flush signal sayGoodbye()
-    // waits on, and which this used to discard. Plain, and confined to executor: enqueue() is
-    // reached only from the aggregate's GSender and the aggregate is only ever touched on this
-    // machine's own thread (#80). feed/uploadToCard/interject use commandQueue directly and never
-    // pass through here.
+    // queue has taken the block and the send window has written it - what sayGoodbye() waits on,
+    // and which this used to discard.
+    //
+    // It is NOT a flush signal and this comment used to call it one (#129). Written means handed to
+    // reactor-netty's outbound, which is two event-loop tasks short of the socket; the socket not
+    // closing in between is a guarantee of the transport's own close
+    // (TerminalManager.closeAfterFlush), not of this Mono. What this one is for is the other half -
+    // not closing before the send window has had room to write the goodbye at all.
+    //
+    // Plain, and confined to executor: enqueue() is reached only from the aggregate's GSender and
+    // the aggregate is only ever touched on this machine's own thread (#80).
+    // feed/uploadToCard/interject use commandQueue directly and never pass through here.
     private Mono<Void> lastEnqueued;
 
     public PrinterReactor(TerminalManager manager, PrinterState printer) {
@@ -329,12 +336,17 @@ public class PrinterReactor {
     }
 
     /**
-     * How long a hang-up or a shutdown will wait for this machine's goodbye to reach the wire.
+     * How long a hang-up or a shutdown will wait for this machine's goodbye to be <em>written</em>.
      *
      * <p>One second: the goodbye is two or three short blocks, and the only thing that can delay it
      * is a send window full of a print job's blocks, which drains as each {@code ok} returns. A
      * machine that cannot manage it in a second is a machine whose socket is already useless, and
      * holding a disconnect open for longer buys nothing.
+     *
+     * <p>That reasoning was incomplete rather than wrong (#129): it bounds how long the send window
+     * may take, and says nothing about how long {@code reactor-netty} takes to put a written block
+     * on the socket. No budget could - the answer is an ordering and not a duration, and it belongs
+     * to the transport's own close rather than here. See {@link #lastEnqueued}.
      */
     private static final Duration GOODBYE_BUDGET = Duration.ofSeconds(1);
 
@@ -426,15 +438,27 @@ public class PrinterReactor {
                 }, cause -> log.warn("gave up on {}: {}", printer.getId(), describe(cause)));
     }
 
+    /**
+     * Shuts this session down, <strong>terminal first and dial chain second</strong>.
+     *
+     * <p>The order is load-bearing (#129). Disposing {@code attempts} cancels the dial chain, and a
+     * live session's {@code Mono.zip(events, gCode)} hangs off it - so the cancel reaches
+     * {@code reactor-netty}'s outbound, which answers a cancel by <em>discarding</em> whatever it has
+     * not written yet. Done first, that throws away the goodbye {@link #sayGoodbye} just wrote:
+     * measured 18-20 times in 20. {@code HostTerminal.stop()} flushes and closes the socket and
+     * waits for it, so after it there is nothing left to discard - and closing the socket is itself
+     * what ends both halves, so the dispose below is only still here for a dial or a retry backoff
+     * that has no terminal yet.
+     */
     private void disconnect() {
         log.info("disconnecting from {}", printer.getId());
-        if (attempts != null) {
-            attempts.dispose();
-            attempts = null;
-        }
         if (terminal != null) {
             terminal.stop();
             terminal = null;
+        }
+        if (attempts != null) {
+            attempts.dispose();
+            attempts = null;
         }
     }
 

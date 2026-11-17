@@ -247,7 +247,8 @@ class HostTerminalBinaryTest {
     }
 
     /** The {@code SYNC} packet's bytes, which {@code MbpSendWindow}'s javadoc states independently -
-     * and the one packet whose whole wire form is short enough to pin as a literal. */
+     * and the one packet whose whole wire form is short enough to pin as a literal. The trailing
+     * {@code 0A} is not part of it; see the next test. */
     @Test
     void theSyncPacketIsTheEightBytesTheProtocolSpecifies() {
         terminal();
@@ -255,7 +256,36 @@ class HostTerminalBinaryTest {
         transfer("mbp.gco", payload(10)).subscribe();
         receive("echo:Switching to Binary Protocol");
 
-        assertEquals("AD B5 00 01 00 00 01 03", HostTerminal.hex(lastWritten()));
+        assertEquals("AD B5 00 01 00 00 01 03 0A", HostTerminal.hex(lastWritten()));
+    }
+
+    /**
+     * Every packet goes out followed by one {@code \n}, so a line-buffered bridge forwards it
+     * whole. ESP3D's telnet server holds bytes until a {@code \n} or 1500ms of silence, and Marlin
+     * drops a packet whose next byte is 500ms late: measured 2026-11-17, FILE OPEN - length byte
+     * {@code 0A} - was forwarded as {@code AD B5 01 11 0A} and the rest held back, on every
+     * resend, so no transfer got past opening the file. Pinned on a full transfer because the
+     * packets with a payload are the ones that broke.
+     */
+    @Test
+    void everyPacketIsFollowedByANewlineThatFlushesALineBufferedBridge() {
+        terminal();
+
+        StepVerifier.create(transfer("mbp.gco", payload(250)), 0)
+                .then(this::replayCaptureUpToTheFinalPftSuccess)
+                .then(() -> receive("ok7"))
+                .thenRequest(3)
+                .expectNextCount(3)
+                .expectComplete()
+                .verify(TIMEOUT);
+
+        var writes = List.copyOf(wrote).stream().filter(HostTerminalBinaryTest::isPacket).toList();
+        assertEquals(8, writes.size(), "one write per packet");
+        for (byte[] written : writes) {
+            assertEquals('\n', written[written.length - 1], HostTerminal.hex(written));
+            assertEquals(1, new MbpPacketReader(512).frames(written, 0, written.length - 1).size(),
+                    "everything before the newline is exactly one packet: " + HostTerminal.hex(written));
+        }
     }
 
     /**

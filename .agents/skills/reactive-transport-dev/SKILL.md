@@ -371,7 +371,7 @@ below subscribes the bus before `start()`, which no caller can do.
 `HostTerminal.binaryTransfer(String cardName, byte[] data, Mono<Void> cancel)` returns a cold
 `Flux<Long>` that drives Marlin's Binary Protocol - `:gcode`'s `MbpSendWindow` and `MbpTransfer`
 state machines, with the clock and the thread discipline they deliberately do not have, in
-`MbpTransferDriver`. Seven things callers depend on:
+`MbpTransferDriver`. Eight things callers depend on:
 
 - **The outbound carries `byte[]`, not `String`.** `CommandProcessor implements
   Processor<String, byte[]>`, `write0` encodes `US_ASCII` itself, and `TerminalManager` uses
@@ -379,6 +379,19 @@ state machines, with the clock and the thread discipline they deliberately do no
   becomes two. A `String` abused as a byte holder is an invariant no compiler and no `trim()`
   respects, so the boundary carries bytes and the ASCII encoding happens in the one place that
   writes. `HostTerminal.hex(byte[])` is what the traffic log shows.
+
+- **Every packet goes out followed by one `\n` that is not part of it** (`writeRaw0`), and the
+  traffic log shows the packet without it. A printer behind a Wi-Fi bridge is reached through a line
+  buffer: ESP3D's telnet server forwards to the UART only on `\n` or after 1500 ms of silence
+  (`TIMEOUT_TELNET_FLUSH`), and Marlin abandons a packet whose next byte is 500 ms late
+  (`packet_max_wait`). Measured 2026-11-17 on ESP3D 3.0.0.8b1 in front of Marlin bugfix-2.1.x:
+  without it SYNC and QUERY answered only after 1.5 s, and FILE OPEN - length byte `0A` - was
+  forwarded as `AD B5 01 11 0A`, answered `Datastream timeout` / `rs1`, and every resend was cut at
+  the same byte, so no transfer got past opening the file; with it each packet is acknowledged in
+  10-20 ms. The firmware drops the byte unread: between packets `BinaryStream` sits in `PACKET_WAIT`,
+  which hunts `AD B5` with a two-byte window and has no timeout, and a `\n` that lands after the
+  CONTROL CLOSE is an empty ASCII line. MarlinSim is a plain socket, so only a bridged printer shows
+  any of this. `everyPacketIsFollowedByANewlineThatFlushesALineBufferedBridge` pins it.
 
 - **The progress `Long` is the cumulative count of payload bytes the firmware has acknowledged** -
   `MbpTransfer.bytesWritten` after each accepted block, one per block. Not a percentage and not a

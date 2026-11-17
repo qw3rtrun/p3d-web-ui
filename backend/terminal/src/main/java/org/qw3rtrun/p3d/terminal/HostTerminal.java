@@ -107,6 +107,13 @@ public class HostTerminal {
      * {@code OFFLINE}, sent its {@code M155 S0}, and left the socket {@code Established} on the
      * printer. The no-arg constructor defaults to doing nothing, which is right for a terminal built
      * over a {@code Sinks} in tests - there is nothing to close.
+     *
+     * <p><strong>It owes one guarantee: it may not discard a block already written.</strong>
+     * {@link CommandProcessor#write0} returning means the bytes were handed to the outbound, which
+     * in {@code reactor-netty} is two event-loop tasks short of the socket - so a close that merely
+     * calls {@code Connection.dispose()} drops a goodbye that this class believes it sent, in
+     * silence and with no error anywhere. {@link TerminalManager#closeAfterFlush} is how the real
+     * one keeps it, and carries the measurements.
      */
     private final Runnable disposeConnection;
 
@@ -315,7 +322,8 @@ public class HostTerminal {
     }
 
     /** Ends the session: both halves cancelled, and the socket actually closed - the third step is
-     * the one that is easy to leave out; see {@link #disposeConnection}. */
+     * the one that is easy to leave out, and the one that must not overtake a block already
+     * written; see {@link #disposeConnection}. */
     public void stop() {
         outSide.cancel();
         inSide.handleCancel();

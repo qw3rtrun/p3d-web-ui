@@ -484,6 +484,47 @@ A throw out of `:gcode` is contained in that loop rather than let out. `:gcode` 
 negotiated block, which is exactly what the construction-order bug produces); letting it unwind
 would go through the netty inbound subscriber and take the whole session's reply stream with it.
 
+### Closing the socket does not throw away what was written
+
+`stop()` may not discard a block `write0` already handed over. That is a guarantee about *ordering*
+and the transport is the only layer that can make it, because the gap it covers is invisible from
+anywhere else: **a write returns two event-loop tasks short of the wire.**
+
+```
+CommandProcessor.write0 -> MonoSendMany.onNext : queue.offer(bytes); eventLoop.execute(run)
+[event loop] run        -> ctx.write(bytes)    : into the outbound buffer, NOT flushed -
+                                                 reactor-netty's default send predicate is b->false;
+                                                 then eventLoop.execute(asyncFlush)
+[event loop] asyncFlush -> ctx.flush()         : the bytes reach the socket
+```
+
+A `Connection.dispose()` landing between `run` and `asyncFlush` closes the channel, and
+`AbstractChannel.close` fails everything still unflushed. **The bytes are dropped in silence** - no
+error reaches the writer, whose `onNext` returned long ago, and nothing on the bus says so either.
+
+`TerminalManager.closeAfterFlush` is how it is kept: the close is itself an event-loop task that
+flushes and then disposes, so it cannot overtake a `run` queued before it. Submitting rather than
+closing inline matters even when the caller *is* the event loop - an inline `close()` from inside an
+inbound callback would jump a `run` still queued behind it.
+
+Measured (Windows, reactor-netty 1.3.7, 2026-11-17): a block handed to `sendByteArray` and a
+`dispose()` on the next line was lost **39 times in 40**; through the whole
+`TerminalManager -> HostTerminal` stack over a loopback socket, with the scheduler hand-offs
+`PrinterReactor`'s disconnect really makes, **6 times in 20** - and 0 in 60 with the fix. That was
+issue #129: `HandshakeIntegrationTest` on CI received `[]` where it expected a session's two
+off-switches, and reran green on a developer's machine for ever.
+
+Two things not to conclude from it. **`PublisherQueue.addPublisher`'s `Mono` is still not a flush
+signal** - it means "the source is exhausted", and a caller that reads it as "on the wire" is wrong
+again the moment a second thread is inside the drain loop. And **no timeout fixes this**: the
+answer is an ordering, not a duration, which is why `PrinterReactor.GOODBYE_BUDGET` stayed at one
+second and only its reasoning was corrected.
+
+A test for this needs a **real socket** - a `Sinks` wire has no netty in it and cannot have the
+defect - and must **schedule the race**: `TerminalManagerCloseTest` parks the channel's event loop
+on a latch so the write and the close are both queued behind it, and fails every run without the
+fix.
+
 ## The layering rule
 
 | Layer | Where | May depend on |
@@ -868,11 +909,21 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   `messageFlux()` long after a session opens.
 - **`TerminalManager` prints to `System.out`** from three of its four lifecycle hooks, calls
   `printStackTrace` from the fourth, and has no error handling on `connect()`.
+- **`addPublisher`'s `Mono` can complete before the block it carried has been written.** The usual
+  path writes inside `CommandProcessor.onNext` - the drain loop runs on the calling thread - and
+  `Mono.just`'s `onComplete` arrives after that, which is why `PrinterReactor.sayGoodbye` works at
+  all. But `processRequest()` returns immediately when another thread already holds `wip`, so the
+  payload is left in `pending` for that thread and the source completes first. The window is
+  nanoseconds and the other thread is already going round again, so the write lands long before any
+  `stop()` two scheduler hops later - but it is a hole, and a caller wanting a true "this block is
+  written" signal needs one from `CommandProcessor` rather than from the queue. Found while fixing
+  #129; not the cause of it.
 - **`GFlux` captures its `FluxSink` from `Flux.create` into a field**, so `onG` NullPointers if
   anything emits before the first subscribe, and a second subscriber overwrites the field.
 - **There is no written spec for this module.** `:gcode` has `doc/specs/GCODE_spec.md` and its
-  Appendix B; the transport has this skill and nothing else. Three contracts are written down now -
-  the send window, what a terminal signal on `messageFlux()` means, and the binary transfer, all
+  Appendix B; the transport has this skill and nothing else. Four contracts are written down now -
+  the send window, what a terminal signal on `messageFlux()` means, the binary transfer, and what
+  closing the socket may not throw away, all
   under *The contracts callers depend on* above - and anything else callers come to rely on goes in
   the same place, in the change that establishes it.
 - **A binary packet parked by `writeRaw` with no downstream demand can be retransmitted into a

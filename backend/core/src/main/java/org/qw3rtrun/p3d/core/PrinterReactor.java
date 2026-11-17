@@ -438,15 +438,27 @@ public class PrinterReactor {
                 }, cause -> log.warn("gave up on {}: {}", printer.getId(), describe(cause)));
     }
 
+    /**
+     * Shuts this session down, <strong>terminal first and dial chain second</strong>.
+     *
+     * <p>The order is load-bearing (#129). Disposing {@code attempts} cancels the dial chain, and a
+     * live session's {@code Mono.zip(events, gCode)} hangs off it - so the cancel reaches
+     * {@code reactor-netty}'s outbound, which answers a cancel by <em>discarding</em> whatever it has
+     * not written yet. Done first, that throws away the goodbye {@link #sayGoodbye} just wrote:
+     * measured 18-20 times in 20. {@code HostTerminal.stop()} flushes and closes the socket and
+     * waits for it, so after it there is nothing left to discard - and closing the socket is itself
+     * what ends both halves, so the dispose below is only still here for a dial or a retry backoff
+     * that has no terminal yet.
+     */
     private void disconnect() {
         log.info("disconnecting from {}", printer.getId());
-        if (attempts != null) {
-            attempts.dispose();
-            attempts = null;
-        }
         if (terminal != null) {
             terminal.stop();
             terminal = null;
+        }
+        if (attempts != null) {
+            attempts.dispose();
+            attempts = null;
         }
     }
 

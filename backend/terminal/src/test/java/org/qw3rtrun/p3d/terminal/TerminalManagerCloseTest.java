@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.terminal;
 
 import io.netty.channel.socket.nio.NioSocketChannel;
 import org.junit.jupiter.api.Test;
+import reactor.core.Disposable;
 import reactor.core.publisher.Sinks;
 import reactor.netty.Connection;
 import reactor.netty.tcp.TcpClient;
@@ -37,12 +38,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * while the write and the close are both queued behind it, so the interleaving that loses the
  * goodbye is the only one either test can produce. Without
  * {@link TerminalManager#closeAfterFlush}, {@link #aBlockWrittenBeforeTheCloseStillReachesTheWire}
- * fails every run. (Blocking inside an event-loop task is exactly what pipeline code may never do
- * and exactly what this needs.)
+ * and {@link #aCancelAfterTheCloseFindsNothingToDiscard} fail every run. (Blocking inside an
+ * event-loop task is exactly what pipeline code may never do and exactly what this needs.)
  */
 class TerminalManagerCloseTest {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
+
+    /** How long {@link Peer#parkTheEventLoop} holds the loop - long enough that the few
+     * microseconds the test needs to write, close and cancel are certainly inside it, and well
+     * inside {@link TerminalManager#CLOSE_BUDGET} so the close waits rather than gives up. */
+    private static final Duration PARK = Duration.ofMillis(200);
 
     /** What the disconnect of issue #129 does: write the off-switch, then shut the socket. */
     @Test
@@ -62,6 +68,46 @@ class TerminalManagerCloseTest {
             assertEquals("M155 S0\n", peer.readUntilClosed(),
                     "the goodbye was written before the close was asked for, so the close owes it"
                             + " a flush");
+        }
+    }
+
+    /**
+     * And once it returns, a cancel of the send has nothing left to throw away.
+     *
+     * <p>The close is not the only teardown step that can lose a written block.
+     * {@code PrinterReactor.disconnect} also disposes the dial chain, which cancels the outbound,
+     * and {@code MonoSendMany.SendManyInner} answers a cancel by discarding its queue - so a
+     * {@code run} that has not executed yet finds the subscription cancelled and drops the bytes
+     * instead of writing them. Queueing the close behind the cancel cannot help: the discard happens
+     * inside the very {@code run} the close is queued behind. Waiting for it can, and that is what
+     * {@link TerminalManager#CLOSE_BUDGET} bounds.
+     *
+     * <p>The ordering is forced rather than hoped for: the event loop is parked for a fixed span,
+     * so the cancel certainly reaches {@code SendManyInner} before {@code run} does unless the
+     * close waited for the loop. Measured in that arrangement, the old order lost the block 20
+     * times in 20 and this one 0 in 20.
+     */
+    @Test
+    void aCancelAfterTheCloseFindsNothingToDiscard() throws Exception {
+        try (var peer = new Peer()) {
+            Connection conn = peer.dial();
+            Sinks.Many<byte[]> outbound = Sinks.many().unicast().onBackpressureBuffer();
+            Disposable send = conn.outbound().sendByteArray(outbound.asFlux()).then()
+                    .subscribe(v -> {
+                    }, e -> {
+                    });
+
+            peer.parkTheEventLoop(conn, PARK);
+            assertEquals(Sinks.EmitResult.OK, outbound.tryEmitNext("M155 S0\n".getBytes(US_ASCII)));
+
+            // PrinterReactor.disconnect()'s teardown, in its order: the terminal first, the dial
+            // chain - and so the outbound's subscription - second.
+            TerminalManager.closeAfterFlush(conn).run();
+            send.dispose();
+
+            assertEquals("M155 S0\n", peer.readUntilClosed(),
+                    "the cancel ran after the close returned, so the loop had already written the"
+                            + " block it was holding");
         }
     }
 
@@ -161,6 +207,21 @@ class TerminalManagerCloseTest {
             assertTrue(holding.await(TIMEOUT.toSeconds(), TimeUnit.SECONDS),
                     "the event loop is held");
             return released;
+        }
+
+        /** Parks the loop for a fixed span, so that whatever the test does next is certainly
+         * ahead of any task already queued on it. */
+        void parkTheEventLoop(Connection conn, Duration hold) throws Exception {
+            var parked = new CountDownLatch(1);
+            conn.channel().eventLoop().execute(() -> {
+                parked.countDown();
+                try {
+                    Thread.sleep(hold);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            assertTrue(parked.await(TIMEOUT.toSeconds(), TimeUnit.SECONDS), "the loop is parked");
         }
 
         String readUntilClosed() throws Exception {

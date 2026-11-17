@@ -7,6 +7,8 @@ import reactor.core.publisher.Mono;
 import reactor.netty.Connection;
 import reactor.netty.tcp.TcpClient;
 
+import java.time.Duration;
+
 /**
  * Dials a printer and wraps the socket in a {@link HostTerminal} - the one place in this module
  * that holds a {@code reactor-netty} {@link Connection}, and therefore the only place that can say
@@ -81,12 +83,31 @@ public class TerminalManager {
      * expected a session's two off-switches.
      *
      * <p><strong>Why this ordering holds.</strong> An event loop runs its task queue in order. Any
-     * write that happened-before this call has already queued its {@code run}; {@code execute}
-     * queues the close behind it, so {@code run} has put the bytes in the outbound buffer before
+     * write that happened-before this call has already queued its {@code run}; submitting queues the
+     * close behind it, so {@code run} has put the bytes in the outbound buffer before
      * {@code flush()} here pushes them to the socket and {@code dispose()} closes it. Submitting
      * rather than closing inline matters even when the caller <em>is</em> the event loop: an inline
      * {@code close()} from inside an inbound callback would overtake a {@code run} still queued
      * behind it.
+     *
+     * <p><strong>And it waits for that task, which is the half that queueing alone cannot do.</strong>
+     * Closing the socket is not the only way a session's teardown can throw a written block away:
+     * {@code PrinterReactor.disconnect} also <em>cancels</em> the send, and
+     * {@code MonoSendMany.SendManyInner} answers a cancel by discarding its queue - so a {@code run}
+     * that has not executed yet finds the subscription cancelled, drops the bytes it was holding and
+     * never writes them. Measured: a write, then a cancel, then this close lost the block
+     * <strong>18-20 times in 20</strong>, and <strong>20 of 20</strong> with the event loop parked
+     * so the cancel certainly got there first. Queueing a close behind the cancel does not help,
+     * because the discard happens inside the very {@code run} the close is queued behind. Waiting
+     * does: once this returns, the loop has run that {@code run}, the bytes are flushed and the
+     * socket is shut, so a cancel afterwards has an empty queue to discard. {@code disconnect()}'s
+     * teardown is ordered {@code stop()} first for exactly that reason.
+     *
+     * <p>Waiting here is a lifecycle call waiting for two queued tasks, never pipeline code
+     * blocking: the callers are {@code PrinterReactor}'s own per-printer thread and the farm's
+     * shutdown thread, both of which already block. A caller that <em>is</em> the event loop would
+     * deadlock on itself, so that case submits and returns, which is still correct for it - it is
+     * ahead of nothing it queued itself.
      *
      * <p><strong>What it does not promise.</strong> Flushed is "written to the socket", not
      * "received by the printer" and not "acknowledged" - a partial socket write still leaves a
@@ -105,14 +126,32 @@ public class TerminalManager {
      * new. Such a channel has nothing queued on a loop either, so there is nothing to flush ahead
      * of the close and closing here is the whole job.
      */
+    /**
+     * How long {@link #closeAfterFlush} waits for the event loop to run the flush and the close.
+     * It is waiting for two queued tasks on a loop that is otherwise idle - microseconds in
+     * practice. A loop that cannot manage it in a second is wedged, and a wedged loop will not put
+     * the bytes on the socket however much longer it is given, so the wait gives up and the session
+     * is torn down anyway rather than holding a disconnect or a farm shutdown open.
+     */
+    static final Duration CLOSE_BUDGET = Duration.ofSeconds(1);
+
     static Runnable closeAfterFlush(Connection conn) {
         return () -> {
             var channel = conn.channel();
             try {
-                channel.eventLoop().execute(() -> {
+                var loop = channel.eventLoop();
+                var shut = loop.submit(() -> {
                     channel.flush();
                     conn.dispose();
                 });
+                // Rule out deadlocking a loop on itself; no caller is one today.
+                if (!loop.inEventLoop() && !shut.await(CLOSE_BUDGET.toMillis())) {
+                    log.info("{} did not flush and close within {}; tearing the session down anyway",
+                            channel, CLOSE_BUDGET);
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                log.debug("interrupted while closing {}", channel);
             } catch (RuntimeException noLoopToQueueOn) {
                 // IllegalStateException when the channel was never registered to one, and
                 // RejectedExecutionException while a live loop is shutting down.

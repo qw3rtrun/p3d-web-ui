@@ -502,17 +502,41 @@ A `Connection.dispose()` landing between `run` and `asyncFlush` closes the chann
 `AbstractChannel.close` fails everything still unflushed. **The bytes are dropped in silence** - no
 error reaches the writer, whose `onNext` returned long ago, and nothing on the bus says so either.
 
-`TerminalManager.closeAfterFlush` is how it is kept: the close is itself an event-loop task that
-flushes and then disposes, so it cannot overtake a `run` queued before it. Submitting rather than
-closing inline matters even when the caller *is* the event loop - an inline `close()` from inside an
-inbound callback would jump a `run` still queued behind it.
+**And closing is not the only teardown step that can discard it.** `SendManyInner` answers a
+*cancel* by clearing its queue, so a `run` that has not executed yet finds the subscription
+cancelled, drops the bytes and never writes them - and `PrinterReactor.disconnect` cancels the
+outbound, because the live session's `Mono.zip(events, gCode)` hangs off the dial chain it disposes.
+Queueing the close behind the cancel cannot help: the discard happens *inside* the very `run` the
+close is queued behind.
 
-Measured (Windows, reactor-netty 1.3.7, 2026-11-17): a block handed to `sendByteArray` and a
-`dispose()` on the next line was lost **39 times in 40**; through the whole
-`TerminalManager -> HostTerminal` stack over a loopback socket, with the scheduler hand-offs
-`PrinterReactor`'s disconnect really makes, **6 times in 20** - and 0 in 60 with the fix. That was
-issue #129: `HandshakeIntegrationTest` on CI received `[]` where it expected a session's two
-off-switches, and reran green on a developer's machine for ever.
+`TerminalManager.closeAfterFlush` is how both are kept: the close is an event-loop task that flushes
+and then disposes, **and it waits for that task**. Waiting is the half that queueing alone cannot do
+- once it returns, the loop has run everything queued before it, the bytes are on the socket and the
+channel is shut, so a cancel afterwards has an empty queue to discard. `disconnect()` is ordered
+`terminal.stop()` first and `attempts.dispose()` second for exactly that reason. Submitting rather
+than closing inline matters even when the caller *is* the event loop - an inline `close()` from
+inside an inbound callback would jump a `run` still queued behind it - and that caller skips the
+wait, since it would deadlock on itself and is ahead of nothing it queued.
+
+**The wait is a lifecycle call waiting for two queued tasks, not pipeline code blocking.** The
+callers are `PrinterReactor`'s own per-printer thread and the farm's shutdown thread, both of which
+already block. `CLOSE_BUDGET` is one second: a loop that cannot run two tasks in that is wedged, and
+a wedged loop will not deliver the bytes however long it is given.
+
+Measured (Windows, reactor-netty 1.3.7, 2026-11-17):
+
+| | lost |
+|---|---|
+| write, then `dispose()` on the next line | **39/40** |
+| the same with 1-2 scheduler hops between, as the disconnect really has | **40/40**, **38/40** |
+| through the `TerminalManager -> HostTerminal` stack over a loopback socket | **6/20** -> **0/60** |
+| write, then *cancel*, then close - the `disconnect()` order | **18-20/20**; **20/20** with the loop parked |
+| write, then close, then cancel - the order now | **0/20** |
+
+That was issue #129: `HandshakeIntegrationTest` on CI received `[]` where it expected a session's
+two off-switches. The first fix (queue the close behind the write) moved the failure to
+`GracefulShutdownIntegrationTest` with the same `[]`, which is how the second hole was found - one
+symptom, two causes, and fixing either alone leaves a flake.
 
 Two things not to conclude from it. **`PublisherQueue.addPublisher`'s `Mono` is still not a flush
 signal** - it means "the source is exhausted", and a caller that reads it as "on the wire" is wrong
@@ -521,9 +545,9 @@ answer is an ordering, not a duration, which is why `PrinterReactor.GOODBYE_BUDG
 second and only its reasoning was corrected.
 
 A test for this needs a **real socket** - a `Sinks` wire has no netty in it and cannot have the
-defect - and must **schedule the race**: `TerminalManagerCloseTest` parks the channel's event loop
-on a latch so the write and the close are both queued behind it, and fails every run without the
-fix.
+defect - and must **force the interleaving**: `TerminalManagerCloseTest` parks the channel's event
+loop so the write, the close and the cancel are all queued behind it, and each of its two race
+tests fails every run without its half of the fix.
 
 ## The layering rule
 

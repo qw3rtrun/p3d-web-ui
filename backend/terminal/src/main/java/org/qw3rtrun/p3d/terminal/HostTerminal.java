@@ -35,6 +35,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
 import java.util.Queue;
@@ -989,19 +990,37 @@ public class HostTerminal {
             subscriber.onNext((block + "\n").getBytes(US_ASCII));
         }
 
-        /** One binary packet, verbatim - no {@code N}, no checksum, no terminator, and nothing told
-         * to {@link #window}; see {@link #writeRaw}. */
+        /**
+         * One binary packet, verbatim - no {@code N}, no checksum, and nothing told to
+         * {@link #window}; see {@link #writeRaw} - followed by one {@code \n} that is not part of it.
+         *
+         * <p>The {@code \n} is for whatever sits between this socket and the firmware's UART, not
+         * for the firmware. ESP3D's telnet bridge forwards to the serial port only on a {@code \n}
+         * or after 1500ms of silence ({@code TIMEOUT_TELNET_FLUSH} in {@code telnet_server.cpp}),
+         * while Marlin abandons a packet whose next byte is 500ms late ({@code packet_max_wait}).
+         * Measured 2026-11-17 against ESP3D 3.0.0.8b1 in front of Marlin bugfix-2.1.x: SYNC and
+         * QUERY answered only after 1.5s, and FILE OPEN - whose length byte is {@code 0A} - was cut
+         * after {@code AD B5 01 11 0A}, answered {@code Datastream timeout} and {@code rs1}, and
+         * every resend was cut the same way, so the transfer never got past opening the file.
+         *
+         * <p>The firmware drops it unread: between packets {@code BinaryStream} is in
+         * {@code PACKET_WAIT}, which hunts for {@code AD B5} with a two-byte window and has no
+         * timeout, and a {@code \n} that lands after the CLOSE has switched back to ASCII is an
+         * empty line, which Marlin ignores.
+         */
         private void writeRaw0(byte[] packet) {
             if (terminated.get()) {
                 return;
             }
             TRAFFIC_LOGGER.debug("-> {}", hex(packet));
-            subscriber.onNext(packet);
+            var flushed = Arrays.copyOf(packet, packet.length + 1);
+            flushed[packet.length] = '\n';
+            subscriber.onNext(flushed);
         }
 
         /**
          * Parks one Marlin Binary Protocol packet for the drain loop and nothing else - no
-         * {@code N}, no {@code *}, no terminator, and not a word to {@link #window} or
+         * {@code N}, no {@code *}, and not a word to {@link #window} or
          * {@link #sentWithoutAck}, because a packet is not a numbered block and crediting one
          * against the ASCII window would desynchronise the session the moment binary mode ends.
          *

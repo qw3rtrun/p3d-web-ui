@@ -167,9 +167,54 @@ thing that will fail when somebody renames an event class.
 server stopped keeping a parallel event model, so the stream carries `BareTemperatureRs` (an
 `M155` auto-report) and `OkTemperatureRs` (the answer to an `M105`) for the same thing, plus
 `PositionRs`, `ErrorRs` and so on. Match a family with a helper - `isTemperature(type)` in
-`types.ts` - rather than writing one of the names, which is the exact shape of the bug above. The
-farm's own events are still named by the application: `ConnectionStateChanged`,
-`MachineJoinedFarm`, `MachineLeftFarm`.
+`types.ts` - rather than writing one of the names, which is the exact shape of the bug above.
+
+**The farm's own events are the facts no firmware has a word for, and this page deliberately no
+longer lists them.** Anything a machine said comes back as a `GRs`; what is left for `api.msg` to
+name is what only the host knows - a connection moving, a session boundary, a block accepted or a
+window's worth abandoned, how far an upload to a card has got, a machine joining or leaving the
+farm. **The enumeration is `EventMessageCatalogueTest` in `:backend:api`**, which reads the
+*compiled* package - `ManagementEvents.kt` is one file holding several types - and fails the build
+when something there is classified as neither travelling as an `EventMessage.event` nor explicitly
+not travelling, with a reason. Read that test; a list in prose here is the thing that keeps being
+wrong. `EventMessage`'s javadoc and `api.msg`'s `package-info` both went stale on
+`SdUploadProgressed` (#69), `MockPrinter`'s census went stale (#61), `spring-backend-dev`'s own
+sentence was a fifth copy (#72), and **the sentence that used to be in this spot named three of
+what was then six members and is seven today** (#74) - while `StorageTab.vue` was already
+switching on one of the three it omitted.
+
+**What this layer owes is the consequence, not the list: a new member there needs a `case` here or
+a written decision not to have one** - a type in `types.ts`, the `case` in a component, and a row
+in `EventStreamContractTest` pinning the `type` string, or a paragraph like the one below saying
+why not and where it will go instead. A member with neither is the silent failure the whole
+arrangement exists to catch.
+
+**The two block events have no `case`, and that is decided rather than forgotten.**
+`BlockAcknowledged` **never reaches a browser at all**: `PrinterState.on(BlockAcknowledged)`
+consumes it - it sets `blocksInFlight` and is the one reply that moves `ONLINE -> IDLE` - and does
+not republish it, so a `case` would be dead code with no `type` string for the contract test to
+pin. What it exists to disambiguate is already here in a renderable form: acknowledgements stopping
+is a machine that stays `BUSY` or never reaches `IDLE`, which arrives as `ConnectionStateChanged`;
+and `inFlight` reaches a person as `JobProgress.inFlight` and `blocksAccepted()`, carried on
+`JobProgressed`, which `JobFeeder` publishes on a timer **because per-block is faster than anything
+should render** - four blocks in flight on a hundred-thousand-block file is a frame per few
+milliseconds per machine, on the one stream the whole farm shares.
+
+`BlocksAbandoned` *is* republished, so a `case` would fire - and would say the same thing twice.
+The `Error:`/`Resend:` that always precedes it has already faulted the connection, which the page
+shows, and `JobFeeder.watchForAbandonedBlocks` already fails the job with the sentence an operator
+needs - *"N block(s) this host had already framed were abandoned and never reached the machine"* -
+which lands on `Job.reason`. On the monitor page, raw, it is a block count with no job to attach it
+to.
+
+**Both belong to a jobs surface that does not exist yet.** `JobController` is mounted at
+`/api-jobs` and nothing under `src/frontend/src` mentions it: no client method, no type, no
+component. When it is built, the queue and a failed job's reason come from `GET /api-jobs`, and
+live progress **needs a backend change before the browser can have it** - `JobProgressed` lives in
+`api.jobs`, travels on the Spring bus only, is never wrapped in an `EventMessage`, and is outside
+what `EventMessageCatalogueTest` covers, so putting it on the farm or per-printer stream is
+`spring-backend-dev`'s work. Do not reach around that with a `case` for the raw block events; see
+*When a control has no command* for the same rule in the outbound direction.
 
 **A reading's `target` and `power` are nullable, and null is not zero.** A build that reports no
 target has not been asked for one; a target of zero is a heater on its way off. The server used to

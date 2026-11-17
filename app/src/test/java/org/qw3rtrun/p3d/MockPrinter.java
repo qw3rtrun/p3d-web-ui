@@ -118,6 +118,50 @@ public final class MockPrinter implements AutoCloseable {
             capabilities = Collections.unmodifiableMap(new LinkedHashMap<>(capabilities));
         }
 
+        /**
+         * The last block this machine's opening handshake puts on the wire - what a test waits for
+         * before the conversation may be assumed to be its own ({@code connectAndSettle}).
+         *
+         * <p>Derived from {@link #capabilities} by the same rule {@code PrinterState.on(CapabilityRs)}
+         * applies, in the same order, because since #127 the handshake's tail is capability-gated and
+         * is therefore a property of the machine rather than a constant. It used to be {@code M155 S1}
+         * for everything, and a helper that cleared the command log there would now clear it with
+         * {@code M114} and {@code M27} still in flight and let them land as the test's own blocks.
+         *
+         * <p>This is a <em>derivation</em> and could drift from the farm's rule in silence, so
+         * {@code HandshakeIntegrationTest} spells the whole expected list out literally for every
+         * profile below rather than calling this - one independent statement of the rule per
+         * configuration.
+         */
+        public String lastHandshakeBlock() {
+            if (!answers) {
+                // nothing is ever acknowledged, so nothing after the first block is ever sent
+                return "M110 N0";
+            }
+            var last = "M155 S1";
+            if (firmware == null) {
+                // no M115 line means no Cap: lines, so nothing gated is reached
+                return last;
+            }
+            for (var capability : capabilities.entrySet()) {
+                var block = gatedBlock(capability.getKey(), capability.getValue());
+                if (block != null) {
+                    last = block;
+                }
+            }
+            return last;
+        }
+
+        /** The handshake block one {@code Cap:} line causes, or null for one that causes none. */
+        private static String gatedBlock(String capability, boolean on) {
+            return switch (capability) {
+                case "AUTOREPORT_POS" -> on ? "M154 S1" : "M114";
+                case "AUTOREPORT_SD_STATUS" -> on ? "M27 S3" : null;
+                case "SDCARD" -> on ? "M27" : null;
+                default -> null;
+            };
+        }
+
         /** The same machine with a different {@code EXTRUDER_COUNT}, which is what gates tool 1. */
         public Profile withExtruders(String label, int count) {
             return new Profile(label,
@@ -144,13 +188,28 @@ public final class MockPrinter implements AutoCloseable {
                     + "MACHINE_TYPE:MarlinSim KINEMATICS:Cartesian EXTRUDER_COUNT:1 "
                     + "UUID:00000000-0000-0000-0000-000000000000";
 
-    /** The subset of the census's forty-odd {@code Cap:} lines that anything in this farm reads. */
+    /**
+     * The subset of the census's forty-odd {@code Cap:} lines that anything in this farm reads,
+     * <strong>in the order MarlinSim writes them</strong> - which is load-bearing since #127, because
+     * the opening handshake's capability-gated blocks go out as each line arrives, so the order of
+     * this map is the order of the wire. Measured 2026-11-17 against
+     * {@code Marlin bugfix-2.1.x (Oct 29 2026 10:28:56)}: {@code AUTOREPORT_POS} at line 6 of 38,
+     * {@code SDCARD} at 22, {@code AUTOREPORT_SD_STATUS} at 26 - so a card is announced before the
+     * auto-report that would supersede polling it, which is why the handshake cannot decide between
+     * them and sends both. {@link Profile#lastHandshakeBlock()} depends on this order.
+     *
+     * <p>{@code AUTOREPORT_POS} and {@code AUTOREPORT_SD_STATUS} are both {@code 0} on the
+     * simulator, measured - see {@link #withPositionAutoReport()} for what is and is not known
+     * about the other side of each.
+     */
     private static Map<String, Boolean> simCapabilities(boolean sdCard, boolean binaryTransfer) {
         var caps = new LinkedHashMap<String, Boolean>();
         caps.put("AUTOREPORT_TEMP", true);
+        caps.put("AUTOREPORT_POS", false);
         caps.put("EEPROM", true);
         caps.put("SDCARD", sdCard);
         caps.put("SD_WRITE", sdCard);
+        caps.put("AUTOREPORT_SD_STATUS", false);
         caps.put("BINARY_FILE_TRANSFER", binaryTransfer);
         caps.put("EMERGENCY_PARSER", true);
         return caps;
@@ -251,6 +310,59 @@ public final class MockPrinter implements AutoCloseable {
     public static Profile withoutSettingsReport() {
         return new Profile("marlin-no-m503", MARLIN_SIM_M115, simCapabilities(true),
                 true, true, true, true, false);
+    }
+
+    /**
+     * A firmware built with {@code AUTOREPORT_POSITION}: {@code Cap:AUTOREPORT_POS:1}, so the host
+     * starts {@code M154 S1} instead of reading the position once with {@code M114}.
+     *
+     * <p><strong>Note the spelling.</strong> The capability on the wire is {@code AUTOREPORT_POS};
+     * Marlin's build macro is {@code AUTOREPORT_POSITION} and the G-code is {@code M154}. Three
+     * different names for one feature, measured 2026-11-17 - the simulator's {@code M115} carries
+     * {@code Cap:AUTOREPORT_POS:0} and no line under any longer spelling, so a host keyed on
+     * {@code AUTOREPORT_POSITION} would silently find nothing and conclude "not supported" for a
+     * machine that supports it.
+     *
+     * <p><strong>Half of this is UNMEASURED and the halves are different.</strong> The
+     * <em>refused</em> side is measured: on the simulator, {@code M154 S1} answers
+     * {@code echo:Unknown command: "M154 S1"} then {@code ok P15 B3}, and three and a half seconds
+     * of silence followed - which is why the farm gates this on the capability rather than sending
+     * it and hoping. The <em>supported</em> side cannot be measured here at all: the simulator is
+     * not built with it, so what a capable firmware answers {@code M154 S1} is Marlin's documented
+     * behaviour and not a capture. This profile therefore answers a bare {@code ok} and pushes no
+     * unsolicited position lines; assert on {@code M154 S1} reaching the wire and on {@code M114}
+     * not, never on a report arriving.
+     */
+    public static Profile withPositionAutoReport() {
+        var caps = new LinkedHashMap<>(simCapabilities(true));
+        caps.put("AUTOREPORT_POS", true);
+        return new Profile("marlin-autoreport-pos", MARLIN_SIM_M115, caps,
+                true, true, true, true, true);
+    }
+
+    /**
+     * A firmware built with {@code AUTO_REPORT_SD_STATUS}: {@code Cap:AUTOREPORT_SD_STATUS:1}, so
+     * the host starts {@code M27 S3} as well as reading the status once.
+     *
+     * <p><strong>This profile exists because of the one measurement that decided the whole design.</strong>
+     * On the simulator, with {@code Cap:AUTOREPORT_SD_STATUS:0}, {@code M27 S1} is <em>not</em>
+     * refused - it answers {@code Not SD printing} then {@code ok P15 B3}, exactly as a bare
+     * {@code M27} does, and then reports nothing for the next three and a half seconds. So an
+     * unsupported auto-report period is accepted in silence, and "send it and let the firmware
+     * refuse what it cannot do" - which works for {@code M154} and for {@code M503} - is invisible
+     * here. Only the capability can tell the farm, which is why the farm reads it.
+     *
+     * <p><strong>UNMEASURED when true</strong>, for the same reason as
+     * {@link #withPositionAutoReport()}: the simulator is not built with it. The answer to
+     * {@code M27 S3} here is the measured answer to {@code M27 S1}, which is the honest thing to
+     * reproduce - it is the same code path on the firmware with one branch taken differently, and
+     * nothing here invents a periodic report.
+     */
+    public static Profile withSdStatusAutoReport() {
+        var caps = new LinkedHashMap<>(simCapabilities(true));
+        caps.put("AUTOREPORT_SD_STATUS", true);
+        return new Profile("marlin-autoreport-sd", MARLIN_SIM_M115, caps,
+                true, true, true, true, true);
     }
 
     // ------------------------------------------------------------------ state
@@ -1369,6 +1481,47 @@ public final class MockPrinter implements AutoCloseable {
                 } else {
                     applySetting(word, argument(command));
                 }
+                lines.add(ok());
+            }
+
+            // ------------------------------------------------------- the auto-reports, #127
+
+            // M154 - position auto-report. The refusal is MEASURED on the simulator, which is built
+            // without it:
+            //
+            //   >> M154 S1   << echo:Unknown command: "M154 S1"
+            //                << ok P15 B3
+            //                   then 0 lines in the next 3400 ms
+            //   >> M154 S0   << echo:Unknown command: "M154 S0"   (the control, also 0 lines)
+            //
+            // The capable arm is UNMEASURED - see withPositionAutoReport() - so it acknowledges and
+            // reports nothing rather than inventing a periodic line.
+            case "M154" -> {
+                if (Boolean.TRUE.equals(profile.capabilities().get("AUTOREPORT_POS"))) {
+                    lines.add(ok());
+                } else {
+                    lines.add("echo:Unknown command: \"" + command + "\"");
+                    lines.add(ok());
+                }
+            }
+
+            // M27 - SD print status, bare or with a period. MEASURED, and the measurement is the
+            // reason the handshake gates on Cap:AUTOREPORT_SD_STATUS instead of just asking:
+            //
+            //   >> M27      << Not SD printing      << ok P15 B3
+            //   >> M27 S1   << Not SD printing      << ok P15 B3
+            //                  then 0 lines in the next 3400 ms, on a build with
+            //                  Cap:AUTOREPORT_SD_STATUS:0
+            //
+            // So the period is accepted in silence by a firmware that cannot honour it: identical
+            // bytes back, and no report. There is nothing on the wire for a host to key on.
+            //
+            // The no-card arm is UNMEASURED and unreachable: the handshake only asks a machine that
+            // answered Cap:SDCARD:1, and the simulator always has a card. It is here so a profile
+            // that reaches it does not fall to the Unknown-command default, which would be a reply
+            // no Marlin sends.
+            case "M27" -> {
+                lines.add(profile.sdCard() ? "Not SD printing" : "echo:No SD card");
                 lines.add(ok());
             }
 

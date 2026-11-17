@@ -640,6 +640,8 @@ builds. Exclusivity is belt over braces today, and this module tests the braces.
 | `legacyOk()` | 1 | 1 | 1 | yes | **`ok`** | yes | a firmware built without `ADVANCED_OK`: no buffer counts and no line number |
 | `withoutEeprom()` | 1 | 1 | **0** | yes | `ok N<n> P15 B3` | yes | the Settings tab is not offered at all |
 | `withoutSettingsReport()` | 1 | 1 | 1 | **no** | `ok N<n> P15 B3` | yes | `DISABLE_M503` — a gate that has to be *learned* |
+| `withPositionAutoReport()` | 1 | 1 | 1 | yes | `ok N<n> P15 B3` | yes | `Cap:AUTOREPORT_POS:`**`1`** — `M154 S1` instead of an `M114` |
+| `withSdStatusAutoReport()` | 1 | 1 | 1 | yes | `ok N<n> P15 B3` | yes | `Cap:AUTOREPORT_SD_STATUS:`**`1`** — an `M27 S3` as well as the one-shot |
 | `mute()` | 1 | 1 | 1 | yes | — | **no** | a terminal server with nothing behind it |
 | `deadPort()` | — | — | — | — | — | — | an address with nothing listening |
 
@@ -682,6 +684,34 @@ what the difference is. The three that have earned their place so far:
 
   That asymmetry is why `withoutSettingsReport()` exists as a profile of its own instead of being a
   second capability flag on `withoutEeprom()`: a flag would imply the farm could look it up.
+
+* **which auto-reports the machine has**, which is the axis issue #127 added and the one where the
+  two halves are measured *differently*. Marlin has exactly three auto-reports and MarlinSim
+  advertises one, so the capable side of two of them cannot be measured here at all:
+
+  | | on the simulator | `M154`/`M27 S<n>` sent anyway | what a host can learn from the wire |
+  |---|---|---|---|
+  | `Cap:AUTOREPORT_TEMP` | **1** | — | — |
+  | `Cap:AUTOREPORT_POS` | 0 | `echo:Unknown command: "M154 S1"`, `ok` | **that it is unsupported** |
+  | `Cap:AUTOREPORT_SD_STATUS` | 0 | `Not SD printing`, `ok`, then nothing ever | **nothing at all** |
+
+  That last row is why the feature reads capabilities rather than asking. `M154` on a firmware
+  without it is *refused*, so the `M503` approach — ask once, learn from the refusal — would have
+  worked. `M27 S1` on a firmware without it is *accepted*, byte-for-byte as a bare `M27`, and then
+  reports nothing. A host that did not read `Cap:AUTOREPORT_SD_STATUS` would believe it had
+  print-progress reporting and quietly never receive a single report. Measured 2026-11-17 by
+  `:backend:terminal:probeHandshake`, with the `S0` window as the control in each case: 3
+  unsolicited lines in 3400 ms with `M155 S1` on, 0 with it off, 0 for the other two either way.
+
+  **The capability is spelled `AUTOREPORT_POS` on the wire.** The build macro is
+  `AUTOREPORT_POSITION` and the G-code is `M154` — three names for one feature, and no `Cap:` line
+  appears under any longer spelling among the simulator's 38.
+
+  `withPositionAutoReport()` and `withSdStatusAutoReport()` are **UNMEASURED on their capable
+  side** and say so: the simulator is not built with either, so what a capable firmware answers is
+  Marlin's documented behaviour. Both profiles therefore acknowledge and push no unsolicited
+  report. Assert the command that reaches the wire, never a report arriving — the same rule
+  `withoutEeprom()` follows.
 
 **`withoutEeprom()` is deliberately not driven against `M500`, `M501` or `M502`**, for the same
 reason `withoutCard()` is not driven against an upload. The simulator always has EEPROM, so what a
@@ -806,6 +836,7 @@ through its endpoints against a mocked printer.
 | 11 | Pages | `/dashboard.html`, `/printers/{id}` | `MonitorPageTest` (`:frontend:web-ui`) | **out of scope** — #43 item 2 |
 | 12 | Restart recovery | *none* | `StartupAnnouncementFlowTest` | covered, **and it is the exception** — §7 |
 | 13 | EEPROM settings | `/store-settings`, `/settings/read`, `/revert`, `/defaults`, `/validate`, and the six setters | `EepromSettingsIntegrationTest` | **covered** — [#88](https://github.com/qw3rtrun/p3d-web-ui/issues/88); and the one whose two configuration axes are *not the same kind of thing*, §5 |
+| 14 | Connect handshake and disconnect teardown | `/api-printer/{id}/connect` (both directions), and the application lifecycle | `HandshakeIntegrationTest`, `GracefulShutdownIntegrationTest` | **covered** — [#127](https://github.com/qw3rtrun/p3d-web-ui/issues/127); and the one whose observable is what the farm says *unprompted*, §5 |
 
 **There is deliberately no endpoint that accepts G-code text**, so there is no console feature to
 test. A control that needs something not listed above needs a backend change rather than a raw-send

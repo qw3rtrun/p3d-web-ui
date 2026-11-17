@@ -415,14 +415,21 @@ abstract class FarmIntegrationTest {
      * as the test's own - an exact-list assertion sees {@code [M115, M155 S1, M23 …, M24]}, and
      * {@code firstSent("M155")} returns the handshake's {@code M155 S1} rather than the
      * {@code M155 S3} asked for. Locally the handshake wins the race in microseconds; on a loaded
-     * two-core runner it does not. {@code M155 S1} is the handshake's last block - see
-     * {@code PrinterState.onOnline} - so its arrival is the honest signal.
+     * two-core runner it does not.
+     *
+     * <p><strong>Which block is last is a property of the machine, not a constant</strong> - since
+     * #127 the handshake's tail is capability-gated, so it is {@code M155 S1} only for a machine
+     * that reports no capabilities at all. {@link MockPrinter.Profile#lastHandshakeBlock()} says
+     * which it is, and the match here is exact rather than by prefix, because {@code M27} is a
+     * prefix of {@code M27 S3} and waiting on the shorter one would clear the log with the longer
+     * one still in flight - the same race this helper exists to close, one block further along.
      */
     protected Events connectAndSettle(UUID id, MockPrinter printer) {
         var events = connectAndLearn(id);
-        await(() -> "the opening handshake to finish."
-                        + " The machine received " + printer.commands(),
-                () -> printer.sent("M155 S1"));
+        var last = printer.profile().lastHandshakeBlock();
+        await(() -> "the opening handshake of " + printer.profile() + " to finish at " + last
+                        + ". The machine received " + printer.commands(),
+                () -> printer.commands().contains(last));
         printer.forget();
         return events;
     }

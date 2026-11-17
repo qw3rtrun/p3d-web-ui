@@ -158,6 +158,8 @@ tasks.register('probeReplyCorpus', JavaExec) {
  *
  * Hand-run only, like the probes above: it needs a printer with
  * `Cap:BINARY_FILE_TRANSFER:1` and it writes to the card, deleting the file again on the way out.
+ * -PprobeCancelAfter=<ms> stops the transfer that long after it starts, to exercise the cancel
+ * path of issue #132; the run then reports CANCELLED and exits non-zero, which is expected.
  */
 tasks.register('probeMbpTransfer', JavaExec) {
     group = 'verification'
@@ -167,6 +169,7 @@ tasks.register('probeMbpTransfer', JavaExec) {
     args = [
             (findProperty('probeHost') ?: 'localhost').toString(),
             (findProperty('probePort') ?: '8099').toString(),
+            (findProperty('probeCancelAfter') ?: '').toString(),
     ]
 }
 

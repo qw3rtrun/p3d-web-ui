@@ -11,10 +11,10 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -33,9 +33,20 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
  * transfer's flux ends - a {@code Mono.just("M28 B1")} would complete, release the exclusivity and
  * let another source write an ASCII line into the middle of a packet.
  *
- * <p>Usage: {@code MbpTransferProbe [host] [port]}, defaulting to {@code localhost 8099}. The card
- * is left as it was found - the file is deleted with {@code M30} on the way out (commit
- * {@code 643d900} set that rule).
+ * <p>Usage: {@code MbpTransferProbe [host] [port] [cancelAfterMs]}, defaulting to
+ * {@code localhost 8099} and no cancel. The card is left as it was found - the file is deleted with
+ * {@code M30} on the way out (commit {@code 643d900} set that rule).
+ *
+ * <p><strong>A stopped transfer releases the wire only once it has left binary mode</strong>
+ * (#132). The transfer is stopped through its {@code cancel} {@code Mono} - after
+ * {@code cancelAfterMs}, or after 60s without one - and the exclusive source is released from the
+ * flux's {@code doFinally}, never from a wait that gave up. Disposing the flux instead, as this
+ * probe once did through {@code block(TIMEOUT)}, shared the wire while the driver was still between
+ * its ABORT and its CONTROL CLOSE: measured 2026-11-17 behind ESP3D, the {@code M21}/{@code M20}
+ * that followed completed a stuck FILE OPEN after the ABORT had been handled, and the CLOSE left
+ * Marlin in M28 save mode - every later line written into the file and answered with a bare
+ * {@code ok}, until a manual {@code M29}. If the transfer does not end within 20s of being
+ * cancelled the probe sends nothing more and exits 2.
  *
  * <p><strong>What it captured.</strong> 2026-11-16, MarlinSim {@code Marlin bugfix-2.1.x} compiled
  * Oct 29 2026, on {@code localhost:8099}. {@code M115} answered
@@ -93,6 +104,10 @@ public final class MbpTransferProbe {
 
     private static final Duration ASCII_TIMEOUT = Duration.ofSeconds(20);
 
+    /** How long a cancelled transfer gets to leave binary mode: above the driver's own give-up of
+     * 5 x 2s, so a CLOSE that is never answered still ends in the driver's failure, not here. */
+    private static final Duration CANCEL_BUDGET = Duration.ofSeconds(20);
+
     /** The name as it is sent; the card answers with the 8.3 upper case of it. */
     private static final String NAME = "mbp.gco";
 
@@ -122,6 +137,8 @@ public final class MbpTransferProbe {
     public static void main(String[] args) throws Exception {
         var host = args.length > 0 ? args[0] : "localhost";
         var port = args.length > 1 ? Integer.parseInt(args[1]) : 8099;
+        Duration cancelAfter = args.length > 2 && !args[2].isBlank()
+                ? Duration.ofMillis(Long.parseLong(args[2])) : null;
         byte[] file = content();
 
         var manager = new TerminalManager(new ConnectionDetails(host, port));
@@ -160,22 +177,43 @@ public final class MbpTransferProbe {
                 Flux.concat(Mono.just("M28 B1"), Flux.<String>never())
                         .takeUntilOther(transferred.asMono()));
 
-        var progress = new ArrayList<Long>();
-        String outcome;
-        try {
-            List<Long> reported = terminal.binaryTransfer(NAME, file, Mono.never())
-                    .doOnNext(bytes -> System.out.printf("  %d of %d bytes acknowledged%n",
-                            bytes, file.length))
-                    .collectList()
-                    .block(TIMEOUT);
-            progress.addAll(Objects.requireNonNullElse(reported, List.of()));
-            outcome = "completed";
-        } catch (Exception failed) {
-            outcome = "FAILED: " + failed.getMessage();
+        // The exclusivity is released when the transfer flux has *terminated* - never when a wait
+        // on it gives up. A transfer stopped from here aborts through further packets and replies
+        // (ABORT, then CONTROL CLOSE), so until it terminates the printer is still reading packets,
+        // and an ASCII line let in early lands in its packet reader (#132).
+        var stop = Sinks.<Void>empty();
+        var ended = new CountDownLatch(1);
+        var progress = new CopyOnWriteArrayList<Long>();
+        var outcome = new AtomicReference<>("completed");
+        terminal.binaryTransfer(NAME, file, stop.asMono())
+                .doFinally(signal -> {
+                    transferred.tryEmitEmpty();
+                    ended.countDown();
+                })
+                .subscribe(bytes -> {
+                    progress.add(bytes);
+                    System.out.printf("  %d of %d bytes acknowledged%n", bytes, file.length);
+                }, failed -> outcome.set("FAILED: " + failed.getMessage()));
+
+        Duration budget = cancelAfter == null ? TIMEOUT : cancelAfter;
+        if (!ended.await(budget.toMillis(), TimeUnit.MILLISECONDS)) {
+            // A cancellation completes rather than errors, so the outcome is set before it fires.
+            outcome.set("CANCELLED after " + budget.toMillis() + "ms");
+            stop.tryEmitEmpty();
+            if (!ended.await(CANCEL_BUDGET.toMillis(), TimeUnit.MILLISECONDS)) {
+                // Still in binary mode as far as anything here knows, so no ASCII may follow - not
+                // even the M30 that would tidy the card.
+                System.out.printf("  !! the transfer did not end within %dms of being cancelled; "
+                        + "sending nothing more, the printer may still be in binary mode%n",
+                        CANCEL_BUDGET.toMillis());
+                sending.dispose();
+                replies.dispose();
+                terminal.stop();
+                System.exit(2);
+            }
         }
-        transferred.tryEmitEmpty();
         exclusive.block(ASCII_TIMEOUT);
-        System.out.printf("  the transfer %s, reporting %s%n", outcome, progress);
+        System.out.printf("  the transfer %s, reporting %s%n", outcome.get(), progress);
 
         System.out.println();
         System.out.println("=== what landed on the card ===");

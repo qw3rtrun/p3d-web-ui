@@ -46,7 +46,7 @@ public final class ConnectionLifecycle {
     private final Clock clock;
 
     // volatile (and the next four with it): read from whichever thread asks (a snapshot,
-    // PrinterReactor.connection()/linked()) but written only by a transition. Visibility, not a
+    // PrinterReactor.linked()) but written only by a transition. Visibility, not a
     // consistent set - a reader can pair a new state with the previous reason for an instant, which
     // the next event on the stream corrects.
     private volatile MachineConnectionState state = OFFLINE;

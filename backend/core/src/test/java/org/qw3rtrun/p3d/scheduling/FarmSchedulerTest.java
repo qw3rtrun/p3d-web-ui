@@ -68,9 +68,10 @@ class FarmSchedulerTest {
 
     /**
      * Where the stubbed {@code connection(id)} answers from, mirroring
-     * {@code PrinterReactor.connection()}'s {@code publishOn(executor)} - the machine's own single
+     * {@code PrinterReactor.connection()}'s {@code subscribeOn(executor)} - the machine's own single
      * thread in production, inline here except in the two tests about which thread the listener is
-     * called on.
+     * called on. Either operator would do for this stub; it is the production one because the
+     * difference between them is exactly what issue #138 was.
      */
     private Scheduler aggregate = Schedulers.immediate();
 
@@ -254,7 +255,7 @@ class FarmSchedulerTest {
                 var state = live.get(id);
                 return (state == null ? Mono.<ConnectionStatus>empty()
                         : Mono.just(new ConnectionStatus(state, LocalDateTime.now(), 0, null)))
-                        .publishOn(aggregate);
+                        .subscribeOn(aggregate);
             }
 
             // Writing to a card is nothing to do with scheduling a job onto a machine, so these

@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.core;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
+import org.qw3rtrun.p3d.api.model.ConnectionStatus;
 import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
@@ -12,6 +13,7 @@ import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.api.msg.ManagementEvent;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
+import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.protocol.GRq;
 import org.qw3rtrun.p3d.terminal.GSender;
 import org.qw3rtrun.p3d.terminal.HostTerminal;
@@ -270,7 +272,7 @@ class PrinterReactorThreadingTest {
 
         var reactor = manager.openReactor(machine);
         // a single-thread executor's thread exists once given something to do: a connection query
-        // uses publishOn(aggregate), an event puts items on the listener hand-off.
+        // subscribes on the aggregate's, an event puts items on the listener hand-off.
         assertNotNull(reactor.connection().block(Duration.ofSeconds(10)));
         aggregate(machine).onEvent(firmware("Marlin 2.1.2"));
         assertTrue(awaitThread(aggregateThread, true), "the aggregate's thread was never started");
@@ -499,6 +501,50 @@ class PrinterReactorThreadingTest {
                         + "did not: " + watched.touchedBy);
     }
 
+    /**
+     * A query arriving on a foreign thread reads the aggregate on the aggregate's thread - issue
+     * #138, the read-side half of the same claim the two tests above make for the write side.
+     * {@link PrinterReactor#connection()} and {@link PrinterReactor#state()} were
+     * {@code Mono.defer(...).publishOn(executor)}, which moves where the answer is <em>delivered</em>
+     * and not where the aggregate is <em>read</em>: a deferred supplier runs on whichever thread
+     * subscribes. So both read from the caller's, while the class javadoc named three other methods
+     * as the deliberate exceptions and therefore claimed these two were not.
+     *
+     * <p>Driven from a named foreign thread so a caller-thread read fails naming
+     * {@code foreign-query} rather than passing by luck on the aggregate's own, and asserted on
+     * thread names like the confinement tests above. The dial never answers and no other call here
+     * reads either value, so the two recorded reads are these two queries alone.
+     */
+    @Test
+    void aQueryArrivingOnAForeignThreadReadsTheAggregateOnTheAggregatesThread() throws Exception {
+        var machine = UUID.randomUUID();
+        var read = new Read(machine);
+        var threads = new Recorded(PrinterThreads.virtualPerPrinter());
+        var reactor = reactorOver(machine, read, new ScriptedDial(Mono.never()), threads);
+        var status = new AtomicReference<ConnectionStatus>();
+        var answered = new CountDownLatch(1);
+
+        onAThreadCalled("foreign-query", () -> {
+            status.set(reactor.connection().block(Duration.ofSeconds(10)));
+            // empty, deliberately: nothing has reported a temperature, and state() answers with no
+            // reading rather than a sentinel one. The read still happened.
+            reactor.state().block(Duration.ofSeconds(10));
+            answered.countDown();
+        });
+
+        assertTrue(answered.await(15, TimeUnit.SECONDS),
+                "neither query answered, so there is nothing to assert about. The aggregate was "
+                        + "read by " + read.readBy);
+        assertNotNull(status.get(), "connection() answered nothing, so the assertion below would "
+                + "be about a read that never happened");
+        assertEquals(2, read.readBy.size(),
+                "one read each is expected from connection() and state(); the aggregate saw "
+                        + read.readBy);
+        assertEquals(Set.of("p3d-printer-" + machine), Set.copyOf(read.readBy),
+                "a query has to read the aggregate on the aggregate's own thread, the same as a "
+                        + "command; these did not: " + read.readBy);
+    }
+
     /** Runs {@code what} on a named thread of its own and returns it, started. */
     private Thread onAThreadCalled(String name, Runnable what) {
         var thread = new Thread(what, name);
@@ -593,6 +639,33 @@ class PrinterReactorThreadingTest {
             touched();
             super.onGaveUp(why);
             gaveUp.countDown();
+        }
+    }
+
+    /**
+     * An aggregate that records which thread <em>read</em> it, where {@link Watched} records which
+     * thread moved it. Kept separate rather than folded in: {@code getConnection()} is also what
+     * {@code PrinterReactor.linked()} answers from, on the caller's thread by design, so recording
+     * it belongs to the one test that knows nothing else is asking.
+     */
+    private static final class Read extends PrinterState {
+
+        private final List<String> readBy = new CopyOnWriteArrayList<>();
+
+        private Read(UUID id) {
+            super(id);
+        }
+
+        @Override
+        public ConnectionStatus getConnection() {
+            readBy.add(Thread.currentThread().getName());
+            return super.getConnection();
+        }
+
+        @Override
+        public HeaterReading getTemperature() {
+            readBy.add(Thread.currentThread().getName());
+            return super.getTemperature();
         }
     }
 

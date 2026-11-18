@@ -369,9 +369,10 @@ class PrinterReactorManagerTest {
 
     /**
      * The first announcement of a linked machine does dial it, which is the whole point. Nothing
-     * covered this before - {@code StartupAnnouncementFlowTest} in {@code :app} stops at the
-     * directory entry's state - so the intent gate in {@code PrinterReactor.connect()} could have
-     * killed the startup redial outright and the suite would have stayed green. Also pins the
+     * covered this before - {@code StartupAnnouncementFlowTest} in {@code :app} stopped at the
+     * directory entry's copy of the state, a field #83 then deleted for having no reader - so the
+     * intent gate in {@code PrinterReactor.connect()} could have killed the startup redial outright
+     * and the suite would have stayed green. Also pins the
      * non-staleness half of the fix: the redial crosses the aggregate, so the intent is set, which
      * it never used to be - leaving {@code connect()}'s retry filter asking about an intent nobody
      * had set, so a machine redialled at startup gave up after its first refusal.

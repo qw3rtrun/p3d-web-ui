@@ -93,13 +93,24 @@ public class PrinterDirectory {
      * read, so a command to a never-connected machine NPE'd instead of being refused. The spec
      * travels beside it because the same check must honour an operator's override (a replica
      * carrying the profile alone would refuse tool 1 on a machine its owner had already described
-     * correctly); it is also what plan item D1 will match a job against. The state is read once, at
-     * startup, for {@link PrinterReactorManager} to redial what was connected when the process went
-     * down - it is not kept current afterwards, since the live answer is {@code core}'s own
-     * aggregate, reached through {@code PrinterControl.connection}.
+     * correctly); it is also what plan item D1 will match a job against.
+     *
+     * <p><strong>Where a machine currently is, is deliberately not here</strong> (#83). This record
+     * replicates what a machine <em>is</em>; where it is belongs to the aggregate, and every reader
+     * that wants the answer already asks for it there - {@code PrinterControl.connection} for a
+     * caller, {@code PrinterReactorManager.runtimeOf} for "is anything running". A
+     * {@link MachineConnectionState} kept here would be stale <em>structurally</em>, not
+     * occasionally: it arrives on {@link MRegisteredEvent}, a statement of persisted fact
+     * re-published about seven times per connect, and the {@code MConnectionChangedEvent} that
+     * would correct it travels the same single-consumer listener queue <em>behind</em> those
+     * republications - so while a backlog drains, the copies in front are guaranteed to carry the
+     * older state. {@code PrinterReactorManager.redialAtStartup} had to pick a different
+     * discriminator (whether this module already holds a runtime) for exactly that reason, which
+     * left the field with no reader at all - the write-only {@code PrinterEntity.connected} column
+     * B3 removed, one layer up.
      */
     public record Entry(UUID id, String name, ConnectionDetails connection, MachineProfile profile,
-                        MachineSpec spec, MachineConnectionState state) {
+                        MachineSpec spec) {
     }
 
     private final Map<UUID, Entry> known = new ConcurrentHashMap<>();
@@ -118,7 +129,7 @@ public class PrinterDirectory {
     public void onRegistered(MRegisteredEvent event) {
         var entry = new Entry(event.getMachineId(), event.getName(),
                 new ConnectionDetails(event.getHost(), event.getPort()), event.getProfile(),
-                event.getSpec(), event.getState());
+                event.getSpec());
         var replaced = new AtomicReference<Entry>();
         var accepted = known.compute(entry.id(), (id, previous) -> {
             replaced.set(previous);

@@ -9,6 +9,7 @@ import org.qw3rtrun.p3d.api.msg.MConnectionChangedEvent;
 import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
 import org.qw3rtrun.p3d.api.service.MachineManagementService;
 import org.qw3rtrun.p3d.core.PrinterDirectory;
+import org.qw3rtrun.p3d.core.PrinterReactorManager;
 import org.qw3rtrun.p3d.management.service.MachineManagementImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -23,6 +24,8 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -42,7 +45,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>{@code PrinterDirectory} is built from {@code MRegisteredEvent} and nothing else, so a fact
  * being in the replica is the same statement as the announcement having carried it - without a
- * listener bean of its own, which would fork the context and cost the suite a second boot.
+ * listener bean of its own, which would fork the context and cost the suite a second boot. For the
+ * two facts the replica no longer keeps a copy of, the observable is what the announcement
+ * <em>caused</em> instead: since #83 an {@code Entry} carries no connection state, so "the
+ * announcement said this machine was linked" is read as "a runtime stood up".
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -56,6 +62,10 @@ class StartupAnnouncementFlowTest {
 
     @Autowired
     private PrinterDirectory directory;
+
+    /** Only {@link PrinterReactorManager#runtimeOf} is read - it answers without building one, unlike {@code openReactor}. */
+    @Autowired
+    private PrinterReactorManager reactors;
 
     @Autowired
     private ApplicationEventPublisher publisher;
@@ -122,6 +132,17 @@ class StartupAnnouncementFlowTest {
      * {@code printer_entity.connection_state} is written from {@code core} (knowing a machine is
      * connected means holding the socket) and read exactly here, to decide what to dial again - both
      * halves required, unlike the write-only {@code connected} boolean this replaced.
+     *
+     * <p>Observed as a <strong>runtime standing up</strong> rather than as a field in
+     * {@code PrinterDirectory.Entry}, which carried a copy of the state until #83 and had no
+     * production reader at all. {@code PrinterReactorManager.onRegistered} runs synchronously on the
+     * announcing thread, so by the time {@code announceTheFarm()} returns the redial has either
+     * happened or been declined; {@code runtimeOf} answers without building one, so the assertion
+     * cannot manufacture what it is looking for. What the redial then <em>does</em> - cross the
+     * aggregate, set the intent the retry filter reads - is
+     * {@code PrinterReactorManagerTest.aFirstAnnouncementOfALinkedMachineDialsIt}'s half; this one is
+     * about the announcement having carried a linked state out of the database in the first place,
+     * which is the seam only {@code :app} can see.
      */
     @Test
     void theAnnouncementCarriesTheConnectionStateSoAMachineIsDialledAgain() {
@@ -131,9 +152,10 @@ class StartupAnnouncementFlowTest {
 
         roster.announceTheFarm();
 
-        var entry = directory.find(id).orElseThrow(() -> new AssertionError("not announced"));
-        assertEquals(MachineConnectionState.BUSY, entry.state());
-        assertTrue(entry.state().isLinked(), "which is what makes the farm redial it");
+        assertTrue(directory.find(id).isPresent(), "not announced");
+        assertNotNull(reactors.runtimeOf(id),
+                "the roster recorded it as BUSY, so the announcement has to carry a linked state -"
+                        + " standing the runtime up is the whole of what that state is read for");
     }
 
     /** A machine that was offline when the process went down is left alone, which keeps a start quiet. */
@@ -143,7 +165,9 @@ class StartupAnnouncementFlowTest {
 
         roster.announceTheFarm();
 
-        assertEquals(MachineConnectionState.OFFLINE,
-                directory.find(id).orElseThrow().state());
+        assertTrue(directory.find(id).isPresent(), "not announced");
+        assertNull(reactors.runtimeOf(id),
+                "nothing was connected when the farm went down, so nothing is dialled - a start that"
+                        + " opened a socket per row in the roster is the leak A3 closed");
     }
 }

@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -171,6 +172,23 @@ class SdUploaderTest {
                 .expectNext("M28 B1", "M21")
                 .expectComplete()
                 .verify(TIMEOUT);
+    }
+
+    /**
+     * The opening command is <strong>built</strong>, not concatenated, so the name meets
+     * {@code bareString} where it becomes bytes rather than where it entered the system. Concatenated
+     * instead, a name carrying {@code \n} is not a rejected block: it is an {@code M28} plus a second
+     * command nobody wrote, with the {@code N} word on one side of the break and the checksum on the
+     * other, immediately in front of a file transfer the firmware is now mis-framing. Issue #82.
+     */
+    @Test
+    void aNameThatWouldEndTheBlockCannotBeBuiltIntoATransfer() {
+        var refused = assertThrows(IllegalArgumentException.class,
+                () -> SdUploader.transferOf("a.gco\nM112", Flux.just("G28"),
+                        Sinks.<Void>empty().asMono()));
+
+        assertTrue(refused.getMessage().contains("bare rest-of-line string"),
+                "the DSL's own refusal, not a second rule here: " + refused.getMessage());
     }
 
     /** An empty file is an open and a close, and the firmware is happy with that. */
@@ -414,6 +432,52 @@ class SdUploaderTest {
 
         assertEquals(List.of(), reactor.written);
         assertEquals(List.of(), reactor.announced);
+    }
+
+    /**
+     * A name that cannot be written in a G-code block is refused <strong>without the HTTP
+     * boundary</strong>, which is the whole of issue #82. {@code PrinterController}'s
+     * {@code UploadToCard} runs a name through {@code SdFileName.checked} and answers 400, so a
+     * browser never gets here - but {@code PrinterControl.uploadToCard} is a public method of the
+     * {@code api} module and a farm that schedules its own uploads is the obvious next caller.
+     * Asserted at {@code start}, the entry such a caller uses, and with a store that fails the test
+     * if it is consulted: the name is pure CPU and the lookup a blocking round trip, so the cheap and
+     * certain check goes first. The second half - that a legitimate upload still goes afterwards - is
+     * the one with teeth: a refusal landing after the one-at-a-time claim would leave the machine
+     * marked busy with no transfer left to clear it.
+     */
+    @Test
+    void aNameThatWouldCorruptTheBlockIsRefusedWithoutTheHttpBoundary() {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE);
+        var uploader = uploaderFor(id, reactor, storeThatMustNotBeAsked(), DEFAULT_MAX);
+
+        StepVerifier.create(uploader.start(reactor, id, UUID.randomUUID(), "bad\nM112.gco", false))
+                .assertNext(outcome -> {
+                    var refused = refusalOf(outcome);
+                    assertEquals(ControlOutcome.Refusal.WRONG_STATE, refused.refusal());
+                    assertTrue(refused.reason().contains("bare rest-of-line string"),
+                            "the refusal carries the DSL's own words: " + refused.reason());
+                })
+                .verifyComplete();
+
+        // the same name over the binary protocol: the file would be created with a name no later
+        // M23 could select, so one rule for the field rather than two that differ by mode.
+        StepVerifier.create(uploader.start(reactor, id, UUID.randomUUID(), "bad\nM112.gco", true))
+                .assertNext(outcome -> assertEquals(ControlOutcome.Refusal.WRONG_STATE,
+                        refusalOf(outcome).refusal()))
+                .verifyComplete();
+
+        assertEquals(List.of(), reactor.written, "nothing may reach the wire");
+        assertEquals(List.of(), reactor.announced, "a refusal is not a transfer and announces none");
+        assertNull(reactor.binaryCardName, "no binary transfer may have been opened");
+
+        // the machine was not left busy: a legitimate upload still goes.
+        var file = OneFile.of("benchy.gco", "G28\nG1 X1\n");
+        StepVerifier.create(uploaderFor(id, reactor, file, DEFAULT_MAX)
+                        .start(reactor, id, file.id(), "benchy.gco", false))
+                .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
+                .verifyComplete();
     }
 
     /**

@@ -6,6 +6,8 @@ import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
 import org.qw3rtrun.p3d.api.msg.SdUploadProgressed;
 import org.qw3rtrun.p3d.api.msg.SdUploadState;
+import org.qw3rtrun.p3d.g.code.core.GEncoder;
+import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
 import org.springframework.scheduling.annotation.Scheduled;
 import reactor.core.Disposable;
 import reactor.core.Disposables;
@@ -47,6 +49,12 @@ import java.util.concurrent.atomic.AtomicReference;
  *       invisible to every listing - measured, not read: a probe once wrote an extensionless file,
  *       got an empty listing, and the first conclusion drawn was that the simulator was broken.
  *       {@link #cardNameFor} gives it an extension instead.</li>
+ *   <li><strong>The name has to be a name and not a second command.</strong> It travels as a bare
+ *       rest-of-line string, so {@link #openingLineFor} builds a {@link StartSDWrite} rather than
+ *       concatenating one and the DSL's {@code bareString} refuses {@code \n}, {@code \r},
+ *       {@code ;}, {@code *} and anything outside printable ASCII. {@link #start} asks the same
+ *       question as a {@link ControlOutcome} in front of everything else, because the HTTP boundary's
+ *       own check is not on the path a caller inside the farm takes (issue #82).</li>
  * </ol>
  *
  * <h3>Two modes</h3>
@@ -160,12 +168,16 @@ public class SdUploader {
      * HTTP request held open for it would time out; {@link SdUploadProgressed} on the machine's
      * event stream says how it is going. Every way this can decline is a {@link ControlOutcome}, not
      * an exception - a stale file id and an unplugged printer are ordinary, and as exceptions both
-     * used to answer 500. Checks run cheapest and most certain first (known machine, then link, then
-     * the capability if {@code binary} was asked for, then file, then "one at a time"), so a
-     * blocking file-store lookup never runs for a printer that could not have taken the file anyway
-     * - the common case on a farm that is mostly idle. The capability joins the link in that first
-     * tier because it is the same kind of question: one volatile read of what the machine already
-     * said, with no store behind it.
+     * used to answer 500. Checks run cheapest and most certain first (known machine, then the name,
+     * then link, then the capability if {@code binary} was asked for, then file, then "one at a
+     * time"), so a blocking file-store lookup never runs for a printer that could not have taken the
+     * file anyway - the common case on a farm that is mostly idle. The capability joins the link in
+     * that first tier because it is the same kind of question: one volatile read of what the machine
+     * already said, with no store behind it.
+     *
+     * <p>The name is checked here, in front of all of it, because this is the entry a caller that is
+     * <em>not</em> the HTTP surface uses: {@code PrinterController}'s {@code UploadToCard} already
+     * refuses a bad name as a 400, and nothing else did until issue #82.
      *
      * @param reactor   the machine's runtime, which the caller has already opened
      * @param requested what the operator asked to call it, which may lack an extension
@@ -177,6 +189,14 @@ public class SdUploader {
     public Mono<ControlOutcome> start(PrinterReactor reactor, UUID machineId, UUID fileId,
                                       String requested, boolean binary) {
         return Mono.defer(() -> {
+            var cardName = cardNameFor(requested);
+            var unwritable = whyUnwritable(cardName);
+            if (unwritable != null) {
+                // the name itself is not quoted back: it is the thing carrying a control character,
+                // and the DSL's message already names the character and its position.
+                return Mono.just(ControlOutcome.wrongState(machineId,
+                        "that name cannot open a file on the card - " + unwritable));
+            }
             if (!reactor.linked()) {
                 return Mono.just(ControlOutcome.wrongState(machineId, "printer " + machineId
                         + " is not connected, so nothing can be written to its card"));
@@ -188,7 +208,7 @@ public class SdUploader {
             return Mono.fromCallable(() -> files.fetch(fileId))
                     .subscribeOn(Schedulers.boundedElastic())
                     .flatMap(found -> found
-                            .map(file -> begin(reactor, machineId, fileId, file, requested, binary))
+                            .map(file -> begin(reactor, machineId, fileId, file, cardName, binary))
                             .orElseGet(() -> Mono.just(ControlOutcome.absent(machineId,
                                     "there is no file " + fileId + " to upload"))));
         });
@@ -199,11 +219,12 @@ public class SdUploader {
      * one asynchronous step - reading the whole file - and the ASCII branch has none; both run on
      * {@code boundedElastic}, having been reached from inside the {@code flatMap} the file lookup was
      * scheduled on.
+     *
+     * @param cardName the name as it will be on the card, already extended by
+     *                 {@link #cardNameFor} and already known to be one a block can carry
      */
     private Mono<ControlOutcome> begin(PrinterReactor reactor, UUID machineId, UUID fileId,
-                                       GcodeFile file, String requested, boolean binary) {
-        var cardName = cardNameFor(requested);
-
+                                       GcodeFile file, String cardName, boolean binary) {
         // before the map is touched, so a refusal cannot leave the machine marked busy.
         if (binary && file.sizeBytes() > binaryMaxBytes) {
             return Mono.just(ControlOutcome.wrongState(machineId, "file " + fileId + " is "
@@ -421,9 +442,43 @@ public class SdUploader {
      */
     static Flux<String> transferOf(String cardName, Flux<String> content, Mono<Void> stop) {
         return Flux.concat(
-                Mono.just("M28 " + cardName),
+                Mono.just(openingLineFor(cardName)),
                 content.takeUntilOther(stop),
                 Mono.just("M29"));
+    }
+
+    /**
+     * The line that opens the file: {@link StartSDWrite} rendered by the encoder, not
+     * {@code "M28 " + cardName}. The name is a bare rest-of-line string (spec 3.4a) and
+     * {@code bareString} in {@code :gcode}'s DSL is the one place that rule lives, so building the
+     * command is what makes the name meet it <em>where it becomes bytes</em> rather than only where
+     * it entered the system - {@link #start} answers the same question as a {@link ControlOutcome}
+     * before anything is claimed, and this is the backstop for a caller that skipped it. The rest of
+     * the transfer stays {@code Flux<String>} on purpose: those are arbitrary G-code lines read off
+     * the store and not re-parsed, and this is the one element that is a <em>command</em>. Issue #82.
+     *
+     * @throws IllegalArgumentException if the name cannot be a bare string - a {@code \n} there is
+     *                                  not a rejected block but an {@code M28} plus a second command
+     *                                  nobody wrote, in front of a file transfer the firmware is now
+     *                                  mis-framing
+     */
+    static String openingLineFor(String cardName) {
+        return GEncoder.INSTANCE.encode(new StartSDWrite(cardName).encode());
+    }
+
+    /**
+     * Why this name cannot open a file on the card, or null - asked of the construction the transfer
+     * will actually use, so there is no second copy of the character rule to drift from the DSL's.
+     * Both modes are held to it: the ASCII one carries the name in an {@code M28}, and a binary one
+     * would create a file whose name no later {@code M23} could select.
+     */
+    private static String whyUnwritable(String cardName) {
+        try {
+            openingLineFor(cardName);
+            return null;
+        } catch (IllegalArgumentException refused) {
+            return refused.getMessage();
+        }
     }
 
     /**

@@ -48,6 +48,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * below assert that difference, because the three look alike in the template and the wrong one
  * copied would take the Storage tab away from every older firmware.
  *
+ * <p>The Terminal tab (#135) is here for the opposite claim: it is gated on <em>nothing</em>, since a
+ * console needs neither a reader nor an EEPROM, so the case that proves it is the machine that loses
+ * both other tabs. A gate copied from the two it sits between would be invisible on every machine
+ * that reports a full firmware.
+ *
  * <p>Renders the real page through the real filter chain, as
  * {@code FarmSecurityTest.theProfilePageRendersWithAndWithoutAResult} argues: a controller
  * returning a view name is not the view working.
@@ -361,6 +366,68 @@ class MonitorPageTest {
 
         assertFalse(page.contains("Store settings (M500)"),
                 "the Monitor tab's store button moved rather than being duplicated");
+    }
+
+    // ---------------------------------------------------------------- the Terminal tab
+
+    /*
+     * The Terminal tab (#135) is the negative of everything above it: it is gated on nothing, because
+     * a console needs neither a card reader nor an EEPROM - every machine has a wire. The test worth
+     * having is therefore the machine that loses both other tabs, since a Terminal gate copied from
+     * the two it sits between would be invisible on any machine that reports a full firmware.
+     */
+    @Test
+    void everyMachineGetsTheTerminalTabAndTheIsland() {
+        PROFILE.set(reporting(true, true));
+
+        var page = monitorPage();
+
+        assertTrue(page.contains("href=\"#terminal\""), "the tab should link to the pane");
+        assertTrue(page.contains("id=\"terminal\""), "the pane should be rendered");
+        assertTrue(page.contains("data-p3d=\"terminal-tab\""), "the island should be mounted");
+        assertTrue(page.contains(">Terminal</a>"), "and the tab should be named");
+    }
+
+    @Test
+    void aMachineWithNoCardAndNoEepromStillGetsTheTerminalTab() {
+        PROFILE.set(reporting(false, false));
+
+        var page = monitorPage();
+
+        assertFalse(page.contains("data-p3d=\"storage-tab\""), "the premise: no card reader");
+        assertFalse(page.contains("data-p3d=\"settings-tab\""), "the premise: no EEPROM");
+        assertTrue(page.contains("href=\"#terminal\""),
+                "a console needs no capability, so no capability may take it away");
+        assertTrue(page.contains("data-p3d=\"terminal-tab\""));
+    }
+
+    // Not even a machine nothing has reached: the tab is live before a firmware has said a word,
+    // which is the state an operator most wants a console in.
+    @Test
+    void anUnreachedMachineGetsTheTerminalTabToo() {
+        PROFILE.set(MachineProfile.unknown());
+
+        var page = monitorPage();
+
+        assertTrue(page.contains("href=\"#terminal\""));
+        assertTrue(page.contains("data-p3d=\"terminal-tab\""));
+    }
+
+    // The island cannot ask who is signed in - the browser holds no auth state - so the role is
+    // rendered onto the mount point, as every other write control on this page gets it. Without it
+    // the prop defaults to VIEWER and an operator silently loses the input box.
+    @Test
+    void theTerminalIslandIsToldWhichMachineAndWhichRole() {
+        PROFILE.set(MachineProfile.unknown());
+
+        var page = monitorPage();
+        var island = page.indexOf("data-p3d=\"terminal-tab\"");
+        var attributes = page.substring(island, page.indexOf("</div>", island));
+
+        assertTrue(attributes.contains("data-uuid=\"" + MACHINE + "\""),
+                "the island should be told which machine it is for: " + attributes);
+        assertTrue(attributes.contains("data-role=\"OPERATOR\""),
+                "and which role is looking, since it cannot ask: " + attributes);
     }
 
     // ---------------------------------------------------------------- the browser's flow

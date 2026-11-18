@@ -403,6 +403,20 @@ class PrinterReactorManagerTest {
                 .verifyComplete();
     }
 
+    // The console owes the same guarantee (#135): a browser holding the terminal of a deleted
+    // printer must be told rather than left waiting, which is why one StreamEnd completes both
+    // sinks. Nothing arrives before the release because the terminal sink has no snapshot - its
+    // scrollback is this session's traffic and there has been none.
+    @Test
+    void aReleasedReactorCompletesItsTerminalStream() {
+        theFarmHas(id);
+        var console = manager.openReactor(id).traffic();
+
+        StepVerifier.create(console)
+                .then(() -> manager.release(id))
+                .verifyComplete();
+    }
+
     // ---------------------------------------------------------------- releaseAll() - issue #87
 
     // release(UUID) for the whole farm, not one machine - every running printer's own stream has to

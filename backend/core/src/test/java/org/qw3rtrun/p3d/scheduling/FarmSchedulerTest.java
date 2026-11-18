@@ -241,8 +241,20 @@ class FarmSchedulerTest {
             }
 
             @Override
+            public Publisher<EventMessage> traffic(UUID id) {
+                return Mono.empty();
+            }
+
+            @Override
             public Publisher<Void> send(UUID id, List<GRq<?>> commands) {
                 return Mono.empty();
+            }
+
+            // Typing a line at a console is nothing to do with scheduling either, like the two
+            // card methods below.
+            @Override
+            public Publisher<ControlOutcome> sendRaw(UUID id, String line) {
+                return Mono.just(ControlOutcome.accepted(id));
             }
 
             @Override

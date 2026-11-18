@@ -153,6 +153,42 @@ class FarmSecurityTest {
                 .expectStatus().isForbidden();
     }
 
+    /**
+     * The Terminal tab, both halves - issue #135 added two endpoints and <strong>no security
+     * rule</strong>, on the claim that {@code POST /api-printer/**} and {@code GET /api-printer/**}
+     * already cover them. This is that claim asserted rather than assumed: a path is covered by
+     * accident until somebody adds one that is not, and the consequence here is the sharpest on this
+     * whole surface - a typed line is arbitrary control of a heater past every named endpoint's
+     * checks, so it has to be at least {@code OPERATOR}, while watching what crossed the wire is a
+     * read like any other and a {@code VIEWER} may have it.
+     *
+     * <p>Reading is asserted as 500, which is the stub throwing: a 200 here would prove nothing,
+     * since an endpoint that was never reached cannot be told apart from one that answered.
+     */
+    @Test
+    void aViewerMayWatchTheConsoleAndMayNotTypeIntoIt() {
+        var session = new Session().signIn("viewer");
+
+        session.post("/api-printer/" + MACHINE + "/terminal", "{\"line\":\"M105\"}")
+                .expectStatus().isForbidden();
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR,
+                session.get("/api-printer/" + MACHINE + "/terminal/stream")
+                        .returnResult(String.class).getStatus(),
+                "a viewer should have been let through to read the console");
+    }
+
+    /** And an operator may type. */
+    @Test
+    void anOperatorMayTypeAtTheConsole() {
+        var session = new Session().signIn("operator");
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR,
+                session.post("/api-printer/" + MACHINE + "/terminal", "{\"line\":\"M105\"}")
+                        .returnResult(String.class).getStatus(),
+                "an operator should have been let through to the console");
+    }
+
     /** And an operator gets through to it - the stub throwing is the proof. */
     @Test
     void anOperatorMayChangeASetting() {

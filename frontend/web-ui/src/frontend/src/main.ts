@@ -10,6 +10,7 @@ import FarmDashboard from './components/FarmDashboard.vue'
 import PrinterMonitor from './components/PrinterMonitor.vue'
 import SettingsTab from './components/SettingsTab.vue'
 import StorageTab from './components/StorageTab.vue'
+import TerminalTab from './components/TerminalTab.vue'
 import {startTheme} from './theme'
 
 /**
@@ -34,6 +35,7 @@ const ISLANDS: Record<string, Component> = {
     'printer-monitor': PrinterMonitor,
     'settings-tab': SettingsTab,
     'storage-tab': StorageTab,
+    'terminal-tab': TerminalTab,
 }
 
 // `data-foo-bar` becomes the prop `fooBar`. `data-p3d` itself is the selector, not a prop, so it

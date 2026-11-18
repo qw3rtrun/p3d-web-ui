@@ -54,6 +54,15 @@
                                 <a class="nav-link disabled" aria-disabled="true" tabindex="-1">Settings</a>
                             </span>
                         </li>
+                        <!-- Deliberately not gated, unlike the two above: a terminal needs no
+                             capability, since every machine has a wire. A VIEWER gets the tab and
+                             the transcript and no input - the island reads data-role for that, and
+                             the server refuses their POST regardless. -->
+                        <li class="nav-item">
+                            <a class="nav-link" id="terminal-tab" data-bs-toggle="tab"
+                               href="#terminal" role="tab" aria-controls="terminal"
+                               aria-selected="false">Terminal</a>
+                        </li>
                         <li class="nav-item">
                             <a class="nav-link" id="contact-tab" data-bs-toggle="tab" href="#demographics" role="tab"
                                aria-selected="false">Firmware</a>
@@ -84,6 +93,16 @@
                     <div class="tab-pane fade" id="settings" role="tabpanel" aria-labelledby="settings-tab"
                          th:if="${printer.profile.hasEeprom()}">
                         <div data-p3d="settings-tab"
+                             th:attr="data-uuid=${printer.uuid},
+                                      data-role=${currentRole}"></div>
+                    </div>
+
+                    <!-- An island, and the only one here with no th:if: the console is the live
+                         session's wire traffic, which every machine has. It opens a fourth
+                         EventSource because /terminal/stream is a different endpoint carrying what
+                         the monitor stream leaves out, not a fourth copy of the same stream. -->
+                    <div class="tab-pane fade" id="terminal" role="tabpanel" aria-labelledby="terminal-tab">
+                        <div data-p3d="terminal-tab"
                              th:attr="data-uuid=${printer.uuid},
                                       data-role=${currentRole}"></div>
                     </div>

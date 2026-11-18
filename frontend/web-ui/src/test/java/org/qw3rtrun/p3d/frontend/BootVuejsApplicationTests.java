@@ -68,7 +68,17 @@ class BootVuejsApplicationTests {
                 }
 
                 @Override
+                public Publisher<EventMessage> traffic(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
                 public Publisher<Void> send(UUID id, List<GRq<?>> commands) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
+
+                @Override
+                public Publisher<ControlOutcome> sendRaw(UUID id, String line) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 

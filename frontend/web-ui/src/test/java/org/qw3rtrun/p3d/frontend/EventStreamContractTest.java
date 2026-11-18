@@ -8,6 +8,7 @@ import org.qw3rtrun.p3d.api.msg.MachineJoinedFarm;
 import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
 import org.qw3rtrun.p3d.api.msg.SdUploadProgressed;
 import org.qw3rtrun.p3d.api.msg.SessionStarted;
+import org.qw3rtrun.p3d.api.msg.TerminalTraffic;
 import org.qw3rtrun.p3d.api.msg.SdUploadState;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
@@ -297,6 +298,94 @@ class EventStreamContractTest {
         assertEquals("PositionRs", payload.get("type").asString());
         assertEquals(0.0, payload.get("event").get("axes").get("X").asDouble());
         assertEquals(10.5, payload.get("event").get("axes").get("Y").asDouble());
+    }
+
+    // ---------------------------------------------------------------- the terminal console
+
+    /**
+     * The Terminal tab's own stream (#135) - a different endpoint from the one above, same envelope.
+     *
+     * <p>All four fields are read by the console: {@code direction} decides which side of the pane a
+     * line sits on, {@code raw} is the text, {@code decodedAs} is a type badge, and {@code at}
+     * timestamps it. This is the only place the type string {@code "TerminalTraffic"} is pinned on
+     * the Java side, and {@code EventMessageCatalogueTest} in {@code :backend:api} is what sends a
+     * new {@code api.msg} type here.
+     */
+    @Test
+    void aReceivedLineCarriesItsDirectionItsTextAndItsDecode() {
+        var payload = mapper.readTree(streamed(new TerminalTraffic(
+                TerminalTraffic.Direction.RECEIVED, "ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0",
+                "OkTemperatureRs", 1763467200123L)));
+
+        assertEquals("TerminalTraffic", payload.get("type").asString());
+        assertEquals("RECEIVED", payload.get("event").get("direction").asString());
+        assertEquals("ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0",
+                payload.get("event").get("raw").asString());
+        assertEquals("OkTemperatureRs", payload.get("event").get("decodedAs").asString());
+    }
+
+    /**
+     * {@code at} is a number, not a formatted date - which is what lets it reach the browser with no
+     * Jackson date module and what makes a replayed line legible as history. The terminal sink is the
+     * one in this farm that replays, so a console without this field could not tell its scrollback
+     * from something that just happened.
+     */
+    @Test
+    void aTerminalLineIsTimestampedAsANumber() {
+        var payload = mapper.readTree(streamed(new TerminalTraffic(
+                TerminalTraffic.Direction.RECEIVED, "echo:busy: processing", "SimpleBusyRs",
+                1763467200123L)));
+
+        assertTrue(payload.get("event").get("at").isNumber(),
+                "a string here would need a date parser in the browser: " + payload.get("event").get("at"));
+        assertEquals(1763467200123L, payload.get("event").get("at").asLong());
+    }
+
+    /**
+     * The outbound direction, and the two things about it that are contracts.
+     *
+     * <p>{@code SENT} is the second of exactly two direction strings a console switches on - a third
+     * would be a case the TypeScript side has no arm for. And {@code raw} is the <strong>framed</strong>
+     * block, {@code N} word and checksum included: the operator typed four characters and nine went
+     * on the wire, and the difference is exactly where a line-numbering fault lives.
+     */
+    @Test
+    void aSentLineCarriesTheFramedBlockUnderTheOtherDirection() {
+        var payload = mapper.readTree(streamed(new TerminalTraffic(
+                TerminalTraffic.Direction.SENT, "N12 M105*31", null, 1763467200000L)));
+
+        assertEquals("SENT", payload.get("event").get("direction").asString());
+        assertEquals("N12 M105*31", payload.get("event").get("raw").asString());
+    }
+
+    /**
+     * An unclaimed line is {@code null} and not an absent key or an empty string, and the browser has
+     * to be able to tell: ten of the probe's 106 received lines reach no decoder at all - the whole
+     * simulator boot banner - and a console that hid them would be useless for the one job it has.
+     * An empty string would read as a type badge with no text in it.
+     */
+    @Test
+    void anUndecodedLineCarriesAnExplicitNull() {
+        var payload = mapper.readTree(streamed(new TerminalTraffic(
+                TerminalTraffic.Direction.RECEIVED, "Sim Startup!", null, 1763467200000L)));
+
+        assertTrue(payload.get("event").has("decodedAs"),
+                "the key has to be there, or a browser cannot tell 'nothing claimed it' from "
+                        + "'this build does not report decodes'");
+        assertTrue(payload.get("event").get("decodedAs").isNull(),
+                "null, not an empty string: " + payload.get("event").get("decodedAs"));
+    }
+
+    /** Both directions, enumerated, so adding a third is a change that passes through here. */
+    @Test
+    void theTwoDirectionsReachTheBrowserByName() {
+        assertEquals(2, TerminalTraffic.Direction.values().length,
+                "a third direction is a third case every console has to switch on");
+        for (var direction : TerminalTraffic.Direction.values()) {
+            var payload = mapper.readTree(streamed(
+                    new TerminalTraffic(direction, "M105", null, 1L)));
+            assertEquals(direction.name(), payload.get("event").get("direction").asString());
+        }
     }
 
     // ---------------------------------------------------------------- the settings report

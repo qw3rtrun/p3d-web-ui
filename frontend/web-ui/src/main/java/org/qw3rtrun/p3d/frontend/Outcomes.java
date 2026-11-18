@@ -10,11 +10,20 @@ import java.util.Optional;
 /**
  * What a refusal is worth over HTTP - the whole of this module's status mapping, in one place.
  *
- * <p>Three sentences and no others: <strong>not here is 404</strong>, <strong>not now is
- * 409</strong>, and anything that got as far as happening is 200. Nothing else in this package
+ * <p>Four sentences and no others: <strong>not here is 404</strong>, <strong>not now is
+ * 409</strong>, <strong>a request that could never be sent is 400</strong>, and anything that got as
+ * far as happening is 200. Nothing else in this package
  * decides a status for a refusal, and that is the point of the class existing at all - the mapping
  * had been written out three times in three controllers and the roster had never been given one,
  * so {@code GET /api-manager/{uuid}} answered 500 for an id the farm did not hold.
+ *
+ * <p><strong>The fourth is about the request, where the other three are about the machine.</strong>
+ * {@code ABSENT} and {@code WRONG_STATE} both say where a machine or a record is;
+ * {@link ControlOutcome.Refusal#MALFORMED} says the caller sent something that must never reach a
+ * wire - a typed console line carrying a {@code ;}, an {@code M110} that would desynchronise the
+ * send window - and neither of the other two could map to 400 honestly. That is also the test for a
+ * fifth: a new refusal earns its place by naming a status this mapping cannot otherwise reach, never
+ * by being a new shade of why. The shade goes in {@code reason}.
  *
  * <p><strong>It maps values, never exception classes.</strong> There is deliberately no
  * {@code @ExceptionHandler} and no {@code @RestControllerAdvice} here, and there must not be: an
@@ -24,10 +33,13 @@ import java.util.Optional;
  * {@link ControlOutcome}, {@link JobOutcome} - and this translates the sentence it said. A new
  * refusal therefore arrives here as a compile error rather than as a 500 in production.
  *
- * <p><strong>409 and not 400.</strong> The request was well formed and the caller was entitled to
+ * <p><strong>409 and not 400</strong>, and that is still true of a refused <em>command</em>. The
+ * request was well formed and the caller was entitled to
  * make it; the job, the file or the machine simply is not where they thought. The common cause is
  * an ordinary race - somebody clicks Pause as the last line is acknowledged, or Upload as a printer
  * drops - so the right answer tells them where things actually got to, and the body carries it.
+ * 400 is the other case entirely: not a machine that cannot do something now, but a body that could
+ * never have been sent to any machine in any state, where retrying it unchanged is pointless.
  *
  * <p><strong>Why a refused command carries a body and an absent query does not.</strong> A query's
  * absence is fully described by its status: there is no record, and there is nothing more to say
@@ -50,9 +62,19 @@ final class Outcomes {
         return switch (outcome) {
             case ControlOutcome.Accepted ignored -> ResponseEntity.ok().build();
             case ControlOutcome.Refused refused -> ResponseEntity
-                    .status(refused.refusal() == ControlOutcome.Refusal.ABSENT
-                            ? HttpStatus.NOT_FOUND : HttpStatus.CONFLICT)
+                    .status(statusOf(refused.refusal()))
                     .body(refused);
+        };
+    }
+
+    // A switch over the enum rather than the conditional this was, so a fourth refusal is a compile
+    // error here instead of silently taking whichever branch the ternary fell to - which is how
+    // MALFORMED arrived, and the whole reason ControlOutcome lives in api and this does not.
+    private static HttpStatus statusOf(ControlOutcome.Refusal refusal) {
+        return switch (refusal) {
+            case ABSENT -> HttpStatus.NOT_FOUND;
+            case WRONG_STATE -> HttpStatus.CONFLICT;
+            case MALFORMED -> HttpStatus.BAD_REQUEST;
         };
     }
 

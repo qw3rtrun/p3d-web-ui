@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.terminal;
 
 import org.qw3rtrun.p3d.api.model.ConnectionDetails;
+import org.qw3rtrun.p3d.api.msg.TerminalTraffic;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
 import org.qw3rtrun.p3d.terminal.msg.Priority;
@@ -12,6 +13,7 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -29,6 +31,25 @@ import java.util.function.Consumer;
  *
  * <p>Usage: {@code EmulatorTemperatureProbe [host] [port] [timeoutSeconds]}, defaulting to
  * {@code localhost 8099 10}.
+ *
+ * <p>It also prints {@link HostTerminal#observeTraffic} as a console renders it - the raw line with
+ * the decode as an annotation, which is the only view that shows the outbound direction and the
+ * lines {@code messageFlux()} drops. Measured against MarlinSim (Marlin bugfix-2.1.x) on 2026-11-18,
+ * a whole session being four lines:
+ *
+ * <pre>
+ * -&gt; N1 M110 N0*124
+ * &lt;- ok N1 P15 B3                               [AdvancedOkRs]
+ * -&gt; N1 M105*38
+ * &lt;- ok T:25.00 /0.00 B:25.00 /0.00 @:0 B@:0     [OkTemperatureRs]
+ * 4 lines crossed the wire, 0 of them received and claimed by no decoder
+ * </pre>
+ *
+ * <p>Two of those four reach no subscriber of {@code messageFlux()} at all - the framed
+ * {@code M110 N0} has no inbound form, and the {@code ok N1 P15 B3} is window credit the transport
+ * consumes - while the bus for the same session carried a {@code BlockAcknowledged} and the
+ * temperature. That is the gap the seam exists to close; {@code TerminalConsoleProbe} measures its
+ * full size (25 of 106 lines) over a battery of commands.
  */
 public final class EmulatorTemperatureProbe {
 
@@ -62,6 +83,21 @@ public final class EmulatorTemperatureProbe {
                         reported.countDown();
                     }
                 });
+        // Issue #135's seam, printed the way a console renders it: the raw line, with the decode as
+        // an annotation. It is the only view that shows what messageFlux() drops - a line no decoder
+        // claims reaches no subscriber at all - and the only one that shows the outbound direction.
+        var crossed = new AtomicInteger();
+        var unclaimed = new AtomicInteger();
+        terminal.observeTraffic(line -> {
+            crossed.incrementAndGet();
+            if (line.direction() == TerminalTraffic.Direction.RECEIVED && line.decodedAs() == null) {
+                unclaimed.incrementAndGet();
+            }
+            System.out.printf("%s %-58s %s%n",
+                    line.direction() == TerminalTraffic.Direction.SENT ? "->" : "<-", line.raw(),
+                    line.decodedAs() == null ? "" : "[" + line.decodedAs() + "]");
+        });
+
         Disposable sending = terminal.start(Flux.from(queue)).subscribe();
 
         g.m105();
@@ -70,6 +106,8 @@ public final class EmulatorTemperatureProbe {
         if (!answered) {
             System.out.printf("no temperature report within %s%n", timeout);
         }
+        System.out.printf("%d lines crossed the wire, %d of them received and claimed by no decoder%n",
+                crossed.get(), unclaimed.get());
 
         sending.dispose();
         replies.dispose();

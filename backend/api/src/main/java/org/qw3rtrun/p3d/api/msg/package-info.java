@@ -11,8 +11,8 @@
  * <p>What remains is what {@code :gcode} has no word for, because it is about the host rather than
  * the machine: a connection moving, a new link forgetting everything the last one taught, a block
  * being acknowledged, the blocks a resynchronised session abandoned, how far a transfer to a
- * machine's card has got, a machine joining or leaving the farm, and the roster news the
- * {@code M}-prefixed events carry.
+ * machine's card has got, a line as it crossed the wire in either direction, a machine joining or
+ * leaving the farm, and the roster news the {@code M}-prefixed events carry.
  */
 @org.springframework.modulith.NamedInterface("msg")
 package org.qw3rtrun.p3d.api.msg;

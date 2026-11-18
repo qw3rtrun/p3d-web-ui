@@ -79,6 +79,24 @@ export function fileSize(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+/**
+ * Epoch milliseconds as a local wall-clock time, to the millisecond: `14:03:21.472`.
+ *
+ * The console's measure, so the date is deliberately absent and the milliseconds deliberately are
+ * not: two lines of a protocol log are routinely a few milliseconds apart, and whether an `ok` came
+ * back before or after the next block went out is the question a reader is asking. Fixed-width, so a
+ * monospace column lines up.
+ *
+ * Not `toLocaleTimeString`, which drops the milliseconds and would re-introduce a date on some
+ * locales.
+ */
+export function wireTime(epochMillis: number): string {
+    const at = new Date(epochMillis)
+    const pad = (value: number, width = 2) => String(value).padStart(width, '0')
+    return `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`
+        + `.${pad(at.getMilliseconds(), 3)}`
+}
+
 /** How long the slicer thinks the print takes, or {@link NOT_STATED}. */
 export function estimate(slice: SliceInfo): string {
     return duration(slice.estimatedSeconds) ?? NOT_STATED

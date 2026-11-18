@@ -94,6 +94,31 @@ class PrinterReactorAwaitSubscribersGoneTest {
     }
 
     /**
+     * A console subscriber counts too (#135). It is the same kind of thing the method exists for - an
+     * SSE response that graceful shutdown would otherwise sever mid-write - and it arrives through a
+     * different method on this class, so it is a second place the counting has to be wired rather
+     * than a second case of one.
+     *
+     * <p>Real schedulers, like everything in this file, so the terminal signal genuinely crosses a
+     * scheduler boundary before the subscriber sees it. Nothing is emitted first because the console
+     * has no snapshot: the subscription itself is what has to be counted.
+     */
+    @Test
+    void awaitSubscribersGoneWaitsForAConsoleSubscriberToo() throws InterruptedException {
+        var completed = new CountDownLatch(1);
+        subscription = reactor.traffic().subscribe(
+                line -> {
+                }, failure -> completed.countDown(), completed::countDown);
+
+        reactor.stop();
+
+        assertTrue(reactor.awaitSubscribersGone(Duration.ofSeconds(10)),
+                "a console subscriber's stream should have completed well within ten seconds");
+        assertTrue(completed.await(1, TimeUnit.SECONDS),
+                "awaitSubscribersGone answered true before the console had actually completed");
+    }
+
+    /**
      * A subscriber that has not caught up within the limit is reported as still there, not thrown at
      * the caller. The backlog is real, not a sleep standing in for one: five firmware reports are
      * queued before {@code stop()} runs, and the subscriber consumes them one at a time with a pause

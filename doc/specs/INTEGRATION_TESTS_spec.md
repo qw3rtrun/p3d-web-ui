@@ -713,6 +713,22 @@ what the difference is. The three that have earned their place so far:
   report. Assert the command that reaches the wire, never a report arriving — the same rule
   `withoutEeprom()` follows.
 
+* **what a machine's acknowledgement *decodes to*, which is the terminal console's one axis** (#135).
+  Everything else about a printer is irrelevant to typing a line — a console does not consult an
+  extruder count, a card or an EEPROM — but the *annotation* beside each raw line is read off the
+  reply, so a firmware that answers `ok P15 B3` and one that answers a bare `ok` put
+  `AdvancedOkRs` and `SimpleOkRs` on the same stream in the same position.
+  `theDecodeAnnotationFollowsTheMachineAndNotTheHost` drives `legacyOk()` for exactly that, and an
+  implementation that hard-coded the type would pass against `marlin()` alone.
+
+  `marlin()`'s `EXTRUDER_COUNT:1` is used by that test class for a **second, unrelated** purpose, and
+  it is worth separating: not as a capability axis, but as the aggregate's *own judgement* made
+  visible. `PrinterState.handle(SetHotendTemperature)` drops a target for tool 1 on a one-tool
+  machine, so `POST /set-temp` for index 1 sends nothing while `M104 T1 S200` typed at the terminal
+  goes out. That asymmetry is the only thing observable from outside the process that proves a
+  second send path exists at all — the queue, the send window and the socket are shared, so nothing
+  else differs between the two routes.
+
 **`withoutEeprom()` is deliberately not driven against `M500`, `M501` or `M502`**, for the same
 reason `withoutCard()` is not driven against an upload. The simulator always has EEPROM, so what a
 firmware built without it answers to those commands has never been measured. The profile exists to
@@ -838,9 +854,58 @@ through its endpoints against a mocked printer.
 | 13 | EEPROM settings | `/store-settings`, `/settings/read`, `/revert`, `/defaults`, `/validate`, and the six setters | `EepromSettingsIntegrationTest` | **covered** — [#88](https://github.com/qw3rtrun/p3d-web-ui/issues/88); and the one whose two configuration axes are *not the same kind of thing*, §5 |
 | 14 | Connect handshake and disconnect teardown | `/api-printer/{id}/connect` (both directions), and the application lifecycle | `HandshakeIntegrationTest`, `GracefulShutdownIntegrationTest` | **covered** — [#127](https://github.com/qw3rtrun/p3d-web-ui/issues/127); and the one whose observable is what the farm says *unprompted*, §5 |
 
-**There is deliberately no endpoint that accepts G-code text**, so there is no console feature to
-test. A control that needs something not listed above needs a backend change rather than a raw-send
-escape hatch.
+| 15 | Terminal console | `POST /api-printer/{id}/terminal`, `GET /terminal/stream` | `TerminalIntegrationTest` | **covered** — [#135](https://github.com/qw3rtrun/p3d-web-ui/issues/135); and the one that reverses a rule this document used to state, §6.3 |
+
+### 6.3 The raw-send rule, reversed and narrowed — #135
+
+This section used to read:
+
+> **There is deliberately no endpoint that accepts G-code text**, so there is no console feature to
+> test. A control that needs something not listed above needs a backend change rather than a raw-send
+> escape hatch.
+
+**[#135](https://github.com/qw3rtrun/p3d-web-ui/issues/135) reverses the first sentence and keeps the
+second**, and the distinction is the whole of why this is not simply the rule being abandoned.
+
+The rule existed to stop the *user interface* from routing around a missing backend command — a
+button that posts `M106 S200` because nobody wrote `/fan` is a control with no server-side meaning,
+no validation, no refusal and no test, and it decays the moment the firmware changes. That hazard is
+real and the rule against it stands, now stated as: **a control may not reach for the terminal to do
+what a named command should do.** `/fan` exists; a fan slider that posted to `/terminal` would be a
+defect, and `PrinterCommandTranslationTest` is still where a control's meaning is pinned.
+
+What the rule got wrong was concluding that *no* endpoint may accept G-code text. A terminal is not a
+control working around a gap; it is a feature whose subject **is** the protocol — the thing an
+operator reaches for when a machine is misbehaving and no named command covers what they need to
+ask. Declining to have one does not remove the need, it moves it to a serial monitor in another
+window, where the farm can neither see it nor keep it off the wire during an upload.
+
+Three things make the reversal safe rather than a hole, and all three are asserted in
+`TerminalIntegrationTest`:
+
+- **It has its own validation, and it is stricter than a named command's**, because a typed line is
+  the one input that can write a different command than the caller asked for. Five gates: the four
+  `bareString` characters of [#38](https://github.com/qw3rtrun/p3d-web-ui/issues/38)/[#82](https://github.com/qw3rtrun/p3d-web-ui/issues/82)
+  applied to the whole line, §1.3's length budget, no caller-supplied `N`, and the four commands the
+  transport owns (`M110`, `M112`, `M28`, `M29`). Each answers **400 with nothing on the wire**.
+- **It does not validate G-code**, deliberately, and that is the control on the four gates above —
+  without `aCommandTheFirmwareDoesNotHaveIsSentAnyway`, "refuse everything" would pass the whole
+  validation section. `M851` goes out and the machine's own `echo:Unknown command` comes back.
+- **It shares the queue and the send window with everything else**, so it cannot interleave into an
+  `M28` upload: `PublisherQueue` already aborts an exclusive holder only for something that
+  *outranks* it, and a typed line is `REGULAR` against an upload's `REALTIME`. Nothing was added to
+  the transport for this.
+
+It also **bypasses the printer aggregate**, which is the one place this feature argues with a rule
+larger than this document — see `PrinterControl.sendRaw`'s javadoc and `spring-backend-dev`. The
+short form: the aggregate's contribution is *interpretation*, and a line the host must not interpret
+has nothing to cross it for. `theAggregatesOwnJudgementIsNotAppliedToATypedLine` is that decision as
+an endpoint assertion rather than a claim.
+
+**And nothing is persisted** (#135 point 3). There is no `GET` that answers with a history, only a
+stream that replays a bounded scrollback of the live session. §3's two observables are unchanged: the
+console is read over SSE like any other stream, and what reached the machine is still
+`MockPrinter.commands()`.
 
 ### 6.1 Why 9 was blocked on 6
 

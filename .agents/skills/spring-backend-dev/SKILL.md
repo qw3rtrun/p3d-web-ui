@@ -1033,6 +1033,35 @@ Two smaller rules fell out and are now contracts:
   command of any kind. Verified on the same trace: the driver gave up and `-> N4 M21*20` still went
   out.
 
+### A value that goes on the wire is built by the DSL, never concatenated into a line
+
+Issue #82. `SdUploader.transferOf` opened a transfer with `Mono.just("M28 " + cardName)`, so the one
+element of that pipeline that is a *command* rather than a line never reached `code/dsl` and never
+met `bareString` - the check #38 put in the one place every consumer passes through. It is
+`openingLineFor(cardName)` now: `GEncoder.encode(new StartSDWrite(cardName).encode())`, which is
+byte-identical on the wire (`SdCardIntegrationTest` asserts `M28 BENCHY.gco` and did not change) and
+refuses `\n`, `\r`, `;`, `*` and anything outside printable ASCII.
+
+- **A check at the request boundary is not a check at the wire.** `PrinterController`'s
+  `UploadToCard` runs the name through `SdFileName.checked` and answers 400, so the hole was latent
+  - but `PrinterControl.uploadToCard(UUID, UUID, String, boolean)` is a public method of the `api`
+  module, `FarmScheduler` already implements that interface and a farm that schedules its own
+  uploads is the obvious next caller. **Ask of any string a module takes from a caller: which of my
+  callers is not the browser?**
+- **The refusal is a value, decided before anything is claimed.** `SdUploader.start` asks
+  `whyUnwritable(cardName)` first - in front of the link, the capability and the blocking store
+  lookup, because it is pure CPU and certain - and answers `ControlOutcome.wrongState`, which is a
+  409 through `Outcomes`. Thrown from `transferOf` instead it would have escaped *after*
+  `running.putIfAbsent`, leaving the machine marked busy with no transfer left to clear it: the same
+  "a refusal must not leave the machine busy" rule the binary ceiling is checked in front of.
+- **The character rule is asked of the construction the transfer actually uses**, by calling
+  `openingLineFor` and catching its `IllegalArgumentException` for its message, so there is no second
+  copy to drift from the DSL's. Both modes are held to it - a binary transfer carries the name in a
+  packet rather than a block, but it would create a file no later `M23 <name>` could select.
+- **The rest of the pipeline stays `Flux<String>` on purpose.** The content is arbitrary G-code read
+  off the store and not re-parsed; this is not "make the pipeline typed", it is "build the one thing
+  that is built". `M29` stays a bare constant: no argument, nothing to check.
+
 ## REST, SSE and WebSocket
 
 - **REST** is `@RestController` returning `Mono`/`Flux`, under `/api-manager` for the farm and

@@ -112,6 +112,36 @@ rule (todo 05) and once here — and both times it was found by something real f
 review. When you add a guard, write out the block it would refuse and check that
 block is genuinely invalid.
 
+### The two character gates: `bareString` for a value, `rawBlock` for a whole line
+
+Every wire-bound string this layer hands out passes one character gate, and there are exactly two
+because there are exactly two kinds of unchecked string:
+
+- **`bareString(value)`** (`GWords.kt`) — a spec 3.4a rest-of-line *argument* inside a command the
+  DSL built.
+- **`rawBlock(line)`** (`GRawBlock.kt`) — a whole command *line* a person typed, as in the #135
+  terminal. Returns `line.trim()`, which is what callers send; throws otherwise.
+
+Both refuse the same four characters for the same reasons — `\n`/`\r` (spec 1.2), `;` (spec 3.4a, 6),
+`*` (spec 8.3), anything outside `0x20`-`0x7E` (spec 1.1) — and both name the character and its
+position. **The table is deliberately duplicated, not shared**: `bareString`'s message ends by
+pointing at `text("…")` (spec 3.4b) as the way out, which is no way out for a typed command line, and
+its exact wording is asserted in `BareStringTest`.
+
+`rawBlock` adds two rules `bareString` does not have, because it holds the whole line: a blank line is
+refused, and the payload is capped at `GLineLimit.INTEROPERABLE_PAYLOAD` (76, spec 1.3) with the
+overrun reported **in bytes**. It is 76 and not `payloadBudget(n)` on purpose — the line number does
+not exist yet when a person types the line, the transport assigns one at write time, and an over-long
+line is the one error a resend cannot repair.
+
+What `rawBlock` deliberately does **not** gate, so it does not get "improved" into doing so:
+
+- **the vocabulary.** It does not know which commands a firmware has; `echo:Unknown command: "M851"`
+  from the machine is the better answer, and a terminal exists to get it.
+- **transport policy.** A caller-supplied `N` word, `M110`, `M112`, `M28`, `M29` are about a
+  particular sender's window and queue. `:gcode` must not know what sender its caller has — those are
+  gated in `:backend:core`.
+
 ### Letter collisions resolve the way the *parser* resolves them
 
 A Kotlin name cannot return two types, so where a letter is both a command and a parameter, one

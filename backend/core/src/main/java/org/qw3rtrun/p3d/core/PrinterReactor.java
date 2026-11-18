@@ -52,12 +52,18 @@ import java.util.concurrent.atomic.AtomicInteger;
  * blocks the other.
  *
  * <p><strong>Everything that moves the aggregate goes through {@code executor}, in both
- * directions</strong> (#80). Replies take {@code publishOn(executor)} in {@link #gEvent()};
+ * directions</strong> (#80), and so does every query of it bar the three named below (#138).
+ * Replies take {@code publishOn(executor)} in {@link #gEvent()};
  * commands take it in {@link #handle(List)}, {@link #handleConnectCmd(Mono)} and - as a scheduled
  * task, since their callers are listeners that must not wait - {@link #handleConnectCmd(ConnectCmd)},
- * {@link #declared}, and {@link #stop()}'s own disconnect. {@code connect()} and {@code disconnect()}
- * are private so that stays true. The retry chain's hooks need nothing extra and that is worth
- * knowing rather than guessing: {@code filter}, {@code doBeforeRetry} and {@code doOnError} run
+ * {@link #declared}, and {@link #stop()}'s own disconnect. {@link #state()} and
+ * {@link #connection()} take {@code subscribeOn(executor)}, which is not interchangeable with
+ * {@code publishOn}: they were {@code Mono.defer(...).publishOn(executor)} and a deferred supplier
+ * runs on whichever thread <em>subscribes</em>, so both read the aggregate from the caller's thread
+ * while this paragraph's own structure claimed otherwise. {@code connect()} and
+ * {@code disconnect()} are private so that stays true. The retry chain's hooks need nothing extra
+ * and that is worth knowing rather than guessing: {@code filter}, {@code doBeforeRetry} and
+ * {@code doOnError} run
  * inside the retry companion on whichever thread delivered the failure, and
  * {@code publishOn(executor)} sits between the dial and the {@code retryWhen}, so that thread is
  * this machine's own ({@code PrinterReactorThreadingTest} asserts it by name).
@@ -65,11 +71,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>So {@code attempts} is a plain field and its "is an attempt already in flight" check-then-act
  * is serialised rather than merely visible - it was {@code volatile}, which bought the
  * happens-before and not the atomicity, and a concurrent connect and disconnect could both decide
- * to act. <strong>Three things are still answered from the caller's thread, deliberately</strong>:
- * {@link #blocksInFlight()} and {@link #linked()}, both single volatile reads a progress timer and
- * an upload make often enough that queueing them behind a reply backlog would be the wrong trade,
- * and {@link #snapshot()}, built from volatile references so a subscriber attaching does not wait
- * for the machine to be quiet. <strong>And {@code terminal} and {@code commandQueue} have no edge
+ * to act. <strong>Three things are answered from the caller's thread, deliberately, and they are
+ * the whole list</strong>: {@link #blocksInFlight()} and {@link #linked()}, both single volatile
+ * reads a progress timer and an upload make often enough that queueing them behind a reply backlog
+ * would be the wrong trade, and {@link #snapshot()}, built from volatile references so a subscriber
+ * attaching does not wait for the machine to be quiet. What puts a read on that list is answering
+ * <em>synchronously</em> to something on a hot path; {@link #connection()} and {@link #state()}
+ * hand back a {@code Mono} nobody can get a value out of without going through {@code executor}
+ * regardless, and are asked once per page load and once per five-second scheduling sweep.
+ * <strong>And {@code terminal} and {@code commandQueue} have no edge
  * at all</strong>: their writes are confined to {@code executor}, but {@link #feed},
  * {@link #uploadToCard}, {@link #binaryTransfer} and {@link #interject} read them from whatever
  * thread is feeding a job or an upload, so
@@ -646,14 +656,23 @@ public class PrinterReactor {
         onExecutor(() -> printer.declared(spec));
     }
 
-    /** The last hotend reading, or empty if nothing has reported yet - not a sentinel. */
+    /**
+     * The last hotend reading, or empty if nothing has reported yet - not a sentinel.
+     *
+     * <p>{@code fromCallable} + {@code subscribeOn}, never {@code defer} + {@code publishOn} (#138):
+     * a deferred supplier runs on whichever thread <em>subscribes</em>, so that form read the
+     * aggregate on the caller's thread and moved only where the answer was delivered. It costs
+     * nothing to do properly, because {@code publishOn} already put the answer behind this
+     * machine's queue - and the value is fresher for it, describing the machine when the task ran
+     * rather than when the backlog in front of it started.
+     */
     public Mono<HeaterReading> state() {
-        return Mono.defer(() -> Mono.justOrEmpty(printer.getTemperature())).publishOn(executor);
+        return Mono.fromCallable(printer::getTemperature).subscribeOn(executor);
     }
 
-    /** Where the machine's connection is, answered without opening the stream. */
+    /** Where the machine's connection is, answered without opening the stream; scheduled like {@link #state()}. */
     public Mono<ConnectionStatus> connection() {
-        return Mono.defer(() -> Mono.just(printer.getConnection())).publishOn(executor);
+        return Mono.fromCallable(printer::getConnection).subscribeOn(executor);
     }
 
     /**

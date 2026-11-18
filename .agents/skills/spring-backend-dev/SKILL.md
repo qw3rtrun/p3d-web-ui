@@ -750,10 +750,30 @@ Issues #54 and #80. Three properties, three mechanisms, and they are separate on
   `PUT`. **A half-true invariant is worse than a stated limitation** - the next reader sees
   `PrinterThreads`, the per-printer scheduler and the thread name and reasonably concludes the whole
   of it. Every entry point into `PrinterState` now goes through `executor`:
-  `publishOn(executor)` where there is a `Mono`/`Flux` to hang it on (`handle(List)`,
-  `handleConnectCmd(Mono)`, `connection()`, `state()`), and a scheduled task where the caller is a
+  `publishOn(executor)` where there is an inbound `Mono`/`Flux` to hang it on (`gEvent()`,
+  `handle(List)`, `handleConnectCmd(Mono)`), a scheduled task where the caller is a
   listener that must not wait (`handleConnectCmd(ConnectCmd)`, `declared`, and `stop()`'s own
-  disconnect). `connect()` and `disconnect()` are **private**, which is what keeps it true.
+  disconnect), and **`subscribeOn(executor)` where the aggregate is *read* to build the answer**
+  (`connection()`, `state()`). `connect()` and `disconnect()` are **private**, which is what keeps
+  it true.
+- **IMPORTANT - `publishOn` after a `defer` confines nothing, and it reads exactly like it does.**
+  `connection()` and `state()` were `Mono.defer(() -> Mono.just(printer.getConnection()))
+  .publishOn(executor)` for the whole of #80, and both read the aggregate on the caller's thread:
+  **a deferred supplier runs on whichever thread subscribes** - that is what `defer` is for - and
+  `publishOn` sits downstream of a value that has already been computed, so it moves where the
+  answer is *delivered*, never where it is *read*. For a read, the operator is
+  `Mono.fromCallable(printer::getConnection).subscribeOn(executor)`; `fromCallable` over `just`
+  because `just` evaluates its argument at assembly, one line earlier still, and it answers empty
+  on null so `state()` keeps "no reading yet" without a sentinel. Issue #138, and the reason it
+  survived #80's own audit is that the shape *looks* confined, so a claim about confinement has to
+  be pinned by a test that records the thread the aggregate was read from
+  (`PrinterReactorThreadingTest.aQueryArrivingOnAForeignThreadReadsTheAggregateOnTheAggregatesThread`,
+  driven from a thread named `foreign-query` so a caller-thread read fails naming itself rather
+  than passing by luck).
+  **Confining the read cost nothing, which is the general case for a query that already hops**: the
+  answer had to come back through `executor` either way, so there was no latency to save - and the
+  value is fresher for it, describing the machine when the task ran rather than when the backlog
+  ahead of it started.
 - **The payoff is that `volatile` comes off rather than on.** `PrinterReactor.attempts` and
   `PrinterState.spec` are plain fields again, and `PrinterState.g` - the `GSender`, which never had
   an edge at all and was read from an HTTP thread by `handle(ConnectCmd)`'s `M155 S0` - is confined.
@@ -773,6 +793,13 @@ Issues #54 and #80. Three properties, three mechanisms, and they are separate on
   a link at all) and `snapshot()` (built from volatile references, so a subscriber attaching does
   not wait for the machine to be quiet). **`blocksInFlight` is the shape to copy** when the same
   question comes up again: a value the aggregate *publishes* beats a question *asked* of it.
+  **Three is the whole list, and the javadoc has to keep saying so** (#138): naming exceptions is
+  what makes "everything, in both directions" checkable, so a method that reads the aggregate off
+  the executor and is *not* on it leaves the next reader believing a guarantee they do not have.
+  The discriminator is whether the read answers **synchronously to something on a hot path** -
+  these three return a value to a progress timer, a transfer and every attaching subscriber, where
+  `connection()`/`state()` hand back a `Mono` no caller can get a value out of without going
+  through `executor` anyway, asked once per page load and once per five-second scheduling sweep.
 - **IMPORTANT - state shared between a machine's aggregate thread and anything else needs its edge
   written down: which field, which thread writes, which thread reads, and what makes the write
   visible.** What is left after #80 is `blocksInFlight`, `ConnectionLifecycle`'s five transition

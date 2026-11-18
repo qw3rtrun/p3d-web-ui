@@ -69,17 +69,22 @@ public class MachineManagementImpl implements MachineManagementService {
      * {@code MSpecDeclaredEvent}'s KDoc for the capture. This is the only path that publishes it:
      * {@link #add} needs none, since nothing can be running under a {@code UUID} minted in its own
      * transaction, and a new aggregate is seeded from the replica at construction.
+     *
+     * <p>An id the farm has no row for answers empty and says <strong>neither</strong> sentence
+     * (issue #81): an announcement would put a machine that is not there into {@code core}'s
+     * replica, and a declaration would be a command addressed to nothing.
      */
     @Transactional
     @Override
-    public Descriptor update(UUID uuid, String name, ConnectionDetails connection, MachineSpec spec) {
-        var entity = repo.findById(uuid).orElseThrow();
-        entity.reachableAs(name, connection.host(), connection.port());
-        entity.declare(spec);
-        var saved = repo.save(entity);
-        eventBus.push(registered(saved));
-        eventBus.push(new MSpecDeclaredEvent(saved.getId(), saved.spec(), LocalDateTime.now()));
-        return map(saved);
+    public Optional<Descriptor> update(UUID uuid, String name, ConnectionDetails connection, MachineSpec spec) {
+        return repo.findById(uuid).map(entity -> {
+            entity.reachableAs(name, connection.host(), connection.port());
+            entity.declare(spec);
+            var saved = repo.save(entity);
+            eventBus.push(registered(saved));
+            eventBus.push(new MSpecDeclaredEvent(saved.getId(), saved.spec(), LocalDateTime.now()));
+            return map(saved);
+        });
     }
 
     private static MRegisteredEvent registered(PrinterEntity entity) {

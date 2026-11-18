@@ -75,10 +75,10 @@ class BlockingBoundaryTest {
             }
 
             @Override
-            public Descriptor update(UUID uuid, String name, ConnectionDetails connection,
-                                     MachineSpec spec) {
+            public Optional<Descriptor> update(UUID uuid, String name, ConnectionDetails connection,
+                                              MachineSpec spec) {
                 record();
-                return descriptor;
+                return Optional.of(descriptor);
             }
 
             @Override

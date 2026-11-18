@@ -140,8 +140,8 @@ class BootVuejsApplicationTests {
                 }
 
                 @Override
-                public Descriptor update(UUID uuid, String name, ConnectionDetails connection,
-                                         MachineSpec spec) {
+                public Optional<Descriptor> update(UUID uuid, String name, ConnectionDetails connection,
+                                                  MachineSpec spec) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
 

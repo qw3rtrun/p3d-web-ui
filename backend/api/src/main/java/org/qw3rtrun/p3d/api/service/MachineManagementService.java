@@ -40,12 +40,29 @@ public interface MachineManagementService {
      * are editable here rather than separately because they are the same kind of fact as the
      * spec: things a person knows and the machine does not.
      *
+     * <p>Empty when the farm holds no such machine, for the reason {@link #fetch} is: the likeliest
+     * caller to meet it is an administrator editing a machine another one has just deleted, which
+     * is an ordinary race. Issue #81 - this used to end in {@code orElseThrow}, so
+     * {@code PUT /api-manager/{uuid}} answered 500 where the {@code GET} beside it answered 404.
+     *
      * @param spec what was declared; {@link org.qw3rtrun.p3d.api.model.MachineSpec#undeclared()}
      *             clears it
      */
-    Descriptor update(UUID uuid, String name, ConnectionDetails connection, MachineSpec spec);
+    Optional<Descriptor> update(UUID uuid, String name, ConnectionDetails connection, MachineSpec spec);
 
     Stream<Descriptor> fetchAll();
 
+    /**
+     * Removes a machine, if it is there.
+     *
+     * <p><strong>Deliberately returns nothing, and an unknown id is not an error</strong> - issue
+     * #81 examined this beside {@link #update} rather than leaving it a third time. A delete is
+     * idempotent: the caller asked for the machine to be gone and it is gone, so there is nothing
+     * to report and nothing a page could usefully do with a 404 it would get only by losing a race
+     * with itself. {@link #fetch} and {@link #update} are different because they answer <em>with</em>
+     * the machine, and a caller that is handed nothing has to be told why.
+     *
+     * <p>The event is published only when a row was actually removed, so a repeat announces nothing.
+     */
     void delete(UUID uuid);
 }

@@ -25,9 +25,16 @@ class PrinterDirectoryTest {
     private final UUID id = UUID.randomUUID();
     private final PrinterDirectory directory = new PrinterDirectory();
 
-    private void theFarmHas(UUID machine, String name, int port, MachineConnectionState state) {
+    /**
+     * The state the announcement carries is {@code IDLE} throughout, and the replica ignores it -
+     * since #83 an {@code Entry} holds no connection state at all, so "the roster still called it
+     * {@code IDLE}" is a fact about the announcement rather than about this map. It stays set
+     * because that is what the stragglers in the #93 capture actually said.
+     */
+    private void theFarmHas(UUID machine, String name, int port) {
         directory.onRegistered(new MRegisteredEvent(machine, name, "localhost", port,
-                MachineProfile.unknown(), MachineSpec.undeclared(), state, LocalDateTime.now()));
+                MachineProfile.unknown(), MachineSpec.undeclared(), MachineConnectionState.IDLE,
+                LocalDateTime.now()));
     }
 
     private void theFarmDeleted(UUID machine) {
@@ -50,10 +57,10 @@ class PrinterDirectoryTest {
      */
     @Test
     void aStaleAnnouncementDoesNotPutBackAMachineTheFarmHasDeleted() {
-        theFarmHas(id, "deleted", 65506, MachineConnectionState.IDLE);
+        theFarmHas(id, "deleted", 65506);
         theFarmDeleted(id);
 
-        theFarmHas(id, "deleted", 65506, MachineConnectionState.IDLE);
+        theFarmHas(id, "deleted", 65506);
 
         assertTrue(directory.find(id).isEmpty(),
                 "a machine the farm has deleted is gone, however far behind the announcement that"
@@ -64,11 +71,11 @@ class PrinterDirectoryTest {
     /** However many stragglers the backlog holds. */
     @Test
     void aDeletedMachineStaysGoneAcrossRepeatedAnnouncements() {
-        theFarmHas(id, "deleted", 65506, MachineConnectionState.IDLE);
+        theFarmHas(id, "deleted", 65506);
         theFarmDeleted(id);
 
         for (var i = 0; i < 7; i++) {
-            theFarmHas(id, "deleted", 65506, MachineConnectionState.IDLE);
+            theFarmHas(id, "deleted", 65506);
         }
 
         assertTrue(directory.find(id).isEmpty());
@@ -81,9 +88,9 @@ class PrinterDirectoryTest {
      */
     @Test
     void aReAnnouncedMachineThatWasNeverDeletedIsStillFoundAndUpdated() {
-        theFarmHas(id, "benchy-maker", 8099, MachineConnectionState.OFFLINE);
+        theFarmHas(id, "benchy-maker", 8099);
 
-        theFarmHas(id, "benchy-maker-mk2", 9000, MachineConnectionState.IDLE);
+        theFarmHas(id, "benchy-maker-mk2", 9000);
 
         var entry = directory.find(id).orElseThrow();
         assertEquals("benchy-maker-mk2", entry.name());
@@ -95,14 +102,15 @@ class PrinterDirectoryTest {
     @Test
     void deletingOneMachineLeavesTheOthersAlone() {
         var other = UUID.randomUUID();
-        theFarmHas(id, "gone", 8099, MachineConnectionState.IDLE);
-        theFarmHas(other, "still here", 8100, MachineConnectionState.IDLE);
+        theFarmHas(id, "gone", 8099);
+        theFarmHas(other, "still here", 8100);
 
         theFarmDeleted(id);
-        theFarmHas(other, "still here", 8100, MachineConnectionState.BUSY);
+        // the re-announcement renames it: a change is how the test sees the second one was taken
+        theFarmHas(other, "still here, renamed", 8100);
 
         assertTrue(directory.find(id).isEmpty());
-        assertEquals(MachineConnectionState.BUSY, directory.find(other).orElseThrow().state());
+        assertEquals("still here, renamed", directory.find(other).orElseThrow().name());
         assertEquals(1, directory.size());
     }
 }

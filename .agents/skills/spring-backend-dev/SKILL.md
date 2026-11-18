@@ -2149,12 +2149,25 @@ the source, not suspected.
   true only because nobody had instrumented `redeclare` yet. Instrumented, it was **4 isolated runs
   in 6**, and the cost was not a late value but a command that is never sent again. **An
   unmeasured window is not a small one.**
-- **`PrinterDirectory.Entry.state` has no production reader.** `PrinterReactorManager` reads
-  `event.getState()`, `FarmEvents` reads the runtime, and `CoreConfiguration.aggregates()` reads
-  only `profile()` and `spec()`; the one reader anywhere is `StartupAnnouncementFlowTest` in `:app`.
-  So the stale announcement that overwrites it costs nothing today - but it is a write-only field,
-  which is the defect B3 removed from `PrinterEntity.connected`, and the next person to read it
-  will read a value that can be behind the aggregate.
+- ~~**`PrinterDirectory.Entry.state` has no production reader.**~~ **Fixed** by issue #83: the field
+  is deleted, so `Entry` is now `(id, name, connection, profile, spec)` - what a machine *is*, with
+  where it *is* left to the aggregate. The audit behind #76 found every reader asking something
+  else already (`PrinterReactorManager` the event's own `getState()`, `FarmEvents` the runtime,
+  `CoreConfiguration.aggregates()` only `profile()` and `spec()`, `FarmScheduler`
+  `printers.connection(id)`), leaving two *tests* as the only readers anywhere. **The reason to
+  delete rather than repair is that the staleness was structural, not occasional**: the value
+  arrived on `MRegisteredEvent`, re-published about seven times per connect, and the
+  `MConnectionChangedEvent` that would correct it travels the same single-consumer listener queue
+  *behind* those republications - so while a backlog drains the copies in front are *guaranteed* to
+  carry the older state. That is why `redialAtStartup` had to pick a different discriminator in the
+  first place, and a field whose only possible reader has already been told not to trust it is the
+  write-only `PrinterEntity.connected` column B3 removed, one layer up.
+  **The shape to copy when a replica's field loses its last reader: move the assertion to what the
+  announcement *caused*, not to the copy it left behind.** `StartupAnnouncementFlowTest` now reads
+  `PrinterReactorManager.runtimeOf(id)` - non-null for a machine the roster recorded as linked, null
+  for one it recorded as `OFFLINE` - which is strictly stronger, since standing a runtime up is the
+  whole of what that persisted state is read for, and `runtimeOf` builds nothing so the assertion
+  cannot manufacture its own subject.
 - ~~**Three methods still touch the aggregate from the caller's thread, and one of them writes.**~~
   **Fixed** by issue #80 - `handleConnectCmd` and `declared` go through the executor, and
   `blocksInFlight()` stays on the caller's thread as a stated exception rather than an omission.

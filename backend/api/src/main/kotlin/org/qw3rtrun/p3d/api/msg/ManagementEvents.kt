@@ -51,6 +51,12 @@ data class MConnectionChangedEvent(
  * side effect. The state here is the roster's **last-known record**, not live truth, and goes
  * stale the instant `core` connects to anything; a connection change deliberately does not
  * re-announce this event, since `core` is where the fact came from.
+ *
+ * So [state] is **acted on when it arrives and never kept**: `PrinterDirectory.Entry` stored a copy
+ * until #83 and nothing in production ever read it, because the correction that would refresh it
+ * (`MConnectionChangedEvent`) travels the same per-machine listener queue *behind* these
+ * republications - a stored copy is therefore guaranteed to be the older value while a backlog
+ * drains. A reader that wants where a machine is now asks the aggregate.
  */
 data class MRegisteredEvent(
     override val machineId: UUID,

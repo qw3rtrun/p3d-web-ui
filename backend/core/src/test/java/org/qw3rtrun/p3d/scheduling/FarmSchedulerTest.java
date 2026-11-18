@@ -212,7 +212,7 @@ class FarmSchedulerTest {
         }
 
         @Override
-        public Descriptor update(UUID uuid, String name, ConnectionDetails connection, MachineSpec spec) {
+        public Optional<Descriptor> update(UUID uuid, String name, ConnectionDetails connection, MachineSpec spec) {
             throw new UnsupportedOperationException();
         }
 

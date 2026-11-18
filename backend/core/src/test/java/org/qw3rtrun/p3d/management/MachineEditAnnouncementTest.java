@@ -14,8 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * What the roster says out loud when a person edits a machine, and what it deliberately does not
@@ -64,6 +66,30 @@ class MachineEditAnnouncementTest {
                         .filter(event -> event.getMachineId().equals(machine.uuid())).count(),
                 "the announcement that rebuilds the replica is unchanged: one for the add, one for"
                         + " the edit");
+    }
+
+    /**
+     * Issue #81. An edit of a machine the farm does not hold is a <strong>value</strong>: the method
+     * used to end in {@code orElseThrow}, so {@code PUT /api-manager/{uuid}} answered 500 for an id
+     * an administrator had just had deleted under them - the same signature-level defect #65 fixed
+     * in {@link MachineManagementService#fetch} and left in the method next door.
+     *
+     * <p>Saying nothing is the other half of the claim, and it is the half that could regress
+     * silently: an announcement for an id the farm has no row for would put an entry back into
+     * {@code core}'s replica (tombstoned or not, it is a fact about a machine that is not there),
+     * and a declaration event would be a command to an aggregate nobody can address.
+     */
+    @Test
+    void editingAMachineTheFarmDoesNotHaveChangesNothingAndSaysNothing() {
+        var unknown = UUID.randomUUID();
+
+        assertTrue(roster.update(unknown, "a printer", SOMEWHERE, twoExtruders()).isEmpty(),
+                "no such machine is an answer, not a fault");
+
+        assertEquals(0, events.stream(MRegisteredEvent.class)
+                .filter(event -> event.getMachineId().equals(unknown)).count());
+        assertEquals(0, events.stream(MSpecDeclaredEvent.class)
+                .filter(event -> event.getMachineId().equals(unknown)).count());
     }
 
     /**

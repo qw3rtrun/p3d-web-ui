@@ -33,9 +33,12 @@ import java.util.stream.Stream;
  * inside the supplier, because a lazy stream handed to a template would be iterated during
  * rendering, outside the transaction.
  *
- * <p>{@link #edit} is where an unknown machine becomes a 404 on this HTML surface - the roster
- * itself only answers an empty {@code Optional}; the REST side maps that same empty value through
- * {@code Outcomes} instead of throwing. The page also puts a declared and a discovered half side by
+ * <p>{@link #edit} and {@link #postEdit} are where an unknown machine becomes a 404 on this HTML
+ * surface - the roster itself only answers an empty {@code Optional}; the REST side maps that same
+ * empty value through {@code Outcomes} instead of throwing. The exception is created here rather
+ * than caught from below, because a Thymeleaf handler returns a view name and has nowhere else to
+ * put a status. Posting the form has to state it too (issue #81): redirecting to a page that will
+ * itself 404 reads as a save that worked. The page also puts a declared and a discovered half side by
  * side (plan item B4): the form writes the declared half, the discovered half is read-only, so a
  * reader can see a machine reporting one extruder against two declared.
  */
@@ -93,7 +96,9 @@ public class MvcPrinterController {
     @PostMapping("/printers/{uuid}/edit.html")
     public Mono<String> postEdit(@PathVariable UUID uuid, @ModelAttribute("machine") MachineInfo edited) {
         return Mono.fromSupplier(() -> manager.update(uuid, edited.name,
-                        new ConnectionDetails(edited.host, edited.port), edited.toSpec()))
+                        new ConnectionDetails(edited.host, edited.port), edited.toSpec())
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                                "the farm has no machine " + uuid)))
                 .subscribeOn(Schedulers.boundedElastic())
                 .thenReturn("redirect:/printers/" + uuid + "/edit.html");
     }

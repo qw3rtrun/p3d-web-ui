@@ -24,9 +24,13 @@ import java.util.function.Supplier;
  * {@code Mono.fromSupplier} alone would not: a {@code Mono} is lazy and its supplier runs on
  * whichever thread subscribes, which for a controller is the event loop.
  *
- * <p>{@link #fetch} used to end in {@code orElseThrow} and answer 500 for an id the farm no longer
- * holds; it returns an {@code Optional} now, and {@link Outcomes#found} turns the empty case into a
- * 404, downstream of the subscription so deciding it touches no JDBC.
+ * <p>{@link #fetch} and {@link #update} used to end in {@code orElseThrow} and answer 500 for an id
+ * the farm no longer holds; both return an {@code Optional} now, and {@link Outcomes#found} turns
+ * the empty case into a 404, downstream of the subscription so deciding it touches no JDBC. The
+ * {@code PUT} was the second half (issue #81): a {@code DELETE} by one administrator makes the
+ * other's edit an ordinary race, not an exotic one. {@link #delete} is the one id-addressed verb
+ * that answers 200 either way, because it is idempotent - see
+ * {@link MachineManagementService#delete}.
  *
  * <p>{@link #update} is {@code PUT}, not {@code PATCH}: the body is the whole declaration, and a
  * field left out of it means "clear this", not "leave this alone". It cannot reach the profile,
@@ -67,9 +71,11 @@ public class FDMPrinterManagementController {
     }
 
     @PutMapping(value = "/{uuid}", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Mono<Descriptor> update(@PathVariable UUID uuid, @RequestBody Mono<PrinterPayload> payload) {
+    public Mono<ResponseEntity<Descriptor>> update(@PathVariable UUID uuid,
+                                                   @RequestBody Mono<PrinterPayload> payload) {
         return payload.flatMap(p -> offLoop(() -> management.update(uuid, p.name(),
-                new ConnectionDetails(p.host(), p.port()), p.spec())));
+                        new ConnectionDetails(p.host(), p.port()), p.spec()))
+                .map(Outcomes::found));
     }
 
     @DeleteMapping("/{uuid}")

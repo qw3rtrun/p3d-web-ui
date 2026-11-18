@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
@@ -38,6 +39,8 @@ class MachineSpecBindingTest {
     private final UUID id = UUID.randomUUID();
     private final AtomicReference<MachineSpec> declared = new AtomicReference<>();
     private final AtomicReference<String> renamedTo = new AtomicReference<>();
+    /** Cleared by the one test about an id the farm does not hold. */
+    private final AtomicBoolean onTheRoster = new AtomicBoolean(true);
 
     private static final MachineProfile REPORTED =
             new MachineProfile(Map.of("FIRMWARE_NAME", "Marlin 2.1.2", "EXTRUDER_COUNT", "1"),
@@ -64,10 +67,13 @@ class MachineSpecBindingTest {
             }
 
             @Override
-            public Descriptor update(UUID uuid, String name, ConnectionDetails connection, MachineSpec spec) {
+            public Optional<Descriptor> update(UUID uuid, String name, ConnectionDetails connection, MachineSpec spec) {
+                if (!onTheRoster.get()) {
+                    return Optional.empty();
+                }
                 renamedTo.set(name);
                 declared.set(spec);
-                return described();
+                return Optional.of(described());
             }
 
             @Override
@@ -128,6 +134,28 @@ class MachineSpecBindingTest {
         assertEquals(Set.of("loud"), declared.get().tags());
         assertNull(declared.get().bedVolume(), "a bed left out of a PUT is a bed cleared");
         assertEquals(List.of(), declared.get().nozzleDiameters());
+    }
+
+    /**
+     * Issue #81: the handler's half of it. An edit of an id the roster answers empty for is a
+     * <strong>404 with an empty body</strong>, exactly as the {@code GET} beside it - it used to be
+     * a 500, because the roster's {@code update} ended in {@code orElseThrow} and "no such machine"
+     * had no value to arrive as. The empty body is part of the claim for the reason it is on the
+     * {@code GET}: {@code client.ts} calls {@code response.json()} on whatever arrives.
+     */
+    @Test
+    void anEditOfAMachineTheFarmDoesNotHaveIsNotFound() {
+        onTheRoster.set(false);
+
+        client().put().uri("/api-manager/" + id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"name":"renamed","host":"elsewhere","port":9000}""")
+                .exchange()
+                .expectStatus().isNotFound()
+                .expectBody().isEmpty();
+
+        assertNull(renamedTo.get(), "and nothing was touched on the way to deciding that");
     }
 
     /** What the farm reports back carries both halves, separately. */

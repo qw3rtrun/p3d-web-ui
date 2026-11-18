@@ -1077,15 +1077,25 @@ refuses `\n`, `\r`, `;`, `*` and anything outside printable ASCII.
   this skill exists to prevent. **The blocking lookup still goes through `offLoop`** - the status
   decision is a `map` downstream of the subscription, so choosing it moves no JPA call back onto an
   event loop.
-- **`Optional`-returning `fetch` is the shape of every GET-by-id now, and there is no outlier
-  left.** The roster, the file store and the job queue all answer one id with an `Optional`, and
-  all four handlers map it the same way: `FDMPrinterManagementController.fetch`,
-  `JobController.fetch`, `GcodeFileController.fetch` and `GcodeFileController.download` (which uses
-  `defaultIfEmpty` because its body is a stream rather than a record). `/api-manager/{uuid}` was
-  the outlier until issue #65 and answered **500** on an unknown id, because
-  `MachineManagementService.fetch` returned a `Descriptor` and ended in `orElseThrow` - the
-  signature, not the handler, was the bug. `MachineManagementService.update` still `orElseThrow`s
-  and is deliberately untouched; it is adjacent work, not this rule.
+- **`Optional` is the shape of every id-addressed verb that answers *with* the record, and there is
+  no outlier left.** The roster, the file store and the job queue all answer one id with an
+  `Optional`, and every handler maps it the same way: `FDMPrinterManagementController.fetch` and
+  `.update`, `JobController.fetch`, `GcodeFileController.fetch` and `GcodeFileController.download`
+  (which uses `defaultIfEmpty` because its body is a stream rather than a record).
+  `/api-manager/{uuid}` was the outlier **twice**, and both halves were the signature rather than
+  the handler: `fetch` returned a `Descriptor` and ended in `orElseThrow` until issue #65, and
+  `update` did the same until issue #81 - so a `PUT` on a machine another administrator had just
+  deleted was a 500 for two more months, in the method next door to the one that was fixed. **When
+  a signature-level defect is found, grep its siblings in the same interface before closing it**;
+  #65 named this one and left it, and naming it is what made it cheap to find and not what made it
+  get fixed.
+- **`delete` is the one id-addressed verb that answers 200 for an id the farm does not hold, and
+  that is decided rather than left over.** It returns `void`, publishes `MDeletedEvent` only when a
+  row was actually removed, and is idempotent: the caller asked for the machine to be gone and it
+  is gone. A 404 there would be bought by a second query and would tell a page nothing it could
+  act on - the only way to see it is to lose a race with yourself. The distinction to apply to a
+  new verb is whether it answers *with* the record (404, so the caller knows why it was handed
+  nothing) or merely *about* it (200, because the outcome is the same either way).
 - **The module's status mapping is stated once, in `Outcomes`, and nowhere else.**
   `ABSENT`/absent -> **404**, `WRONG_STATE` -> **409** with a legible body, accepted -> 200. 409
   and not 400 because the request was well formed and the caller was entitled to make it - the job,
@@ -1574,9 +1584,13 @@ travels, and that is rule 7 of `doc/sub_boundaries.txt`.
   inside the method that failed never sees it. An entity with a `@Version` therefore changes where
   its service's transaction boundary has to be stated, not just what the database does.
 - **`@Version` needs a value type to refuse into, and a module without one should not have it.**
-  `PrinterEntity` got `@DynamicUpdate` and deliberately no version: `MachineManagementService.update`
-  returns a `Descriptor` and `orElseThrow`s, so the failure would surface as the 500 this layer's
-  status mapping exists to prevent. A refusal value first, a version second.
+  `PrinterEntity` got `@DynamicUpdate` and deliberately no version. Issue #81 moved
+  `MachineManagementService.update` to `Optional<Descriptor>`, so "that machine is not there" now
+  has a value and a 404 - but **an `Optional` is an absence, not a refusal**: it carries no state
+  and no sentence, so an overtaken edit would have nothing to come back as except the same empty
+  value, which would read as "deleted" when it means "somebody else got there first". A version
+  here still wants a `Refused`-shaped value of the roster's own first, the way `JobOutcome` has
+  one. A refusal value first, a version second.
 
 ## Testing
 

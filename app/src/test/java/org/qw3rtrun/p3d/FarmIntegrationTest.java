@@ -245,9 +245,12 @@ abstract class FarmIntegrationTest {
      *
      * <p>{@link #tidyUp()} deletes whatever is left at the end, which covers every test that only
      * ever adds. A test whose <em>subject</em> is the removal needs to do it itself and needs the
-     * cleanup to then leave it alone: a second {@code DELETE} of the same id answers 404 harmlessly
-     * but publishes nothing, so the difference would not be visible here - it would be visible on
-     * the farm stream, as a second {@code MachineLeftFarm} for a machine that left once.
+     * cleanup to then leave it alone: a second {@code DELETE} of the same id answers <strong>200
+     * harmlessly</strong> and publishes nothing, so the difference would not be visible here - it
+     * would be visible on the farm stream, as a second {@code MDeletedEvent} for a machine that
+     * left once. That 200 is deliberate and was examined alongside issue #81: a delete is
+     * idempotent, so an id that is already gone is the outcome the caller asked for. The {@code GET}
+     * and the {@code PUT} beside it answer 404 because they answer <em>with</em> the machine.
      */
     protected void deregister(UUID id) {
         farm.delete().uri("/api-manager/{id}", id).exchange().expectStatus().isOk();

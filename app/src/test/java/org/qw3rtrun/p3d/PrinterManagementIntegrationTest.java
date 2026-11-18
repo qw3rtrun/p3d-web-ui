@@ -20,9 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * it bites - a command for tool 1 reaching the wire on a machine whose firmware reports one
  * extruder.
  *
- * <p>It also holds the roster's half of issue #65: asking for a machine the farm does not have is a
- * <strong>404</strong>, not 500 - a status with no second observable, since there is no machine to
- * have been touched.
+ * <p>It also holds the roster's half of issues #65 and #81: asking for, or editing, a machine the
+ * farm does not have is a <strong>404</strong>, not 500 - a status with no second observable, since
+ * there is no machine to have been touched.
  *
  * <p>Not carried over: the assertion that {@code announceTheFarm()} re-announces a spec at
  * startup. It has no endpoint and a test here cannot restart a context; it stays covered in
@@ -247,6 +247,34 @@ class PrinterManagementIntegrationTest extends FarmIntegrationTest {
         deregister(id);
 
         farm.get().uri("/api-manager/{id}", id).exchange().expectStatus().isNotFound();
+    }
+
+    /**
+     * #81, the method next door to #65's: editing a machine that is not there was still a
+     * <strong>500</strong>, from the signature in the same way - {@code update} ended in
+     * {@code orElseThrow}, so the {@code NoSuchElementException} left the handler and reached the
+     * default one. {@code PUT} is {@code hasRole("ADMIN")}, so the person who meets it is an
+     * administrator editing a machine another one has just deleted: an ordinary race.
+     *
+     * <p>Deliberately not asserted here: that the roster announced nothing. This test can only see
+     * statuses, and the announcement half is
+     * {@code MachineEditAnnouncementTest.editingAMachineTheFarmDoesNotHaveChangesNothingAndSaysNothing}
+     * in {@code :backend:core}, where the events are observable.
+     */
+    @Test
+    void editingAMachineThatHasBeenDeletedIsNotFoundAfterwards() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("edited after it left", printer);
+
+        deregister(id);
+
+        farm.put().uri("/api-manager/{id}", id)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .bodyValue("{\"name\":\"edited after it left\",\"host\":\"localhost\",\"port\":"
+                        + printer.port() + ",\"spec\":" + DECLARED + "}")
+                .exchange()
+                .expectStatus().isNotFound()
+                .expectBody().isEmpty();
     }
 
     // ---------------------------------------------------------------- helpers

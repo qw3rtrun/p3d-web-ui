@@ -9,6 +9,7 @@ import org.springframework.security.authentication.ReactiveAuthenticationManager
 import org.springframework.security.authentication.UserDetailsRepositoryReactiveAuthenticationManager;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
 import org.springframework.security.core.userdetails.ReactiveUserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.server.SecurityWebFilterChain;
@@ -16,8 +17,11 @@ import org.springframework.security.web.server.ServerAuthenticationEntryPoint;
 import org.springframework.security.web.server.authentication.HttpStatusServerEntryPoint;
 import org.springframework.security.web.server.csrf.CookieServerCsrfTokenRepository;
 import org.springframework.security.web.server.csrf.CsrfToken;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Mono;
+
+import java.util.Optional;
 
 /**
  * Who may do what to a farm of heaters - plan item D3.
@@ -52,7 +56,13 @@ public class SecurityConfiguration {
     @Bean
     public SecurityWebFilterChain farmSecurity(ServerHttpSecurity http,
                                                ReactiveUserDetailsService users,
-                                               PasswordEncoder encoder) {
+                                               PasswordEncoder encoder,
+                                               @Qualifier("localAdminAutoLogin")
+                                               Optional<WebFilter> localAutoLogin) {
+        // Present only under the "local" profile - see LocalDevAutoLogin. Positioned at
+        // AUTHENTICATION so authorizeExchange sees the admin principal it writes; absent under
+        // every other profile, which is what makes this strictly additive.
+        localAutoLogin.ifPresent(filter -> http.addFilterAt(filter, SecurityWebFiltersOrder.AUTHENTICATION));
         return http
                 .authenticationManager(authentication(users, encoder))
                 .csrf(csrf -> csrf

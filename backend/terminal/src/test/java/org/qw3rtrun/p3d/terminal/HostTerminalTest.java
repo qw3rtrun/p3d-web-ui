@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopReport;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopStateRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.SdFile;
@@ -314,6 +316,58 @@ class HostTerminalTest {
                 assertInstanceOf(SdFileList.class, published.get(0)).getFiles());
         assertEquals(List.of(new SdFile("B.GCO", 2)),
                 assertInstanceOf(SdFileList.class, published.get(1)).getFiles());
+    }
+
+    /**
+     * One {@code M119} read puts <strong>one</strong> event on the bus, not one per line - issue
+     * #35's requirement, and the reason the per-line shape was rejected: a consumer counting endstop
+     * events cannot tell four lines of one answer from four answers. The {@code ok P15 B3} that ends
+     * the burst is window credit and is not published, so the whole read is a single value here.
+     * {@code ReplyFluxMultilineTest} is where the <em>order</em> of the two is asserted.
+     */
+    @Test
+    void anEndstopReportCrossesTheBusAsOneEventPerRead() {
+        listen();
+
+        receive("Reporting endstop status");
+        receive("x_min: open");
+        receive("y_min: open");
+        receive("z_min: open");
+        receive("ok P15 B3");
+
+        assertEquals(1, published.size(), "five lines, one event: " + published);
+        assertEquals(List.of(new EndstopStateRs("x_min", false),
+                        new EndstopStateRs("y_min", false),
+                        new EndstopStateRs("z_min", false)),
+                assertInstanceOf(EndstopReport.class, published.getFirst()).getStates());
+    }
+
+    /**
+     * The {@code ok} that flushes a report is still an acknowledgement: the accumulator emits the
+     * report <em>and then</em> the {@code ok}, so the send window gets its credit and the next block
+     * goes out. Swallowing it - the obvious way to write "accumulate until ok" - would stall the
+     * outbound half of the session for good, which is why this is asserted as demand and not as a
+     * value: without the credit the second {@code thenRequest} moves nothing.
+     */
+    @Test
+    void theOkThatEndsAnEndstopReportStillCreditsTheSendWindow() {
+        var out = sendWindow();
+
+        StepVerifier.create(out, 0)
+                .thenRequest(1)
+                .expectNext("N1 M110 N0*124\n")
+                .then(() -> receive("ok"))
+                .thenRequest(10)
+                .expectNext("N1 G1 X1*96\n")
+                .then(() -> receive("Reporting endstop status"))
+                .then(() -> receive("x_min: open"))
+                .then(() -> receive("ok N1 P15 B3"))
+                .expectNext("N2 G1 X2*96\n", "N3 G1 X3*96\n", "N4 G1 X4*96\n")
+                .thenCancel()
+                .verify(TIMEOUT);
+
+        assertEquals(List.of(new EndstopStateRs("x_min", false)),
+                assertInstanceOf(EndstopReport.class, published.getFirst()).getStates());
     }
 
     /** Marlin's {@code host_keepalive()} writes {@code echo:busy: processing}, not the RepRap bare

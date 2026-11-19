@@ -12,6 +12,8 @@ import org.qw3rtrun.p3d.api.msg.TerminalTraffic;
 import org.qw3rtrun.p3d.api.msg.SdUploadState;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopReportHeader;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopStateRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.OkTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
@@ -455,6 +457,49 @@ class EventStreamContractTest {
 
         assertEquals("UnknownCommand", payload.get("type").asString());
         assertEquals("M503", payload.get("event").get("command").asString());
+    }
+
+    // ---------------------------------------------------------------- the endstop report
+
+    /**
+     * {@code M119}'s state lines, which travel as {@code :gcode}'s own reply - the same as
+     * {@code SettingsValue} does, with no envelope of this application's around them.
+     *
+     * <p>Two fields and both are read: {@code name} is the firmware's own spelling ({@code x_min},
+     * {@code z_probe}), which is all the identity an endstop has, and {@code triggered} is a real
+     * boolean rather than Marlin's {@code open}/{@code TRIGGERED} text - so a page switches on it
+     * rather than comparing strings in a case it has not seen. Which names arrive is the machine's
+     * business, so nothing may be keyed on a fixed set.
+     */
+    @Test
+    void anEndstopStateCarriesItsNameAndWhetherItIsTriggered() {
+        var open = mapper.readTree(streamed(new EndstopStateRs("x_min", false)));
+        assertEquals("EndstopStateRs", open.get("type").asString());
+        assertEquals("x_min", open.get("event").get("name").asString());
+        assertFalse(open.get("event").get("triggered").asBoolean());
+
+        var triggered = mapper.readTree(streamed(new EndstopStateRs("z_min", true)));
+        assertEquals("EndstopStateRs", triggered.get("type").asString());
+        assertEquals("z_min", triggered.get("event").get("name").asString());
+        assertTrue(triggered.get("event").get("triggered").asBoolean());
+    }
+
+    /**
+     * The heading is an empty object under its own type, by design - the line itself is the whole
+     * content, and which machine it is about travels on {@code id}. Asserted to carry no fields so
+     * that adding one has to come through here and think about the browser first, the same guard
+     * {@code SessionStarted} gets. The aggregate does not keep it, so a page sees it only live - a
+     * panel attaching afterwards is handed the state lines without it.
+     */
+    @Test
+    void anEndstopReportHeaderCarriesItsTypeAndNothingElse() {
+        var payload = mapper.readTree(streamed(EndstopReportHeader.INSTANCE));
+
+        assertEquals("EndstopReportHeader", payload.get("type").asString());
+        assertTrue(payload.get("event").isObject(), "an object, not a null or a string");
+        assertEquals(0, payload.get("event").size(),
+                "a field here is a field the TypeScript client has to learn: "
+                        + payload.get("event"));
     }
 
     // M500's confirmation is a //action: line, not a reply of its own, and the whole of the

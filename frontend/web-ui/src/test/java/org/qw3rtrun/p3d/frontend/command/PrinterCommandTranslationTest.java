@@ -154,6 +154,13 @@ class PrinterCommandTranslationTest {
         assertEquals("M114", one(new RequestPosition()));
     }
 
+    // M119 takes no parameters at all, so there is nothing here that could drift - the assertion is
+    // that the one request this records makes is still the one command.
+    @Test
+    void askingForTheEndstopsIsM119() {
+        assertEquals("M119", one(new ReadEndstops()));
+    }
+
     // M503 is asserted bare, not with S or C: S0 drops the section headings the Settings tab groups
     // by, and C compares against compiled defaults instead of what is live - a flag slipped in here
     // would be invisible on this side and show up as an ungrouped tab.

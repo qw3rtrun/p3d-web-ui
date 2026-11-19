@@ -353,6 +353,37 @@ export interface SettingsValue {
 }
 
 /**
+ * `type: "EndstopStateRs"` - one endstop, from `M119`'s report.
+ *
+ * `name` is the firmware's own spelling and is all the identity an endstop has: `x_min`, `y_max`,
+ * `z_probe`, `probe_en`, `filament`, plus duplicates like `x2_min` and `z3_min`. Which names a
+ * machine reports, how many, and in what order is the machine's business
+ * (`Endstops::report_states`) - the measured build answers three, a delta or an IDEX answers a
+ * different set - so a panel renders what arrives and never keys on a fixed list.
+ *
+ * `triggered` is a real boolean, not Marlin's `open`/`TRIGGERED` text: the decode happens on the
+ * server, so nothing here compares strings.
+ *
+ * A re-read answers the same names, and the server merges each line in the place it already holds,
+ * so the order is stable across refreshes. The last states are part of the aggregate's snapshot, so
+ * a panel opened after somebody else pressed Read is handed them without asking again.
+ */
+export interface EndstopStateRs {
+    name: string
+    triggered: boolean
+}
+
+/**
+ * `type: "EndstopReportHeader"` - `Reporting endstop status`, the line `M119` writes ahead of the
+ * state lines. Carries nothing.
+ *
+ * Scaffolding rather than information, and the server does not keep it: it arrives live at the start
+ * of a report and is absent from the snapshot, so a panel may use it to clear a stale list but must
+ * not require it to render one.
+ */
+export type EndstopReportHeader = Record<string, never>
+
+/**
  * `type: "EepromReport"` - `M504`'s verdict on the stored settings.
  *
  * A message, not a boolean, and a page must render it as one: `echo:EEPROM OK` is what MarlinSim

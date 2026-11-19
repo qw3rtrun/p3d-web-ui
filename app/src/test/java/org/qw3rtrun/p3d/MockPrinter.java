@@ -457,6 +457,45 @@ public final class MockPrinter implements AutoCloseable {
     /** What {@code M500} wrote and {@code M501} reads back. A separate memory, deliberately. */
     private final Map<String, String> eeprom = Collections.synchronizedMap(new LinkedHashMap<>());
 
+    /**
+     * {@code M119}'s answer: which of this machine's endstops are triggered, in the order the
+     * firmware reports them. Captured verbatim by {@code GCodeLiveProbe} against MarlinSim
+     * (bugfix-2.1.x, Nov 18 2026) on {@code localhost:8099}:
+     *
+     * <pre>
+     * &gt;&gt; M119   &lt;&lt; Reporting endstop status
+     *            &lt;&lt; x_min: open
+     *            &lt;&lt; y_min: open
+     *            &lt;&lt; z_min: TRIGGERED
+     *            &lt;&lt; ok P15 B3
+     * </pre>
+     *
+     * <p>A {@link LinkedHashMap} so the order is reproducible - three on this build, which is a
+     * property of the machine it was measured on and not a rule {@code M119} itself states.
+     * {@link #setEndstop(String, boolean)} lets a test move a switch between two reads.
+     */
+    private static final Map<String, Boolean> DEFAULT_ENDSTOPS = new LinkedHashMap<>();
+
+    static {
+        // Map.of() does not preserve insertion order - explicit puts, in the measured order.
+        DEFAULT_ENDSTOPS.put("x_min", false);
+        DEFAULT_ENDSTOPS.put("y_min", false);
+        DEFAULT_ENDSTOPS.put("z_min", true);
+    }
+
+    private final Map<String, Boolean> endstops =
+            Collections.synchronizedMap(new LinkedHashMap<>(DEFAULT_ENDSTOPS));
+
+    /**
+     * Moves one endstop so the next {@code M119} answers differently - the only way a test can show
+     * that a second read genuinely updates the held state rather than coincidentally repeating the
+     * first.
+     */
+    public MockPrinter setEndstop(String name, boolean triggered) {
+        endstops.put(name, triggered);
+        return this;
+    }
+
     /** The file {@code M28} opened and {@code M29} has not yet closed, or null. */
     private volatile String openFile;
 
@@ -1343,6 +1382,17 @@ public final class MockPrinter implements AutoCloseable {
             case "M105" -> lines.add("ok T:210.00 /210.00 B:25.00 /0.00 @:11 B@:0");
             case "M114" -> {
                 lines.add("X:10.00 Y:10.00 Z:5.00 E:10.00 Count X:800 Y:800 Z:2000");
+                lines.add(ok());
+            }
+            // M119 - which endstops are triggered. No capability gates it on the measured build and
+            // no refusal of it has been observed, so it is answered unconditionally - see
+            // EndstopsControl's own javadoc for why nothing in the farm assumes a fixed set of names.
+            case "M119" -> {
+                lines.add("Reporting endstop status");
+                synchronized (endstops) {
+                    endstops.forEach((name, triggered) ->
+                            lines.add(name + ": " + (triggered ? "TRIGGERED" : "open")));
+                }
                 lines.add(ok());
             }
             case "M21" -> {

@@ -12,6 +12,7 @@ import org.qw3rtrun.p3d.frontend.command.MountCard;
 import org.qw3rtrun.p3d.frontend.command.MoveAxes;
 import org.qw3rtrun.p3d.frontend.command.PrintFile;
 import org.qw3rtrun.p3d.frontend.command.PrinterCommand;
+import org.qw3rtrun.p3d.frontend.command.ReadEndstops;
 import org.qw3rtrun.p3d.frontend.command.ReadSettings;
 import org.qw3rtrun.p3d.frontend.command.ReleaseCard;
 import org.qw3rtrun.p3d.frontend.command.SendRawLine;
@@ -68,6 +69,13 @@ import java.util.UUID;
  * own {@code UnknownCommand} naming {@code M503} - there is no capability line for it. {@code
  * /settings/validate} ({@code M504}) reports {@code echo:EEPROM OK} verbatim on success; the failure
  * text has not been observed, which is why nothing here renders a boolean for it.
+ *
+ * <p><strong>{@code /endstops/read}</strong> ({@code M119}) is the plainest shape on this surface and
+ * is worth naming as the one with no gate and no refusal: no {@code Cap:} line reports it and no
+ * firmware has been measured declining it, so it is always sent. Its answer is several events - an
+ * {@code EndstopReportHeader} then one {@code EndstopStateRs} per endstop - and the aggregate keeps
+ * the state lines, so a panel opened after somebody else pressed the button is handed them without
+ * asking again. Which endstops a machine reports, and how many, is the machine's business.
  *
  * <p><strong>{@code /sd/*} endpoints:</strong> card presence is inferred, not reported - {@code
  * /sd/mount} ({@code M21}) succeeds silently and presence shows up as {@code SdCardOk} on the
@@ -174,6 +182,14 @@ public class PrinterController {
     @PostMapping("/settings/read")
     public Mono<Void> readSettings(@PathVariable UUID id) {
         return send(id, new ReadSettings());
+    }
+
+    // M119. Answers as a stream of EndstopReportHeader/EndstopStateRs events; a tab opened late
+    // still gets the last-known states from the aggregate's kept run, same as /settings/read.
+    // Nothing gates it - no capability names it and no refusal of it has been measured.
+    @PostMapping("/endstops/read")
+    public Mono<Void> readEndstops(@PathVariable UUID id) {
+        return send(id, new ReadEndstops());
     }
 
     @PostMapping("/settings/revert")

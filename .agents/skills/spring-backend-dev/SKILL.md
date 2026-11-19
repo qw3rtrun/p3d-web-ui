@@ -1393,6 +1393,20 @@ rename there is a runtime failure rather than a compile one.
 - **There is no default password.** `InitialAdmin` runs only when the roster is **empty** - not
   "when the admin is missing", so a deliberately deleted account does not come back on restart - and
   either uses `p3d.security.initial-admin.password` or generates 192 bits and logs them once.
+- **The `local` profile bypasses the whole of the above, and the gate is the profile name alone**
+  (issue #90). `LocalDevAutoLogin`, `@Profile("local")` in `frontend`, exposes a `WebFilter` bean
+  that writes an already-authenticated `admin`/`ROLE_ADMIN` `Authentication` into the reactive
+  security context of every request. It must be wired in at
+  `SecurityWebFiltersOrder.AUTHENTICATION` inside `SecurityConfiguration`'s own chain, not left as a
+  bare global `@Bean WebFilter`: Spring Security's whole chain is itself one filter at order `-100`,
+  so a plain global filter runs *after* it and writes the context too late for `authorizeExchange`
+  to see. Under any other profile the bean does not exist - `SecurityConfiguration` takes it as
+  `Optional<WebFilter>`, qualified by bean name, so its absence changes nothing about the chain - and
+  it touches no other rule: CSRF is still enforced on a write, so this is an anonymous-read and
+  anonymous-login convenience, not a way to skip the CSRF token too. Start the application with
+  `-Dspring.profiles.active=local` (or `SPRING_PROFILES_ACTIVE=local`); there is no
+  `application-local.properties` shipped, by choice - adding one is an `:app` assembly decision and
+  not this layer's to make.
 
 ### Testing it
 

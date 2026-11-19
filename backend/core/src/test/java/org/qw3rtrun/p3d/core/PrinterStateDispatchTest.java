@@ -8,6 +8,7 @@ import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.api.msg.SessionStarted;
 import org.qw3rtrun.p3d.g.marlin.MarlinG;
 import org.qw3rtrun.p3d.g.marlin.command.FactoryReset;
+import org.qw3rtrun.p3d.g.marlin.command.EndstopStates;
 import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
 import org.qw3rtrun.p3d.g.marlin.command.PrintTravelMoveLimits;
 import org.qw3rtrun.p3d.g.marlin.command.ReportSettings;
@@ -24,6 +25,8 @@ import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.ValidateEEPROMContents;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopReportHeader;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopStateRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
@@ -517,6 +520,60 @@ class PrinterStateDispatchTest {
             }
         }
         return -1;
+    }
+
+    // --------------------------------------------------------------------- the endstops, M119
+
+    /**
+     * {@code M119} reaches the wire bare. Nothing gates it - no {@code Cap:} line names it and no
+     * refusal of it has ever been measured - so unlike {@code M503} there is no branch here that
+     * could decline it, and the test is that there is not.
+     */
+    @Test
+    void askingForTheEndstopsIsM119() {
+        var printer = online();
+
+        assertEquals(List.of("M119"), wire(printer, new EndstopStates()));
+    }
+
+    /**
+     * An endstop line is republished and held - the pair of claims that matters, the same as a
+     * settings line. Republished because someone pressed a button and is waiting (a switch that did
+     * not move is still the answer they asked for); held so a diagnostics page opened afterwards is
+     * handed the switches rather than an empty table. Asserting only the first half is how both
+     * halves of the Storage tab shipped dead.
+     */
+    @Test
+    void anEndstopLineIsRepublishedAndHeld() {
+        var printer = online();
+        var open = new EndstopStateRs("x_min", false);
+        var triggered = new EndstopStateRs("z_min", true);
+
+        printer.onEvent(EndstopReportHeader.INSTANCE);
+        printer.onEvent(open);
+        printer.onEvent(triggered);
+
+        assertEquals(List.of(EndstopReportHeader.INSTANCE, open, triggered), published(),
+                "every line of the report has to reach the page that asked for it");
+        assertTrue(printer.snapshot().containsAll(List.of(open, triggered)),
+                "and a page opened later has to be handed the states: " + printer.snapshot());
+        assertFalse(printer.snapshot().contains(EndstopReportHeader.INSTANCE),
+                "the heading is scaffolding, not a fact to hand out: " + printer.snapshot());
+        assertEquals(List.of(), sent, "the aggregate answers none of them on the wire");
+    }
+
+    // the same forgetting every other control gets: an endstop is a switch on a machine that may
+    // have been switched off or re-wired while the link was down.
+    @Test
+    void aNewSessionForgetsTheLastSessionsEndstops() {
+        var printer = online();
+        printer.onEvent(new EndstopStateRs("z_min", true));
+
+        printer.onOffline("the cable was moved");
+        printer.onOnline(new GSender(this::capture));
+
+        assertFalse(printer.snapshot().contains(new EndstopStateRs("z_min", true)),
+                "last session's switches are not this session's: " + printer.snapshot());
     }
 
     /**

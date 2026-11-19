@@ -13,6 +13,7 @@ import org.qw3rtrun.p3d.api.msg.SessionStarted;
 import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
 import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
 import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
+import org.qw3rtrun.p3d.g.marlin.command.EndstopStates;
 import org.qw3rtrun.p3d.g.marlin.command.FactoryReset;
 import org.qw3rtrun.p3d.g.marlin.command.FanOff;
 import org.qw3rtrun.p3d.g.marlin.command.FullShutdown;
@@ -46,6 +47,7 @@ import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
 import org.qw3rtrun.p3d.g.marlin.command.ValidateEEPROMContents;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
@@ -67,9 +69,9 @@ import java.util.function.Consumer;
 
 /**
  * The printer aggregate: one machine's connection, firmware/capability profile, declared spec,
- * EEPROM settings, SD card state, last temperature and the auto-reports this session started, plus
- * the dispatch that routes every command and reply through it. One instance per printer, holding no
- * scheduler of its own.
+ * EEPROM settings, SD card state, endstops, last temperature and the auto-reports this session
+ * started, plus the dispatch that routes every command and reply through it. One instance per
+ * printer, holding no scheduler of its own.
  *
  * <h3>The conversation it opens and closes</h3>
  * {@link #onOnline} sends the two blocks that need no permission ({@code M115}, {@code M155 S1}) and
@@ -88,8 +90,8 @@ import java.util.function.Consumer;
  * Three things are still read off another thread and each is published behind one {@code volatile}
  * reference, never read-modify-written: {@link #blocksInFlight} (a progress poll),
  * {@link ConnectionLifecycle}'s transition fields ({@code PrinterReactor.linked()}), and the one
- * immutable value apiece in the four controls that {@link #snapshot()} reads, which a subscriber
- * attaching does on its own thread. {@link AutoReportControl} is the fifth control and is
+ * immutable value apiece in the five controls that {@link #snapshot()} reads, which a subscriber
+ * attaching does on its own thread. {@link AutoReportControl} is the sixth control and is
  * <em>not</em> one of them: nothing reads it off this thread, so it is a plain field - see its own
  * javadoc.
  *
@@ -141,6 +143,8 @@ public class PrinterState implements PrinterAggregate {
     private final SdCardControl card = new SdCardControl();
 
     private final EEPROMSettingsControl settings = new EEPROMSettingsControl();
+
+    private final EndstopsControl endstops = new EndstopsControl();
 
     private final AutoReportControl autoReports = new AutoReportControl();
 
@@ -258,6 +262,10 @@ public class PrinterState implements PrinterAggregate {
                 heard();
                 on(e);
             }
+            case EndstopRs<?> e -> {
+                heard();
+                on(e);
+            }
             case UnknownCommand e -> {
                 heard();
                 on(e);
@@ -301,6 +309,7 @@ public class PrinterState implements PrinterAggregate {
             case SetFanSpeed c -> handle(c);
             case FanOff c -> handle(c);
             case GetCurrentPosition c -> handle(c);
+            case EndstopStates c -> handle(c);
 
             // EEPROM (#88): only M503 needs a decision (see handle(ReportSettings)). M301/M200/
             // M145/M149/G21 are deliberately not named here and reach the machine through the
@@ -354,9 +363,9 @@ public class PrinterState implements PrinterAggregate {
     /**
      * Everything this aggregate holds, as the events that would have announced it - handed to a
      * late subscriber before anything live (see {@code PrinterReactor.updates()}). Facts only, in a
-     * fixed order (connection, profile, card, settings, last temperature); nothing that merely
-     * <em>happened</em> - a position, a card listing, an acknowledged or abandoned block - is here,
-     * or a late subscriber would see it as having just happened.
+     * fixed order (connection, profile, card, settings, endstops, last temperature); nothing that
+     * merely <em>happened</em> - a position, a card listing, an acknowledged or abandoned block - is
+     * here, or a late subscriber would see it as having just happened.
      *
      * <p><strong>Everything this method carries is invalidated by {@link SessionStarted}</strong>,
      * which {@link #onOnline} states where it forgets - so a control added here is covered without
@@ -369,6 +378,7 @@ public class PrinterState implements PrinterAggregate {
         facts.addAll(profile.snapshot());
         facts.addAll(card.snapshot());
         facts.addAll(settings.snapshot());
+        facts.addAll(endstops.snapshot());
         temperature.current().ifPresent(facts::add);
         return facts;
     }
@@ -567,6 +577,15 @@ public class PrinterState implements PrinterAggregate {
         passThrough(position);
     }
 
+    /**
+     * {@code M119} - endstop states. Answered by an {@code EndstopReportHeader} and then one
+     * {@code EndstopStateRs} per endstop into {@link #on(EndstopRs)}; no capability gates it and
+     * nothing here refuses it.
+     */
+    public void handle(EndstopStates report) {
+        passThrough(report);
+    }
+
     // ------------------------------------------------------------------------------- the card
 
     /** {@code M21} - mount the card. Answered by {@code echo:SD card ok}, or silence if there is none - see {@link #on(SdCardRs)}. */
@@ -646,6 +665,7 @@ public class PrinterState implements PrinterAggregate {
         this.g = g;
         card.sessionStarted();
         settings.sessionStarted();
+        endstops.sessionStarted();
         autoReports.sessionStarted();
         emitter.accept(new SessionStarted());
         var change = connection.linkEstablished();
@@ -780,6 +800,19 @@ public class PrinterState implements PrinterAggregate {
      */
     public void on(SettingsRs<?> reply) {
         settings.on(reply);
+        emitter.accept(reply);
+    }
+
+    /**
+     * One line of an {@code M119} report - one arm for the whole {@link EndstopRs} family, the state
+     * lines kept in {@link EndstopsControl} and every line republished. Both halves earn their
+     * place: the held states are what a page opened after somebody else asked is handed by
+     * {@link #snapshot()}, and republishing keeps a page that was already open current - the same
+     * reading {@link #on(SdCardRs)} and {@link #on(SettingsRs)} take, since a switch that has not
+     * moved is still the answer whoever pressed the button is waiting for.
+     */
+    public void on(EndstopRs<?> reply) {
+        endstops.on(reply);
         emitter.accept(reply);
     }
 

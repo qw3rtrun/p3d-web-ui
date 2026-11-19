@@ -4,6 +4,7 @@ import org.qw3rtrun.p3d.g.code.core.token.GIdentifier;
 import org.qw3rtrun.p3d.g.code.core.token.GNumber;
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsReport;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsRs;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsSection;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsValue;
@@ -22,9 +23,12 @@ import java.util.List;
  * values with no other link between them, so a value's place in the sequence is which heading it is
  * under. A value merges in place on a second read of the same key rather than accumulating, which is
  * what makes a single-setting read-back ({@code >> M92}) update the held report without a second
- * 25-line dump. Nothing is parsed: {@code :gcode}'s {@link SettingsValue} keeps the line verbatim,
- * and a caller wanting {@code X80.00} runs it through {@code GTokenizer} rather than a second, looser
- * reader of the same bytes.
+ * 25-line dump. <strong>A burst arrives as one {@link SettingsReport} and its entries are merged
+ * entry by entry, never taken as a replacement</strong> - that read-back is a one-entry report, so
+ * replacing wholesale (what {@link EndstopsControl} correctly does, because no {@code M119} is
+ * partial) would throw away 24 lines to record one. Nothing is parsed: {@code :gcode}'s
+ * {@link SettingsValue} keeps the line verbatim, and a caller wanting {@code X80.00} runs it through
+ * {@code GTokenizer} rather than a second, looser reader of the same bytes.
  *
  * <p>Everything is "the last thing the machine said" - absent rather than defaulted - except
  * {@link #invalidated()}, documented at its own declaration.
@@ -63,12 +67,23 @@ public class EEPROMSettingsControl {
     /** One entry point for the whole family, so {@code PrinterState} has one arm - a reply added to it in {@code :gcode} arrives here already routed. */
     public void on(SettingsRs<?> reply) {
         switch (reply) {
-            case SettingsSection section -> onSection(section);
-            case SettingsValue value -> onValue(value);
+            case SettingsReport batch -> batch.getEntries().forEach(this::onEntry);
             case EepromReport report -> onEeprom(report);
             default -> {
-                // a member of the family this control keeps nothing about; none exists today, the
-                // arm exists because SettingsRs is an interface and not a sealed one.
+                // SettingsSection/SettingsValue never reach here individually anymore -
+                // :backend:terminal's SettingsReportReader folds every line of one burst (a full M503
+                // dump or a lone M92-style read-back) into one SettingsReport before PrinterState ever
+                // sees it (issue #35). The arm exists because the interface is not sealed.
+            }
+        }
+    }
+
+    private void onEntry(SettingsRs<?> entry) {
+        switch (entry) {
+            case SettingsSection section -> onSection(section);
+            case SettingsValue value -> onValue(value);
+            default -> {
+                // nothing else is a member of a settings burst - see SettingsReportReader.offer.
             }
         }
     }
@@ -221,14 +236,19 @@ public class EEPROMSettingsControl {
     }
 
     /**
-     * The settings as the replies that announced them: the report in firmware order, then
-     * {@code M504}'s verdict if any, then the refusal if {@code M503} was declined - each published
-     * as itself rather than a synthetic "unsupported" event, so a late page learns it the same way
-     * the first one did.
+     * The settings as the replies that announced them: the whole held report as one
+     * {@link SettingsReport} in firmware order, then {@code M504}'s verdict if any, then the refusal
+     * if {@code M503} was declined - each published as itself rather than a synthetic "unsupported"
+     * event, so a late page learns it the same way the first one did. One report rather than its
+     * lines spread out, because that is the only shape a settings answer travels in now (issue #35)
+     * and a late subscriber must not have to handle a second one.
      */
     public List<Object> snapshot() {
         var s = state;
-        var replies = new ArrayList<Object>(s.report());
+        var replies = new ArrayList<Object>();
+        if (!s.report().isEmpty()) {
+            replies.add(new SettingsReport(s.report()));
+        }
         if (s.eeprom() != null) {
             replies.add(s.eeprom());
         }

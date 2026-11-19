@@ -25,13 +25,14 @@ import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.ValidateEEPROMContents;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
-import org.qw3rtrun.p3d.g.marlin.event.EndstopReportHeader;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopReport;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopStateRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
 import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
 import org.qw3rtrun.p3d.g.marlin.event.SdCardOk;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsReport;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsSection;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsValue;
 import org.qw3rtrun.p3d.g.marlin.event.UnknownCommand;
@@ -384,24 +385,25 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * A settings line is republished and held - the pair of claims that matters. Republished since
-     * these answer an {@code M503} a page pressed a button for, so a repeat is still news (the same
-     * reading {@code on(SdCardRs)} takes, opposite the temperature's); held so a page opened later
-     * sees the settings without pressing the button again. Asserting only the first half is how both
-     * halves of the Storage tab shipped dead.
+     * A settings report is republished and held - the pair of claims that matters. Republished
+     * since it answers an {@code M503} a page pressed a button for, so a repeat is still news (the
+     * same reading {@code on(SdCardRs)} takes, opposite the temperature's); held so a page opened
+     * later sees the settings without pressing the button again. One report, not its lines spread
+     * out - {@code :backend:terminal} folds a whole burst into one {@code SettingsReport} before it
+     * ever reaches here (#35), so there is exactly one event to assert on.
      */
     @Test
-    void aSettingsLineIsRepublishedAndHeld() {
+    void aSettingsReportIsRepublishedAndHeld() {
         var printer = online();
-        var section = new SettingsSection("Steps per unit");
-        var value = new SettingsValue("M92", "M92 X80.00 Y80.00 Z400.00 E500.00");
+        var report = new SettingsReport(List.of(
+                new SettingsSection("Steps per unit"),
+                new SettingsValue("M92", "M92 X80.00 Y80.00 Z400.00 E500.00")));
 
-        printer.onEvent(section);
-        printer.onEvent(value);
+        printer.onEvent(report);
 
-        assertEquals(List.of(section, value), published(),
-                "a settings line has to reach the page that asked for it");
-        assertTrue(printer.snapshot().containsAll(List.of(section, value)),
+        assertEquals(List.of(report), published(),
+                "one settings burst has to reach the page that asked for it as one event");
+        assertTrue(printer.snapshot().contains(report),
                 "and a page opened later has to be handed it: " + printer.snapshot());
     }
 
@@ -443,7 +445,7 @@ class PrinterStateDispatchTest {
     void aNewSessionAsksAFirmwareWithNoM503Again() {
         var printer = online();
         printer.onEvent(new UnknownCommand("M503"));
-        printer.onEvent(new SettingsValue("M92", "M92 X80.00"));
+        printer.onEvent(new SettingsReport(List.of(new SettingsValue("M92", "M92 X80.00"))));
 
         printer.onOffline("the cable was moved");
         printer.onOnline(new GSender(this::capture));
@@ -451,7 +453,7 @@ class PrinterStateDispatchTest {
 
         assertEquals(List.of("M503"), wire(printer, new ReportSettings()),
                 "a reflashed machine may well answer M503 now");
-        assertFalse(printer.snapshot().contains(new SettingsValue("M92", "M92 X80.00")),
+        assertTrue(printer.snapshot().stream().noneMatch(SettingsReport.class::isInstance),
                 "and the last session's settings are not this session's: " + printer.snapshot());
     }
 
@@ -469,7 +471,7 @@ class PrinterStateDispatchTest {
     void aNewLinkStatesItsBoundaryBeforeItAnnouncesTheLink() {
         var printer = online();
         printer.onEvent(SdCardOk.INSTANCE);
-        printer.onEvent(new SettingsValue("M92", "M92 X80.00"));
+        printer.onEvent(new SettingsReport(List.of(new SettingsValue("M92", "M92 X80.00"))));
         printer.onOffline("the cable was pulled");
         emitted.clear();
 
@@ -537,28 +539,27 @@ class PrinterStateDispatchTest {
     }
 
     /**
-     * An endstop line is republished and held - the pair of claims that matters, the same as a
-     * settings line. Republished because someone pressed a button and is waiting (a switch that did
-     * not move is still the answer they asked for); held so a diagnostics page opened afterwards is
-     * handed the switches rather than an empty table. Asserting only the first half is how both
-     * halves of the Storage tab shipped dead.
+     * An endstop report is republished and held - the pair of claims that matters, the same as a
+     * settings report. Republished because someone pressed a button and is waiting (a switch that
+     * did not move is still the answer they asked for); held so a diagnostics page opened afterwards
+     * is handed the switches rather than an empty table. One report, not its lines spread out -
+     * {@code :backend:terminal} folds the heading and every state line into one
+     * {@code EndstopReport} before it ever reaches here (#35), so there is exactly one event to
+     * assert on.
      */
     @Test
-    void anEndstopLineIsRepublishedAndHeld() {
+    void anEndstopReportIsRepublishedAndHeld() {
         var printer = online();
         var open = new EndstopStateRs("x_min", false);
         var triggered = new EndstopStateRs("z_min", true);
+        var report = new EndstopReport(List.of(open, triggered));
 
-        printer.onEvent(EndstopReportHeader.INSTANCE);
-        printer.onEvent(open);
-        printer.onEvent(triggered);
+        printer.onEvent(report);
 
-        assertEquals(List.of(EndstopReportHeader.INSTANCE, open, triggered), published(),
-                "every line of the report has to reach the page that asked for it");
-        assertTrue(printer.snapshot().containsAll(List.of(open, triggered)),
-                "and a page opened later has to be handed the states: " + printer.snapshot());
-        assertFalse(printer.snapshot().contains(EndstopReportHeader.INSTANCE),
-                "the heading is scaffolding, not a fact to hand out: " + printer.snapshot());
+        assertEquals(List.of(report), published(),
+                "one M119 answer has to reach the page that asked for it as one event");
+        assertTrue(printer.snapshot().contains(report),
+                "and a page opened later has to be handed it: " + printer.snapshot());
         assertEquals(List.of(), sent, "the aggregate answers none of them on the wire");
     }
 
@@ -567,12 +568,12 @@ class PrinterStateDispatchTest {
     @Test
     void aNewSessionForgetsTheLastSessionsEndstops() {
         var printer = online();
-        printer.onEvent(new EndstopStateRs("z_min", true));
+        printer.onEvent(new EndstopReport(List.of(new EndstopStateRs("z_min", true))));
 
         printer.onOffline("the cable was moved");
         printer.onOnline(new GSender(this::capture));
 
-        assertFalse(printer.snapshot().contains(new EndstopStateRs("z_min", true)),
+        assertTrue(printer.snapshot().stream().noneMatch(EndstopReport.class::isInstance),
                 "last session's switches are not this session's: " + printer.snapshot());
     }
 

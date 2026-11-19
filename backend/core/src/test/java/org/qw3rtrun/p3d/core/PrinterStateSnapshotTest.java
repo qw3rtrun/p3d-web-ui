@@ -13,6 +13,7 @@ import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
 import org.qw3rtrun.p3d.g.marlin.event.SdCardOk;
 import org.qw3rtrun.p3d.g.marlin.event.SdFile;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsReport;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsSection;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsValue;
 
@@ -41,6 +42,10 @@ class PrinterStateSnapshotTest {
 
     private static final SettingsValue M92 = new SettingsValue("M92", "M92 X80.00 Y80.00 Z400.00 E500.00");
 
+    // One M503 burst now arrives, and is held, as one SettingsReport (#35) - the control's
+    // onEvent(SettingsRs<?>) arm never sees STEPS/M92 individually any more, only this.
+    private static final SettingsReport SETTINGS = new SettingsReport(List.of(STEPS, M92));
+
     @Test
     void aMachineNothingIsKnownAboutIsOnlyItsConnection() {
         var snapshot = new PrinterState(UUID.randomUUID()).snapshot();
@@ -59,8 +64,7 @@ class PrinterStateSnapshotTest {
         printer.onEvent(new FirmwareInfoRs(Map.of("FIRMWARE_NAME", "Marlin 2.1.2")));
         printer.onEvent(new CapabilityRs("AUTOREPORT_TEMP", true));
         printer.onEvent(LISTING);
-        printer.onEvent(STEPS);
-        printer.onEvent(M92);
+        printer.onEvent(SETTINGS);
 
         var snapshot = printer.snapshot();
 
@@ -71,22 +75,21 @@ class PrinterStateSnapshotTest {
                 new CapabilityRs("EEPROM", true),
                 SdCardOk.INSTANCE,
                 LISTING,
-                STEPS,
-                M92,
+                SETTINGS,
                 WARM), snapshot.subList(1, snapshot.size()));
     }
 
-    // asserted separately too because settings are a sequence, not a single value like every other
-    // slot - a 25-line report whose internal order is what a tab groups by.
+    // asserted separately too because the settings slot is one SettingsReport, not a single bare
+    // value like every other slot - a 25-line dump whose internal order is what a tab groups by,
+    // now folded into one value before it ever reaches this control (#35).
     @Test
     void theSettingsSitBetweenTheCardAndTheTemperature() {
         var printer = new PrinterState(UUID.randomUUID());
         printer.onEvent(WARM);
         printer.onEvent(LISTING);
-        printer.onEvent(STEPS);
-        printer.onEvent(M92);
+        printer.onEvent(SETTINGS);
 
-        assertEquals(List.of(SdCardOk.INSTANCE, LISTING, STEPS, M92, WARM),
+        assertEquals(List.of(SdCardOk.INSTANCE, LISTING, SETTINGS, WARM),
                 printer.snapshot().subList(1, printer.snapshot().size()));
     }
 

@@ -578,9 +578,9 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * {@code M119} - endstop states. Answered by an {@code EndstopReportHeader} and then one
-     * {@code EndstopStateRs} per endstop into {@link #on(EndstopRs)}; no capability gates it and
-     * nothing here refuses it.
+     * {@code M119} - endstop states. Answered by one {@code EndstopReport} into
+     * {@link #on(EndstopRs)}, folded from the firmware's several lines by {@code :backend:terminal}
+     * (#35); no capability gates it and nothing here refuses it.
      */
     public void handle(EndstopStates report) {
         passThrough(report);
@@ -794,9 +794,12 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * One settings line or an {@code M504} verdict - one arm for the whole {@link SettingsRs}
-     * family, kept in {@link EEPROMSettingsControl} and always republished: an unmoved value is
-     * still news to whoever just asked for it.
+     * One whole settings answer - a {@code SettingsReport} carrying every line of one burst, or an
+     * {@code M504} verdict - one arm for the whole {@link SettingsRs} family, kept in
+     * {@link EEPROMSettingsControl} and always republished: an unmoved value is still news to
+     * whoever just asked for it. One event per read, not one per line: {@code :backend:terminal}
+     * folds the lines before they get here (#35), so a 25-line {@code M503} dump and a one-line
+     * {@code M92} read-back both reach a subscriber as a single message.
      */
     public void on(SettingsRs<?> reply) {
         settings.on(reply);
@@ -804,9 +807,11 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * One line of an {@code M119} report - one arm for the whole {@link EndstopRs} family, the state
-     * lines kept in {@link EndstopsControl} and every line republished. Both halves earn their
-     * place: the held states are what a page opened after somebody else asked is handed by
+     * One whole {@code M119} answer - an {@code EndstopReport} carrying every endstop the machine
+     * named, one arm for the whole {@link EndstopRs} family, kept in {@link EndstopsControl} and
+     * republished. One event per read, not one per line: {@code :backend:terminal} folds the heading
+     * and the state lines into the report before they get here (#35). Both halves earn their place:
+     * the held report is what a page opened after somebody else asked is handed by
      * {@link #snapshot()}, and republishing keeps a page that was already open current - the same
      * reading {@link #on(SdCardRs)} and {@link #on(SettingsRs)} take, since a switch that has not
      * moved is still the answer whoever pressed the button is waiting for.

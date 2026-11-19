@@ -699,17 +699,22 @@ The rules that follow, each paid for:
   re-announced is the reply's business: a temperature that did not move is suppressed, a card reply
   never is - someone asked for it and is waiting. `SdCardControl` forgets everything on a new
   session and on `M22`.
-  **A control's entry point is the family interface, and the control decides what is a fact and what
-  is scaffolding.** `EndstopsControl` (`M119`) is the cheapest instance of the shape and the one to
-  copy: `on(EndstopRs<?>)` is one arm in `PrinterState.onEvent`, an `EndstopStateRs` merges in place
-  by `name` so a re-read does not double the list, and `EndstopReportHeader` - the firmware's
-  `Reporting endstop status` line - is **republished but never held**, the same reading
-  `SdCardControl` takes of the file listing's begin/end markers. So the snapshot carries states and
-  no heading, and a page may use the heading to clear a stale list but must not need it to render
-  one. What makes it the simple case is that `M119` is a pure read of live hardware with no second
-  memory, no capability gating it, no measured refusal and nothing this host sends invalidating it -
-  so there is no `reportSupported()`, no `invalidated()` and no "unsupported" state. **Do not invent
-  a gate for a refusal nobody has observed**; `EEPROMSettingsControl`'s exists because
+  **A control's entry point is the family interface, and a reply that spans several lines on the
+  wire crosses this boundary as one value, never as a run of lines (#35).** `:backend:terminal`
+  folds a whole `M119` answer into one `EndstopReport` and a whole `M503` burst (or a lone `M92`
+  read-back) into one `SettingsReport` before either family's decode-layer types
+  (`EndstopReportHeader`/`EndstopStateRs`, `SettingsSection`/`SettingsValue`) ever reach this module -
+  a previous pass shipped the per-line shape instead (one event per endstop, held state as the only
+  compensation) and it was rejected for exactly that reason: a page counting endstop events could not
+  tell four lines of one answer from four answers.
+  `EndstopsControl` (`M119`) is the simpler of the two controls and the one to copy for a pure
+  hardware read: `on(EndstopRs<?>)` takes the one `EndstopReport` and **replaces the held one
+  wholesale** - no merge by name, because `M119` always states every endstop it has, so there is no
+  partial answer to merge with. What makes it the simple case is that `M119` is a pure read of live
+  hardware with no second memory, no capability gating it, no measured refusal and nothing this host
+  sends invalidating it - so there is no `reportSupported()`, no `invalidated()` and no "unsupported"
+  state. **Do not invent a gate for a refusal nobody has observed**; `EEPROMSettingsControl`'s
+  exists because
   `DISABLE_M503` was measured.
   **The terminal stream is the stated exception, and it is a different question rather than the same
   one answered differently.** `PrinterControl.traffic(UUID)` (#135) replays a bounded scrollback -
@@ -1576,16 +1581,17 @@ to get wrong and were verified on the wire:
 
 **`POST /api-printer/{id}/endstops/read` is the contract for `M119`**, and it is the plainest read
 on this surface: no body, no capability gate, no refusal branch, `Mono<Void>`, `OPERATOR` like every
-other `POST` here. Its answer is **several events and no return value** - one
-`EndstopReportHeader`, then one `EndstopStateRs` per endstop, on `/stream` - and the state lines are
-in the aggregate's snapshot, so a panel opened after somebody else pressed Read is handed them
-rather than an empty table. The browser types are `EndstopStateRs` (`{"name","triggered"}`) and
-`EndstopReportHeader` (`{}`), pinned by `EventStreamContractTest` and declared in
-`frontend/src/api/types.ts`; **nothing may key on a fixed set of endstop names** - which ones a
-machine reports, how many, and in what order is `Endstops::report_states`' business, measured as
-three (`x_min`, `y_min`, `z_min`) on MarlinSim and different on a delta, an IDEX or a machine with a
-filament sensor. There is no view for it yet, deliberately: the command, the endpoint, the aggregate
-wiring and the two contract surfaces came first so the event is nameable from the browser before
+other `POST` here. Its answer is **one event and no return value** - one `EndstopReport`, carrying
+every endstop's state, on `/stream` (#35; a previous pass shipped it as a header event plus one
+state event per endstop and that was reopened) - and the report is in the aggregate's snapshot, so a
+panel opened after somebody else pressed Read is handed it rather than an empty table. The browser
+type is `EndstopReport` (`{"states":[{"name","triggered"}, ...]}`), pinned by
+`EventStreamContractTest` and declared in `frontend/src/api/types.ts`; **nothing may key on a fixed
+set of endstop names** - which ones a machine reports, how many, and in what order is
+`Endstops::report_states`' business, measured as three (`x_min`, `y_min`, `z_min`) on MarlinSim and
+different on a delta, an IDEX or a machine with a filament sensor. There is no view for it yet,
+deliberately: the command, the endpoint, the aggregate wiring and the two contract surfaces came
+first so the event is nameable from the browser before
 anyone builds a Diagnostics tab.
 
 ### IMPORTANT - one endpoint accepts G-code text, and the old prohibition is now one sentence wide

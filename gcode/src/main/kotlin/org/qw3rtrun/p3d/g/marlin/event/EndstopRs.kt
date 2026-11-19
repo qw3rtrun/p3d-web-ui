@@ -1,7 +1,6 @@
 package org.qw3rtrun.p3d.g.marlin.event
 
 import org.qw3rtrun.p3d.g.protocol.GEventRs
-import org.qw3rtrun.p3d.g.protocol.GRs
 import org.qw3rtrun.p3d.g.protocol.GRsDecoder
 import org.qw3rtrun.p3d.g.protocol.asciiTrim
 import org.qw3rtrun.p3d.g.protocol.blanksEnd
@@ -10,7 +9,8 @@ import org.qw3rtrun.p3d.g.protocol.sameAscii
 import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 
 /**
- * `M119`'s answer, which is **several lines**:
+ * `M119`'s answer, which is **several lines**. Captured off MarlinSim (bugfix-2.1.x, Nov 18 2026)
+ * by `GCodeLiveProbe`, which is also where the shape below is from:
  *
  * ```
  * Reporting endstop status
@@ -19,22 +19,32 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
  * z_probe: open
  * ```
  *
+ * **One interface over the family, as with [SdCardRs] and [SettingsRs]**, so a caller matching
+ * `EndstopRs<*>` catches the header and every state line, and nothing else - one arm for the whole
+ * report rather than one per type, and the next line kind lands in it for free.
+ *
  * [GRsDecoder] reads one line, so this is modelled as one event per line - [EndstopReportHeader]
  * and then an [EndstopStateRs] each - and the caller assembles the block if it needs it whole.
  *
  * That is the cheap answer and it is honest about the interface rather than pretending a decoder
  * has memory. It works here because each line stands on its own: `x_min: open` means the same thing
- * whether or not its header arrived. It will **not** work for `M20`'s file list, where a list
- * without its terminator is wrong rather than merely partial - see todo 12 on the multi-line
- * problem, which is still open.
+ * whether or not its header arrived. `M20`'s file list is the other case - a list without its
+ * terminator is *wrong* rather than merely partial - and is read by the stateful [SdFileListReader]
+ * instead; `SdFileListRs.kt` holds that distinction, and it is why this family and [SettingsRs] get
+ * the per-line model while the listing needed a reader.
+ *
+ * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
+ */
+interface EndstopRs<D : EndstopRs<D>> : GEventRs<D>
+
+/**
+ * `Reporting endstop status` - the heading `M119` writes ahead of the state lines.
  *
  * ```
  * EndstopReportHeader.decode("Reporting endstop status")   // EndstopReportHeader
  * ```
- *
- * @see <a href="https://reprap.org/wiki/G-code#Replies_from_the_RepRap_machine_to_the_host_computer">RepRap G-code, replies</a>
  */
-object EndstopReportHeader : GEventRs<EndstopReportHeader>, GRsDecoder<EndstopReportHeader> {
+object EndstopReportHeader : EndstopRs<EndstopReportHeader>, GRsDecoder<EndstopReportHeader> {
 
     override fun encode(): String = "Reporting endstop status"
 
@@ -57,7 +67,7 @@ object EndstopReportHeader : GEventRs<EndstopReportHeader>, GRsDecoder<EndstopRe
  * EndstopStateRs("z_probe", false).encode()     // "z_probe: open"
  * ```
  */
-data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<EndstopStateRs> {
+data class EndstopStateRs(val name: String, val triggered: Boolean) : EndstopRs<EndstopStateRs> {
 
     override fun encode(): String = "$name: " + if (triggered) TRIGGERED else OPEN
 
@@ -121,8 +131,8 @@ data class EndstopStateRs(val name: String, val triggered: Boolean) : GRs<Endsto
  * EndstopRsDecoder.decode("y_max: open")   // EndstopStateRs("y_max", triggered = false)
  * ```
  */
-object EndstopRsDecoder : GRsDecoder<GRs<*>> {
+object EndstopRsDecoder : GRsDecoder<EndstopRs<*>> {
 
-    override fun decode(line: String): GRs<*>? =
+    override fun decode(line: String): EndstopRs<*>? =
         EndstopReportHeader.decode(line) ?: EndstopStateRs.decode(line)
 }

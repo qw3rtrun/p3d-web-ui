@@ -336,6 +336,15 @@ class MarlinRsTest {
             assertEquals(EndstopStateRs("z_probe", false), EndstopRsDecoder.decode("z_probe: open"))
         }
 
+        @Test
+        fun `both line kinds are one family a host can match in one place`() {
+            // The reason EndstopRs exists. One PrinterState arm is told about the whole M119 report
+            // without enumerating the header and the state line separately.
+            for (line in listOf("Reporting endstop status", "x_min: open")) {
+                assertTrue(MarlinRsDecoder.decode(line) is EndstopRs<*>) { "not an EndstopRs: $line" }
+            }
+        }
+
         @ParameterizedTest
         @ValueSource(strings = ["x_min", "x_max", "x2_min", "y2_max", "z3_min", "z_probe", "probe_en", "filament"])
         fun `every endstop name Marlin writes decodes`(name: String) {

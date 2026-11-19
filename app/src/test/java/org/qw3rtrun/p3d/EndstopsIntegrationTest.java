@@ -3,37 +3,34 @@ package org.qw3rtrun.p3d;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The endstops - issue #35's feature, reduced from its original proposal.
+ * The endstops - issue #35's feature, redone after its first shipped shape was reopened.
  *
- * <h2>What #35 asked for, and what this builds instead</h2>
+ * <h2>Why this is the second version of this test</h2>
  *
- * <p>The issue proposed a generic {@code MultilineRs} marker plus a transport-level "accumulate
- * lines until {@code ok}" mechanism, naming {@code M119} and {@code M503} as the examples. Neither
- * needed it: {@code :gcode} already read both as one event per line, because every line of either
- * answer stands on its own - {@code x_min: open} means the same thing whether or not its header
- * arrived, which is exactly the property a list does <strong>not</strong> have ({@code M20}'s
- * listing is the case that genuinely needs accumulation, and {@code :gcode}'s own
- * {@code SdFileListReader} already does it, stateful and owned by the caller, which
- * {@code :backend:terminal} already uses). {@code :backend:terminal} needed no change at all: its
- * {@code HostTerminal.ReplyFlux} already forwards every decoded reply one at a time, and a generic
- * "accumulate until {@code ok}" rule would have been actively wrong there - an unsolicited line
- * (a {@code busy:} notice, an auto-report, {@code Done printing file}) can land between a command
- * and the {@code ok} that answers it without being part of that answer at all.
+ * <p>The first pass (PR #142) correctly rejected issue #35's original proposal - a generic
+ * {@code MultilineRs} marker plus a transport-level "accumulate every line until {@code ok}"
+ * mechanism - because a rule that generic would swallow unrelated traffic (a {@code busy:} notice,
+ * an auto-report) that can genuinely land between some other command and its {@code ok} on this
+ * wire. That measurement stood. What it then shipped instead was wrong in a different way: it kept
+ * {@code :gcode}'s per-line decode ({@code EndstopReportHeader}, then one {@code EndstopStateRs} per
+ * endstop) streaming all the way to the browser as <strong>N separate events</strong>, with
+ * {@code EndstopsControl} only <em>holding</em> the latest set for a late subscriber. The repo
+ * owner's correction: one {@code M119} read has to cross {@code PrinterState} and reach
+ * {@code /stream} as <strong>exactly one event</strong> - an {@code EndstopReport} carrying every
+ * state, not a header plus a run of state events a page has to reassemble.
  *
- * <p>What was missing was narrower: {@code M119}'s reply family had no shared interface for
- * {@code :backend:core} to match in one arm (unlike {@code M503}'s {@code SettingsRs} and the SD
- * card family's {@code SdCardRs}), and nothing held the states for a late subscriber - a diagnostics
- * panel opened after somebody else pressed the button got nothing, unlike {@code M503}'s settings.
- * This test proves the fix the way {@code EepromSettingsIntegrationTest} proves {@code M503}'s: both
- * ends of the round trip, the command reaching the machine and the event reaching the browser -
- * this repository has shipped three complete, green, inert features that a one-ended test would
- * have passed.
+ * <p>The fix is narrower than it sounds: {@code :backend:terminal}'s {@code EndstopReportReader}
+ * (mirroring {@code :gcode}'s own {@code SdFileListReader} for {@code M20}) folds every line of one
+ * {@code M119} answer into one {@code EndstopReport} before {@code PrinterState} ever sees it, scoped
+ * to "lines that belong to this family" rather than "everything until {@code ok}" - which is what
+ * keeps this safe against exactly the interleaving the first pass was right to worry about.
  *
  * <h2>What was measured, and what was not</h2>
  *
@@ -41,20 +38,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * MACHINE_TYPE:MarlinSim} on {@code localhost:8099} via {@code GCodeLiveProbe} on 2026-11-19:
  * {@code M119} answers {@code Reporting endstop status} then one {@code <name>: open|TRIGGERED}
  * line per endstop - three on that build ({@code x_min}, {@code y_min}, {@code z_min}) - then
- * {@code ok P15 B3}. No {@code Cap:} line names it and no refusal of it has been observed on any
- * firmware this repository has measured, so {@link MockPrinter} answers it unconditionally and this
- * suite asserts no refusal branch - unlike {@code M503}'s {@code DISABLE_M503} case, there is nothing
- * UNMEASURED to avoid asserting on here.
+ * {@code ok P15 B3}. A second probe, {@code MultilineInterleaveProbe}, ran a continuous
+ * {@code M155 S1} temperature auto-report alongside M119 reads on 2026-11-19 and found nothing lands
+ * between the first line of an answer and the {@code ok} that ends it - an auto-report tick arrives
+ * either just before or just after the whole burst, never inside it, which is the fact that makes
+ * family-scoped accumulation safe here. No {@code Cap:} line names {@code M119} and no refusal of it
+ * has been observed on any firmware this repository has measured, so {@link MockPrinter} answers it
+ * unconditionally and this suite asserts no refusal branch.
  */
 class EndstopsIntegrationTest extends FarmIntegrationTest {
 
     /**
-     * Three lines on the wire become three events reaching the browser, in the firmware's own
-     * order and with the header leading them - the count matters because the failure this guards
-     * against is a host that reads the first line and republishes nothing else.
+     * One {@code M119} read, one event - the count matters because the failure this guards against
+     * is exactly what the previous pass shipped: the right bytes on the wire, decoded correctly, and
+     * still N separate events reaching the browser instead of one.
      */
     @Test
-    void readingTheEndstopsBringsEveryLineToTheBrowser() {
+    void readingTheEndstopsBringsExactlyOneEventToTheBrowser() {
         var printer = machine(MockPrinter.marlin());
         var id = register("endstops", printer);
         var events = connectAndSettle(id, printer);
@@ -62,78 +62,80 @@ class EndstopsIntegrationTest extends FarmIntegrationTest {
         command(id, "/endstops/read").expectStatus().isOk();
 
         await("M119 to reach the machine", () -> printer.sent("M119"));
-        events.await("EndstopStateRs");
+        events.await("EndstopReport");
 
-        await("every endstop line to reach the browser",
-                () -> events.allOf("EndstopStateRs").size() >= 3);
-        assertTrue(events.saw("EndstopReportHeader"), "the heading arrives live too: " + events.types());
+        quiet();
+        assertEquals(1, events.allOf("EndstopReport").size(),
+                "one M119 answer has to cross as one event, not one per line: " + events.types());
 
-        var names = events.allOf("EndstopStateRs").stream().map(e -> e.get("name")).toList();
+        var report = events.allOf("EndstopReport").getFirst();
+        @SuppressWarnings("unchecked")
+        var states = (List<Map<String, Object>>) report.get("states");
+        var names = states.stream().map(s -> s.get("name")).toList();
         assertEquals(List.of("x_min", "y_min", "z_min"), names,
                 "the firmware's own order, not an invented one");
 
-        var zMin = events.allOf("EndstopStateRs").stream()
-                .filter(e -> "z_min".equals(e.get("name"))).findFirst().orElseThrow();
+        var zMin = states.stream().filter(s -> "z_min".equals(s.get("name"))).findFirst().orElseThrow();
         assertEquals(Boolean.TRUE, zMin.get("triggered"), "z_min was measured TRIGGERED");
     }
 
     /**
      * The snapshot half of the aggregate's contract, and the reason {@code EndstopsControl} exists
      * rather than the replies being simply forwarded - without it a panel opened after somebody else
-     * pressed the button shows nothing, with no way out but asking again.
+     * pressed the button is handed nothing. Also one event, for the same reason as above: the
+     * snapshot replays what the live stream carried, which is now one {@code EndstopReport}.
      */
     @Test
-    void aPanelOpenedLaterIsHandedTheStatesAlready() {
+    void aPanelOpenedLaterIsHandedTheReportAlready() {
         var printer = machine(MockPrinter.marlin());
         var id = register("late subscriber", printer);
         var first = connectAndSettle(id, printer);
 
         command(id, "/endstops/read").expectStatus().isOk();
-        await("the report to arrive once", () -> first.allOf("EndstopStateRs").size() >= 3);
+        first.await("EndstopReport");
 
         try (var later = watch(id)) {
-            later.await("EndstopStateRs");
-            await("the snapshot to carry every state",
-                    () -> later.allOf("EndstopStateRs").size() >= 3);
-            assertEquals(3, later.allOf("EndstopStateRs").size(),
+            later.await("EndstopReport");
+            quiet();
+            assertEquals(1, later.allOf("EndstopReport").size(),
                     "the snapshot is the report once, not the report twice: "
-                            + later.allOf("EndstopStateRs"));
-            assertFalse(later.saw("EndstopReportHeader"),
-                    "the heading is scaffolding and is not held for a late subscriber: "
-                            + later.types());
+                            + later.allOf("EndstopReport"));
+            @SuppressWarnings("unchecked")
+            var states = (List<Map<String, Object>>) later.allOf("EndstopReport").getFirst().get("states");
+            assertEquals(3, states.size(), "every endstop, handed to a subscriber that asked nothing");
         }
     }
 
     /**
-     * A second read answers the firmware's current switches, and the held state moves with it in
-     * place rather than appending a second row for the same endstop.
+     * A second read answers the firmware's current switches, and a late subscriber is handed the
+     * report that reflects them - wholesale, not merged line by line, because one {@code M119}
+     * answer always states every endstop it has.
      */
     @Test
-    void aSecondReadReplacesTheHeldStateRatherThanDuplicatingIt() {
+    void aSecondReadReplacesTheHeldReportRatherThanDuplicatingIt() {
         var printer = machine(MockPrinter.marlin());
         var id = register("moved switch", printer);
         var events = connectAndSettle(id, printer);
 
         command(id, "/endstops/read").expectStatus().isOk();
-        await("the first report", () -> events.allOf("EndstopStateRs").size() >= 3);
+        events.await("EndstopReport");
 
         printer.setEndstop("x_min", true);
         command(id, "/endstops/read").expectStatus().isOk();
 
-        await("the moved switch to be reported",
-                () -> events.allOf("EndstopStateRs").stream()
-                        .filter(e -> "x_min".equals(e.get("name")))
-                        .anyMatch(e -> Boolean.TRUE.equals(e.get("triggered"))));
+        await("the second report to arrive", () -> events.allOf("EndstopReport").size() >= 2);
 
         try (var later = watch(id)) {
-            later.await("EndstopStateRs");
-            await("the snapshot to settle", () -> later.allOf("EndstopStateRs").size() >= 3);
-            assertEquals(3, later.allOf("EndstopStateRs").size(),
-                    "one row per endstop, not one per read: " + later.allOf("EndstopStateRs"));
-            var xMin = later.allOf("EndstopStateRs").stream()
-                    .filter(e -> "x_min".equals(e.get("name"))).findFirst().orElseThrow();
+            later.await("EndstopReport");
+            quiet();
+            assertEquals(1, later.allOf("EndstopReport").size(),
+                    "one held report, not one per read: " + later.allOf("EndstopReport"));
+            @SuppressWarnings("unchecked")
+            var states = (List<Map<String, Object>>) later.allOf("EndstopReport").getFirst().get("states");
+            var xMin = states.stream().filter(s -> "x_min".equals(s.get("name"))).findFirst().orElseThrow();
             assertEquals(Boolean.TRUE, xMin.get("triggered"),
                     "the snapshot carries the moved switch, not the first reading");
+            assertEquals(3, states.size(), "the full set, not just the endstop that moved");
         }
     }
 
@@ -150,7 +152,7 @@ class EndstopsIntegrationTest extends FarmIntegrationTest {
         var first = connectAndSettle(id, printer);
 
         command(id, "/endstops/read").expectStatus().isOk();
-        await("the report to arrive", () -> first.allOf("EndstopStateRs").size() >= 3);
+        first.await("EndstopReport");
         first.close();
 
         disconnect(id);
@@ -158,7 +160,7 @@ class EndstopsIntegrationTest extends FarmIntegrationTest {
 
         try (var fresh = watch(id)) {
             quiet();
-            assertTrue(fresh.allOf("EndstopStateRs").isEmpty(),
+            assertTrue(fresh.allOf("EndstopReport").isEmpty(),
                     "the previous session's switches belonged to the previous session: "
                             + fresh.types());
         }
@@ -173,7 +175,30 @@ class EndstopsIntegrationTest extends FarmIntegrationTest {
 
         command(id, "/endstops/read").expectStatus().isOk();
 
-        await("every endstop line to reach the browser",
-                () -> events.allOf("EndstopStateRs").size() >= 3);
+        events.await("EndstopReport");
+        quiet();
+        assertEquals(1, events.allOf("EndstopReport").size());
+    }
+
+    /**
+     * The regression the previous pass's own suite could not catch, because it asserted the thing
+     * that was wrong: this pins that the header never reaches the browser as a type of its own
+     * (it is folded into {@code EndstopReport} before the aggregate sees it), and that no
+     * {@code EndstopStateRs} ever reaches {@code /stream} standalone.
+     */
+    @Test
+    void theRawPerLineTypesNeverReachTheBrowser() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("no raw lines", printer);
+        var events = connectAndSettle(id, printer);
+
+        command(id, "/endstops/read").expectStatus().isOk();
+        events.await("EndstopReport");
+
+        quiet();
+        assertFalse(events.saw("EndstopReportHeader"),
+                "the heading is a decode-layer detail now, not a browser-visible type: " + events.types());
+        assertFalse(events.saw("EndstopStateRs"),
+                "a state line never travels on its own anymore: " + events.types());
     }
 }

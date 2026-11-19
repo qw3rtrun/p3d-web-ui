@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -10,11 +11,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The machine's settings - issue #88's feature, the five operations of {@code M500}-{@code M504}.
- * Every test asserts <strong>both</strong> ends of one round trip, the command reaching the machine
- * and the event reaching the browser - this repository has shipped three complete, green, inert
- * features (the motion commands, then the Storage tab's commands, then its replies) that a
- * one-ended test would have passed; {@code SdCardIntegrationTest} says the same thing at length.
+ * The machine's settings - issue #88's feature, the five operations of {@code M500}-{@code M504} -
+ * and issue #35's redo of how a read reaches the browser. Every test asserts <strong>both</strong>
+ * ends of one round trip, the command reaching the machine and the event reaching the browser - this
+ * repository has shipped three complete, green, inert features (the motion commands, then the
+ * Storage tab's commands, then its replies) that a one-ended test would have passed;
+ * {@code SdCardIntegrationTest} says the same thing at length.
  *
  * <h2>What was measured, and what was not</h2>
  *
@@ -29,6 +31,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code M504} answers {@code echo:EEPROM OK}; its <em>failure</em> text is UNMEASURED, so nothing
  * here asserts a negative verdict and the reply carries the message verbatim rather than a boolean.
  *
+ * <p>A second probe, {@code MultilineInterleaveProbe}, ran a continuous {@code M155 S1} temperature
+ * auto-report alongside {@code M503} reads on 2026-11-19 and found nothing lands between the first
+ * line of a dump and the {@code ok} that ends it - a tick arrives before or after the whole burst,
+ * never inside it. That is what issue #35's redo relies on: {@code :backend:terminal}'s
+ * {@code SettingsReportReader} folds every line of one {@code M503} burst (or a lone read-back like
+ * a bare {@code M92}'s answer) into one {@code SettingsReport} before {@code PrinterState} ever
+ * sees it, so one read crosses as one event rather than as a run of {@code SettingsSection}/
+ * {@code SettingsValue} events a page has to reassemble itself. {@code EepromReport} ({@code M504})
+ * is untouched - it is never part of an M503 burst and still arrives as its own event.
+ *
  * <h2>The configuration axis is which half of the EEPROM story the firmware tells</h2>
  *
  * <p>Three profiles, because issue #88's two named "capabilities" are not the same kind of thing:
@@ -42,15 +54,31 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class EepromSettingsIntegrationTest extends FarmIntegrationTest {
 
+    /** One entry of a {@code SettingsReport} - a section heading has {@code title}, a value has
+     * {@code code}/{@code command}; the two shapes are disjoint by field name, which is how a reader
+     * (and the browser) tells them apart with no type tag on the entry itself. */
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> entriesOf(Map<String, Object> report) {
+        return (List<Map<String, Object>>) report.get("entries");
+    }
+
+    private static List<Map<String, Object>> values(List<Map<String, Object>> entries) {
+        return entries.stream().filter(e -> e.containsKey("code")).toList();
+    }
+
+    private static List<Map<String, Object>> sections(List<Map<String, Object>> entries) {
+        return entries.stream().filter(e -> e.containsKey("title")).toList();
+    }
+
     // ------------------------------------------------------------------ reading the settings
 
     /**
-     * Twenty-five lines on the wire become twenty-five messages; the count is asserted because the
-     * failure this guards against is a host that decodes the first line and drops the rest -
-     * precisely what happened before {@code SdFileListReader} existed.
+     * One {@code M503} read, one event - the count matters because the failure this guards against
+     * is exactly what issue #35 was reopened over: the right bytes decoded correctly and still N
+     * separate events reaching the browser, one per line, instead of one.
      */
     @Test
-    void readingTheSettingsBringsTheWholeReportToTheBrowser() {
+    void readingTheSettingsBringsExactlyOneEventToTheBrowser() {
         var printer = machine(MockPrinter.marlin());
         var id = register("has eeprom", printer);
         var events = connectAndSettle(id, printer);
@@ -58,21 +86,23 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         command(id, "/settings/read").expectStatus().isOk();
 
         await("M503 to reach the machine", () -> printer.sent("M503"));
-        events.await("SettingsValue");
+        events.await("SettingsReport");
 
-        await("every reported value to reach the browser",
-                () -> events.allOf("SettingsValue").size() >= 13);
+        quiet();
+        assertEquals(1, events.allOf("SettingsReport").size(),
+                "one M503 answer has to cross as one event: " + events.types());
 
-        var codes = events.allOf("SettingsValue").stream().map(v -> v.get("code")).toList();
+        var entries = entriesOf(events.allOf("SettingsReport").getFirst());
+        var codes = values(entries).stream().map(v -> v.get("code")).toList();
         assertEquals(List.of("G21", "M104", "M149", "M200", "M92", "M203", "M201", "M204",
                         "M205", "M206", "M145", "M145", "M301"), codes,
                 "the report in the order the firmware wrote it, both M145 presets kept");
 
-        var sections = events.allOf("SettingsSection").stream().map(s -> s.get("title")).toList();
-        assertTrue(sections.contains("Steps per unit"), "sections group the tab: " + sections);
-        assertTrue(sections.contains(
+        var titles = sections(entries).stream().map(s -> s.get("title")).toList();
+        assertTrue(titles.contains("Steps per unit"), "sections group the tab: " + titles);
+        assertTrue(titles.contains(
                         "Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>)"),
-                "a title with brackets and angle brackets survives decoding: " + sections);
+                "a title with brackets and angle brackets survives decoding: " + titles);
     }
 
     /**
@@ -88,11 +118,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         var events = connectAndSettle(id, printer);
 
         command(id, "/settings/read").expectStatus().isOk();
-        await("the steps-per-unit line",
-                () -> events.allOf("SettingsValue").stream()
-                        .anyMatch(v -> "M92".equals(v.get("code"))));
+        var report = events.await("SettingsReport");
 
-        var steps = events.allOf("SettingsValue").stream()
+        var steps = values(entriesOf(report)).stream()
                 .filter(v -> "M92".equals(v.get("code")))
                 .findFirst().orElseThrow();
         assertEquals("M92 X80.00 Y80.00 Z400.00 E500.00", steps.get("command"));
@@ -101,24 +129,27 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     /**
      * The snapshot half of the aggregate's contract, and the reason {@code EEPROMSettingsControl}
      * exists rather than the replies being simply forwarded - without it a page opened after
-     * somebody else pressed Read shows an empty table with no way out but asking again.
+     * somebody else pressed Read shows an empty table with no way out but asking again. One event,
+     * for the same reason as the live read: the snapshot replays what the stream carried.
      */
     @Test
-    void aTabOpenedLaterIsHandedTheSettingsAlready() {
+    void aTabOpenedLaterIsHandedTheReportAlready() {
         var printer = machine(MockPrinter.marlin());
         var id = register("late subscriber", printer);
         var first = connectAndSettle(id, printer);
 
         command(id, "/settings/read").expectStatus().isOk();
-        await("the report to arrive once", () -> first.allOf("SettingsValue").size() >= 13);
+        first.await("SettingsReport");
 
         try (var later = watch(id)) {
-            later.await("SettingsValue");
-            await("the snapshot to carry the whole report",
-                    () -> later.allOf("SettingsValue").size() >= 13);
-            assertEquals(13, later.allOf("SettingsValue").size(),
+            later.await("SettingsReport");
+            quiet();
+            assertEquals(1, later.allOf("SettingsReport").size(),
                     "the snapshot is the report once, not the report twice: "
-                            + later.allOf("SettingsValue"));
+                            + later.allOf("SettingsReport"));
+            var entries = entriesOf(later.allOf("SettingsReport").getFirst());
+            assertEquals(13, values(entries).size(),
+                    "the whole report, handed to a subscriber that asked nothing");
         }
     }
 
@@ -198,7 +229,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
     /**
      * The aggregate sends its own {@code M503} behind the {@code M501}, so the browser is told the
      * reverted values; the assertion is the value arriving on the stream, not the {@code M503}
-     * being sent - the command is the mechanism, the event is the promise.
+     * being sent - the command is the mechanism, the event is the promise. A lone read-back would
+     * also be a single-entry {@code SettingsReport}, but the aggregate's own re-read behind
+     * {@code M501} is a full {@code M503}, so this still sees the whole report.
      */
     @Test
     void revertingReReadsTheSettingsBecauseTheFirmwareWillNotSayWhatChanged() {
@@ -216,8 +249,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         await("live memory to be back where it started",
                 () -> "M92 X80.00 Y80.00 Z400.00 E500.00".equals(printer.setting("M92")));
 
-        await("the browser to be told the reverted value", () -> events.allOf("SettingsValue")
-                .stream().anyMatch(v -> "M92 X80.00 Y80.00 Z400.00 E500.00".equals(v.get("command"))));
+        await("the browser to be told the reverted value", () -> events.allOf("SettingsReport")
+                .stream().anyMatch(report -> values(entriesOf(report)).stream()
+                        .anyMatch(v -> "M92 X80.00 Y80.00 Z400.00 E500.00".equals(v.get("command")))));
         assertTrue(printer.sent("M503"),
                 "an M501 that is not followed by a re-read leaves every reader stale");
     }
@@ -240,8 +274,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         await("the defaults to be in live memory",
                 () -> "M104 S210 B250 F0.10".equals(printer.setting("M104")));
 
-        await("the browser to be told the defaulted value", () -> events.allOf("SettingsValue")
-                .stream().anyMatch(v -> "M104 S210 B250 F0.10".equals(v.get("command"))));
+        await("the browser to be told the defaulted value", () -> events.allOf("SettingsReport")
+                .stream().anyMatch(report -> values(entriesOf(report)).stream()
+                        .anyMatch(v -> "M104 S210 B250 F0.10".equals(v.get("command")))));
 
         command(id, "/settings/revert").expectStatus().isOk();
         await("reverting to undo the reset",
@@ -265,7 +300,9 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
 
     /**
      * Asserted verbatim because {@code echo:EEPROM OK} is what was measured; the failing verdict's
-     * text was not (UNMEASURED), so there is no test for it and no boolean in the reply to invite one.
+     * text was not (UNMEASURED), so there is no test for it and no boolean in the reply to invite
+     * one. {@code M504}'s verdict is untouched by issue #35 - it is never part of an {@code M503}
+     * burst, so it still arrives as its own {@code EepromReport} event.
      */
     @Test
     void validatingTheEepromReportsItsVerdict() {
@@ -334,7 +371,7 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         assertEquals("M503", refusal.get("command"));
 
         quiet();
-        assertFalse(events.saw("SettingsValue"),
+        assertFalse(events.saw("SettingsReport"),
                 "a firmware that has no M503 cannot have reported a setting: " + events.types());
     }
 
@@ -372,7 +409,7 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         var first = connectAndSettle(id, printer);
 
         command(id, "/settings/read").expectStatus().isOk();
-        await("the report to arrive", () -> first.allOf("SettingsValue").size() >= 13);
+        first.await("SettingsReport");
         first.close();
 
         disconnect(id);
@@ -384,7 +421,7 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         // tab on a just-reconnected machine and nothing from before is presented as current.
         try (var fresh = watch(id)) {
             quiet();
-            assertTrue(fresh.allOf("SettingsValue").isEmpty(),
+            assertTrue(fresh.allOf("SettingsReport").isEmpty(),
                     "the previous session's report belonged to the previous session: "
                             + fresh.types());
         }
@@ -433,8 +470,8 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         var watching = connectAndSettle(id, printer);
 
         command(id, "/settings/read").expectStatus().isOk();
-        await("the report to arrive", () -> watching.allOf("SettingsValue").size() >= 13);
-        var reportEndedAt = watching.types().lastIndexOf("SettingsValue");
+        watching.await("SettingsReport");
+        var reportEndedAt = watching.types().lastIndexOf("SettingsReport");
 
         dropTheLinkAndWait(id, printer);
 
@@ -458,14 +495,14 @@ class EepromSettingsIntegrationTest extends FarmIntegrationTest {
         var watching = connectAndSettle(id, printer);
 
         command(id, "/settings/read").expectStatus().isOk();
-        await("the report to arrive", () -> watching.allOf("SettingsValue").size() >= 13);
+        watching.await("SettingsReport");
 
         dropTheLinkAndWait(id, printer);
         watching.await("SessionStarted");
 
         try (var fresh = watch(id)) {
             quiet();
-            assertTrue(fresh.allOf("SettingsValue").isEmpty(),
+            assertTrue(fresh.allOf("SettingsReport").isEmpty(),
                     "a stream opened after the boundary must carry nothing from before it: "
                             + fresh.types());
         }

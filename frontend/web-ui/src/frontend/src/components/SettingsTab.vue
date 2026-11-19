@@ -8,11 +8,10 @@ import type {
     EepromReport,
     EventMessage,
     FarmRole,
-    SettingsSection,
-    SettingsValue,
+    SettingsReport,
     UnknownCommand,
 } from '../api/types'
-import {isUsable} from '../api/types'
+import {isSettingsSection, isUsable} from '../api/types'
 import {useSessionScope} from '../session'
 import PreviousSession from './PreviousSession.vue'
 
@@ -117,27 +116,28 @@ const readAndEmpty = computed(() =>
 
 // ---------------------------------------------------------------- the stream
 
-// Sections and values are separate events, interleaved in firmware order with nothing numbering the
-// lines, so a value belongs to the most recent section ahead of it, tracked as the stream arrives.
-function openSection(title: string) {
-    // A heading already used means a second report has begun (another Read, or a server re-read
-    // behind M501) - start over rather than appending, so a fresh report does not render twice.
-    // Titles are distinct within one report; "Material heatup parameters" holds two M145 lines under
-    // one heading rather than appearing twice.
-    if (groups.value.some(group => group.title === title)) {
-        groups.value = []
+// One read, one SettingsReport event (issue #35) - rebuilt wholesale in a single pass rather than
+// tracked incrementally as sections and values arrived. That is a direct consequence of the fix:
+// the previous shape sent sections and values as separate stream events with nothing numbering
+// them, so a repeated heading was this component's only signal that a second report had begun
+// (another Read, or a server re-read behind M501); one atomic report removes the need for that
+// heuristic entirely, since there is no "half the next report has already arrived" state to guard.
+function applyReport(report: SettingsReport) {
+    const next: Group[] = []
+    for (const entry of report.entries) {
+        if (isSettingsSection(entry)) {
+            next.push({title: entry.title, values: []})
+        } else {
+            if (next.length === 0) {
+                next.push({title: null, values: []})
+            }
+            next[next.length - 1].values.push({code: entry.code, command: entry.command})
+        }
     }
-    groups.value.push({title, values: []})
-}
-
-function addValue(value: Value) {
-    if (groups.value.length === 0) {
-        groups.value.push({title: null, values: []})
-    }
-    groups.value[groups.value.length - 1].values.push(value)
+    groups.value = next
     answered.value = true
     reading.value = false
-    // This line belongs to the session now running, so whatever is on screen does too.
+    // This report belongs to the session now running, so whatever is on screen does too.
     renewed()
 }
 
@@ -151,15 +151,9 @@ function onMessage(message: EventMessage) {
             state.value = (message.event as ConnectionStateChanged).to
             break
 
-        case 'SettingsSection':
-            openSection((message.event as SettingsSection).title)
+        case 'SettingsReport':
+            applyReport(message.event as SettingsReport)
             break
-
-        case 'SettingsValue': {
-            const value = message.event as SettingsValue
-            addValue({code: value.code, command: value.command})
-            break
-        }
 
         case 'EepromReport':
             verdict.value = (message.event as EepromReport).message

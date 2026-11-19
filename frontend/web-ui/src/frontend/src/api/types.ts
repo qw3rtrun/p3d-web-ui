@@ -319,23 +319,35 @@ export interface SdUploadProgressed {
 }
 
 /**
- * `type: "SettingsSection"` - a heading in `M503`'s report, naming the group of values under it.
+ * `type: "SettingsReport"` - the whole of one settings answer, in one event (issue #35): a full
+ * `M503` dump, or a lone read-back like a bare `M92`'s answer - both fold into this on the server,
+ * uniformly, one wire shape for the family whatever its length. A previous shape sent sections and
+ * values as separate stream events for a panel to reassemble; that was reopened in favour of one
+ * event per read.
  *
- * Sections and values are interleaved on the stream in firmware order, with nothing nesting one in
- * the other, so a value belongs to the most recent section ahead of it - grouping means tracking
- * that as it comes in.
+ * `entries` carries sections and values interleaved in firmware order exactly as the dump arrived -
+ * a value belongs to the most recent section ahead of it, if any (`M503 S0` writes values with no
+ * headings at all). **Each entry has no type tag of its own**: a section has `title`, a value has
+ * `code`/`command`, and the two shapes are disjoint by field name - see {@link isSettingsSection}.
+ */
+export interface SettingsReport {
+    entries: SettingsReportEntry[]
+}
+
+/**
+ * A heading in a {@link SettingsReport}, naming the group of values under it.
  *
  * `title` can contain its own punctuation - `Acceleration (units/s2) (P<print-accel>
  * R<retract-accel> T<travel-accel>)` is one real section name - so it is rendered as text, never
  * parsed. Eleven sections on the measured build, one of which ("Material heatup parameters") holds
  * two values.
  */
-export interface SettingsSection {
+export interface SettingsReportSection {
     title: string
 }
 
 /**
- * `type: "SettingsValue"` - one setting, as the G-code that would restore it.
+ * One setting inside a {@link SettingsReport}, as the G-code that would restore it.
  *
  * The report is G-code, deliberately: `command` is the firmware's own line - `M92 X80.00 Y80.00
  * Z400.00 E500.00` - with no parsed model on the server, since the report already carries Marlin's
@@ -347,13 +359,35 @@ export interface SettingsSection {
  *
  * A trailing comment stays in `command` verbatim (`G21 ; (mm)`), so tokenising it must stop at `;`.
  */
-export interface SettingsValue {
+export interface SettingsReportValue {
     code: string
     command: string
 }
 
+/** One line of a {@link SettingsReport} - a {@link SettingsReportSection} or a
+ * {@link SettingsReportValue}, told apart structurally; see {@link isSettingsSection}. */
+export type SettingsReportEntry = SettingsReportSection | SettingsReportValue
+
+/** The structural discriminator for a {@link SettingsReportEntry} - there is no `type` field per
+ * entry, only per message, so a reader checks for the field a section alone has. */
+export function isSettingsSection(entry: SettingsReportEntry): entry is SettingsReportSection {
+    return 'title' in entry
+}
+
 /**
- * `type: "EndstopStateRs"` - one endstop, from `M119`'s report.
+ * `type: "EndstopReport"` - the whole of `M119`'s answer, in one event (issue #35). The server
+ * folds the firmware's heading and one line per endstop into this before it ever reaches the
+ * browser - never one event per endstop, which is what a previous shape sent and was reopened.
+ *
+ * `states` replaces wholesale on every read, never merges: `M119` always reports every endstop it
+ * has, so there is nothing partial to combine with what came before.
+ */
+export interface EndstopReport {
+    states: EndstopState[]
+}
+
+/**
+ * One endstop inside an {@link EndstopReport}.
  *
  * `name` is the firmware's own spelling and is all the identity an endstop has: `x_min`, `y_max`,
  * `z_probe`, `probe_en`, `filament`, plus duplicates like `x2_min` and `z3_min`. Which names a
@@ -363,25 +397,11 @@ export interface SettingsValue {
  *
  * `triggered` is a real boolean, not Marlin's `open`/`TRIGGERED` text: the decode happens on the
  * server, so nothing here compares strings.
- *
- * A re-read answers the same names, and the server merges each line in the place it already holds,
- * so the order is stable across refreshes. The last states are part of the aggregate's snapshot, so
- * a panel opened after somebody else pressed Read is handed them without asking again.
  */
-export interface EndstopStateRs {
+export interface EndstopState {
     name: string
     triggered: boolean
 }
-
-/**
- * `type: "EndstopReportHeader"` - `Reporting endstop status`, the line `M119` writes ahead of the
- * state lines. Carries nothing.
- *
- * Scaffolding rather than information, and the server does not keep it: it arrives live at the start
- * of a report and is absent from the snapshot, so a panel may use it to clear a stale list but must
- * not require it to render one.
- */
-export type EndstopReportHeader = Record<string, never>
 
 /**
  * `type: "EepromReport"` - `M504`'s verdict on the stored settings.

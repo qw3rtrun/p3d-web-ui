@@ -12,7 +12,7 @@ import org.qw3rtrun.p3d.api.msg.TerminalTraffic;
 import org.qw3rtrun.p3d.api.msg.SdUploadState;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
-import org.qw3rtrun.p3d.g.marlin.event.EndstopReportHeader;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopReport;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopStateRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.OkTemperatureRs;
@@ -21,6 +21,7 @@ import org.qw3rtrun.p3d.g.marlin.event.SdCardOk;
 import org.qw3rtrun.p3d.g.marlin.event.SdFile;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileOpened;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsReport;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsSection;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsValue;
 import org.qw3rtrun.p3d.g.marlin.event.UnknownCommand;
@@ -392,48 +393,58 @@ class EventStreamContractTest {
 
     // ---------------------------------------------------------------- the settings report
 
-    // M503's report as the two type strings the Settings tab switches on. Sections and values are
-    // separate events, interleaved in firmware order with nothing nesting one in the other, so a
-    // value belongs to the most recent section ahead of it. command is the firmware's own line,
-    // asserted as a string - deliberately no parsed model, so the tab tokenises this text itself.
+    /**
+     * Issue #35's redo: a whole {@code M503} burst (or a lone {@code M92}-style read-back) crosses
+     * as one {@code SettingsReport} event, not as a run of {@code SettingsSection}/
+     * {@code SettingsValue} events the page had to reassemble itself - a previous pass shipped the
+     * latter and it was reopened. {@code entries} carries sections and values interleaved in
+     * firmware order, each entry with <strong>no type tag of its own</strong>: a section has
+     * {@code title}, a value has {@code code}/{@code command}, and the two shapes are disjoint by
+     * field name, which is how the browser tells them apart (see {@code isSettingsSection} in
+     * {@code api/types.ts}). {@code command} is the firmware's own line, asserted as a string -
+     * deliberately no parsed model, so the tab tokenises this text itself. Angle brackets in a title
+     * reach the browser verbatim (a real heading off the measured build) and would be read as markup
+     * by unescaped interpolation, so the tab must render it as text. {@code code} is not a key - the
+     * measured build's "Material heatup parameters" section holds two {@code M145} lines, one
+     * preset each, so two entries share a code with different {@code command} text and both must
+     * show.
+     */
     @Test
-    void theSettingsReportCarriesItsSectionsAndItsCommandText() {
-        var section = mapper.readTree(streamed(new SettingsSection("Steps per unit")));
-        assertEquals("SettingsSection", section.get("type").asString());
-        assertEquals("Steps per unit", section.get("event").get("title").asString());
+    void theSettingsReportCarriesSectionsAndValuesAsOneEventWithNoTypeTagPerEntry() {
+        var payload = mapper.readTree(streamed(new SettingsReport(List.of(
+                new SettingsSection(
+                        "Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>)"),
+                new SettingsValue("M92", "M92 X80.00 Y80.00 Z400.00 E500.00"),
+                new SettingsValue("M145", "M145 S0 H180 B60 F0"),
+                new SettingsValue("M145", "M145 S1 H240 B110 F0")))));
 
-        var value = mapper.readTree(streamed(
-                new SettingsValue("M92", "M92 X80.00 Y80.00 Z400.00 E500.00")));
-        assertEquals("SettingsValue", value.get("type").asString());
-        assertEquals("M92", value.get("event").get("code").asString());
-        assertEquals("M92 X80.00 Y80.00 Z400.00 E500.00", value.get("event").get("command").asString());
-    }
-
-    // A real heading off the measured build. Angle brackets reach the browser verbatim and would be
-    // read as markup by unescaped interpolation, so the tab must render the title as text.
-    @Test
-    void aSectionTitleKeepsTheBracketsTheFirmwareWrote() {
-        var payload = mapper.readTree(streamed(new SettingsSection(
-                "Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>)")));
+        assertEquals("SettingsReport", payload.get("type").asString());
+        var entries = payload.get("event").get("entries");
 
         assertEquals("Acceleration (units/s2) (P<print-accel> R<retract-accel> T<travel-accel>)",
-                payload.get("event").get("title").asString());
+                entries.get(0).get("title").asString());
+        assertFalse(entries.get(0).has("code"), "a section entry has no code field");
+
+        assertEquals("M92", entries.get(1).get("code").asString());
+        assertEquals("M92 X80.00 Y80.00 Z400.00 E500.00", entries.get(1).get("command").asString());
+        assertFalse(entries.get(1).has("title"), "a value entry has no title field");
+
+        assertEquals("M145", entries.get(2).get("code").asString());
+        assertEquals("M145", entries.get(3).get("code").asString());
+        assertTrue(!entries.get(2).get("command").asString()
+                        .equals(entries.get(3).get("command").asString()),
+                "two presets under one code, which is why the code is not a key");
     }
 
-    // code is not a key: the measured build's "Material heatup parameters" section holds two M145
-    // lines, one preset each, so two events share a code with different commands - both must show.
+    /** An empty burst is still an answer - the machine said nothing, and that is not the same as
+     * nobody having asked. */
     @Test
-    void twoValuesCanShareACode() {
-        var first = mapper.readTree(streamed(
-                new SettingsValue("M145", "M145 S0 H180 B60 F0")));
-        var second = mapper.readTree(streamed(
-                new SettingsValue("M145", "M145 S1 H240 B110 F0")));
+    void anEmptySettingsReportIsAnEmptyArrayAndNotAbsence() {
+        var payload = mapper.readTree(streamed(new SettingsReport(List.of())));
 
-        assertEquals("M145", first.get("event").get("code").asString());
-        assertEquals("M145", second.get("event").get("code").asString());
-        assertTrue(!first.get("event").get("command").asString()
-                        .equals(second.get("event").get("command").asString()),
-                "two presets under one code, which is why the code is not a key");
+        assertEquals("SettingsReport", payload.get("type").asString());
+        assertTrue(payload.get("event").get("entries").isArray());
+        assertEquals(0, payload.get("event").get("entries").size());
     }
 
     // M504's verdict is a message on purpose: echo:EEPROM OK is the only answer ever measured (the
@@ -462,44 +473,40 @@ class EventStreamContractTest {
     // ---------------------------------------------------------------- the endstop report
 
     /**
-     * {@code M119}'s state lines, which travel as {@code :gcode}'s own reply - the same as
-     * {@code SettingsValue} does, with no envelope of this application's around them.
-     *
-     * <p>Two fields and both are read: {@code name} is the firmware's own spelling ({@code x_min},
+     * Issue #35's redo: a whole {@code M119} answer crosses as one {@code EndstopReport} event,
+     * carrying every endstop, not as a header event plus one state event per endstop - a previous
+     * pass shipped the latter and it was reopened. {@code states} is the only field, an array of
+     * {@code {name, triggered}}: {@code name} is the firmware's own spelling ({@code x_min},
      * {@code z_probe}), which is all the identity an endstop has, and {@code triggered} is a real
      * boolean rather than Marlin's {@code open}/{@code TRIGGERED} text - so a page switches on it
-     * rather than comparing strings in a case it has not seen. Which names arrive is the machine's
-     * business, so nothing may be keyed on a fixed set.
+     * rather than comparing strings in a case it has not seen. Which names arrive, and how many, is
+     * the machine's business, so nothing may be keyed on a fixed set. The heading
+     * ({@code Reporting endstop status}) never reaches the browser at all now - it is a decode-layer
+     * detail {@code :backend:terminal} folds away before the report is built.
      */
     @Test
-    void anEndstopStateCarriesItsNameAndWhetherItIsTriggered() {
-        var open = mapper.readTree(streamed(new EndstopStateRs("x_min", false)));
-        assertEquals("EndstopStateRs", open.get("type").asString());
-        assertEquals("x_min", open.get("event").get("name").asString());
-        assertFalse(open.get("event").get("triggered").asBoolean());
+    void anEndstopReportCarriesEveryStateAsOneEvent() {
+        var payload = mapper.readTree(streamed(new EndstopReport(List.of(
+                new EndstopStateRs("x_min", false),
+                new EndstopStateRs("z_min", true)))));
 
-        var triggered = mapper.readTree(streamed(new EndstopStateRs("z_min", true)));
-        assertEquals("EndstopStateRs", triggered.get("type").asString());
-        assertEquals("z_min", triggered.get("event").get("name").asString());
-        assertTrue(triggered.get("event").get("triggered").asBoolean());
+        assertEquals("EndstopReport", payload.get("type").asString());
+        var states = payload.get("event").get("states");
+        assertEquals("x_min", states.get(0).get("name").asString());
+        assertFalse(states.get(0).get("triggered").asBoolean());
+        assertEquals("z_min", states.get(1).get("name").asString());
+        assertTrue(states.get(1).get("triggered").asBoolean());
     }
 
-    /**
-     * The heading is an empty object under its own type, by design - the line itself is the whole
-     * content, and which machine it is about travels on {@code id}. Asserted to carry no fields so
-     * that adding one has to come through here and think about the browser first, the same guard
-     * {@code SessionStarted} gets. The aggregate does not keep it, so a page sees it only live - a
-     * panel attaching afterwards is handed the state lines without it.
-     */
+    /** An empty report is a header with no state lines behind it - still an answer, and distinct
+     * from no {@code M119} ever having been asked (which is simply no event at all). */
     @Test
-    void anEndstopReportHeaderCarriesItsTypeAndNothingElse() {
-        var payload = mapper.readTree(streamed(EndstopReportHeader.INSTANCE));
+    void anEmptyEndstopReportIsAnEmptyArrayAndNotAbsence() {
+        var payload = mapper.readTree(streamed(new EndstopReport(List.of())));
 
-        assertEquals("EndstopReportHeader", payload.get("type").asString());
-        assertTrue(payload.get("event").isObject(), "an object, not a null or a string");
-        assertEquals(0, payload.get("event").size(),
-                "a field here is a field the TypeScript client has to learn: "
-                        + payload.get("event"));
+        assertEquals("EndstopReport", payload.get("type").asString());
+        assertTrue(payload.get("event").get("states").isArray());
+        assertEquals(0, payload.get("event").get("states").size());
     }
 
     // M500's confirmation is a //action: line, not a reply of its own, and the whole of the

@@ -14,6 +14,7 @@ import org.qw3rtrun.p3d.frontend.command.PrintFile;
 import org.qw3rtrun.p3d.frontend.command.PrinterCommand;
 import org.qw3rtrun.p3d.frontend.command.ReadSettings;
 import org.qw3rtrun.p3d.frontend.command.ReleaseCard;
+import org.qw3rtrun.p3d.frontend.command.SendRawLine;
 import org.qw3rtrun.p3d.frontend.command.RequestPosition;
 import org.qw3rtrun.p3d.frontend.command.RequestTemperatureReport;
 import org.qw3rtrun.p3d.frontend.command.ResetSettingsToDefaults;
@@ -90,6 +91,15 @@ import java.util.UUID;
  * ran is observable on the stream as {@code SdUploadProgressed.binary}. {@code /sd/upload/cancel} is not a
  * Reactive Streams cancel: the content stops but {@code M29} still goes out, closing a short but
  * valid file; it answers 200 whether or not anything was running, and its only refusal is 404.
+ *
+ * <p><strong>{@code /terminal} is the one endpoint that takes G-code text</strong> (#135), and it is
+ * a narrow exception rather than an escape hatch: everything with a shape keeps its own endpoint and
+ * its own payload record, and a control that posted to {@code /terminal} to do what a named command
+ * should do would be a defect. See {@link PrinterCommand} and §6.3 of
+ * {@code doc/specs/INTEGRATION_TESTS_spec.md}. It is at least {@code OPERATOR}, like every other
+ * {@code POST} here; its companion {@code /terminal/stream} is readable by a {@code VIEWER}, like
+ * every other {@code GET} - so a viewer may watch the console and may not type into it, which
+ * {@code FarmSecurityTest} asserts rather than assumes.
  */
 @RestController
 @RequestMapping("/api-printer/{id}")
@@ -277,6 +287,26 @@ public class PrinterController {
     @PostMapping("/connect")
     public Mono<Void> connect(@PathVariable UUID id, @RequestBody Mono<ConnectCmd> cmd) {
         return cmd.flatMap(c -> Mono.from(printers.connect(id, c)));
+    }
+
+    // The Terminal tab's typed line (#135) - the one body on this surface that is G-code rather than
+    // a description of an intent, and so the one that is not a PrinterCommand. Every gate it passes
+    // is in core, and all three of its refusals come back through Outcomes: 404 for a machine the
+    // farm does not hold, 400 for a line that must never reach a wire, 409 for no link.
+    @PostMapping("/terminal")
+    public Mono<ResponseEntity<?>> sendLine(@PathVariable UUID id,
+                                            @RequestBody Mono<SendRawLine> command) {
+        return command.flatMap(c -> Mono.from(printers.sendRaw(id, c.line())))
+                .map(Outcomes::of);
+    }
+
+    // A second long-lived stream per machine, deliberately separate from /stream: raw wire lines in
+    // both directions, which are high-volume, are fanned out to no dashboard, and include the lines
+    // no decoder claimed and the acknowledgements the monitor stream withholds as flow control.
+    // Unlike /stream it replays a bounded scrollback, because a console's content is its scrollback.
+    @GetMapping(value = "/terminal/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<EventMessage> terminal(@PathVariable UUID id) {
+        return Flux.from(printers.traffic(id));
     }
 
     private Mono<Void> send(UUID id, Mono<? extends PrinterCommand> command) {

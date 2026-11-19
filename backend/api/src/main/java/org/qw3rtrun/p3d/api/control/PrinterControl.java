@@ -38,6 +38,30 @@ public interface PrinterControl {
     Publisher<EventMessage> updates(UUID id);
 
     /**
+     * The raw wire lines of the machine's <em>live session</em>, each as a
+     * {@link org.qw3rtrun.p3d.api.msg.TerminalTraffic TerminalTraffic} inside an
+     * {@link EventMessage} - what a console is attached to. Stays open on the same terms as
+     * {@link #updates(UUID)}.
+     *
+     * <p><strong>A separate stream, not a filtered view of {@link #updates(UUID)}</strong>, for
+     * three reasons:
+     * <ul>
+     *   <li>volume - censused at 106 received lines in one session (see
+     *       {@code TerminalTraffic}), so folding them in would roughly double the monitor stream's
+     *       traffic for a tab nobody has open;</li>
+     *   <li>reach - {@code updates()} is fanned out to the farm-wide dashboard stream, where one
+     *       machine's wire traffic has no business being;</li>
+     *   <li>scope - the console is the live session only. Nothing here is persisted anywhere
+     *       (issue #135 point 3).</li>
+     * </ul>
+     *
+     * <p>Replays a bounded scrollback where {@code updates()} replays nothing - which is exactly
+     * why {@code TerminalTraffic} carries a timestamp: a replayed line has to be legible as
+     * history rather than as news.
+     */
+    Publisher<EventMessage> traffic(UUID id);
+
+    /**
      * Sends commands, completing when they are handed over - not when the machine is done.
      *
      * <p>A list because one user action is not always one command: a relative jog is
@@ -45,6 +69,44 @@ public interface PrinterControl {
      * so nothing else can land between them and be read in the wrong mode.
      */
     Publisher<Void> send(UUID id, List<GRq<?>> commands);
+
+    /**
+     * Sends one raw line exactly as given, completing when the line has been <strong>accepted into
+     * the send queue</strong> - not when the send window has written it, and not when the machine
+     * has answered it. The console's input, and the one path on which a line is not interpreted.
+     *
+     * <p><strong>The proof that it reached the wire is the {@code SENT} line on
+     * {@link #traffic(UUID)}</strong>, framed as it went out, and that is deliberately the only
+     * proof. Completing on the write would be an unbounded wait rather than a slower answer - there
+     * is no timeout on the path, so a machine that has stopped acknowledging stalls the send window
+     * and this never completes at all, which an operator cannot tell apart from a line that was
+     * refused. A line typed while an SD upload holds the queue exclusively therefore still waits for
+     * the transfer before it goes out; it just does not hold a request open meanwhile. Same
+     * reasoning as {@link #uploadToCard}, which answers whether a transfer was taken on rather than
+     * whether it finished, and as {@link #send}, which never waits for the wire at all.
+     *
+     * <p><strong>Deliberately does not cross the printer aggregate</strong>, which a reader will
+     * reasonably take for a bug against this layer's standing rule. The aggregate's contribution is
+     * <em>interpretation</em>, and this line must not be interpreted: decoding it to a {@code GRq}
+     * and re-encoding would change what the operator typed - measured, a firmware answers
+     * {@code M92 X81} with {@code X81.00}, and {@code :gcode}'s one documented lossy round trip
+     * re-encodes {@code M104 F} as {@code M104}. And the aggregate's thread is where every reply is
+     * applied, so a diagnostic line typed while a 24-line {@code M503} dump is being processed would
+     * queue behind it - the same trade {@code PrinterReactor} already exempts
+     * {@code blocksInFlight()}, {@code linked()} and {@code snapshot()} from by name. The send
+     * window is <strong>not</strong> protected by the aggregate's thread (it is protected by
+     * {@code HostTerminal.CommandProcessor}'s own drain loop, and the queue in front of it by
+     * {@code PublisherQueue}'s), so a second send path cannot corrupt it.
+     *
+     * <p>Refuses rather than throwing, three ways:
+     * {@link ControlOutcome.Refusal#ABSENT} for a machine the farm does not hold,
+     * {@link ControlOutcome.Refusal#MALFORMED} for a line that must not reach a wire, and
+     * {@link ControlOutcome.Refusal#WRONG_STATE} for a machine with no link.
+     *
+     * @param line one line of G-code as typed, without its {@code N} field or checksum - the send
+     *             window frames it, and what actually went out is reported on {@link #traffic(UUID)}
+     */
+    Publisher<ControlOutcome> sendRaw(UUID id, String line);
 
     /**
      * Writes a stored G-code file onto the machine's SD card, answering whether it was taken on -

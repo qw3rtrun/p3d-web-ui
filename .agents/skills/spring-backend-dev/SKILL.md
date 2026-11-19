@@ -304,6 +304,20 @@ handler may be one line** - most of the motion and card handlers delegate straig
 (`handle(ReleaseSDCard)` names the `M22`-during-a-print refusal it does not yet make), and it makes
 the set of things this farm can do readable in one screen.
 
+**There is exactly one outbound exception, and it is the whole list: `PrinterControl.sendRaw`.**
+A line typed into the Terminal tab (#135) goes to the send window without crossing the aggregate,
+because the aggregate's contribution is *interpretation* and this line must not be interpreted -
+decoding it to a `GRq` and re-encoding would change what the operator typed (a firmware answers
+`M92 X81` with `X81.00`; `:gcode`'s one documented lossy round trip re-encodes `M104 F` as `M104`),
+and the aggregate's thread is where every reply is applied, so a diagnostic line typed during a
+24-line `M503` dump would queue behind it. The send window is not protected by the aggregate's
+thread - `HostTerminal.CommandProcessor` has its own drain loop and `PublisherQueue` has one in
+front of it - so a second send path cannot corrupt it. **Naming the exception is what keeps
+"everything, in both directions" checkable**, the same reason `blocksInFlight()`, `linked()` and
+`snapshot()` are named on the read side: a half-true invariant is worse than a stated limitation. A
+*second* exception is a design discussion, not a precedent - anything with a shape is a `GRq` and
+gets a `handle`.
+
 ### The defaults are the safety net, not the gate
 
 Both `default` arms **pass the message on**: `passThrough(command)` outbound, `republish(event)`
@@ -683,6 +697,15 @@ The rules that follow, each paid for:
   nothing hands out. Whether a repeat is re-announced is the reply's business: a temperature that
   did not move is suppressed, a card reply never is - someone asked for it and is waiting.
   `SdCardControl` forgets everything on a new session and on `M22`.
+  **The terminal stream is the stated exception, and it is a different question rather than the same
+  one answered differently.** `PrinterControl.traffic(UUID)` (#135) replays a bounded scrollback -
+  256 lines, the depth `HostTerminal` already keeps - because a console *is* a record of what was
+  said, so "what did it last say" is the whole of what it is for, and a page opened mid-session with
+  an empty console is useless. The two properties that keep #85's defect from coming back with it
+  are that the stream is **separate** from `updates()`, so nothing decided from a machine's event
+  stream can see a replayed line, and that every `TerminalTraffic` carries `at` - a replayed line is
+  legible as history rather than as news. **A new stream that wants a replay has to answer both**:
+  which decisions could be taken on it, and how a reader tells a replay from a live event.
   **A snapshot read once at subscribe time needs the aggregate to say when it goes stale**: the
   aggregate emits `SessionStarted` from `PrinterState.onOnline`, where it forgets, and what that
   invalidates is *exactly what `PrinterState.snapshot()` carries* - so a control added there is
@@ -1124,12 +1147,19 @@ refuses `\n`, `\r`, `;`, `*` and anything outside printable ASCII.
   new verb is whether it answers *with* the record (404, so the caller knows why it was handed
   nothing) or merely *about* it (200, because the outcome is the same either way).
 - **The module's status mapping is stated once, in `Outcomes`, and nowhere else.**
-  `ABSENT`/absent -> **404**, `WRONG_STATE` -> **409** with a legible body, accepted -> 200. 409
-  and not 400 because the request was well formed and the caller was entitled to make it - the job,
-  the file or the machine simply is not where they thought. A refused *command* carries the
-  `Refused` record as its body, because it has a sentence worth putting in front of a person; an
-  absent *query* carries nothing, because its status says the whole of it. Both `of` methods are
-  exhaustive switches over a sealed type with no `default`, so a third variant fails the build.
+  `ABSENT`/absent -> **404**, `WRONG_STATE` -> **409** with a legible body,
+  `MALFORMED` -> **400**, accepted -> 200. 409 and not 400 for the first two because the request was
+  well formed and the caller was entitled to make it - the job, the file or the machine simply is not
+  where they thought. A refused *command* carries the `Refused` record as its body, because it has a
+  sentence worth putting in front of a person; an absent *query* carries nothing, because its status
+  says the whole of it. Both `of` methods are exhaustive switches over a sealed type with no
+  `default`, so a new variant fails the build - which is how `MALFORMED` arrived: `ControlOutcome`
+  is in `api` and `Outcomes` is in `frontend`, so the arm cannot be forgotten.
+  **`MALFORMED` is the one refusal about the *request* rather than the machine**, and that is the
+  test for a fourth: `ABSENT` and `WRONG_STATE` both describe where the machine is, so a typed
+  console line carrying a `;` had no honest mapping - it is not a machine that cannot do something,
+  it is a line that must never reach a wire. A new member earns its place by naming a status the
+  mapping cannot otherwise reach, never by being a new shade of why; the shade goes in `reason`.
 - **A service states a refusal as a value and the REST layer maps the value.** `JobOutcome` for the
   queue, `ControlOutcome` for the control surface - sealed, with a `reason` a page can show.
   **An `@ExceptionHandler`, a `@RestControllerAdvice` keyed on exception class, a `@ResponseStatus`
@@ -1530,10 +1560,36 @@ and were verified on the wire:
   means "do not move this axis" and in absolute mode means "go to the origin". A binding that
   defaulted null to zero would turn a single-axis jog into a move of everything.
 
-**There is deliberately no endpoint that accepts G-code text**, and there must not be. It would
-hand any operator arbitrary control of a heater past every check the endpoints exist to make. Note
-that this is a rule about the *HTTP surface* - inside the application G-code is exactly what
-travels, and that is rule 7 of `doc/sub_boundaries.txt`.
+### IMPORTANT - one endpoint accepts G-code text, and the old prohibition is now one sentence wide
+
+**This paragraph used to say "there is deliberately no endpoint that accepts G-code text, and there
+must not be".** Issue #135 reverses that for exactly one route - the Terminal tab's typed line,
+carried by `PrinterControl.sendRaw(UUID, String)` in `api` - and the reasoning the prohibition
+rested on is unchanged: such a line hands an operator arbitrary control of a heater past every check
+the typed endpoints exist to make. What changed is that a farm with no console cannot be diagnosed
+at all, and the alternative to one audited route is somebody attaching `netcat` to the printer's
+port, which has no checks whatsoever.
+
+So the rule is now narrower rather than gone, and the three parts of it are the contract:
+
+- **Everything with a shape keeps its own endpoint and its own payload record.** A new control that
+  *can* be a `frontend/command` record must be one; `sendRaw` is not a shortcut past step 1 of
+  *The command model, end to end*, and a second feature routed through it instead of adding a
+  record is this rule being broken in the other direction.
+- **The surface owes a role gate and a refusal.** An arbitrary line is at least `OPERATOR`, and
+  `MALFORMED` exists so a line that must never reach a wire (a `;`, a newline, an `M110`, anything
+  outside printable ASCII) is a 400 decided before anything is claimed - the same
+  "refuse before you claim" rule `SdUploader.whyUnwritable` holds, and the same character set
+  `:gcode`'s `bareString` already enforces.
+- **What went out is observable.** `PrinterControl.traffic(UUID)` reports the *framed* block, so the
+  route cannot send something the console does not show. It is a second long-lived SSE stream per
+  machine, so it owes what every one of them owes: an end-of-stream wired into `FarmShutdown` the
+  day it is added (see *Shutdown - the farm lets go before the web layer waits for it*), a sink fed
+  through `Outbox` if more than one thread emits to it, and an answer to what it costs at forty
+  machines rather than one.
+
+Note that this was always a rule about the *HTTP surface* - inside the application G-code is exactly
+what travels, and that is rule 7 of `doc/sub_boundaries.txt`.
 
 ## Persistence
 

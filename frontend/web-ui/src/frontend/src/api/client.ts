@@ -248,6 +248,18 @@ export function printer(uuid: string) {
         // A stop, not a cancel: the content ends but M29 still goes out, leaving a short closed file
         // (safe to delete, not to print). Expect state: 'CANCELLED'.
         cancelCardUpload: () => send(at('/sd/upload/cancel'), {}),
+
+        // The Terminal tab's typed line (#135), and the one call on this surface carrying G-code
+        // rather than a description of an intent. It is a narrow exception, not the escape hatch the
+        // comment above rules out: a control with a shape keeps its own endpoint, and posting
+        // `M106 S200` here to do what setFanSpeed does would be a defect.
+        //
+        // Resolving means queued, not delivered: what actually went on the wire arrives on
+        // watchTerminal as a SENT line, framed, which is better evidence and needs no reply here.
+        // The three refusals are 400 for a line that must never reach a wire, 409 for no link and
+        // 404 for no such machine; each carries a sentence written for whoever typed it, which
+        // RequestFailed.message already holds - show it rather than a status.
+        sendLine: (line: string) => send(at('/terminal'), {line}),
     }
 }
 
@@ -337,4 +349,21 @@ export function watchFarm(onMessage: Listener): Subscription {
 /** One machine, for a page that is looking at exactly that machine. */
 export function watchPrinter(uuid: string, onMessage: Listener): Subscription {
     return subscribe(`/api-printer/${uuid}/stream`, onMessage)
+}
+
+/**
+ * One machine's raw wire lines, both directions, as `TerminalTraffic` - the console's stream.
+ *
+ * A genuinely separate connection from {@link watchPrinter} rather than a second copy of it: this is
+ * a different endpoint carrying what the monitor stream deliberately leaves out (the lines no decoder
+ * claimed, the acknowledgements held back as flow control) at a volume that has no business being
+ * fanned out to the farm-wide dashboard. The one-stream-per-farm rule is about not opening the *same*
+ * stream N times; this is not that.
+ *
+ * Unlike every other stream here it **replays a bounded scrollback** - the server's last 256 lines -
+ * because a console's content is its scrollback, so the first burst a listener receives is history.
+ * Nothing is persisted: the live session is the whole of it (#135 point 3).
+ */
+export function watchTerminal(uuid: string, onMessage: Listener): Subscription {
+    return subscribe(`/api-printer/${uuid}/terminal/stream`, onMessage)
 }

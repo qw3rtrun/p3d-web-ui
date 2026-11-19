@@ -52,6 +52,12 @@ class PrinterCommandBindingTest {
 
     private final AtomicBoolean cancelled = new AtomicBoolean();
 
+    /** The line the terminal endpoint handed to the runtime - null until it has been asked at all. */
+    private final AtomicReference<String> typed = new AtomicReference<>();
+
+    /** What the stubbed runtime answers a typed line with; accepted unless a test says otherwise. */
+    private final AtomicReference<ControlOutcome> rawAnswers = new AtomicReference<>();
+
     // What the stubbed runtime answers an upload with (accepted unless a test says otherwise) - a
     // field rather than a second stub class, since the refusal tests want the real controller and
     // Jackson encoding, asserting only the status and body bytes a browser can see.
@@ -70,11 +76,23 @@ class PrinterCommandBindingTest {
             }
 
             @Override
+            public Publisher<EventMessage> traffic(UUID id) {
+                return Mono.empty();
+            }
+
+            @Override
             public Publisher<Void> send(UUID id, List<GRq<?>> commands) {
                 received.set(commands.stream()
                         .map(c -> GEncoder.INSTANCE.encode(c.encode()))
                         .toList());
                 return Mono.empty();
+            }
+
+            @Override
+            public Publisher<ControlOutcome> sendRaw(UUID id, String line) {
+                typed.set(line);
+                var answer = rawAnswers.get();
+                return Mono.just(answer == null ? ControlOutcome.accepted(id) : answer);
             }
 
             @Override
@@ -431,6 +449,86 @@ class PrinterCommandBindingTest {
                 .expectStatus().isBadRequest();
 
         assertEquals(List.of(), received.get(), "nothing may reach the printer");
+    }
+
+    // ------------------------------------------------- the Terminal tab (issue #135)
+
+    /**
+     * The one body on this surface that is G-code rather than a description of an intent, so there
+     * is no {@code toMarlin()} between the browser and the wire - what binds is what is sent.
+     *
+     * <p>Asserted as the string that reached {@link PrinterControl#sendRaw}, and asserted to have
+     * reached nothing else: a typed line that arrived through {@code send} would be a line the
+     * aggregate interpreted, which is the whole thing this route exists not to do.
+     */
+    @Test
+    void theTypedLineBindsAndIsNotTranslated() {
+        post("/terminal", "{\"line\":\"M105\"}");
+
+        assertEquals("M105", typed.get());
+        assertEquals(List.of(), received.get(),
+                "a typed line must not go down the command path, where it would be interpreted");
+    }
+
+    /**
+     * A line with spaces and an argument in it, which is most of what an operator types - the
+     * trimming and the character gate belong to {@code core}, so the web layer must hand the line
+     * over exactly as it arrived rather than tidying it.
+     */
+    @Test
+    void theTypedLineArrivesVerbatim() {
+        post("/terminal", "{\"line\":\"  M117 Hello World \"}");
+
+        assertEquals("  M117 Hello World ", typed.get(),
+                "the gate is in core, so the controller must not pre-trim what it will judge");
+    }
+
+    /**
+     * The console's stream exists and is served as SSE. Only that it routes - what it carries is
+     * {@code EventStreamContractTest}'s subject, and that it ends when the machine is released is
+     * {@code PrinterReactorManagerTest}'s.
+     */
+    @Test
+    void theTerminalStreamIsMappedAsAnEventStream() {
+        client().get().uri("/api-printer/" + id + "/terminal/stream")
+                .accept(MediaType.TEXT_EVENT_STREAM)
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM);
+    }
+
+    // The one place on this surface where a 400 comes back as a body rather than as a Jackson
+    // decoding failure, so refusal and reason have to be where client.ts looks for them - the same
+    // two fields the upload refusals below are asserted on. The 400 itself is Outcomes' new arm:
+    // MALFORMED had no mapping until #135 and the switch over Refusal is what made that a compile
+    // error there rather than a 500 here.
+    @Test
+    void aRefusedLineIsABadRequestWithItsReasonInTheBody() {
+        rawAnswers.set(ControlOutcome.malformed(id, "';' at position 5"));
+
+        client().post().uri("/api-printer/" + id + "/terminal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"line\":\"M117 hi;M112\"}")
+                .exchange()
+                .expectStatus().isBadRequest()
+                .expectBody()
+                .jsonPath("$.machineId").isEqualTo(id.toString())
+                .jsonPath("$.refusal").isEqualTo("MALFORMED")
+                .jsonPath("$.reason").isEqualTo("';' at position 5");
+    }
+
+    /** And a machine with no link is 409 on this route like every other - "not now", not "not valid". */
+    @Test
+    void aLineToAnUnconnectedMachineIsAConflict() {
+        rawAnswers.set(ControlOutcome.wrongState(id, "printer " + id + " is not connected"));
+
+        client().post().uri("/api-printer/" + id + "/terminal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"line\":\"M105\"}")
+                .exchange()
+                .expectStatus().isEqualTo(HttpStatus.CONFLICT)
+                .expectBody()
+                .jsonPath("$.refusal").isEqualTo("WRONG_STATE");
     }
 
     // ------------------------------------------------- the refusals (issue #65)

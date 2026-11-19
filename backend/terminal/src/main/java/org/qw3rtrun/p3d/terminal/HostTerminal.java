@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.terminal;
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
+import org.qw3rtrun.p3d.api.msg.TerminalTraffic;
 import org.qw3rtrun.p3d.g.code.core.session.GSendWindow;
 import org.qw3rtrun.p3d.g.marlin.binary.MbpRs;
 import org.qw3rtrun.p3d.g.marlin.binary.MbpRsDecoder;
@@ -38,18 +39,22 @@ import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 import static java.lang.Math.min;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.US_ASCII;
+import static org.qw3rtrun.p3d.api.msg.TerminalTraffic.Direction.RECEIVED;
+import static org.qw3rtrun.p3d.api.msg.TerminalTraffic.Direction.SENT;
 
 /**
  * One terminal session, two coupled pipelines. {@link CommandProcessor} pulls G-code from a source,
@@ -74,6 +79,31 @@ import static java.nio.charset.StandardCharsets.US_ASCII;
  * replies in through the same {@link ReplyFlux}, which decodes them with {@code MbpRsDecoder} while
  * {@link #binaryMode} is on. It is a third drain loop ({@link MbpTransferDriver}) and not a third
  * pipeline - the outbound carries {@code byte[]} for exactly this reason.
+ *
+ * <p><strong>And there is a second thing a caller can watch.</strong>
+ * {@link #observeTraffic(Consumer)} reports every line that crossed the wire, either way, as a
+ * {@link TerminalTraffic} - the raw text with the decode as an <em>annotation</em>, which is what a
+ * per-machine console shows. A {@code volatile} consumer and not a second {@code Flux}: the sink has
+ * to outlive a redial (a new {@code HostTerminal} is built on every reconnect) so
+ * {@code PrinterReactor} owns it, and this class's subscriber-facing surface stays one flux. Three
+ * sites report, all of them through the one {@link #outbox} and {@link #drainBus()} so that no new
+ * concurrency appears here: {@link CommandProcessor#write0} (the framed block,
+ * {@code decodedAs} null), {@link CommandProcessor#writeRaw0} ({@link #hex} of the packet, for the
+ * same reason the traffic log shows it that way), and {@link ReplyFlux#decode} - for
+ * <em>every</em> received line, <strong>before</strong> the early return that drops one no decoder
+ * claimed.
+ *
+ * <p>That last one is the reason the seam exists. Censused by {@code TerminalConsoleProbe} against
+ * MarlinSim (Marlin bugfix-2.1.x) on {@code localhost:8099} on 2026-11-18, 106 received lines:
+ * <pre>
+ *   UNCLAIMED - nothing reaches a subscriber    10   the whole boot banner; decode() drops these
+ *   RENDERABLE from the decoded event           81
+ *   LOSSY - encode() is not the line             3
+ *   CONSUMED by the transport as flow control   12   every `ok P15 B3`
+ * </pre>
+ * 25 of 106 cannot be rendered from a decoded reply at all, and the outbound direction has no
+ * subscriber-visible form whatsoever - so a console cannot be a filtered view of
+ * {@link #messageFlux()}, and this is not a duplicate of it.
  */
 @Slf4j
 public class HostTerminal {
@@ -176,6 +206,47 @@ public class HostTerminal {
      * @param error what killed the inbound side, or null when it merely ended
      */
     private record BusEnd(Throwable error) {
+    }
+
+    /**
+     * One line of wire traffic, parked in the same outbox so that one drain loop serialises it with
+     * the replies around it. A wrapper rather than the bare record because {@link #publish} routes
+     * on type and a {@link TerminalTraffic} goes to the observer, never to the reply bus.
+     */
+    private record Traffic(TerminalTraffic line) {
+    }
+
+    /**
+     * Where a console's lines go, defaulting to a no-op so an unobserved terminal costs nothing.
+     * {@code volatile} because {@code PrinterReactor.onConnected} sets it on the aggregate's thread
+     * before {@link #start} is subscribed, and it is then read from the netty inbound loop and from
+     * whichever thread is in {@link #drainBus()} - a reference write is atomic and a snapshot is all a
+     * report needs, the same argument {@link #binaryMode} and {@link #binaryDriver} make.
+     */
+    private volatile Consumer<TerminalTraffic> trafficObserver = line -> {
+    };
+
+    /**
+     * Watches the wire: every line this session writes and every line it reads, raw, with the decoded
+     * reply's simple class name as an annotation where there is one. A console wants the bytes - 25
+     * of 106 measured received lines cannot be rendered from a decoded reply, and an outbound block
+     * has no decoded form at all; see this class's javadoc for the census.
+     *
+     * <p>One observer, replaced wholesale and settable at any time - it may be called from any of the
+     * threads this class uses, but only ever one at a time, since every report goes through
+     * {@link #drainBus()}. It must not block or throw: it is on the path a block takes to the wire, and
+     * a throw is caught and logged rather than allowed to wedge the loop.
+     */
+    public void observeTraffic(Consumer<TerminalTraffic> observer) {
+        this.trafficObserver = Objects.requireNonNull(observer, "observer");
+    }
+
+    /** Parks one line of traffic for the drain loop, the same hand-off {@link #emit} makes - a report
+     * is raised from the netty inbound loop and from inside the send window's drain loop, neither of
+     * which may call a stranger's consumer directly. */
+    private void reportTraffic(TerminalTraffic line) {
+        outbox.add(new Traffic(line));
+        drainBus();
     }
 
     private CommandProcessor outSide;
@@ -317,7 +388,7 @@ public class HostTerminal {
     public Mono<Void> start(Publisher<String> gcodes) {
         this.inSide = new ReplaySubscriber();
         this.outSide = new CommandProcessor(gcodes);
-        new ReplyFlux(inbound.get(), () -> binaryMode)
+        new ReplyFlux(inbound.get(), () -> binaryMode, this::reportTraffic)
                 .subscribe(inSide);
         return outbound.apply(outSide);
     }
@@ -468,6 +539,17 @@ public class HostTerminal {
 
     /** One parked item onto the sink. Drain loop only, so {@link #busEnded} is plain. */
     private void publish(Object parked) {
+        if (parked instanceof Traffic report) {
+            // Routed ahead of the busEnded check and not gated on it: the reply bus ending is the
+            // inbound half dying, and the console's stream is not the reply bus - silencing it there
+            // would lose the last lines of a session, which are the ones an operator is looking at.
+            try {
+                trafficObserver.accept(report.line());
+            } catch (RuntimeException broken) {
+                log.warn("a traffic observer threw on {}; the drain loop carries on", report.line(), broken);
+            }
+            return;
+        }
         if (parked instanceof BusEnd end) {
             if (busEnded) {
                 return;
@@ -507,6 +589,13 @@ public class HostTerminal {
          * A supplier and not a copy: the mode changes under a live subscription. */
         private final BooleanSupplier binaryMode;
 
+        /** Where a received line is reported for a console - see
+         * {@link HostTerminal#observeTraffic(Consumer)}. Handed in because this class is static and
+         * cannot reach {@link HostTerminal#drainBus()}, and a callback rather than the observer
+         * itself for the same reason {@link #binaryMode} is a supplier: the observer changes under a
+         * live subscription. */
+        private final Consumer<TerminalTraffic> traffic;
+
         /**
          * {@code M20}'s listing, being assembled - the one stateful thing on this side, and it has
          * to live here: a listing's entries ({@code Begin file list}, entries, {@code End file list})
@@ -519,9 +608,11 @@ public class HostTerminal {
         // The firmware never sends a *packet* to the host - every reply in both modes is an ASCII
         // line - so the inbound .asString() needs no change and :gcode's MbpPacketReader has no
         // place in this pipeline.
-        public ReplyFlux(Flux<String> source, BooleanSupplier binaryMode) {
+        public ReplyFlux(Flux<String> source, BooleanSupplier binaryMode,
+                         Consumer<TerminalTraffic> traffic) {
             super(source);
             this.binaryMode = binaryMode;
+            this.traffic = traffic;
             this.flux = source
                     .flatMap(s -> Flux.fromStream(s.chars().mapToObj(i -> (char) i).map(Object::toString)))
                     .bufferUntil("\n"::equals)
@@ -540,14 +631,25 @@ public class HostTerminal {
          * scaffolding, an entry is swallowed because it was never a reply, and a listing something
          * interrupted produces <strong>nothing</strong> rather than a short list reported as the
          * card's contents - see {@code SdFileListRs}.
+         *
+         * <p>The line is claimed first and once - the report a console needs annotates the
+         * <em>line</em>, not what the line produced, and it has to precede all three returns below,
+         * including the one that drops an unclaimed line (10 of the 106 lines censused). So
+         * {@code End file list} is reported as {@code SdFileListEnd} even though it is the line that
+         * assembles the whole {@link SdFileList}, and a listing entry carries no annotation at all,
+         * which is honest: it was never a claimable reply.
          */
         private void decode(String line, SynchronousSink<GRs<?>> sink) {
+            GRs<?> reply = claim(line);
+            traffic.accept(new TerminalTraffic(RECEIVED, line,
+                    reply == null ? null : reply.getClass().getSimpleName(),
+                    System.currentTimeMillis()));
+
             SdFileList files = listing.read(line);
             if (files != null) {
                 sink.next(files);
                 return;
             }
-            GRs<?> reply = claim(line);
             if (reply == null) {
                 // Not "unread" while a list is open: an entry is a line this host understands
                 // perfectly well and has just put into the listing being assembled.
@@ -987,6 +1089,7 @@ public class HostTerminal {
                 return;
             }
             TRAFFIC_LOGGER.debug("-> {}", block);
+            reportTraffic(new TerminalTraffic(SENT, block, null, System.currentTimeMillis()));
             subscriber.onNext((block + "\n").getBytes(US_ASCII));
         }
 
@@ -1012,7 +1115,9 @@ public class HostTerminal {
             if (terminated.get()) {
                 return;
             }
-            TRAFFIC_LOGGER.debug("-> {}", hex(packet));
+            String shown = hex(packet);
+            TRAFFIC_LOGGER.debug("-> {}", shown);
+            reportTraffic(new TerminalTraffic(SENT, shown, null, System.currentTimeMillis()));
             var flushed = Arrays.copyOf(packet, packet.length + 1);
             flushed[packet.length] = '\n';
             subscriber.onNext(flushed);

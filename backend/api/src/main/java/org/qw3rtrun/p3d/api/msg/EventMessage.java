@@ -12,8 +12,8 @@ import java.util.UUID;
  * propagated by {@code :backend:terminal} exactly as decoded, since a Marlin farm has no use for
  * a second vocabulary for what a Marlin said; the rest are the farm's own facts no firmware can
  * state - {@link ConnectionStateChanged}, {@link SessionStarted}, {@link BlockAcknowledged},
- * {@link BlocksAbandoned}, {@link SdUploadProgressed}, {@link MachineJoinedFarm},
- * {@link MachineLeftFarm}.
+ * {@link BlocksAbandoned}, {@link SdUploadProgressed}, {@link TerminalTraffic},
+ * {@link MachineJoinedFarm}, {@link MachineLeftFarm}.
  *
  * <p>No interface spans those two sets - that would mean {@code :gcode} implementing a type from
  * this module, which is not for sale. {@link #type} is the discriminator a browser switches on

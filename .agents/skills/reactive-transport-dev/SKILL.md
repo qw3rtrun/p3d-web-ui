@@ -562,6 +562,59 @@ defect - and must **force the interleaving**: `TerminalManagerCloseTest` parks t
 loop so the write, the close and the cancel are all queued behind it, and each of its two race
 tests fails every run without its half of the fix.
 
+### A console sees the wire, and it is a consumer rather than a flux
+
+`HostTerminal.observeTraffic(Consumer<TerminalTraffic>)` reports **every line that crossed the
+wire, in both directions**, as the raw text with the decode as an *annotation*
+(`decodedAs` = the decoded reply's simple class name, or null). It is the console's stream and it is
+deliberately not a view of `messageFlux()`. Censused by `TerminalConsoleProbe` against MarlinSim
+(Marlin bugfix-2.1.x) on `localhost:8099`, 2026-11-18, over 106 received lines:
+
+| | lines | |
+|---|---|---|
+| UNCLAIMED | **10** | the whole boot banner - `decode` drops these, nothing reaches a subscriber |
+| RENDERABLE from the decoded event | 81 | |
+| LOSSY - `encode()` is not the line | 3 | `echo: Last Updated:` re-encodes as `echo:Last Updated:` |
+| CONSUMED as flow control | **12** | every `ok P15 B3`, withheld from the bus on purpose |
+
+**25 of 106 cannot be rendered from a decoded reply**, and the outbound direction has no
+subscriber-visible form at all - which is the whole argument for carrying raw lines.
+
+Six things a caller depends on:
+
+- **A consumer, not a second `Sinks`.** The sink has to outlive a redial - a new `HostTerminal` is
+  built on every reconnect - so `PrinterReactor` in `:backend:core` owns it and its lifecycle, and
+  this class's subscriber-facing surface stays one flux. The field is `volatile` for the same reason
+  `binaryMode` is: set on the aggregate's thread before `start()` is subscribed, read from the netty
+  inbound loop and from whichever thread is in a drain loop, and a reference write is atomic.
+- **Three report sites, all through the one `outbox` and `drainBus()`**, so one drain loop
+  serialises them and **no new concurrency enters the class**: `CommandProcessor.write0` (the framed
+  block, `decodedAs` null), `CommandProcessor.writeRaw0` (`hex(packet)`, since a packet has no
+  printable form), and `ReplyFlux.decode`. `ReplyFlux` is `static` and cannot reach the drain loop,
+  so the callback is a constructor argument - a consumer and not a copy of the observer, for the
+  same reason `binaryMode` is a `BooleanSupplier`: it changes under a live subscription.
+- **A received line is reported before the early return that drops it.** That is the half that
+  recovers the ten UNCLAIMED lines, and `decode` has three `return`s the report must precede.
+- **`decodedAs` is a property of the line, not of what the line produced.** `claim(line)` is
+  evaluated **once**, up front, and the existing control flow then uses that value - the registry
+  was inverted so a line is read once. So `End file list` reads as `SdFileListEnd` and never as the
+  `SdFileList` that line assembles, and a listing entry (`TEST.GCO 47`) reads as null, which is
+  honest: it was never a claimable reply. A console annotates the text in front of the operator.
+- **A traffic item is not gated on `busEnded`.** The reply bus ending is the inbound half dying; the
+  console's stream is not the reply bus, and the last lines of a session are the ones an operator is
+  looking at when something went wrong. `publish` routes a traffic item ahead of that check, which
+  is the one place the asymmetry with the lines above it needs a comment.
+- **`SENT` is the framed block**, `N12 M105*31` and not what the operator typed: the `N` field and
+  the checksum are the send window's, and a console showing what was asked for rather than what
+  happened would hide exactly the fault that lives in those two fields. An outbound block has
+  `decodedAs` null - it is not a reply and there is nothing to decode it as.
+
+An observer must not block or throw: it sits on the path a block takes to the wire, and a throw out
+of the drain loop would leave `emitting` non-zero and wedge the reply bus for the rest of the
+session - so `publish` catches a `RuntimeException` from it and logs. `HostTerminalTrafficTest` is
+the proof, and each of its tests asserts the **pair**: the line is reported *and* what reaches
+`messageFlux()` is unchanged, which is what keeps this from becoming a second copy of the bus.
+
 ## The layering rule
 
 | Layer | Where | May depend on |
@@ -812,6 +865,11 @@ the default for anything with demand in it.
   `TerminalRecoveryProbe` need a printer on `localhost:8099` and must never be wired into `check`.
   They exist because the unit tests cannot catch a reply shape the firmware actually sends - which
   is how the `ok N…` bug was found. Run one when you change reply handling.
+- **`TerminalConsoleProbe` is the one for the traffic observer** (`:backend:terminal:probeTerminalConsole`),
+  and the only thing that can count how much of a machine's own output a decoded reply cannot
+  reproduce - the census under *A console sees the wire* is its output. Its control is that the claim
+  is falsifiable: if every line were claimed, published and round-tripping, the raw line would be
+  redundant and the feature wrong.
 - **`MbpTransferProbe` is the one for the binary protocol**, and the only thing that exercises the
   arrangement `:backend:core` has to build: an ASCII `M28 B1` and a packet stream as two writers on
   one wire, with the first still holding the queue's exclusivity while the second runs. It writes a
@@ -861,10 +919,13 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   nothing moves until the next `request(n)` or `ok` arrives; `processRequest()` is not called. The
   tests work around it with an explicit `thenRequest`. Adding the call is a flow-control change
   against hardware and wants a probe behind it.
-- **`messageFlux()` no longer carries lines no decoder claims** - the boot banner, an `M503` dump, a
-  calibration report. They are dropped with a `#traffic` debug line, which is what the layer above
-  did with them anyway. A terminal or console view needs a separate `Flux<String>` of received
-  lines off `ReplyFlux`, not a nullable field on a value type.
+- ~~**`messageFlux()` no longer carries lines no decoder claims**~~ - the boot banner, an `M503`
+  dump, a calibration report. They are still dropped from the bus with a `#traffic` debug line, and
+  that is right: the layer above did nothing with them anyway. **Answered** for the console case by
+  `observeTraffic` - see *A console sees the wire* above - which reports every received line
+  *before* the drop, plus the outbound direction the bus never had. Not the `Flux<String>` this
+  entry asked for, and the reason is in that section: the sink has to outlive a redial, so it
+  belongs to `PrinterReactor` rather than to a `HostTerminal` that is rebuilt on every reconnect.
 - **`:backend:terminal` declares `implementation project(':gcode')`** while `messageFlux()` now has
   a `:gcode` type in its public signature. It compiles only because `:backend:api` declares `:gcode`
   itself; a consumer that does not would fail. The fix is `api` rather than `implementation`, which
@@ -958,9 +1019,9 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
 - **`GFlux` captures its `FluxSink` from `Flux.create` into a field**, so `onG` NullPointers if
   anything emits before the first subscribe, and a second subscriber overwrites the field.
 - **There is no written spec for this module.** `:gcode` has `doc/specs/GCODE_spec.md` and its
-  Appendix B; the transport has this skill and nothing else. Four contracts are written down now -
-  the send window, what a terminal signal on `messageFlux()` means, the binary transfer, and what
-  closing the socket may not throw away, all
+  Appendix B; the transport has this skill and nothing else. Five contracts are written down now -
+  the send window, what a terminal signal on `messageFlux()` means, the binary transfer, what
+  closing the socket may not throw away, and the traffic observer, all
   under *The contracts callers depend on* above - and anything else callers come to rely on goes in
   the same place, in the change that establishes it.
 - **A binary packet parked by `writeRaw` with no downstream demand can be retransmitted into a

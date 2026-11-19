@@ -10,6 +10,7 @@ import org.qw3rtrun.p3d.api.msg.EventMessage;
 import org.qw3rtrun.p3d.api.msg.MCapabilityReportedEvent;
 import org.qw3rtrun.p3d.api.msg.MConnectionChangedEvent;
 import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
+import org.qw3rtrun.p3d.api.msg.TerminalTraffic;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
@@ -108,11 +109,38 @@ import java.util.concurrent.atomic.AtomicInteger;
  * subscribed before the snapshot is read (see {@link CatchUp}), at a cost of at most one repeated
  * value.
  *
+ * <h3>The terminal sink (#135)</h3>
+ * {@code traffic} is the one sink here that <strong>does</strong> replay - {@code replay().limit(256)},
+ * not {@code directBestEffort()} - and it contradicts the paragraph above on purpose. That paragraph
+ * is about <em>facts about the machine now</em>, where a stale value is a lie. A console's content
+ * <em>is</em> its scrollback: a chat window that is empty when you open it is useless, and a page
+ * opened mid-session would otherwise show nothing until the operator typed something.
+ *
+ * <p>Two properties keep #85's defect from coming back with the replay, and <strong>a new stream
+ * that wants one has to answer both</strong>. {@code TerminalTraffic} carries {@code at} (epoch
+ * millis), so a reader can tell a replayed line from a live one; and <strong>nothing decides
+ * anything on a replayed line</strong> - this stream is separate from {@link #updates()}, so no
+ * watcher that acts on a machine's events can see it.
+ *
+ * <p>It is fed through {@link #outbox} like {@code updates}, and the second emitter is real rather
+ * than theoretical: {@link #onConnected} builds a <em>new</em> {@link HostTerminal} on every redial
+ * and observes it, while the old terminal's {@code stop()} has cancelled its halves but a reply
+ * already in flight on the old netty loop can still reach the old drain loop. Two terminals is two
+ * drain loops is two threads into one safe sink, which refuses rather than serialises.
+ *
+ * <p><strong>A console line must not reach {@link PrinterState#onEvent}, {@link #toFarm} or
+ * {@code updates}</strong>, and routing it to {@code onEvent} is the obvious-looking thing. It is a
+ * live bug: that method's {@code default} arm calls {@code heard()}, which moves the connection
+ * lifecycle, so a {@code SENT} line would make <em>the host's own writing</em> count as the machine
+ * having said something - a fault cleared by the news of this host talking to itself. The outbound
+ * half, {@link #sendRaw}, likewise does not cross the aggregate; {@code PrinterControl.sendRaw}'s
+ * javadoc is the authority for why, and it is the whole of that exception's list.
+ *
  * <h3>Shutdown</h3>
  * {@link #stop()} is idempotent ({@code stopped}), disconnects, and parks - does not necessarily
  * publish - a {@code StreamEnd} on the same outbox as every other emission, so it cannot terminate
- * the sink underneath an event another thread is mid-publishing ({@code FAIL_TERMINATED}).
- * Whichever thread actually drains that marker completes the sink and only then disposes
+ * either sink underneath an event another thread is mid-publishing ({@code FAIL_TERMINATED}).
+ * Whichever thread actually drains that marker completes both sinks and only then disposes
  * {@code executor} and {@code listeners} via {@link #disposeWhenIdle}, never
  * {@code scheduler.dispose()} directly: that calls {@code shutdownNow()}, discarding the
  * {@code onComplete} task {@code tryEmitComplete()} just handed to a subscriber's
@@ -124,7 +152,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link #awaitSubscribersGone(Duration)} is the stronger guarantee {@link #stop()} alone cannot
  * give: Spring Boot's own graceful shutdown sampled a parked-but-undelivered {@code StreamEnd} as
  * idle and severed the SSE response mid-write. {@link #liveSubscribers} counts a subscriber gone on
- * completion, error or cancellation; {@link #subscribersGone} completes from whichever of
+ * completion, error or cancellation, and counts a {@link #traffic()} subscriber alongside an
+ * {@link #updates()} one - a console is an SSE response like any other; {@link #subscribersGone}
+ * completes from whichever of
  * {@link #stop()} (nobody was watching) or the last subscriber's {@code doFinally} (somebody was)
  * runs second, and never throws on timeout, so one stuck browser cannot fail a farm-wide shutdown.
  *
@@ -189,6 +219,16 @@ public class PrinterReactor {
 
     private static final int SUBSCRIBER_BACKLOG = 256;
 
+    /**
+     * How much scrollback the console keeps - see the class javadoc's <em>terminal sink</em> section
+     * for why this one replays where {@link #updates} does not.
+     *
+     * <p>256 is the figure this repository has already chosen twice for a backlog
+     * ({@code HostTerminal.BACKLOG}, {@link #SUBSCRIBER_BACKLOG}) and is {@code publishOn}'s own
+     * prefetch: a legible console and bounded memory, times however many machines are running.
+     */
+    private static final int TRAFFIC_BACKLOG = 256;
+
     private final TerminalManager manager;
     private final PrinterState printer;
     private final ConnectionPolicy policy;
@@ -203,17 +243,32 @@ public class PrinterReactor {
 
     private final Sinks.Many<EventMessage> updates = Sinks.many().multicast().directBestEffort();
 
+    /** The console's scrollback - see the class javadoc's <em>terminal sink</em> section. */
+    private final Sinks.Many<EventMessage> traffic = Sinks.many().replay().limit(TRAFFIC_BACKLOG);
+
     private final Outbox<Parked> outbox = new Outbox<>(this::publish);
 
     private boolean streamEnded;
 
     /**
-     * One thing waiting for the update sink: a message, or the end of the stream. Sealed so
-     * {@link #publish} is an exhaustive switch with no {@code default}.
+     * One thing waiting for a sink: a message for the monitor, a line for the console, or the end of
+     * both. Sealed so {@link #publish} is an exhaustive switch with no {@code default}.
+     *
+     * <p><strong>One outbox and a third arm, not a second {@link Outbox}.</strong> The end of the
+     * stream is why: {@code StreamEnd} completes both sinks and then disposes this machine's two
+     * schedulers, and that disposal has to be strictly after <em>every</em> completion. Two drain
+     * loops could not promise that ordering between themselves - each would need its own marker, and
+     * whichever drained first would dispose the schedulers the other still needs - which is the
+     * failure mode the class javadoc's Shutdown section records being paid for once already. It also
+     * costs one queue and one {@code AtomicInteger} per machine rather than two, which is a farm of
+     * forty rather than one.
      */
     private sealed interface Parked {
 
         record Update(EventMessage message) implements Parked {
+        }
+
+        record Traffic(EventMessage message) implements Parked {
         }
 
         record StreamEnd() implements Parked {
@@ -250,7 +305,7 @@ public class PrinterReactor {
     //
     // Plain, and confined to executor: enqueue() is reached only from the aggregate's GSender and
     // the aggregate is only ever touched on this machine's own thread (#80).
-    // feed/uploadToCard/interject use commandQueue directly and never pass through here.
+    // feed/uploadToCard/interject/sendRaw use commandQueue directly and never pass through here.
     private Mono<Void> lastEnqueued;
 
     public PrinterReactor(TerminalManager manager, PrinterState printer) {
@@ -541,6 +596,9 @@ public class PrinterReactor {
         }
         commandQueue = new PublisherQueue<>();
         this.terminal = terminal;
+        // before the zip is composed, so the console sees this session's opening handshake: the
+        // observer is a field read inside HostTerminal's own drain loop, not a subscription.
+        terminal.observeTraffic(this::onTraffic);
         Mono<Void> events = gEvent();
         printer.onOnline(new GSender(this::enqueue));
         // defer: Mono.zip happens to subscribe index 0 first, keeping the socket read behind it.
@@ -693,6 +751,84 @@ public class PrinterReactor {
                 .doFinally(signal -> subscriberGone());
     }
 
+    /**
+     * The console: every line that crossed the wire, in both directions, each a
+     * {@code TerminalTraffic} in an {@link EventMessage}. Opens with up to
+     * {@link #TRAFFIC_BACKLOG} lines of scrollback and then stays live until {@link #stop()}.
+     *
+     * <p><strong>No {@code publishOn(executor)}, unlike {@link #updates()} two methods above</strong>,
+     * and the asymmetry is the design rather than an omission. Every message on {@code updates()} has
+     * crossed the aggregate, so it is already on this machine's own thread and the hop only keeps it
+     * there; nothing here has crossed it, and putting a console line on the aggregate's thread would
+     * queue a diagnostic behind every reply being applied - the exact queueing this feature exists to
+     * avoid. A line is handed straight from the transport's drain loop to whoever is watching.
+     *
+     * <p>Counted in {@link #liveSubscribers} like a monitor subscriber, so
+     * {@link #awaitSubscribersGone(Duration)} covers a browser holding a console too: an SSE response
+     * severed mid-write by graceful shutdown is a bug this class already carries the scar of.
+     */
+    public Flux<EventMessage> traffic() {
+        return traffic.asFlux()
+                .doOnSubscribe(subscription -> liveSubscribers.incrementAndGet())
+                .doFinally(signal -> subscriberGone());
+    }
+
+    /**
+     * Puts one already-checked line in the send queue, bypassing the aggregate - the Terminal tab's
+     * typed line, and the one outbound path that does not cross {@link PrinterState}. See
+     * {@code PrinterControl.sendRaw}, which is where every gate this line passed through lives.
+     *
+     * <p>{@code REGULAR}, the priority an interactive command and a temperature poll already use: a
+     * typed line should interleave with a running print (which feeds at {@code BACKGROUND}) and must
+     * <em>not</em> take the wire from an SD upload (which holds it at {@code REALTIME}), so
+     * {@code PublisherQueue.headThatMayRun()} leaves the transfer alone with no new code.
+     *
+     * <p><strong>The write is deliberately not waited on, and this returns as soon as the line is
+     * queued.</strong> {@code PublisherQueue.add} appends the source and calls its drain loop
+     * synchronously, so the enqueue has genuinely happened by the time this returns; the {@code Mono}
+     * it hands back is only the completion of the <em>write</em>, and waiting on that would be an
+     * unbounded hang rather than a slow answer - there is no timeout anywhere on this path, so a
+     * machine that has stopped acknowledging stalls the send window and the request never finishes,
+     * leaving an operator unable to tell "my line was refused" from "the machine is wedged". What
+     * went out is observable where it belongs: {@link #traffic()} carries the framed {@code SENT}
+     * line the instant the window writes it, which is better evidence than a 200 and arrives whether
+     * or not anybody kept a request open. It also keeps this route no stricter than the aggregate's,
+     * where {@link #handle(List)} acknowledges a command once the aggregate has applied it and never
+     * waits for the wire at all.
+     *
+     * <p>That completion is subscribed with a log-only arm rather than dropped on the floor: it is a
+     * {@code Sinks.One} that errors when the queue terminates mid-source - the ordinary end of a
+     * session - and an unsubscribed error becomes an {@code onErrorDropped}. The shape is
+     * {@code applyConnectCmd}'s goodbye flush, for the same reason.
+     *
+     * @param line the exact bytes to send, without an {@code N} field or checksum - the send window
+     *             frames it and reports the framed block on {@link #traffic()}
+     * @return false when there is no link to type at, which is the only way an enqueue fails here;
+     *         the caller turns that into a refusal rather than this throwing into a REST call
+     */
+    public boolean sendRaw(String line) {
+        var queue = commandQueue;
+        if (queue == null || terminal == null) {
+            return false;
+        }
+        queue.addPublisher(Priority.REGULAR, Mono.just(line))
+                .subscribe(ignored -> {
+                }, cause -> log.info("the line typed at {} ended in {}",
+                        printer.getId(), cause.toString()));
+        return true;
+    }
+
+    /**
+     * One line the transport saw, onto the console and nowhere else.
+     *
+     * <p>Package-private as a test seam: driving the console otherwise needs a socket, and the
+     * assertion worth having - that a line reaches {@link #traffic()} and does <em>not</em> reach
+     * {@link #updates()} - is about this method's one decision.
+     */
+    void onTraffic(TerminalTraffic line) {
+        emit(new Parked.Traffic(new EventMessage(printer.getId(), line)));
+    }
+
     /** Built from volatile references to immutable values, so reading it does not queue behind replies. */
     public Flux<EventMessage> snapshot() {
         return Flux.defer(() -> Flux.fromIterable(printer.snapshot()))
@@ -736,6 +872,13 @@ public class PrinterReactor {
                 if (result.isFailure()) {
                     log.warn("the update stream did not complete ({})", result);
                 }
+                // and the console, for the same reason: a browser holding the terminal of a deleted
+                // printer has to be told rather than left waiting. Before the schedulers below,
+                // which is the ordering the class javadoc's Shutdown section argues for.
+                Sinks.EmitResult console = traffic.tryEmitComplete();
+                if (console.isFailure()) {
+                    log.warn("the terminal stream did not complete ({})", console);
+                }
                 disposeWhenIdle(listeners);
                 disposeWhenIdle(executor);
             }
@@ -749,6 +892,18 @@ public class PrinterReactor {
                 // nobody watching is the normal case for a machine no page has open.
                 if (result.isFailure() && result != Sinks.EmitResult.FAIL_ZERO_SUBSCRIBER) {
                     log.warn("event dropped ({}): {}", result, message);
+                }
+            }
+            // No FAIL_ZERO_SUBSCRIBER arm: a replaying sink takes an emission with nobody attached,
+            // which is the whole point of it being one, so any failure here says something real.
+            case Parked.Traffic(EventMessage message) -> {
+                if (streamEnded) {
+                    log.debug("the terminal stream has ended, so {} goes nowhere", message);
+                    return;
+                }
+                Sinks.EmitResult result = traffic.tryEmitNext(message);
+                if (result.isFailure()) {
+                    log.warn("terminal line dropped ({}): {}", result, message);
                 }
             }
         }

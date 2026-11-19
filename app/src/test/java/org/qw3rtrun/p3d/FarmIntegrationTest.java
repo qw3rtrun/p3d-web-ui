@@ -497,6 +497,22 @@ abstract class FarmIntegrationTest {
     }
 
     /**
+     * Opens this machine's <strong>terminal</strong> channel - raw wire lines, a different stream
+     * from {@link #watch(UUID)} and deliberately so (#135).
+     *
+     * <p>Unlike the two below, this one may be opened <em>after</em> the traffic it asserts on: the
+     * terminal sink replays its last 256 lines, because a console's content is its scrollback rather
+     * than a restatement of current facts. So a test opens it where it reads best and still sees the
+     * handshake - which means an exact-list assertion on this stream would be an assertion about the
+     * handshake's length, and every test here matches content instead.
+     */
+    protected Events watchTerminal(UUID id) {
+        var events = new Events("/api-printer/" + id + "/terminal/stream");
+        streams.add(events);
+        return events;
+    }
+
+    /**
      * Opens the farm-wide channel - the one a dashboard holds instead of one per machine.
      *
      * <p><strong>Register the machines first.</strong> A subscriber first receives a snapshot of the

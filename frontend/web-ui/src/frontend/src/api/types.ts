@@ -387,6 +387,41 @@ export interface ActionRs {
     argument: string | null
 }
 
+/**
+ * Which way a line crossed the wire. Two values and no more - a third would be a case the Terminal
+ * tab has no arm for, which `EventStreamContractTest.theTwoDirectionsReachTheBrowserByName` pins.
+ */
+export type TerminalDirection = 'SENT' | 'RECEIVED'
+
+/**
+ * `type: "TerminalTraffic"` - one line as it crossed the wire, on the console's own stream.
+ *
+ * `raw` is never a reconstruction, and for `SENT` that means the **framed** block (`N12 M105*31`),
+ * not the four characters the operator typed: the `N` word and the checksum are added by the send
+ * window, and the difference between the two is exactly where a line-numbering fault lives. Render
+ * it as-is.
+ *
+ * `decodedAs` is the reply's simple class name and is **null for a lot of ordinary traffic** - 10 of
+ * 106 received lines in the measured session (the whole simulator boot banner) reach no decoder at
+ * all. Null is an annotation nobody could make, not an error and not a line to hide; the key is
+ * always present, so a browser can tell "nothing claimed it" from "this build reports no decodes".
+ * A name rather than the reply itself because `EventMessage` declares its payload as `Object` with
+ * no type information, so a nested reply would arrive as anonymous fields.
+ *
+ * `at` is epoch milliseconds, a number so nothing here needs a date parser. It is what makes a
+ * console honest: this is the one stream in the farm that **replays** (its last 256 lines), so the
+ * first burst after connecting is history and the time is what says so.
+ */
+export interface TerminalTraffic {
+    direction: TerminalDirection
+    raw: string
+    decodedAs: string | null
+    at: number
+}
+
+/** The `type` string {@link TerminalTraffic} arrives under - matched in `TerminalTab.vue` alone. */
+export const TERMINAL_TRAFFIC = 'TerminalTraffic'
+
 /** `type: "MachineJoinedFarm"` - a printer registered while the page was open. */
 export interface MachineJoinedFarm {
     name: string

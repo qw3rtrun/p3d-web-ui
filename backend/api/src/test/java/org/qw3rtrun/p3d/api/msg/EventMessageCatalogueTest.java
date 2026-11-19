@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+import static java.util.Map.entry;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -59,20 +60,22 @@ class EventMessageCatalogueTest {
             "MachineJoinedFarm",
             "MachineLeftFarm",
             "SdUploadProgressed",
-            "SessionStarted");
+            "SessionStarted",
+            "TerminalTraffic");
 
     /** Everything else in the package, and the reason it is not one of the above. */
-    private static final Map<String, String> DOES_NOT = new LinkedHashMap<>(Map.of(
-            "EventMessage", "the envelope itself",
-            "ConnectCmd", "a command the farm gives a machine, not a fact about one",
-            "SdUploadState", "SdUploadProgressed's companion enum, not a message of its own",
-            "ManagementEvent", "the roster's own event interface",
-            "MRegisteredEvent", "roster news on the Spring bus; never wrapped for a browser",
-            "MDeletedEvent", "roster news on the Spring bus; never wrapped for a browser",
-            "MConnectionChangedEvent", "roster news on the Spring bus; never wrapped for a browser",
-            "MFirmwareReportedEvent", "roster news on the Spring bus; never wrapped for a browser",
-            "MCapabilityReportedEvent", "roster news on the Spring bus; never wrapped for a browser",
-            "MSpecDeclaredEvent", "roster news on the Spring bus; never wrapped for a browser"));
+    private static final Map<String, String> DOES_NOT = new LinkedHashMap<>(Map.ofEntries(
+            entry("EventMessage", "the envelope itself"),
+            entry("ConnectCmd", "a command the farm gives a machine, not a fact about one"),
+            entry("SdUploadState", "SdUploadProgressed's companion enum, not a message of its own"),
+            entry("TerminalTraffic$Direction", "TerminalTraffic's nested enum, not a message of its own"),
+            entry("ManagementEvent", "the roster's own event interface"),
+            entry("MRegisteredEvent", "roster news on the Spring bus; never wrapped for a browser"),
+            entry("MDeletedEvent", "roster news on the Spring bus; never wrapped for a browser"),
+            entry("MConnectionChangedEvent", "roster news on the Spring bus; never wrapped for a browser"),
+            entry("MFirmwareReportedEvent", "roster news on the Spring bus; never wrapped for a browser"),
+            entry("MCapabilityReportedEvent", "roster news on the Spring bus; never wrapped for a browser"),
+            entry("MSpecDeclaredEvent", "roster news on the Spring bus; never wrapped for a browser")));
 
     @Test
     @DisplayName("every type in this package is classified, and the classification names nothing gone")

@@ -1,6 +1,7 @@
 package org.qw3rtrun.p3d.core;
 
 import org.qw3rtrun.p3d.api.model.MachineProfile;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilitiesReport;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 
@@ -51,25 +52,44 @@ public class ProfileControl {
         return true;
     }
 
-    /** A {@code Cap:} line. A change only when the capability is new or has flipped. */
-    public boolean on(CapabilityRs report) {
+    /**
+     * One whole {@code M115} answer's {@code Cap:} lines. A change only when at least one entry in
+     * the batch is new or has flipped - the same "a change only when the firmware's own fields
+     * differ" reading {@link #on(FirmwareInfoRs)} takes, now evaluated over the whole answer rather
+     * than line by line (#144). A reconnect reporting exactly what the roster already held is
+     * therefore not news, and nothing is announced or written to the database for it.
+     */
+    public boolean on(CapabilitiesReport report) {
         var current = profile;
-        var previous = current.capabilities().get(report.getCapability());
-        if (previous != null && previous == report.getEnabled()) {
+        var merged = new HashMap<>(current.capabilities());
+        var changed = false;
+        for (CapabilityRs cap : report.getCapabilities()) {
+            var previous = merged.put(cap.getCapability(), cap.getEnabled());
+            if (previous == null || previous != cap.getEnabled()) {
+                changed = true;
+            }
+        }
+        if (!changed) {
             return false;
         }
-        var merged = new HashMap<>(current.capabilities());
-        merged.put(report.getCapability(), report.getEnabled());
         profile = new MachineProfile(current.firmware(), Map.copyOf(merged), LocalDateTime.now());
         return true;
     }
 
     /**
      * The profile as the reports that would have announced it: the firmware first, if it is known,
-     * then each capability in name order.
+     * then every capability as one {@link CapabilitiesReport}, in name order.
+     *
+     * <p>One folded report rather than one {@link CapabilityRs} per capability (#144), so a late
+     * subscriber's replay has the same shape as what a live stream now carries - the same reading
+     * {@code EndstopsControl.snapshot()} and {@code EEPROMSettingsControl.snapshot()} take of their
+     * own folded types after #35. A machine with no capabilities carries nothing rather than an
+     * empty batch: absent is not the same as "it reported none".
      *
      * <p>Name order rather than map order so that two snapshots of the same profile are the same
-     * sequence - a page or a test comparing them should not see a reshuffle as a change.
+     * sequence - a page or a test comparing them should not see a reshuffle as a change. It is not
+     * the firmware's own arrival order, and cannot be: the persisted capability map records no
+     * order at all, so name order is the only stable one a replay can offer.
      */
     public List<Object> snapshot() {
         var current = profile;
@@ -77,8 +97,12 @@ public class ProfileControl {
         if (!current.firmware().isEmpty()) {
             reports.add(new FirmwareInfoRs(current.firmware()));
         }
-        new TreeMap<>(current.capabilities())
-                .forEach((name, enabled) -> reports.add(new CapabilityRs(name, enabled)));
+        if (!current.capabilities().isEmpty()) {
+            var ordered = new TreeMap<>(current.capabilities());
+            var capabilities = new ArrayList<CapabilityRs>(ordered.size());
+            ordered.forEach((name, enabled) -> capabilities.add(new CapabilityRs(name, enabled)));
+            reports.add(new CapabilitiesReport(capabilities));
+        }
         return reports;
     }
 }

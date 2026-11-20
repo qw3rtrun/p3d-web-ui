@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.core;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilitiesReport;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.terminal.GSender;
 
@@ -47,7 +48,11 @@ class PrinterStateHandshakeTest {
         return printer;
     }
 
-    /** What the arrival of one {@code Cap:} line caused, with the opening pair cleared away. */
+    /**
+     * What an {@code M115} answer holding one capability caused, with the opening pair cleared away.
+     * A batch of one since #144 - the decision is taken over a whole answer now, so a single
+     * capability is the one-element case of it rather than a different code path.
+     */
     private List<String> gatedBy(String capability, boolean enabled) {
         return gatedBy(MachineProfile.unknown(), capability, enabled);
     }
@@ -55,7 +60,7 @@ class PrinterStateHandshakeTest {
     private List<String> gatedBy(MachineProfile seed, String capability, boolean enabled) {
         var printer = online(seed);
         sent.clear();
-        printer.onEvent(new CapabilityRs(capability, enabled));
+        printer.onEvent(new CapabilitiesReport(List.of(new CapabilityRs(capability, enabled))));
         return List.copyOf(sent);
     }
 
@@ -149,15 +154,16 @@ class PrinterStateHandshakeTest {
     /**
      * <strong>The trap this feature is most likely to fall into.</strong> A machine's
      * {@link MachineProfile} is seeded from the roster, which persisted every capability the first
-     * session reported, and {@code ProfileControl.on(CapabilityRs)} answers {@code false} for a
-     * capability whose value has not changed. So from the second connect onwards - and after every
-     * restart - no capability line is news, and a gate written as
+     * session reported, and {@code ProfileControl.on(CapabilitiesReport)} answers {@code false} for
+     * a batch whose capabilities have not changed. So from the second connect onwards - and after
+     * every restart - no capability is news, and a gate written as
      * {@code if (profile.on(report)) { ...send... }} sends nothing at all in production while
      * passing every first-connect test.
      *
-     * <p>The gate is therefore the line <em>arriving</em>, not the line being news.
+     * <p>The gate is therefore the answer <em>arriving</em>, not the answer being news.
      * {@code HandshakeIntegrationTest.aSecondSessionAsksEverythingTheFirstOneDid} is the same claim
-     * over a real socket.
+     * over a real socket, and {@link #aBatchWhereEveryCapabilityWasAlreadyKnownStillSendsEveryBlock}
+     * is the whole-answer form of this one.
      */
     @Test
     void aCapabilityTheProfileAlreadyHeldStillSendsItsBlock() {
@@ -166,6 +172,63 @@ class PrinterStateHandshakeTest {
 
         assertEquals(List.of("M114"), gatedBy(seeded, "AUTOREPORT_POS", false));
         assertEquals(List.of("M27"), gatedBy(seeded, "SDCARD", true));
+    }
+
+    // ------------------------------------------------------------------ the whole answer, #144
+
+    /**
+     * The decision is taken over one whole {@code M115} answer, in the firmware's own order - which
+     * {@code CapabilitiesReportReader} preserves. Iterating the batch and applying the per-line
+     * logic to each element produces the same calls in the same order as the per-line gate did, so
+     * the command sequence is identical by construction; this is what says so.
+     */
+    @Test
+    void aWholeBatchFiresEveryGatedBlockInTheFirmwaresOwnOrder() {
+        var printer = online();
+        sent.clear();
+
+        printer.onEvent(new CapabilitiesReport(List.of(
+                new CapabilityRs("AUTOREPORT_POS", false),
+                new CapabilityRs("AUTOREPORT_TEMP", true),
+                new CapabilityRs("SDCARD", true),
+                new CapabilityRs("AUTOREPORT_SD_STATUS", false))));
+
+        assertEquals(List.of("M114", "M27"), sent,
+                "the whole batch decided at once, in the firmware's own order; AUTOREPORT_TEMP"
+                        + " causes nothing here since M155 S1 is sent ungated from onOnline");
+    }
+
+    /**
+     * The batch form of the trap above: every capability in the answer was already in the seeded
+     * profile, so {@code ProfileControl.on} answers false and nothing is announced - and every
+     * gated block still goes out. Arrival, not change, exactly as the per-line gate always did.
+     */
+    @Test
+    void aBatchWhereEveryCapabilityWasAlreadyKnownStillSendsEveryBlock() {
+        var seeded = new MachineProfile(Map.of(),
+                Map.of("AUTOREPORT_POS", false, "SDCARD", true), LocalDateTime.now());
+        var printer = online(seeded);
+        sent.clear();
+
+        printer.onEvent(new CapabilitiesReport(List.of(
+                new CapabilityRs("AUTOREPORT_POS", false),
+                new CapabilityRs("SDCARD", true))));
+
+        assertEquals(List.of("M114", "M27"), sent,
+                "the roster already held both capabilities; the batch must still send their blocks -"
+                        + " arrival, not change, same as the per-line gate always did");
+    }
+
+    /** A pre-1.1.9 firmware with no {@code Cap:} lines at all: an empty answer starts nothing. */
+    @Test
+    void aFirmwareThatReportsNoCapabilitiesAtAllIsAskedNothingFurther() {
+        var printer = online();
+        sent.clear();
+
+        printer.onEvent(new CapabilitiesReport(List.of()));
+
+        assertEquals(List.of(), sent, "an empty batch - a pre-1.1.9 firmware with no Cap: lines at"
+                + " all - gets nothing beyond M115/M155 S1, same as before");
     }
 
     // ------------------------------------------------------------------ the teardown
@@ -178,8 +241,9 @@ class PrinterStateHandshakeTest {
     @Test
     void aTeardownUndoesOnlyWhatThisSessionStarted() {
         var printer = online();
-        printer.onEvent(new CapabilityRs("AUTOREPORT_POS", true));
-        printer.onEvent(new CapabilityRs("SDCARD", true));
+        printer.onEvent(new CapabilitiesReport(List.of(
+                new CapabilityRs("AUTOREPORT_POS", true),
+                new CapabilityRs("SDCARD", true))));
         sent.clear();
 
         assertTrue(printer.quiesce(), "two reports were started, so something had to be sent");

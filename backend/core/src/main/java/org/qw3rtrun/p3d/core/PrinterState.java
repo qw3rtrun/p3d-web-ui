@@ -45,6 +45,7 @@ import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.TemperatureAutoReport;
 import org.qw3rtrun.p3d.g.marlin.command.ValidateEEPROMContents;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilitiesReport;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopRs;
@@ -75,10 +76,10 @@ import java.util.function.Consumer;
  *
  * <h3>The conversation it opens and closes</h3>
  * {@link #onOnline} sends the two blocks that need no permission ({@code M115}, {@code M155 S1}) and
- * {@link #on(CapabilityRs)} sends the rest as each {@code Cap:} line decides it - so the handshake's
- * tail is a property of the machine rather than a constant, with no "is the handshake over yet"
- * state anywhere. {@link #quiesce()} is the other end of it, and is deliberately separate from the
- * disconnect intent; both are documented where they are declared (#127).
+ * {@link #on(CapabilitiesReport)} sends the rest, deciding the whole {@code M115} answer at once -
+ * so the handshake's tail is a property of the machine rather than a constant, with no "is the
+ * handshake over yet" state anywhere. {@link #quiesce()} is the other end of it, and is deliberately
+ * separate from the disconnect intent; both are documented where they are declared (#127).
  *
  * <h3>Threading: every mutator is this machine's thread, and the exceptions are reads</h3>
  * Every method that <em>changes</em> anything here is reached only from that printer's own
@@ -246,7 +247,7 @@ public class PrinterState implements PrinterAggregate {
                 heard();
                 on(e);
             }
-            case CapabilityRs e -> {
+            case CapabilitiesReport e -> {
                 heard();
                 on(e);
             }
@@ -659,7 +660,7 @@ public class PrinterState implements PrinterAggregate {
      * firmware that reports no {@code Cap:} lines at all - and temperature is the one reading the UI
      * cannot work without. The price is one command a pre-1.1.9 firmware answers
      * {@code echo:Unknown command}, which is benign, measured, and republished to the page. The rest
-     * of the handshake is capability-gated and sent from {@link #on(CapabilityRs)}.
+     * of the handshake is capability-gated and sent from {@link #on(CapabilitiesReport)}.
      */
     public void onOnline(GSender g) {
         this.g = g;
@@ -837,7 +838,14 @@ public class PrinterState implements PrinterAggregate {
         }
     }
 
-    public void on(CapabilityRs report) {
+    /**
+     * One whole {@code M115} answer's capabilities - one arm for the batch since #144, where it was
+     * one arm per {@code Cap:} line. Republished only when
+     * {@link ProfileControl#on(CapabilitiesReport)} says the batch taught the profile something
+     * new, the same reading {@link #on(FirmwareInfoRs)} takes; {@link #startReportsFor} runs
+     * regardless of that answer, for the reason given in its own javadoc.
+     */
+    public void on(CapabilitiesReport report) {
         if (profile.on(report)) {
             emitter.accept(report);
         }
@@ -845,16 +853,18 @@ public class PrinterState implements PrinterAggregate {
     }
 
     /**
-     * The capability-gated tail of the opening handshake: one {@code Cap:} line in, the block it
-     * permits out. The precondition of each block is exactly the fact that permits it, so there is
-     * no "is the handshake finished yet" state and no timer.
+     * The capability-gated tail of the opening handshake: one whole {@code M115} answer in, every
+     * block its capabilities permit out. The precondition of each block is exactly the fact that
+     * permits it, so there is no "is the handshake finished yet" state and no timer.
      *
-     * <p><strong>Driven by the line arriving, never by {@code profile.on(report)} returning
-     * true.</strong> {@link ProfileControl#on(CapabilityRs)} answers false for a capability whose
-     * value has not changed, and a {@link MachineProfile} is seeded from the roster, which persisted
-     * every capability the first session reported - so from the second connect onwards, and after
-     * every restart, no capability line is news. A gate inside that condition would send nothing at
-     * all in production while passing a first-connect test.
+     * <p><strong>The whole batch is iterated once, in the firmware's own order, and the loop never
+     * consults {@link ProfileControl#on(CapabilitiesReport)}'s return</strong> - so a reconnect's
+     * {@code M115} answer sends every gated block again, exactly as the per-line gate always did.
+     * That answer is false for a batch whose capabilities have not changed, and a
+     * {@link MachineProfile} is seeded from the roster, which persisted every capability the first
+     * session reported - so from the second connect onwards, and after every restart, nothing in the
+     * answer is news. A gate inside that condition would send nothing at all in production while
+     * passing a first-connect test.
      *
      * <p>Two of the four decisions need their reason beside them:
      * <ul>
@@ -865,42 +875,45 @@ public class PrinterState implements PrinterAggregate {
      *       suppress the one-shot {@code M27}. Measured: {@code Cap:SDCARD} is line 22 of the
      *       simulator's answer and {@code Cap:AUTOREPORT_SD_STATUS} is line 26, so the card is
      *       announced before the auto-report that would supersede polling it, and a rule that
-     *       suppressed the read would have to know a fact that has not arrived. One extra
-     *       {@code Not SD printing} on a machine with both is the price of a rule that does not
-     *       depend on the order Marlin happens to write its capabilities in. Three seconds, because
-     *       a percentage does not move at 1 Hz and every report is a message on every open SSE
-     *       stream.</li>
+     *       suppressed the read would have to know a fact that comes later in the same answer. One
+     *       extra {@code Not SD printing} on a machine with both is the price of a rule that does
+     *       not depend on the order Marlin happens to write its capabilities in - which holds for a
+     *       batch exactly as it did for a line, since this loop still decides each capability
+     *       without looking at the rest. Three seconds, because a percentage does not move at 1 Hz
+     *       and every report is a message on every open SSE stream.</li>
      * </ul>
      *
      * <p>A one-shot read records nothing in {@link AutoReportControl}: a read is not a subscription
      * and has no off-switch. {@link #onCommand} refuses when the link is down, which is right here -
-     * a {@code Cap:} line can only arrive over a live one.
+     * an {@code M115} answer can only arrive over a live one.
      */
-    private void startReportsFor(CapabilityRs report) {
-        switch (report.getCapability()) {
-            case "AUTOREPORT_POS" -> {
-                if (report.getEnabled()) {
-                    onCommand(new PositionAutoReport(1));
-                    autoReports.positionStarted();
-                } else {
-                    onCommand(new GetCurrentPosition());
+    private void startReportsFor(CapabilitiesReport report) {
+        for (CapabilityRs cap : report.getCapabilities()) {
+            switch (cap.getCapability()) {
+                case "AUTOREPORT_POS" -> {
+                    if (cap.getEnabled()) {
+                        onCommand(new PositionAutoReport(1));
+                        autoReports.positionStarted();
+                    } else {
+                        onCommand(new GetCurrentPosition());
+                    }
                 }
-            }
-            case "AUTOREPORT_SD_STATUS" -> {
-                if (report.getEnabled()) {
-                    onCommand(new ReportSDPrintStatus(3, false));
-                    autoReports.sdStatusStarted();
+                case "AUTOREPORT_SD_STATUS" -> {
+                    if (cap.getEnabled()) {
+                        onCommand(new ReportSDPrintStatus(3, false));
+                        autoReports.sdStatusStarted();
+                    }
                 }
-            }
-            case "SDCARD" -> {
-                if (report.getEnabled()) {
-                    onCommand(new ReportSDPrintStatus());
+                case "SDCARD" -> {
+                    if (cap.getEnabled()) {
+                        onCommand(new ReportSDPrintStatus());
+                    }
                 }
-            }
-            default -> {
-                // the other thirty-five Cap: lines of a MarlinSim M115 answer start nothing. The
-                // vocabulary has exactly three auto-reports; Cap:PROGRESS and Cap:BUILD_PERCENT are
-                // about M73, which is progress travelling host -> printer.
+                default -> {
+                    // the other thirty-five Cap: lines of a MarlinSim M115 answer start nothing. The
+                    // vocabulary has exactly three auto-reports; Cap:PROGRESS and Cap:BUILD_PERCENT
+                    // are about M73, which is progress travelling host -> printer.
+                }
             }
         }
     }

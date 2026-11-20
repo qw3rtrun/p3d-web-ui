@@ -6,6 +6,7 @@ import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilitiesReport;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
@@ -60,9 +61,11 @@ class PrinterStateSnapshotTest {
     void everythingHeldArrivesInAFixedOrder() {
         var printer = new PrinterState(UUID.randomUUID());
         printer.onEvent(WARM);
-        printer.onEvent(new CapabilityRs("EEPROM", true));
+        // two M115 answers rather than one batch: a capability noticed on a later read is a
+        // legitimate scenario, and the snapshot has to fold both into one report regardless.
+        printer.onEvent(new CapabilitiesReport(List.of(new CapabilityRs("EEPROM", true))));
         printer.onEvent(new FirmwareInfoRs(Map.of("FIRMWARE_NAME", "Marlin 2.1.2")));
-        printer.onEvent(new CapabilityRs("AUTOREPORT_TEMP", true));
+        printer.onEvent(new CapabilitiesReport(List.of(new CapabilityRs("AUTOREPORT_TEMP", true))));
         printer.onEvent(LISTING);
         printer.onEvent(SETTINGS);
 
@@ -71,8 +74,9 @@ class PrinterStateSnapshotTest {
         assertInstanceOf(ConnectionStateChanged.class, snapshot.get(0));
         assertEquals(List.of(
                 new FirmwareInfoRs(Map.of("FIRMWARE_NAME", "Marlin 2.1.2")),
-                new CapabilityRs("AUTOREPORT_TEMP", true),
-                new CapabilityRs("EEPROM", true),
+                new CapabilitiesReport(List.of(
+                        new CapabilityRs("AUTOREPORT_TEMP", true),
+                        new CapabilityRs("EEPROM", true))),
                 SdCardOk.INSTANCE,
                 LISTING,
                 SETTINGS,
@@ -105,7 +109,8 @@ class PrinterStateSnapshotTest {
 
         assertEquals(List.of(
                 new FirmwareInfoRs(Map.of("FIRMWARE_NAME", "Marlin 2.1.2")),
-                new CapabilityRs("EEPROM", false)), snapshot.subList(1, snapshot.size()));
+                new CapabilitiesReport(List.of(new CapabilityRs("EEPROM", false)))),
+                snapshot.subList(1, snapshot.size()));
     }
 
     /** Things that happened are not facts the aggregate holds, so a late subscriber is not told them. */

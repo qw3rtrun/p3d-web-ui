@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.terminal;
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.msg.BlockAcknowledged;
 import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilitiesReport;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopReport;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopStateRs;
@@ -58,7 +59,7 @@ class HostTerminalTest {
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
 
     /** What MarlinSim answers {@code M115} with, verbatim - kept whole because the tests that use it
-     * are about six replies and an {@code ok} arriving as one burst. */
+     * are about six lines and an {@code ok} arriving as one burst. */
     private static final String M115_FIRMWARE =
             "FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56) "
                     + "SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin PROTOCOL_VERSION:1.0 "
@@ -649,10 +650,11 @@ class HostTerminalTest {
      * {@code PrinterReactor} lives in exactly that window: it calls {@code terminal.start(...)} and
      * {@code Mono.zip} subscribes the reply flux afterwards.
      *
-     * <p>The shape is {@code M115}'s real MarlinSim answer - six replies then the {@code ok} that
-     * releases the next block, which goes down a different road entirely ({@code onOk} never touches
-     * the sink) - so a session could look healthy while the firmware report never reached anybody.
-     * With a one-element history, a subscriber here got only the <em>last</em> capability.
+     * <p>The shape is {@code M115}'s real MarlinSim answer - six lines, folded into two values by
+     * {@code ReplyFlux}, then the {@code ok} that releases the next block, which goes down a
+     * different road entirely ({@code onOk} never touches the sink) - so a session could look healthy
+     * while the firmware report never reached anybody. With a one-element history, a subscriber here
+     * got only the <em>last</em> of them.
      */
     @Test
     void everyReplyOfABurstReachesASubscriberThatAttachedAfterTheSocketWasRead() {
@@ -669,11 +671,12 @@ class HostTerminalTest {
 
         StepVerifier.create(terminal.messageFlux())
                 .expectNextMatches(FirmwareInfoRs.class::isInstance)
-                .expectNext(new CapabilityRs("AUTOREPORT_TEMP", true))
-                .expectNext(new CapabilityRs("EEPROM", true))
-                .expectNext(new CapabilityRs("SDCARD", true))
-                .expectNext(new CapabilityRs("SD_WRITE", true))
-                .expectNext(new CapabilityRs("EMERGENCY_PARSER", false))
+                .expectNext(new CapabilitiesReport(List.of(
+                        new CapabilityRs("AUTOREPORT_TEMP", true),
+                        new CapabilityRs("EEPROM", true),
+                        new CapabilityRs("SDCARD", true),
+                        new CapabilityRs("SD_WRITE", true),
+                        new CapabilityRs("EMERGENCY_PARSER", false))))
                 .then(() -> receive("T:24.31 /0.00 B:23.87 /0.00 @:0 B@:0"))
                 .expectNextMatches(TemperatureRs.class::isInstance)
                 .thenCancel()
@@ -717,11 +720,12 @@ class HostTerminalTest {
 
         assertInstanceOf(BusyRs.class, published.getFirst());
         assertInstanceOf(FirmwareInfoRs.class, published.get(1));
-        assertEquals(List.of(new CapabilityRs("AUTOREPORT_TEMP", true),
+        assertEquals(List.of(new CapabilitiesReport(List.of(
+                        new CapabilityRs("AUTOREPORT_TEMP", true),
                         new CapabilityRs("EEPROM", true),
                         new CapabilityRs("SDCARD", true),
                         new CapabilityRs("SD_WRITE", true),
-                        new CapabilityRs("EMERGENCY_PARSER", false)),
+                        new CapabilityRs("EMERGENCY_PARSER", false)))),
                 published.subList(2, published.size()));
     }
 

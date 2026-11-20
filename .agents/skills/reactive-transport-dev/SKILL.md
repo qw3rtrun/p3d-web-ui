@@ -312,6 +312,32 @@ into: `BlockAcknowledged` - see *An acknowledged block is announced* - and `Bloc
 *An abandoned block is announced too*. Anything else added to the bus that is not a decoded reply
 wants the same justification: a fact the layer above needs and genuinely cannot see from here.
 
+### An answer that is a block of lines arrives as one value
+
+Two answers are not one line, and a subscriber gets each as a single value rather than as a burst to
+re-assemble: `M20`'s listing as one `SdFileList`, and - issue #144 - `M115`'s capability block as one
+`CapabilitiesReport`. Three things a caller depends on:
+
+- **A single `CapabilityRs` never reaches the bus.** The fold is `ReplyFlux.accumulate`, and the
+  burst is scoped to "every reply that is a `CapabilityRs`", ended by the first reply that is not.
+  `CapabilitiesInterleaveProbe` is why that scope is safe: measured against MarlinSim on 2026-11-20,
+  the header, all 38 `Cap:` lines and the closing `ok P15 B3` arrive at one millisecond offset, with
+  `M155 S1` ticks strictly outside the burst on both sides (0 ms before, 651 ms after).
+- **Zero `Cap:` lines means no report, not an empty one** - a firmware older than Marlin 1.1.9
+  answers `M115` with the header alone, and nothing is invented for it. A burst the stream ended
+  inside publishes nothing either, the same answer an interrupted `SdFileList` gets and for a sharper
+  reason: a capability missing from a truncated list reads as one the firmware does not have.
+- **The reply that closed the burst is still emitted, after the report.** It is almost always the
+  `ok`, and it has to reach the send window as credit or the sender stalls by a block for the rest of
+  the session - which is why the fold is a `concatMapIterable` and not a second `handle` stage, whose
+  `SynchronousSink` permits one emission per input. `ReplyFluxCapabilitiesTest` pins both halves; the
+  live check is `probeCapabilitiesFold` (38 lines on the wire, one report on the bus, no bare
+  `CapabilityRs`).
+
+**The console's view is unchanged by any of this.** `decodedAs` annotates the *line* - 38
+`[CapabilityRs]` annotations still cross `observeTraffic` - for the same reason `End file list` reads
+as `SdFileListEnd` rather than as the `SdFileList` it assembles.
+
 ### `messageFlux()` terminates when the connection does, and at no other time
 
 A firmware error is a **value**. It goes down the flux as the `ErrorRs` it is, like any other reply,
@@ -807,15 +833,22 @@ replaces it must keep the two properties the current one has: a reply split acro
 rejoined, and a chunk holding several replies yields several. It should also drop the `.trim()`,
 which is not framing and loses a decoder's guard - see the debt entry below.
 
-**`flatMap` is also the wrong operator, and it is safe here by two accidents.** It does not preserve
-order across inner publishers, so two chunks in flight can interleave their characters and frame
-nonsense lines. It cannot happen today because (1) the source is one netty channel-read thread, so a
-chunk's `onNext` has returned before the next one starts, and (2) `ReplaySubscriber` requests
-`Long.MAX_VALUE` and nothing between here and it bounds the demand, so each synchronous inner is
-drained to exhaustion inside its own `onNext`. Bound the demand anywhere in that chain - a
-`limitRate`, a `publishOn`, an operator with a prefetch - and the second accident goes, with a
-half-drained inner left open when the next chunk arrives. `concatMap` states the intent and costs
-nothing here; change it in its own commit, because it is not the cause of anything known.
+**`flatMap` is also the wrong operator, and it was safe here by two accidents - now one.** It does
+not preserve order across inner publishers, so two chunks in flight can interleave their characters
+and frame nonsense lines. It cannot happen today because (1) the source is one netty channel-read
+thread, so a chunk's `onNext` has returned before the next one starts, and (2) `ReplaySubscriber`
+requested `Long.MAX_VALUE` with nothing between it and here bounding the demand, so each synchronous
+inner was drained to exhaustion inside its own `onNext`.
+
+**The second accident is gone as of issue #144.** The capability fold is a `concatMapIterable`, which
+carries a prefetch (`Queues.XS_BUFFER_SIZE`, 32) and so is the first operator in that chain to bound
+the demand - exactly the "operator with a prefetch" this entry warned about. Measured rather than
+assumed: `ReplyFluxCapabilitiesTest.framingSurvivesTheFoldBothAcrossAReadAndWithinOne` frames 100
+replies out of one chunk, three times the prefetch, and one reply split across two reads, and both
+still come out whole and in order - the synchronous chain replenishes its demand inside the same
+`onNext`, so no inner is left half-drained. So accident (1) is now the whole of it, which makes
+`concatMap` worth more than it was: it states the intent and costs nothing here. Change it in its own
+commit, because it is still not the cause of anything known.
 
 ### Keep blocking out of the pipeline
 

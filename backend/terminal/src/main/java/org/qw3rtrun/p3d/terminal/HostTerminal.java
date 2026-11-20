@@ -7,6 +7,8 @@ import org.qw3rtrun.p3d.api.msg.TerminalTraffic;
 import org.qw3rtrun.p3d.g.code.core.session.GSendWindow;
 import org.qw3rtrun.p3d.g.marlin.binary.MbpRs;
 import org.qw3rtrun.p3d.g.marlin.binary.MbpRsDecoder;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilitiesReport;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilitiesReportReader;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopReport;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopReportReader;
 import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
@@ -69,6 +71,12 @@ import static org.qw3rtrun.p3d.api.msg.TerminalTraffic.Direction.SENT;
  * ({@link ReplyFlux#accumulate}), and {@link ReplaySubscriber} routes the result back into the send
  * window or onto {@link #messageFlux()}. The coupling is real: an {@code ok} or {@code busy:}
  * arriving on the inbound side is half of outbound flow control.
+ *
+ * <p>A reply that is one line is published as itself; the two answers that are a <em>block</em> of
+ * lines are folded into one value before they leave - {@code M20}'s listing into one
+ * {@link SdFileList}, and {@code M115}'s 38 {@code Cap:} lines into one {@link CapabilitiesReport}
+ * (see {@link ReplyFlux#accumulate}), so that one question answered by the firmware is one value on
+ * the bus rather than a burst a subscriber has to re-assemble.
  *
  * <p>Three threads matter - the producer pushing G-code, the netty inbound loop delivering replies,
  * and whichever of those two first enters a drain loop and so does the writing or emitting for both.
@@ -422,9 +430,10 @@ public class HostTerminal {
      * with a {@code #traffic} debug line.
      *
      * <p><strong>A multi-line answer arrives as one value.</strong> {@code M20}'s listing is one
-     * {@link SdFileList} ({@link ReplyFlux#listing}), {@code M119}'s endstop report one
-     * {@link EndstopReport} and {@code M503}/{@code M92}'s dump one {@link SettingsReport}
-     * ({@link ReplyFlux#accumulate}) - one event per read, never one per line.
+     * {@link SdFileList} ({@link ReplyFlux#listing}); {@code M119}'s endstop report, {@code M503}'s
+     * settings dump and {@code M115}'s capability block are each one {@link EndstopReport},
+     * {@link SettingsReport} or {@link CapabilitiesReport} ({@link ReplyFlux#accumulate}) - one event
+     * per read, never one per line, and no report at all from a firmware that sent nothing to fold.
      *
      * <p>A transfer's ordinary traffic still arrives here: measured mid-transfer,
      * {@code echo:SD card ok}, {@code echo:Now fresh file:}, {@code Writing to file:},
@@ -590,14 +599,15 @@ public class HostTerminal {
      * {@code MarlinRsDecoder} while binary mode is on, through {@code MarlinRsDecoder} alone
      * otherwise - and then folds the replies that are really one answer into one value. Built once
      * per session, in {@link #start}, on the netty inbound loop, which is the only thread that ever
-     * touches it or the three readers it holds.
+     * touches it or the four readers it holds.
      *
-     * <p><strong>Three multi-line answers are assembled here, by three {@code :gcode} readers.</strong>
-     * {@link #listing} has a terminator line to cut on ({@code End file list}); {@link #endstops} and
-     * {@link #settings} do not, so they are scoped to <em>membership of their own family</em> instead
-     * and {@link #accumulate} ends a burst at the first reply that is not a member - in practice the
-     * {@code ok}. See {@link #accumulate} for why that scoping is safe on this wire and what it costs
-     * on a dead socket.
+     * <p><strong>Four multi-line answers are assembled here, by four {@code :gcode} readers.</strong>
+     * {@link #listing} has a terminator line to cut on ({@code End file list}); {@link #endstops},
+     * {@link #settings} and {@link #capabilities} do not, so each is scoped to <em>membership of its
+     * own family</em> instead, and {@link #accumulate} ends a burst at the first reply that is not a
+     * member of the one currently open - in practice the {@code ok}. See {@link #accumulate} for why
+     * that scoping is safe on this wire, why the three can share one fold stage, and what it costs on
+     * a dead socket.
      */
     public static class ReplyFlux extends FluxOperator<String, GRs<?>> {
 
@@ -630,6 +640,17 @@ public class HostTerminal {
         /** {@code M503}/{@code M92}'s settings burst, being assembled - see {@link #accumulate}. */
         private final SettingsReportReader settings = new SettingsReportReader();
 
+        /**
+         * {@code M115}'s capability block, being folded - see {@link #accumulate}. Scoped to "the
+         * next reply that is a {@code CapabilityRs}", ended by the first one that is not, which
+         * {@code CapabilitiesInterleaveProbe} measured against MarlinSim (Marlin bugfix-2.1.x) on
+         * 2026-11-20 to be safe: the {@code FIRMWARE_NAME:} header, all 38 {@code Cap:} lines and the
+         * closing {@code ok P15 B3} arrive at the same millisecond offset, with a 1-second
+         * {@code M155 S1} temperature tick strictly outside the burst on both sides - 0ms in front of
+         * it and the next at 651ms behind the {@code ok}. Nothing was observed landing inside.
+         */
+        private final CapabilitiesReportReader capabilities = new CapabilitiesReportReader();
+
         // The firmware never sends a *packet* to the host - every reply in both modes is an ASCII
         // line - so the inbound .asString() needs no change and :gcode's MbpPacketReader has no
         // place in this pipeline.
@@ -648,34 +669,69 @@ public class HostTerminal {
         }
 
         /**
-         * Folds {@code M119}'s and {@code M503}'s multi-line answers into one reply each, and passes
-         * everything else through. A member line is swallowed into its reader; the first reply that is
-         * <em>not</em> a member ends whatever was open, so one input produces zero, one or two outputs:
-         * the completed report first and then the line that ended it, which is almost always the
-         * {@code ok} and must still reach {@link ReplaySubscriber} as window credit.
+         * Folds {@code M119}'s, {@code M503}'s and {@code M115}'s multi-line answers into one reply
+         * each, and passes everything else through. A member line is swallowed into its own reader;
+         * the first reply that is <em>not</em> a member of whichever burst is open ends it, so one
+         * input produces zero, one or two outputs: the completed report first and then the line that
+         * ended it, which is almost always the {@code ok} and must still reach {@link ReplaySubscriber}
+         * as window credit. A stream with no member line in it - a settings read with nothing changed
+         * from default is not this case, but a firmware older than Marlin 1.1.9 answering {@code M115}
+         * with the header alone is - never produces a report at all, because nothing was ever opened to
+         * flush.
+         *
+         * <p><strong>Three readers, one {@code offer} each, and the order between them does not
+         * matter.</strong> {@link EndstopReportReader#offer}, {@link SettingsReportReader#offer} and
+         * {@link CapabilitiesReportReader#offer} each type-check the reply against its own family
+         * ({@code EndstopRs<?>}; {@code SettingsSection}/{@code SettingsValue}; {@code CapabilityRs}) -
+         * three disjoint {@code :gcode} types, since a decoded {@code GRs} value is exactly one
+         * concrete type. So at most one {@code offer} below ever answers true for a given reply, and
+         * checking them in a different order could only change which reader is asked first about a
+         * reply none of them want - which still answers false from all three. The same holds for the
+         * three {@code flush} calls once a burst closes: the probes below show the bursts never
+         * interleave on the wire, but even if they did, each reader only ever holds what its own
+         * {@code offer} accepted.
          *
          * <p><strong>Why {@code concatMapIterable} and not another {@code handle}.</strong>
          * {@code handle}'s {@link SynchronousSink} permits at most one emission per input, and the
-         * line that ends a burst has two to make, in order. {@code concatMapIterable} over a
-         * synchronous {@code List} introduces no concurrency, no re-ordering and no scheduling - it
-         * stays on the netty inbound loop that drives the upstream, which is also what lets the three
+         * line that ends a burst has two to make, in order: the assembled report, then the line itself
+         * - almost always the {@code ok}, which must still reach the send window as the block of
+         * credit it is, or the sender stalls by a block for the rest of the session. A second
+         * {@code handle} stage answers a second {@code next} with an {@code IllegalStateException}.
+         * {@code concatMapIterable} over a synchronous {@code List} is the smallest operator that
+         * emits both, in order, and introduces no concurrency and no re-ordering of its own: the
+         * {@code List} is built and drained inside the one {@code onNext} that produced it, so the
+         * fold stays on the netty inbound loop that drives the upstream - which is what lets all three
          * readers be plain fields.
          *
          * <p><strong>Why "members of this family" and not "everything until the ok".</strong> The
          * generic rule is wrong on this wire: a {@code busy:} notice or a {@code Done printing file}
          * genuinely can land between an unrelated command and <em>its</em> {@code ok}, and would be
          * swallowed into a report it has nothing to do with. What makes the family-scoped rule safe is
-         * that nothing lands <em>inside</em> one of these two answers - measured by
+         * that nothing lands <em>inside</em> any of these three answers - measured twice, independently:
          * {@code MultilineInterleaveProbe} on 2026-11-19 against MarlinSim on {@code localhost:8099},
-         * with {@code M155 S1} ticking once a second throughout: the tick before {@code M119} arrived
-         * at 0ms, the report's four lines and its {@code ok P15 B3} all at 22ms, and the next tick at
-         * 691ms. {@code M503} measured the same shape, a contiguous ~20-line burst with its {@code ok}
-         * immediately behind the last line.
+         * with {@code M155 S1} ticking once a second throughout, found the tick before {@code M119}
+         * arriving at 0ms, the report's four lines and its {@code ok P15 B3} all at 22ms, and the next
+         * tick at 691ms ({@code M503} the same shape, a contiguous ~20-line burst with its {@code ok}
+         * immediately behind the last line); {@code CapabilitiesInterleaveProbe} on 2026-11-20 found
+         * {@code M115}'s header, all 38 {@code Cap:} lines and its {@code ok} at one millisecond
+         * offset, with the temperature tick 0ms in front and 651ms behind.
          *
          * <p>A burst the connection dies in the middle of is never flushed and is lost in silence -
          * the same strict reading {@link SdFileListReader} takes (a partial answer reported as the
-         * whole one is worse than no answer), and what this transport already does to every other
-         * exchange in flight on a dead socket.
+         * whole one is worse than no answer, and for {@code M115} specifically a capability missing
+         * from a truncated report reads as one the firmware does not have), and what this transport
+         * already does to every other exchange in flight on a dead socket.
+         *
+         * <p><strong>This is the first operator in this pipeline with a prefetch</strong>
+         * ({@code XS_BUFFER_SIZE}, 32), so the framing above is no longer driven by
+         * {@link ReplaySubscriber}'s unbounded demand alone - which matters because that unbounded
+         * demand is one of the two reasons the {@code flatMap} framing cannot interleave two chunks'
+         * characters. That was already true with two readers folding here (issue #35); a third changes
+         * nothing about the prefetch itself - it is still one {@code concatMapIterable} stage with the
+         * same 32-element buffer, now serving three {@code offer}/{@code flush} pairs instead of two,
+         * and the fold is still fully synchronous with no inner publisher. {@code ReplyFluxCapabilitiesTest}
+         * and {@code ReplyFluxMultilineTest} each drive well past the prefetch (100 lines, three times
+         * 32) through the whole three-reader stage and pin that framing is unchanged.
          */
         private List<GRs<?>> accumulate(GRs<?> reply) {
             if (endstops.offer(reply)) {
@@ -684,7 +740,10 @@ public class HostTerminal {
             if (settings.offer(reply)) {
                 return List.of();
             }
-            var out = new ArrayList<GRs<?>>(3);
+            if (capabilities.offer(reply)) {
+                return List.of();
+            }
+            var out = new ArrayList<GRs<?>>(4);
             EndstopReport endstopReport = endstops.flush();
             if (endstopReport != null) {
                 out.add(endstopReport);
@@ -692,6 +751,10 @@ public class HostTerminal {
             SettingsReport settingsReport = settings.flush();
             if (settingsReport != null) {
                 out.add(settingsReport);
+            }
+            CapabilitiesReport capabilitiesReport = capabilities.flush();
+            if (capabilitiesReport != null) {
+                out.add(capabilitiesReport);
             }
             out.add(reply);
             return out;

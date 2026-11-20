@@ -250,3 +250,41 @@ tasks.register('probeMultilineBus', JavaExec) {
             (findProperty('probePort') ?: '8099').toString(),
     ]
 }
+
+/**
+ * Measure whether anything can land between the first line of an M115 answer and the ok that ends
+ * it - issue #144, the same control issue #35 ran for M119/M503 before folding those into one
+ * event each.
+ *
+ * Hand-run only, like the probes above: it needs a listener on the far end, so it is deliberately
+ * not wired into `check`. It sets the temperature auto-report period to 1 and back to 0.
+ */
+tasks.register('probeCapabilitiesInterleave', JavaExec) {
+    group = 'verification'
+    description = 'Measure whether an M155 S1 temperature tick ever lands inside an M115 answer (default localhost:8099).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.CapabilitiesInterleaveProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}
+
+/**
+ * Send one M115 over the real TerminalManager stack and see issue #144's fold happen: 38 `Cap:`
+ * lines on the wire, one `CapabilitiesReport` on `messageFlux()`, and the per-line console
+ * annotation untouched. The pipeline half of the probe above, which measures only the wire.
+ *
+ * Hand-run only, like the probes above: it needs a listener on the far end, so it is deliberately
+ * not wired into `check`. It changes nothing on the machine - M115 only reports.
+ */
+tasks.register('probeCapabilitiesFold', JavaExec) {
+    group = 'verification'
+    description = 'Send one M115 through HostTerminal and print the folded CapabilitiesReport (default localhost:8099).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.CapabilitiesFoldProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

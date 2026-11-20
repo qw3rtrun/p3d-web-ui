@@ -827,40 +827,42 @@ a safe sink does not keep that promise for you, it only tells you when you broke
 
 ## Patterns that work here
 
-### Frame lines on the wire, do not stream characters
+### Frame lines on the wire with a stateful buffer, not `flatMap` over characters
 
-`ReplyFlux` currently does
-`flatMap(s -> Flux.fromStream(s.chars()...map(Object::toString))).bufferUntil("\n"::equals)` - it
-boxes every byte of every reply into a `String` and pushes it through an inner `Flux`. For a
-transport that is the hot path. The shape that belongs here is a stateful buffer over the incoming
-chunks that cuts at `\n` and keeps the remainder, or reactor-netty's own line decoder. Whatever
-replaces it must keep the two properties the current one has: a reply split across TCP reads is
-rejoined, and a chunk holding several replies yields several. It should also drop the `.trim()`,
-which is not framing and loses a decoder's guard - see the debt entry below.
+`ReplyFlux.frame` is a stateful buffer over the incoming chunks: it appends each chunk to a kept
+`StringBuilder`, cuts at every `\n` it finds, and leaves whatever did not end in one for the next
+call. `concatMapIterable(this::frame)` turns what it returns back into individual lines, in order -
+the operator `accumulate` already used downstream for the same reason, and the deliberate
+replacement for `flatMap`. The two properties any framing stage here owes are both pinned by
+`ReplyFluxFramingTest`: a reply split across TCP reads is rejoined
+(`aLineSplitAcrossTwoReadsIsRejoined`), and a chunk holding several replies yields several
+(`aChunkHoldingSeveralRepliesYieldsThemAllInOrder`).
 
-**`flatMap` is also the wrong operator, and it was safe here by two accidents - now one.** It does
-not preserve order across inner publishers, so two chunks in flight can interleave their characters
-and frame nonsense lines. It cannot happen today because (1) the source is one netty channel-read
-thread, so a chunk's `onNext` has returned before the next one starts, and (2) `ReplaySubscriber`
-requested `Long.MAX_VALUE` with nothing between it and here bounding the demand, so each synchronous
-inner was drained to exhaustion inside its own `onNext`.
+**This replaced `flatMap(s -> Flux.fromStream(s.chars()...)).bufferUntil("\n"::equals)`**, which
+boxed every character of every reply into its own `String` and pushed it through an inner `Flux` -
+the hot path doing that per byte - and which was the wrong operator besides: `flatMap` does not
+preserve order across inner publishers, so two chunks in flight could in principle interleave their
+characters and frame nonsense lines. It never did, by two accidents of the pipeline around it
+rather than anything the operator itself promised: (1) the source is one netty channel-read thread,
+so a chunk's `onNext` had returned before the next one started, and (2) nothing between the socket
+and `ReplaySubscriber` bounded demand below unbounded, until issue #144 found that `accumulate`'s
+own prefetch (`concatMapIterable`'s `Queues.XS_BUFFER_SIZE`, 32) had quietly become exactly the
+"operator with a prefetch" this note used to warn about - safe only because the fold is fully
+synchronous and replenishes its demand inside the same `onNext`, never leaving an inner
+half-drained (`ReplyFluxCapabilitiesTest#framingSurvivesTheFoldBothAcrossAReadAndWithinOne`).
 
-**The second accident went quietly, at issue #35, and #144 is the one that noticed.**
-`ReplyFlux.accumulate` - the single `concatMapIterable` stage that folds `M119`, `M503` and `M115`
-into one event each - carries a prefetch (`Queues.XS_BUFFER_SIZE`, 32) and so is the first operator
-in this chain to bound the demand, which is exactly the "operator with a prefetch" this entry warned
-about. It went in for the first two families without anyone checking this interaction;
-`ReplyFluxMultilineTest` (#35) proves the fold but never drives more than a handful of lines through
-it, so it could not have caught a half-drained inner. `ReplyFluxCapabilitiesTest` (#144) is what
-measured it, and the finding is about the stage as a whole rather than about `M115` specifically:
-`framingSurvivesTheFoldBothAcrossAReadAndWithinOne` frames 100 replies out of one chunk, three times
-the prefetch, and one reply split across two reads, and both still come out whole and in order
-through all three readers - the synchronous chain replenishes its demand inside the same `onNext`,
-so no inner is left half-drained, and a third reader sharing the one stage changes nothing about
-that: it is still one buffer of 32, now serving three `offer`/`flush` pairs instead of one. So
-accident (1) is now the whole of it, which makes `concatMap` worth more than it was: it states the
-intent and costs nothing here. Change it in its own
-commit, because it is still not the cause of anything known.
+**`frame` needs neither accident**, by issue #149: it has no inner publisher at all, so a chunk is
+sliced in the one call that received it and there is nothing left to interleave regardless of what
+bounds demand downstream. `ReplyFluxFramingTest#orderSurvivesManyRepliesCutAtArbitraryChunkBoundaries`
+is the test that would notice if that stopped being true - 300 replies cut at chunk boundaries from
+1 to 40 characters wide, nowhere near a line boundary, framed whole and in order.
+
+**It also no longer `.trim()`s the assembled line.** `.trim()` stripped the leading two-space
+indent `SettingsValue`'s unprefixed shape - what `M503 S0` and a bare `M92` read-back answer in -
+uses as its whole decode guard, so both were silently dropped (logged `<- (unread)`) and never
+reached the bus; see the (now-fixed) debt entry below. `stripTrailing()` removes the line
+terminator and nothing in front of it, which is what both shapes of `M503` and every other decoder
+on this wire have always been handed to work with.
 
 ### Keep blocking out of the pipeline
 
@@ -1083,18 +1085,20 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   #129; not the cause of it.
 - **`GFlux` captures its `FluxSink` from `Flux.create` into a field**, so `onG` NullPointers if
   anything emits before the first subscribe, and a second subscriber overwrites the field.
-- **`ReplyFlux`'s framing `.trim()`s a received line, which destroys a guard a decoder reads.**
-  `SettingsValue`'s two-space indent is "the whole guard" separating a settings line from everything
-  else a printer says, and in the unprefixed shape - what `M503 S0` answers in, and what a bare
-  single-setting read-back like `M92` answers in - the indent is *leading*, so `trim()` eats it.
-  Measured: `MarlinRsDecoder.decode("  M92 X81.00 Y80.00")` answers
-  `SettingsValue(M92, ...)`, the same line trimmed answers **null**, and through `ReplyFlux` it is
-  logged `<- (unread)` and dropped. So all 13 lines of an `M503 S0` and every bare read-back are
-  invisible to the bus, while the `echo:`-prefixed `M503` dump (indent internal to the line) works -
-  which is why `ReplyFluxMultilineTest` uses the prefixed shape. The fix belongs with the framing
-  rewrite the *Patterns* section already asks for (strip the terminator, not the blanks); a
-  `stripTrailing()` would do it, but it changes what every decoder here is handed and wants its own
-  change plus a `GCodeCorpusProbe` run.
+- ~~**`ReplyFlux`'s framing `.trim()`s a received line, which destroys a guard a decoder reads.**~~
+  **Fixed** (#149), together with the framing rewrite the *Patterns* section asked for - they were
+  one change, as this entry said they would have to be. `ReplyFlux.frame` is a stateful buffer with
+  no inner publisher (see *Frame lines on the wire* above), and the assembled line is
+  `stripTrailing()`'d rather than `trim()`'d, so the leading indent `SettingsValue`'s unprefixed
+  shape decodes on survives. Measured against MarlinSim on `localhost:8099`, 2026-11-20, through the
+  real `TerminalManager`/`HostTerminal` stack (`SettingsLeadingIndentProbe`): with the fix, `M503 S0`
+  folds its 13 unprefixed lines into one `SettingsReport` and a bare `M92` folds into a one-entry
+  one, both on `messageFlux()`; the same probe run against the pre-fix code reported **zero**
+  `SettingsReport`s for either and timed out waiting for them, each line logged `<- (unread)` as the
+  entry above described. `ReplyFluxFramingTest` pins the leading indent at the `ReplyFlux` level
+  directly (`anM503S0DumpDecodesToOneSettingsReport`, `aBareM92ReadBackDecodesToASettingsReport`) and
+  `ReplyFluxMultilineTest` (#35) and `ReplyFluxCapabilitiesTest` (#144) still pass unchanged, so the
+  rewrite did not disturb the accumulation stage sitting on top of it.
 - **There is no written spec for this module.** `:gcode` has `doc/specs/GCODE_spec.md` and its
   Appendix B; the transport has this skill and nothing else. Five contracts are written down now -
   the send window, what a terminal signal on `messageFlux()` means, the binary transfer, what

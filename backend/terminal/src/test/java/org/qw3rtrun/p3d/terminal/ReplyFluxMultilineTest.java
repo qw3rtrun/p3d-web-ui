@@ -72,9 +72,9 @@ class ReplyFluxMultilineTest {
     }
 
     /** The same for {@code M503}'s dump: a section, a value, and the {@code ok}. The {@code echo:}
-     * shape, because {@code ReplyFlux} trims a received line and the unprefixed {@code M503 S0}
-     * shape's two-space indent - which is the whole guard {@code SettingsValue} decodes on - does not
-     * survive that; see the known-debt entry in {@code reactive-transport-dev}. */
+     * shape - {@code ReplyFluxFramingTest} is where the unprefixed {@code M503 S0} shape (no
+     * sections, leading indent as the only guard) is pinned, since issue #149 is what made that
+     * shape survive framing at all. */
     @Test
     void aSettingsDumpArrivesAsOneReplyFollowedByItsOk() {
         StepVerifier.create(replies(

@@ -651,6 +651,53 @@ public class HostTerminal {
          */
         private final CapabilitiesReportReader capabilities = new CapabilitiesReportReader();
 
+        /**
+         * The line being assembled across chunks - whatever the most recent chunk ended inside,
+         * with no terminator in it. What makes {@link #frame} a stateful buffer rather than
+         * {@code flatMap} over characters: touched only here, on the one thread that ever calls
+         * {@link #frame} - the netty inbound loop - like {@link #listing} and the other readers
+         * this class holds.
+         */
+        private final StringBuilder assembling = new StringBuilder();
+
+        /**
+         * Cuts one chunk of the wire into zero or more complete lines - the {@code \n} itself not
+         * included - and holds back whatever did not end in one for the next call. Replaces a
+         * {@code flatMap} that boxed every character into its own {@code String} and pushed it
+         * through an inner {@code Flux}; that old shape could interleave two chunks' characters in
+         * principle and was safe only by two accidents of the pipeline it sat in (see the note on
+         * {@link #accumulate} for both). Neither accident is load-bearing for this method: it has
+         * no inner publisher, so a chunk is sliced in the one call that received it and there is
+         * nothing left to interleave, regardless of which thread calls it or how much demand is
+         * outstanding downstream.
+         *
+         * <p>{@code concatMapIterable} is what turns the list this returns back into the individual
+         * lines, in order - the same operator {@link #accumulate} already used for the same reason,
+         * and the deliberate alternative to {@code flatMap}.
+         *
+         * @param chunk one {@code onNext} from the socket - a partial line, one whole line, or
+         *              several
+         * @return the lines {@code chunk} completed, oldest first; empty when it completed none
+         */
+        private List<String> frame(String chunk) {
+            assembling.append(chunk);
+            List<String> lines = null;
+            int start = 0;
+            for (int i = 0; i < assembling.length(); i++) {
+                if (assembling.charAt(i) == '\n') {
+                    if (lines == null) {
+                        lines = new ArrayList<>();
+                    }
+                    lines.add(assembling.substring(start, i));
+                    start = i + 1;
+                }
+            }
+            if (start > 0) {
+                assembling.delete(0, start);
+            }
+            return lines == null ? List.of() : lines;
+        }
+
         // The firmware never sends a *packet* to the host - every reply in both modes is an ASCII
         // line - so the inbound .asString() needs no change and :gcode's MbpPacketReader has no
         // place in this pipeline.
@@ -660,9 +707,8 @@ public class HostTerminal {
             this.binaryMode = binaryMode;
             this.traffic = traffic;
             this.flux = source
-                    .flatMap(s -> Flux.fromStream(s.chars().mapToObj(i -> (char) i).map(Object::toString)))
-                    .bufferUntil("\n"::equals)
-                    .map(l -> String.join("", l).trim())
+                    .concatMapIterable(this::frame)
+                    .map(String::stripTrailing)
                     .doOnNext((in) -> TRAFFIC_LOGGER.debug("<- {}", in))
                     .handle(this::decode)
                     .concatMapIterable(this::accumulate);
@@ -723,15 +769,17 @@ public class HostTerminal {
          * already does to every other exchange in flight on a dead socket.
          *
          * <p><strong>This is the first operator in this pipeline with a prefetch</strong>
-         * ({@code XS_BUFFER_SIZE}, 32), so the framing above is no longer driven by
-         * {@link ReplaySubscriber}'s unbounded demand alone - which matters because that unbounded
-         * demand is one of the two reasons the {@code flatMap} framing cannot interleave two chunks'
-         * characters. That was already true with two readers folding here (issue #35); a third changes
-         * nothing about the prefetch itself - it is still one {@code concatMapIterable} stage with the
-         * same 32-element buffer, now serving three {@code offer}/{@code flush} pairs instead of two,
-         * and the fold is still fully synchronous with no inner publisher. {@code ReplyFluxCapabilitiesTest}
-         * and {@code ReplyFluxMultilineTest} each drive well past the prefetch (100 lines, three times
-         * 32) through the whole three-reader stage and pin that framing is unchanged.
+         * ({@code XS_BUFFER_SIZE}, 32), so this fold is no longer driven by
+         * {@link ReplaySubscriber}'s unbounded demand alone. That mattered while {@link #frame} was
+         * a {@code flatMap} over individual characters, which depended on exactly that unbounded
+         * demand to avoid interleaving two chunks (issue #149 removed the other half of it, the
+         * framing's reliance on being fed by one netty thread, by giving {@link #frame} no inner
+         * publisher at all - see its javadoc). It is still one {@code concatMapIterable} stage with
+         * the same 32-element buffer, now serving three {@code offer}/{@code flush} pairs instead of
+         * two, and the fold is fully synchronous with no inner publisher of its own either.
+         * {@code ReplyFluxCapabilitiesTest} and {@code ReplyFluxMultilineTest} each drive well past
+         * the prefetch (100 lines, three times 32) through the whole three-reader stage and pin that
+         * framing is unchanged.
          */
         private List<GRs<?>> accumulate(GRs<?> reply) {
             if (endstops.offer(reply)) {

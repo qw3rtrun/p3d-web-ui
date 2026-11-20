@@ -222,3 +222,133 @@ data class CapabilityRs(val capability: String, val enabled: Boolean) : GRs<Capa
         }
     }
 }
+
+/**
+ * A whole `M115` answer's capabilities, assembled: every [CapabilityRs] the firmware listed, in the
+ * order it listed them.
+ *
+ * **One event per `M115` answer instead of 38**, which is the whole point. A capability on its own
+ * is a true fact but not a useful one - a host asks `M115` to learn what the printer can do, and
+ * that is the set, not its members arriving one at a time.
+ *
+ * **`FIRMWARE_NAME:...` is deliberately not folded in.** That line is [FirmwareInfoRs], and it is
+ * already one event per answer: it is a single line, so there is no multiplicity for a reader to fix,
+ * and it carries its own "announced only when the firmware's fields changed" rule that has nothing
+ * to do with this fold. Folding it in would bundle two facts with different lifetimes into one event
+ * and force every consumer of either to re-split them.
+ *
+ * **Scoping the fold to "members of this family" rather than "everything until `ok`" is measured,
+ * not assumed.** `CapabilitiesInterleaveProbe` ran `M115` against MarlinSim (bugfix-2.1.x) on
+ * 2026-11-20 with `M155 S1` auto-report running: the header, all 38 `Cap:` lines and `ok P15 B3`
+ * arrived at the same millisecond offset (31ms after the command was written), with the temperature
+ * ticks strictly outside the burst on both sides (a leftover at 0ms, the next at 651ms). Nothing
+ * lands inside an `M115` answer, so a reader that ends a report on the first reply that is not a
+ * capability cannot be ended early by an unrelated line.
+ *
+ * **[encode] writes the whole block**, one `Cap:` line each - like [SdFileList], a value that *is* a
+ * block, so encoding it as its first line would be a lie. Each line still round-trips through
+ * [CapabilityRs.decode] on its own, which `CapabilitiesReportReaderTest` asserts.
+ *
+ * ```
+ * CapabilitiesReport(listOf(CapabilityRs("EEPROM", true), CapabilityRs("SDCARD", true))).encode()
+ * // Cap:EEPROM:1
+ * // Cap:SDCARD:1
+ * ```
+ *
+ * @see <a href="https://reprap.org/wiki/G-code#M115:_Get_Firmware_Version_and_Capabilities">RepRap G-code, M115</a>
+ */
+data class CapabilitiesReport(val capabilities: List<CapabilityRs>) : GEventRs<CapabilitiesReport> {
+
+    override fun encode(): String {
+        val out = StringBuilder()
+        for (capability in capabilities) {
+            if (out.isNotEmpty()) out.append('\n')
+            out.append(capability.encode())
+        }
+        return out.toString()
+    }
+}
+
+/**
+ * Folds one `M115` answer's `Cap:` lines into one [CapabilitiesReport], one decoded reply at a time.
+ *
+ * Same job as [SdFileListReader] does for `M20`: the memory a multi-line answer needs lives in an
+ * object the caller owns, because every `GRsDecoder` is a pure line-to-value function and
+ * `MarlinRsDecoder` is a singleton registry that two printers share. It takes decoded replies rather
+ * than raw lines, so it sits above `decode()` - which is also why neither [CapabilityRs] nor
+ * [FirmwareInfoRs] changes to make this work, and why neither leaves the decoder registry.
+ *
+ * **There is no terminator line.** `M119` opens on a header and `M20` closes on `End file list`;
+ * `M115` has neither, so the first `Cap:` line opens the report - it already carries data - and what
+ * *ends* it is the next reply that is not a capability. [offer] answering false is that signal, and
+ * the caller flushes on it:
+ *
+ * ```
+ * val reader = CapabilitiesReportReader()
+ * for (reply in replies) {
+ *     if (reader.offer(reply)) continue
+ *     reader.flush()?.let { publish(it) }
+ *     publish(reply)
+ * }
+ * ```
+ *
+ * **A connection that dies mid-burst drops the report.** Nothing flushes, so the capabilities
+ * collected so far are discarded with the reader - the same judgement [SdFileListReader] takes, for
+ * the same reason: a partial answer reported as a whole one is worse than no answer, because a host
+ * cannot tell a firmware that lacks `SDCARD` from one whose answer was cut off before it.
+ *
+ * **One reader per connection, and every call on the owner's one thread.** It holds a plain `Boolean`
+ * and a plain `ArrayList` and no atomics - the contract `GSendWindow` states, and stated here rather
+ * than at the call site because this file travels to a port and the caller does not.
+ */
+class CapabilitiesReportReader {
+
+    private var open = false
+
+    private val capabilities = ArrayList<CapabilityRs>()
+
+    /**
+     * Offers one decoded reply to the reader, taking it into the open report when it is a
+     * [CapabilityRs] and opening one if none was open.
+     *
+     * Declining leaves the open report exactly as it was, so a caller may offer every reply it sees
+     * and treat a false as "this reply is not mine, and whatever I was collecting is now complete".
+     *
+     * ```
+     * reader.offer(CapabilityRs("EEPROM", true))   // true - a report is open and holds one
+     * reader.offer(SimpleOkRs)                     // false - flush, then handle the ok
+     * ```
+     *
+     * @param reply one decoded reply, or null
+     * @return true when [reply] was a capability and was taken, false for anything else
+     */
+    fun offer(reply: Any?): Boolean {
+        if (reply !is CapabilityRs) return false
+        open = true
+        capabilities.add(reply)
+        return true
+    }
+
+    /**
+     * Closes the open report and answers it, or null when no capability has been offered since the
+     * last flush - so flushing on every non-capability reply is safe and costs nothing.
+     *
+     * The report gets its own copy of the list, and the reader is empty afterwards: the next `M115`
+     * answer starts clean, and a second flush answers null.
+     *
+     * ```
+     * reader.offer(CapabilityRs("EEPROM", true))
+     * reader.flush()   // CapabilitiesReport([CapabilityRs("EEPROM", true)])
+     * reader.flush()   // null
+     * ```
+     *
+     * @return the assembled report, or null when nothing was collected
+     */
+    fun flush(): CapabilitiesReport? {
+        if (!open) return null
+        val report = CapabilitiesReport(ArrayList(capabilities))
+        open = false
+        capabilities.clear()
+        return report
+    }
+}

@@ -1,59 +1,56 @@
 package org.qw3rtrun.p3d.core;
 
-import org.qw3rtrun.p3d.g.marlin.event.EndstopReportHeader;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopReport;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopRs;
-import org.qw3rtrun.p3d.g.marlin.event.EndstopStateRs;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Which of this machine's endstops are triggered, as far as {@code M119}'s answers have said. Same
  * shape as {@link SdCardControl}, {@link TemperatureControl}, {@link ProfileControl} and
  * {@link EEPROMSettingsControl}: {@link #on} folds a reply in, {@link #snapshot()} hands it back as
- * the replies that would have announced it - so a diagnostics page opened after somebody else
- * pressed the button sees the switches rather than an empty table.
+ * the reply that would have announced it - so a diagnostics page opened after somebody else pressed
+ * the button sees the switches rather than an empty table.
  *
- * <p>Simpler than {@link EEPROMSettingsControl} in three ways, each because {@code M119} is a pure
- * read of live hardware: there is no second memory (no stored/live split the way an EEPROM has),
- * nothing gates it (no capability line and no measured refusal, so there is no "unsupported" state
- * to hold), and nothing this host sends invalidates it - only another {@code M119} says anything
- * about a switch.
+ * <p><strong>A report replaces the held one wholesale, and that is the difference from
+ * {@link EEPROMSettingsControl}.</strong> {@code M119} is a pure read of live hardware that always
+ * states every endstop it has - there is no partial {@code M119} - so the newest answer is the whole
+ * truth and merging by name would only let a switch that has disappeared from the machine linger.
+ * A settings read genuinely is partial (a lone {@code M92} read-back arrives as a one-entry
+ * {@code SettingsReport} and must merge into the 25-line dump already held), which is why that
+ * control keeps its per-key merge and this one does not.
  *
- * <p>One ordered list rather than a map, because the order is Marlin's own
- * ({@code Endstops::report_states}) and is the only grouping a reader gets; a re-read merges each
- * line in the place it already holds. Which endstops exist, how many, and in what order is the
- * machine's business - measured against MarlinSim (bugfix-2.1.x, Nov 18 2026, {@code localhost:8099},
- * via {@code GCodeLiveProbe}):
- * <pre>
- * &gt;&gt; M119
- * &lt;&lt; Reporting endstop status      EndstopReportHeader
- * &lt;&lt; x_min: open                   EndstopStateRs(x_min, triggered=false)
- * &lt;&lt; y_min: open                   EndstopStateRs(y_min, triggered=false)
- * &lt;&lt; z_min: TRIGGERED              EndstopStateRs(z_min, triggered=true)
- * &lt;&lt; ok P15 B3
- * </pre>
- * Three on that build; a delta, an IDEX or a machine with a filament runout sensor reports a
- * different set, so nothing here assumes one.
+ * <p>Simpler in three further ways, each because {@code M119} is that pure read: there is no second
+ * memory (no stored/live split the way an EEPROM has), nothing gates it (no capability line and no
+ * measured refusal, so there is no "unsupported" state to hold), and nothing this host sends
+ * invalidates it - only another {@code M119} says anything about a switch.
+ *
+ * <p>The report's order is Marlin's own ({@code Endstops::report_states}) and is the only grouping a
+ * reader gets. Which endstops exist, how many, and in what order is the machine's business -
+ * measured against MarlinSim (bugfix-2.1.x, Nov 18 2026, {@code localhost:8099}, via
+ * {@code GCodeLiveProbe}): three, {@code x_min} open, {@code y_min} open, {@code z_min} TRIGGERED,
+ * in that order, behind a {@code Reporting endstop status} heading that {@code :backend:terminal}
+ * now folds away. A delta, an IDEX or a machine with a filament runout sensor reports a different
+ * set, so nothing here assumes one.
  *
  * <h2>Concurrency</h2>
  * One immutable {@link State} behind one volatile reference ({@link SdCardControl}'s pattern): the
  * aggregate's own thread is the only writer (every {@code on} runs on {@code PrinterState.onEvent}'s
  * {@code p3d-printer-<uuid>} thread), any thread may read ({@link #snapshot()} runs on whatever
  * subscribes to {@code PrinterReactor.updates()}), and the volatile write of a fully-built
- * {@code State} is the happens-before edge - a reader sees the whole of the old state or the whole
- * of the new one, never a list mid-rebuild.
+ * {@code State} is the happens-before edge - a reader sees the whole of the old report or the whole
+ * of the new one, never one mid-replacement.
  */
 public class EndstopsControl {
 
     /**
-     * The endstops as reported, in the order the firmware wrote them.
+     * The last whole {@code M119} answer.
      *
-     * @param states one entry per endstop named so far, each the last line about that name
+     * @param report every endstop the machine named, in its order, or null before one has arrived
      */
-    record State(List<EndstopStateRs> states) {
+    record State(EndstopReport report) {
 
-        static final State NOTHING = new State(List.of());
+        static final State NOTHING = new State(null);
     }
 
     private volatile State state = State.NOTHING;
@@ -64,33 +61,13 @@ public class EndstopsControl {
 
     /** One entry point for the whole family, so {@code PrinterState} has one arm - a reply added to it in {@code :gcode} arrives here already routed. */
     public void on(EndstopRs<?> reply) {
-        switch (reply) {
-            case EndstopStateRs line -> onState(line);
-            case EndstopReportHeader ignored -> {
-                // "Reporting endstop status" carries nothing to hold: it is scaffolding ahead of the
-                // state lines, not an informative line - the same reading SdCardControl takes of
-                // SdFileListBegin. It is still republished by PrinterState, so a page that wants to
-                // mark the start of a report can.
-            }
-            default -> {
-                // a member of the family this control keeps nothing about; none exists today, the
-                // arm exists because EndstopRs is an interface and not a sealed one.
-            }
+        if (reply instanceof EndstopReport report) {
+            state = new State(report);
         }
-    }
-
-    /** One endstop, replacing the line held for the same name in its own place, or appended. */
-    private void onState(EndstopStateRs line) {
-        var states = new ArrayList<>(state.states());
-        for (int i = 0; i < states.size(); i++) {
-            if (states.get(i).getName().equals(line.getName())) {
-                states.set(i, line);
-                state = new State(List.copyOf(states));
-                return;
-            }
-        }
-        states.add(line);
-        state = new State(List.copyOf(states));
+        // EndstopReportHeader/EndstopStateRs never reach here individually anymore -
+        // :backend:terminal's EndstopReportReader folds every line of one M119 answer into one
+        // EndstopReport before PrinterState ever sees it (issue #35). The arm exists because
+        // EndstopRs is an interface and not a sealed one.
     }
 
     /**
@@ -104,12 +81,9 @@ public class EndstopsControl {
         state = State.NOTHING;
     }
 
-    /**
-     * The endstops as the replies that announced them, in the order first seen - a replacement keeps
-     * its place, so the sequence stays the firmware's. {@link EndstopReportHeader} is deliberately
-     * not replayed, for the same reason it was never held.
-     */
+    /** The last report as the reply that announced it, or nothing when no {@code M119} has answered. */
     public List<Object> snapshot() {
-        return List.copyOf(state.states());
+        var report = state.report();
+        return report == null ? List.of() : List.of(report);
     }
 }

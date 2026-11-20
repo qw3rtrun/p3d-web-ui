@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.g.marlin.event.EepromReport;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsReport;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsRs;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsSection;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsValue;
@@ -16,6 +17,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * What the machine said its settings are, as the replies that would have announced it.
+ *
+ * <p>Issue #35's redo: {@code :backend:terminal}'s {@code SettingsReportReader} now folds one burst
+ * (a full {@code M503} dump, or a lone {@code M92}-style read-back) into one {@code SettingsReport}
+ * before this control ever sees it, so {@link EEPROMSettingsControl#on} takes one value per burst
+ * rather than one call per line - {@link #fold} wraps the per-line fixtures this suite already had
+ * in exactly that shape. The per-key merge inside ({@code onSection}/{@code onValue}) is unchanged:
+ * a read-back's one-entry report still has to merge into a larger held report, which is why this
+ * control, unlike {@code EndstopsControl}, does not replace wholesale.
  */
 class EEPROMSettingsControlTest {
 
@@ -54,8 +63,9 @@ class EEPROMSettingsControlTest {
 
     private final EEPROMSettingsControl settings = new EEPROMSettingsControl();
 
+    /** Folds a whole burst in as the one {@code SettingsReport} it now arrives as. */
     private void fold(List<SettingsRs<?>> lines) {
-        lines.forEach(settings::on);
+        settings.on(new SettingsReport(lines));
     }
 
     /** Nothing said is nothing known: an unasked machine has no settings, not empty ones. */
@@ -67,10 +77,10 @@ class EEPROMSettingsControlTest {
     // one ordered list, not three maps: a value's place in the sequence is the only thing that says
     // which heading it belongs under, since the firmware writes no other association.
     @Test
-    void theWholeDumpReplaysInReportOrder() {
+    void theWholeDumpReplaysAsOneSettingsReport() {
         fold(dump());
 
-        assertEquals(List.copyOf(dump()), settings.snapshot());
+        assertEquals(List.of(new SettingsReport(dump())), settings.snapshot());
     }
 
     // what makes a single-setting read-back useful: >> M92 answers one unprefixed line, so the held
@@ -81,12 +91,12 @@ class EEPROMSettingsControlTest {
         fold(dump());
         var readBack = new SettingsValue("M92", "M92 X81.00 Y80.00 Z400.00 E500.00");
 
-        settings.on(readBack);
+        settings.on(new SettingsReport(List.of(readBack)));
 
-        var expected = new ArrayList<Object>(dump());
+        var expected = new ArrayList<SettingsRs<?>>(dump());
         expected.set(expected.indexOf(new SettingsValue("M92", "M92 X80.00 Y80.00 Z400.00 E500.00")),
                 readBack);
-        assertEquals(expected, settings.snapshot());
+        assertEquals(List.of(new SettingsReport(expected)), settings.snapshot());
     }
 
     /**
@@ -101,7 +111,11 @@ class EEPROMSettingsControlTest {
         fold(dump());
         fold(dump());
 
-        var presets = settings.snapshot().stream()
+        var report = settings.snapshot().stream()
+                .filter(SettingsReport.class::isInstance)
+                .map(SettingsReport.class::cast)
+                .findFirst().orElseThrow();
+        var presets = report.getEntries().stream()
                 .filter(SettingsValue.class::isInstance)
                 .map(SettingsValue.class::cast)
                 .filter(value -> value.getCode().equals("M145"))
@@ -110,6 +124,21 @@ class EEPROMSettingsControlTest {
 
         assertEquals(List.of("M145 S0 H180.00 B70.00 F0", "M145 S1 H240.00 B110.00 F0"), presets,
                 "keying on M145 alone collapses the two presets into one");
+    }
+
+    /**
+     * An empty batch is a possibility the per-line path never had - nothing to offer makes an empty
+     * {@code List}, not an absent call - and it must touch nothing: an {@code M503} would never send
+     * one, but the control's own contract does not depend on that being true.
+     */
+    @Test
+    void anEmptyReportLeavesTheHeldOneUntouched() {
+        fold(dump());
+        var before = settings.snapshot();
+
+        settings.on(new SettingsReport(List.of()));
+
+        assertEquals(before, settings.snapshot());
     }
 
     // pressing refresh twice must leave the tab as it was, not doubling every row.
@@ -143,7 +172,7 @@ class EEPROMSettingsControlTest {
         var snapshot = settings.snapshot();
 
         assertEquals(new EepromReport("OK"), snapshot.getLast());
-        assertEquals(List.copyOf(dump()), snapshot.subList(0, snapshot.size() - 1));
+        assertEquals(new SettingsReport(dump()), snapshot.get(snapshot.size() - 2));
     }
 
     // ------------------------------------------------------------- whether M503 exists at all

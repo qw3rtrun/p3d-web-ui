@@ -212,3 +212,41 @@ tasks.register('probeHandshake', JavaExec) {
             (findProperty('probePort') ?: '8099').toString(),
     ]
 }
+
+/**
+ * Measure, for issue #35's redo, whether anything can land between the first line of an M119/M503
+ * multi-line reply and the `ok` that ends it - with a temperature auto-report ticking throughout,
+ * since that is the one thing this host asks for that keeps firing on its own.
+ *
+ * Hand-run only, like the probes above: it needs a listener on the far end, so it is deliberately
+ * not wired into `check`. It turns `M155 S1` on and back off again.
+ */
+tasks.register('probeMultilineInterleave', JavaExec) {
+    group = 'verification'
+    description = 'Measure whether traffic interleaves inside an M119/M503 multi-line reply (default localhost:8099).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.MultilineInterleaveProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}
+
+/**
+ * Count how many values cross `messageFlux()` for one M119 read and one M503 read, over the real
+ * TerminalManager stack - the claim issue #35 was reopened over, and the probe for
+ * `HostTerminal.ReplyFlux.accumulate`. The one above measures the wire; this one measures the bus.
+ *
+ * Hand-run only, like the probes above: it needs a listener on the far end, so it is deliberately
+ * not wired into `check`. It reads and changes nothing on the machine.
+ */
+tasks.register('probeMultilineBus', JavaExec) {
+    group = 'verification'
+    description = 'Count the events one M119/M503 read puts on messageFlux() (default localhost:8099).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.MultilineBusProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

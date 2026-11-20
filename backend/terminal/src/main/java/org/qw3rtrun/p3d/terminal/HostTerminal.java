@@ -7,11 +7,15 @@ import org.qw3rtrun.p3d.api.msg.TerminalTraffic;
 import org.qw3rtrun.p3d.g.code.core.session.GSendWindow;
 import org.qw3rtrun.p3d.g.marlin.binary.MbpRs;
 import org.qw3rtrun.p3d.g.marlin.binary.MbpRsDecoder;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopReport;
+import org.qw3rtrun.p3d.g.marlin.event.EndstopReportReader;
 import org.qw3rtrun.p3d.g.marlin.event.MarlinRsDecoder;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileListBegin;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileListEnd;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileListReader;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsReport;
+import org.qw3rtrun.p3d.g.marlin.event.SettingsReportReader;
 import org.qw3rtrun.p3d.g.protocol.AdvancedOkRs;
 import org.qw3rtrun.p3d.g.protocol.BusyRs;
 import org.qw3rtrun.p3d.g.protocol.GRs;
@@ -36,6 +40,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
@@ -59,10 +64,11 @@ import static org.qw3rtrun.p3d.api.msg.TerminalTraffic.Direction.SENT;
 /**
  * One terminal session, two coupled pipelines. {@link CommandProcessor} pulls G-code from a source,
  * numbers and frames it through {@code :gcode}'s {@link GSendWindow}, and writes it bounded by the
- * printer's own buffer; {@link ReplyFlux} frames reply lines and decodes each once via
- * {@code MarlinRsDecoder}, and {@link ReplaySubscriber} routes the result back into the send window
- * or onto {@link #messageFlux()}. The coupling is real: an {@code ok} or {@code busy:} arriving on
- * the inbound side is half of outbound flow control.
+ * printer's own buffer; {@link ReplyFlux} frames reply lines, decodes each once via
+ * {@code MarlinRsDecoder} and folds the three answers that span several lines into one reply each
+ * ({@link ReplyFlux#accumulate}), and {@link ReplaySubscriber} routes the result back into the send
+ * window or onto {@link #messageFlux()}. The coupling is real: an {@code ok} or {@code busy:}
+ * arriving on the inbound side is half of outbound flow control.
  *
  * <p>Three threads matter - the producer pushing G-code, the netty inbound loop delivering replies,
  * and whichever of those two first enters a drain loop and so does the writing or emitting for both.
@@ -413,8 +419,12 @@ public class HostTerminal {
      * {@code wait}, {@code Resend}, and every {@link MbpRs} - a packet-stream reply belongs to
      * {@link MbpTransferDriver}, and an {@code MbpOk} published as a reply would read as an
      * acknowledgement of something it has nothing to do with. A line no decoder claims is dropped
-     * with a {@code #traffic} debug line. {@code M20}'s multi-line answer arrives as one
-     * {@link SdFileList}, assembled by {@link ReplyFlux#listing}.
+     * with a {@code #traffic} debug line.
+     *
+     * <p><strong>A multi-line answer arrives as one value.</strong> {@code M20}'s listing is one
+     * {@link SdFileList} ({@link ReplyFlux#listing}), {@code M119}'s endstop report one
+     * {@link EndstopReport} and {@code M503}/{@code M92}'s dump one {@link SettingsReport}
+     * ({@link ReplyFlux#accumulate}) - one event per read, never one per line.
      *
      * <p>A transfer's ordinary traffic still arrives here: measured mid-transfer,
      * {@code echo:SD card ok}, {@code echo:Now fresh file:}, {@code Writing to file:},
@@ -578,8 +588,16 @@ public class HostTerminal {
     /**
      * Frames reply lines off the wire and decodes each once - through {@code MbpRsDecoder} then
      * {@code MarlinRsDecoder} while binary mode is on, through {@code MarlinRsDecoder} alone
-     * otherwise. Built once per session, in {@link #start}, on the netty inbound loop, which is the
-     * only thread that ever touches it.
+     * otherwise - and then folds the replies that are really one answer into one value. Built once
+     * per session, in {@link #start}, on the netty inbound loop, which is the only thread that ever
+     * touches it or the three readers it holds.
+     *
+     * <p><strong>Three multi-line answers are assembled here, by three {@code :gcode} readers.</strong>
+     * {@link #listing} has a terminator line to cut on ({@code End file list}); {@link #endstops} and
+     * {@link #settings} do not, so they are scoped to <em>membership of their own family</em> instead
+     * and {@link #accumulate} ends a burst at the first reply that is not a member - in practice the
+     * {@code ok}. See {@link #accumulate} for why that scoping is safe on this wire and what it costs
+     * on a dead socket.
      */
     public static class ReplyFlux extends FluxOperator<String, GRs<?>> {
 
@@ -597,13 +615,20 @@ public class HostTerminal {
         private final Consumer<TerminalTraffic> traffic;
 
         /**
-         * {@code M20}'s listing, being assembled - the one stateful thing on this side, and it has
-         * to live here: a listing's entries ({@code Begin file list}, entries, {@code End file list})
-         * are deliberately not claimable replies ({@code TEST.GCO 47} is too common a
-         * {@code <word> <number>} shape for a decoder to own), so they reach {@link #decode} as lines
-         * no decoder wants and have nowhere else to be collected.
+         * {@code M20}'s listing, being assembled. The oldest of the three readers this side holds,
+         * and the only one that works on raw lines rather than decoded replies: a listing's entries
+         * ({@code Begin file list}, entries, {@code End file list}) are deliberately not claimable
+         * replies ({@code TEST.GCO 47} is too common a {@code <word> <number>} shape for a decoder to
+         * own), so they reach {@link #decode} as lines no decoder wants and have nowhere else to be
+         * collected.
          */
         private final SdFileListReader listing = new SdFileListReader();
+
+        /** {@code M119}'s endstop report, being assembled - see {@link #accumulate}. */
+        private final EndstopReportReader endstops = new EndstopReportReader();
+
+        /** {@code M503}/{@code M92}'s settings burst, being assembled - see {@link #accumulate}. */
+        private final SettingsReportReader settings = new SettingsReportReader();
 
         // The firmware never sends a *packet* to the host - every reply in both modes is an ASCII
         // line - so the inbound .asString() needs no change and :gcode's MbpPacketReader has no
@@ -618,7 +643,58 @@ public class HostTerminal {
                     .bufferUntil("\n"::equals)
                     .map(l -> String.join("", l).trim())
                     .doOnNext((in) -> TRAFFIC_LOGGER.debug("<- {}", in))
-                    .handle(this::decode);
+                    .handle(this::decode)
+                    .concatMapIterable(this::accumulate);
+        }
+
+        /**
+         * Folds {@code M119}'s and {@code M503}'s multi-line answers into one reply each, and passes
+         * everything else through. A member line is swallowed into its reader; the first reply that is
+         * <em>not</em> a member ends whatever was open, so one input produces zero, one or two outputs:
+         * the completed report first and then the line that ended it, which is almost always the
+         * {@code ok} and must still reach {@link ReplaySubscriber} as window credit.
+         *
+         * <p><strong>Why {@code concatMapIterable} and not another {@code handle}.</strong>
+         * {@code handle}'s {@link SynchronousSink} permits at most one emission per input, and the
+         * line that ends a burst has two to make, in order. {@code concatMapIterable} over a
+         * synchronous {@code List} introduces no concurrency, no re-ordering and no scheduling - it
+         * stays on the netty inbound loop that drives the upstream, which is also what lets the three
+         * readers be plain fields.
+         *
+         * <p><strong>Why "members of this family" and not "everything until the ok".</strong> The
+         * generic rule is wrong on this wire: a {@code busy:} notice or a {@code Done printing file}
+         * genuinely can land between an unrelated command and <em>its</em> {@code ok}, and would be
+         * swallowed into a report it has nothing to do with. What makes the family-scoped rule safe is
+         * that nothing lands <em>inside</em> one of these two answers - measured by
+         * {@code MultilineInterleaveProbe} on 2026-11-19 against MarlinSim on {@code localhost:8099},
+         * with {@code M155 S1} ticking once a second throughout: the tick before {@code M119} arrived
+         * at 0ms, the report's four lines and its {@code ok P15 B3} all at 22ms, and the next tick at
+         * 691ms. {@code M503} measured the same shape, a contiguous ~20-line burst with its {@code ok}
+         * immediately behind the last line.
+         *
+         * <p>A burst the connection dies in the middle of is never flushed and is lost in silence -
+         * the same strict reading {@link SdFileListReader} takes (a partial answer reported as the
+         * whole one is worse than no answer), and what this transport already does to every other
+         * exchange in flight on a dead socket.
+         */
+        private List<GRs<?>> accumulate(GRs<?> reply) {
+            if (endstops.offer(reply)) {
+                return List.of();
+            }
+            if (settings.offer(reply)) {
+                return List.of();
+            }
+            var out = new ArrayList<GRs<?>>(3);
+            EndstopReport endstopReport = endstops.flush();
+            if (endstopReport != null) {
+                out.add(endstopReport);
+            }
+            SettingsReport settingsReport = settings.flush();
+            if (settingsReport != null) {
+                out.add(settingsReport);
+            }
+            out.add(reply);
+            return out;
         }
 
         /**

@@ -661,6 +661,23 @@ So: **route on `GRs` inside, publish `GRs` outside.** The send window still matc
 `BusyRs<?>` and `ResendRs`; everything else goes on the bus as itself, and a line no decoder claims
 is dropped at `ReplyFlux` with a `#traffic` debug line.
 
+**One answer, one value on the bus - including the answers that span several lines.** A stage after
+`.handle(this::decode)` - `ReplyFlux.accumulate`, reached through `concatMapIterable` - folds an
+`M119` endstop report and an `M503`/`M92` settings burst into one `EndstopReport` / `SettingsReport`
+each, through `:gcode`'s `EndstopReportReader` and `SettingsReportReader`. Same problem
+`SdFileListReader` solves for `M20`, different cut: a listing has a terminator line and these two
+have none, so the scope is **membership of the family** and a burst ends at the first reply that is
+not a member - almost always the `ok`, which is emitted straight after the report and must never be
+swallowed, since downstream it is window credit. That is why the stage is `concatMapIterable` and
+not a second `handle`: a `SynchronousSink` permits one emission per input and the line that ends a
+burst has two to make, in order. What makes family scoping safe is measured, not assumed -
+`MultilineInterleaveProbe`, 2026-11-19, MarlinSim on `localhost:8099`, with `M155 S1` ticking
+throughout: the report's four lines and its `ok P15 B3` all at 22ms, the auto-report ticks at 0ms
+and 691ms, nothing inside either answer. The generic rule ("accumulate everything until `ok`") was
+rejected for this transport and stays rejected: a `busy:` notice or a `Done printing file` really
+does land between an unrelated command and *its* `ok`. A burst a dead socket interrupts is never
+flushed and is lost, the same strict reading `SdFileListReader` takes.
+
 This module ran a second parser (`terminal.msg.Replay`) until it was deleted, and the cost is worth
 remembering, because every item was invisible until something was measured against a real printer:
 
@@ -787,7 +804,8 @@ boxes every byte of every reply into a `String` and pushes it through an inner `
 transport that is the hot path. The shape that belongs here is a stateful buffer over the incoming
 chunks that cuts at `\n` and keeps the remainder, or reactor-netty's own line decoder. Whatever
 replaces it must keep the two properties the current one has: a reply split across TCP reads is
-rejoined, and a chunk holding several replies yields several.
+rejoined, and a chunk holding several replies yields several. It should also drop the `.trim()`,
+which is not framing and loses a decoder's guard - see the debt entry below.
 
 **`flatMap` is also the wrong operator, and it is safe here by two accidents.** It does not preserve
 order across inner publishers, so two chunks in flight can interleave their characters and frame
@@ -919,8 +937,10 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   nothing moves until the next `request(n)` or `ok` arrives; `processRequest()` is not called. The
   tests work around it with an explicit `thenRequest`. Adding the call is a flow-control change
   against hardware and wants a probe behind it.
-- ~~**`messageFlux()` no longer carries lines no decoder claims**~~ - the boot banner, an `M503`
-  dump, a calibration report. They are still dropped from the bus with a `#traffic` debug line, and
+- ~~**`messageFlux()` no longer carries lines no decoder claims**~~ - the boot banner, a calibration
+  report. (The `M503` dump this entry used to name is no longer one of them: `SettingsRsDecoder`
+  claims its `echo:` lines and they now cross as one `SettingsReport` - see *One answer, one value on
+  the bus* above.) The rest are still dropped from the bus with a `#traffic` debug line, and
   that is right: the layer above did nothing with them anyway. **Answered** for the console case by
   `observeTraffic` - see *A console sees the wire* above - which reports every received line
   *before* the drop, plus the outbound direction the bus never had. Not the `Flux<String>` this
@@ -1018,6 +1038,18 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   #129; not the cause of it.
 - **`GFlux` captures its `FluxSink` from `Flux.create` into a field**, so `onG` NullPointers if
   anything emits before the first subscribe, and a second subscriber overwrites the field.
+- **`ReplyFlux`'s framing `.trim()`s a received line, which destroys a guard a decoder reads.**
+  `SettingsValue`'s two-space indent is "the whole guard" separating a settings line from everything
+  else a printer says, and in the unprefixed shape - what `M503 S0` answers in, and what a bare
+  single-setting read-back like `M92` answers in - the indent is *leading*, so `trim()` eats it.
+  Measured: `MarlinRsDecoder.decode("  M92 X81.00 Y80.00")` answers
+  `SettingsValue(M92, ...)`, the same line trimmed answers **null**, and through `ReplyFlux` it is
+  logged `<- (unread)` and dropped. So all 13 lines of an `M503 S0` and every bare read-back are
+  invisible to the bus, while the `echo:`-prefixed `M503` dump (indent internal to the line) works -
+  which is why `ReplyFluxMultilineTest` uses the prefixed shape. The fix belongs with the framing
+  rewrite the *Patterns* section already asks for (strip the terminator, not the blanks); a
+  `stripTrailing()` would do it, but it changes what every decoder here is handed and wants its own
+  change plus a `GCodeCorpusProbe` run.
 - **There is no written spec for this module.** `:gcode` has `doc/specs/GCODE_spec.md` and its
   Appendix B; the transport has this skill and nothing else. Five contracts are written down now -
   the send window, what a terminal signal on `messageFlux()` means, the binary transfer, what

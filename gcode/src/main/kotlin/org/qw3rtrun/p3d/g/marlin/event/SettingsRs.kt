@@ -11,8 +11,15 @@ import org.qw3rtrun.p3d.g.protocol.startsWithAscii
 /**
  * `M503`'s settings report and `M504`'s EEPROM notice: what the machine says its own
  * configuration is. One interface over the family, as with [SdCardRs], so a caller matching
- * `SettingsRs<*>` gets the whole report in one subscription: section headers, the setting lines
- * under them, and the EEPROM health notice.
+ * `SettingsRs<*>` gets section headers, the setting lines under them, and the EEPROM health notice
+ * in one subscription.
+ *
+ * **A line is not an event here.** The decoders below read one line each, but
+ * [SettingsReportReader] - owned by `:backend:terminal` - folds a whole dump, and equally a lone
+ * read-back like `M92`'s answer, into one [SettingsReport] before anything above `:gcode` is told
+ * about it; [SettingsSection] and [SettingsValue] are decode-layer values that do not reach
+ * `PrinterState` individually. [EepromReport] is the exception and still arrives on its own, since
+ * `M504`'s answer is never part of a burst.
  *
  * Captured off MarlinSim `FIRMWARE_NAME:Marlin bugfix-2.1.x (Oct 29 2026 10:28:56)
  * MACHINE_TYPE:MarlinSim`. `M503`, `M503 S1`, `M503 S` and `M503 C` all produce byte-identical
@@ -261,4 +268,122 @@ object SettingsRsDecoder : GRsDecoder<SettingsRs<*>> {
     )
 
     override fun decode(line: String): SettingsRs<*>? = decoders.firstNotNullOfOrNull { it.decode(line) }
+}
+
+/**
+ * A whole settings answer, assembled: every heading and value line of one burst, in the order the
+ * firmware wrote them.
+ *
+ * Produced only by a [SettingsReportReader], and the only shape of this family anything above
+ * `:gcode` sees - except [EepromReport], which is `M504`'s own answer and still arrives alone.
+ * [SettingsSection] and [SettingsValue] are decode-layer values that the reader folds away.
+ *
+ * **Headings and values stay interleaved in one flat list** rather than being nested into
+ * sections, because that is what the wire says: `M503 S0` writes the values with no headings at
+ * all, so a value belongs to the most recent heading ahead of it *if there is one*, and a nested
+ * model would have to invent a section to hold the headless case.
+ *
+ * **[encode] writes the whole block** - every entry's own line, joined by newlines - the same
+ * deliberate exception [SdFileList] and [EndstopReport] make.
+ *
+ * ```
+ * SettingsReport(listOf(SettingsSection("Steps per unit"), SettingsValue("M92", "M92 X80.00"))).encode()
+ * // echo:; Steps per unit:
+ * // echo:  M92 X80.00
+ * ```
+ *
+ * @property entries the lines of one burst, each a [SettingsSection] or a [SettingsValue]
+ */
+data class SettingsReport(val entries: List<SettingsRs<*>>) : SettingsRs<SettingsReport> {
+
+    override fun encode(): String {
+        val out = StringBuilder()
+        for (i in entries.indices) {
+            if (i > 0) out.append('\n')
+            out.append(entries[i].encode())
+        }
+        return out.toString()
+    }
+}
+
+/**
+ * Folds one settings burst into one [SettingsReport], one decoded reply at a time.
+ *
+ * **The same job [SdFileListReader] does for `M20`, with one structural difference: `M503` has no
+ * terminator line.** Nothing marks the end of the dump, so what ends a report is **the next reply
+ * that is not a member of this family** - which is what [offer] answering false means, and which
+ * the caller in `:backend:terminal` turns into a [flush].
+ *
+ * ```
+ * val reader = SettingsReportReader()
+ * reader.offer(SettingsSection("Steps per unit"))             // true  - opened
+ * reader.offer(SettingsValue("M92", "M92 X80.00"))            // true  - folded
+ * reader.offer(SimpleOkRs)                                    // false - not a member
+ * reader.flush()                                              // SettingsReport([section, value])
+ * ```
+ *
+ * **Every settings answer crosses as exactly one [SettingsReport], whatever its length.** A lone
+ * [SettingsValue] - a bare `M92` read-back, which shares the unprefixed shape `M503 S0` writes -
+ * folds into a one-entry report on this same path. That is a decision and not an oversight: two
+ * wire shapes for "one value", chosen by whether other lines happened to arrive alongside it, would
+ * make `:backend:core` and the browser handle the same fact twice.
+ *
+ * **[EepromReport] is deliberately refused**, open report or not. It shares the [SettingsRs] family
+ * but it is `M504`'s answer and is never part of an `M503` burst: measured on MarlinSim
+ * bugfix-2.1.x (localhost:8099, 2026-11-19), a fresh `M503` ends `...M301 P22.20 I1.08 D114.00` and
+ * goes straight to `ok`, with no EEPROM line inside it. So it ends a batch rather than joining one.
+ *
+ * **Why "members of this family" and not "every line until `ok`".** The same probe
+ * (`MultilineInterleaveProbe`) read `M503` with `M155 S1` auto-reporting across it: a contiguous
+ * ~20-line burst, `ok` immediately behind the last `echo:` line, temperature ticks before or after
+ * the burst and never inside it. Nothing is spliced into a dump, so the narrow rule is sound here.
+ * The general rule is not - elsewhere on this wire busy notices and `Done printing file` do land
+ * between a command and its `ok` - which is why accumulating until `ok` unconditionally was
+ * rejected.
+ *
+ * **A connection that dies mid-dump drops it**, because nothing forces a flush on completion - the
+ * judgement [SdFileListReader] records, and not a regression of it.
+ *
+ * **One reader per connection, and every call on the owner's one thread.** Plain fields, no atomics.
+ */
+class SettingsReportReader {
+
+    private var open = false
+
+    private val entries = ArrayList<SettingsRs<*>>()
+
+    /**
+     * Offers one decoded reply, answering whether it belonged to a settings burst and was folded
+     * into the one being built.
+     *
+     * A false answer is the signal to [flush] - see the class doc for why that is the terminator,
+     * and why [EepromReport] gets a false here despite being a [SettingsRs].
+     *
+     * @param reply whatever the decoder produced for the line, of any type
+     * @return true when [reply] is a [SettingsSection] or a [SettingsValue] and is now part of the
+     *   open report
+     */
+    fun offer(reply: Any?): Boolean {
+        if (reply !is SettingsSection && reply !is SettingsValue) return false
+        open = true
+        entries.add(reply)
+        return true
+    }
+
+    /**
+     * Ends whatever report is open and answers it, leaving the reader ready for the next one.
+     *
+     * ```
+     * reader.flush()   // SettingsReport([...]) the first time, null every time after
+     * ```
+     *
+     * @return the assembled report, or null when no report was open
+     */
+    fun flush(): SettingsReport? {
+        if (!open) return null
+        val report = SettingsReport(ArrayList(entries))
+        open = false
+        entries.clear()
+        return report
+    }
 }

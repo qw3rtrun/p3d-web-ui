@@ -156,10 +156,10 @@ export function printer(uuid: string) {
         // M500. The one command here whose effect outlives the connection.
         storeSettings: () => send(at('/store-settings'), {}),
 
-        // M503. The report arrives on the event stream as interleaved SettingsSection/SettingsValue
-        // events, not from this call - a tab opened late still gets it from the aggregate's kept
-        // run, so a tab must not fire this again if a report has already arrived. DISABLE_M503
-        // refuses with UnknownCommand({command: 'M503'}).
+        // M503. The report arrives on the event stream as one SettingsReport, not from this call -
+        // a tab opened late still gets it from the aggregate's kept run, so a tab must not fire this
+        // again if a report has already arrived. DISABLE_M503 refuses with
+        // UnknownCommand({command: 'M503'}).
         readSettings: () => send(at('/settings/read'), {}),
 
         // M501, the undo for this session's edits - recoverable, so no confirmation is warranted.

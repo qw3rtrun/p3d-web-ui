@@ -288,3 +288,23 @@ tasks.register('probeCapabilitiesFold', JavaExec) {
             (findProperty('probePort') ?: '8099').toString(),
     ]
 }
+
+/**
+ * Send M503 S0 and a bare M92 through HostTerminal and check both still fold into a SettingsReport
+ * on messageFlux() - issue #149. Before the fix, ReplyFlux's framing .trim()'d the assembled line
+ * and ate the leading indent SettingsValue's unprefixed shape decodes on, so neither reached the
+ * bus at all.
+ *
+ * Hand-run only, like the probes above: it needs a listener on the far end, so it is deliberately
+ * not wired into `check`. It reads and changes nothing on the machine.
+ */
+tasks.register('probeSettingsLeadingIndent', JavaExec) {
+    group = 'verification'
+    description = 'Check M503 S0 and a bare M92 still fold into a SettingsReport (default localhost:8099).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.SettingsLeadingIndentProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

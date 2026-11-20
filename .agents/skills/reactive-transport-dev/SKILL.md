@@ -689,20 +689,25 @@ is dropped at `ReplyFlux` with a `#traffic` debug line.
 
 **One answer, one value on the bus - including the answers that span several lines.** A stage after
 `.handle(this::decode)` - `ReplyFlux.accumulate`, reached through `concatMapIterable` - folds an
-`M119` endstop report and an `M503`/`M92` settings burst into one `EndstopReport` / `SettingsReport`
-each, through `:gcode`'s `EndstopReportReader` and `SettingsReportReader`. Same problem
-`SdFileListReader` solves for `M20`, different cut: a listing has a terminator line and these two
-have none, so the scope is **membership of the family** and a burst ends at the first reply that is
-not a member - almost always the `ok`, which is emitted straight after the report and must never be
-swallowed, since downstream it is window credit. That is why the stage is `concatMapIterable` and
-not a second `handle`: a `SynchronousSink` permits one emission per input and the line that ends a
-burst has two to make, in order. What makes family scoping safe is measured, not assumed -
-`MultilineInterleaveProbe`, 2026-11-19, MarlinSim on `localhost:8099`, with `M155 S1` ticking
-throughout: the report's four lines and its `ok P15 B3` all at 22ms, the auto-report ticks at 0ms
-and 691ms, nothing inside either answer. The generic rule ("accumulate everything until `ok`") was
-rejected for this transport and stays rejected: a `busy:` notice or a `Done printing file` really
-does land between an unrelated command and *its* `ok`. A burst a dead socket interrupts is never
-flushed and is lost, the same strict reading `SdFileListReader` takes.
+`M119` endstop report, an `M503`/`M92` settings burst and an `M115` capability block into one
+`EndstopReport` / `SettingsReport` / `CapabilitiesReport` each, through `:gcode`'s
+`EndstopReportReader`, `SettingsReportReader` and `CapabilitiesReportReader` - one shared stage, not
+three, since the three readers' `offer` methods type-check against disjoint `GRs` subtypes and a
+decoded reply can only ever be one of them. Same problem `SdFileListReader` solves for `M20`,
+different cut: a listing has a terminator line and these three have none, so the scope for each is
+**membership of its own family** and a burst ends at the first reply that is not a member of
+whichever one is open - almost always the `ok`, which is emitted straight after the report and must
+never be swallowed, since downstream it is window credit. That is why the stage is
+`concatMapIterable` and not a second `handle`: a `SynchronousSink` permits one emission per input
+and the line that ends a burst has two to make, in order. What makes family scoping safe is
+measured, not assumed, and twice over: `MultilineInterleaveProbe`, 2026-11-19, MarlinSim on
+`localhost:8099`, with `M155 S1` ticking throughout, found the `M119`/`M503` report's lines and its
+`ok P15 B3` all at 22ms, the auto-report ticks at 0ms and 691ms, nothing inside either answer;
+`CapabilitiesInterleaveProbe`, 2026-11-20, found `M115`'s header, all 38 `Cap:` lines and its `ok` at
+one millisecond offset, with the tick 0ms before and 651ms after. The generic rule ("accumulate
+everything until `ok`") was rejected for this transport and stays rejected: a `busy:` notice or a
+`Done printing file` really does land between an unrelated command and *its* `ok`. A burst a dead
+socket interrupts is never flushed and is lost, the same strict reading `SdFileListReader` takes.
 
 This module ran a second parser (`terminal.msg.Replay`) until it was deleted, and the cost is worth
 remembering, because every item was invisible until something was measured against a real printer:
@@ -840,14 +845,21 @@ thread, so a chunk's `onNext` has returned before the next one starts, and (2) `
 requested `Long.MAX_VALUE` with nothing between it and here bounding the demand, so each synchronous
 inner was drained to exhaustion inside its own `onNext`.
 
-**The second accident is gone as of issue #144.** The capability fold is a `concatMapIterable`, which
-carries a prefetch (`Queues.XS_BUFFER_SIZE`, 32) and so is the first operator in that chain to bound
-the demand - exactly the "operator with a prefetch" this entry warned about. Measured rather than
-assumed: `ReplyFluxCapabilitiesTest.framingSurvivesTheFoldBothAcrossAReadAndWithinOne` frames 100
-replies out of one chunk, three times the prefetch, and one reply split across two reads, and both
-still come out whole and in order - the synchronous chain replenishes its demand inside the same
-`onNext`, so no inner is left half-drained. So accident (1) is now the whole of it, which makes
-`concatMap` worth more than it was: it states the intent and costs nothing here. Change it in its own
+**The second accident went quietly, at issue #35, and #144 is the one that noticed.**
+`ReplyFlux.accumulate` - the single `concatMapIterable` stage that folds `M119`, `M503` and `M115`
+into one event each - carries a prefetch (`Queues.XS_BUFFER_SIZE`, 32) and so is the first operator
+in this chain to bound the demand, which is exactly the "operator with a prefetch" this entry warned
+about. It went in for the first two families without anyone checking this interaction;
+`ReplyFluxMultilineTest` (#35) proves the fold but never drives more than a handful of lines through
+it, so it could not have caught a half-drained inner. `ReplyFluxCapabilitiesTest` (#144) is what
+measured it, and the finding is about the stage as a whole rather than about `M115` specifically:
+`framingSurvivesTheFoldBothAcrossAReadAndWithinOne` frames 100 replies out of one chunk, three times
+the prefetch, and one reply split across two reads, and both still come out whole and in order
+through all three readers - the synchronous chain replenishes its demand inside the same `onNext`,
+so no inner is left half-drained, and a third reader sharing the one stage changes nothing about
+that: it is still one buffer of 32, now serving three `offer`/`flush` pairs instead of one. So
+accident (1) is now the whole of it, which makes `concatMap` worth more than it was: it states the
+intent and costs nothing here. Change it in its own
 commit, because it is still not the cause of anything known.
 
 ### Keep blocking out of the pipeline

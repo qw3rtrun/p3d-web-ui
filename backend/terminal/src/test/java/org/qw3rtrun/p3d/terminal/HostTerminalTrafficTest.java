@@ -154,8 +154,16 @@ class HostTerminalTrafficTest {
         assertEquals(List.of(), published, "window credit is not a reply, and that does not change");
     }
 
-    /** A console renders an answer as a transcript, so the order of its lines is part of it -
-     * {@code M115}'s shape, several replies and the acknowledgement that closes them. */
+    /**
+     * A console renders an answer as a transcript, so the order of its lines is part of it -
+     * {@code M115}'s shape, several replies and the acknowledgement that closes them.
+     *
+     * <p>The annotations are the per-line decode and are <em>unaffected</em> by the fold above them:
+     * two {@code Cap:} lines read as two {@code CapabilityRs} here while reaching the bus as one
+     * {@code CapabilitiesReport}, for the same reason {@code End file list} reads as
+     * {@code SdFileListEnd} rather than as the {@code SdFileList} it assembles - {@code decodedAs}
+     * annotates the line, not what the line produced.
+     */
     @Test
     void everyLineOfAMultiLineAnswerIsReportedInOrder() {
         listen();
@@ -173,7 +181,8 @@ class HostTerminalTrafficTest {
                 received().stream().map(TerminalTraffic::raw).toList());
         assertEquals(List.of("FirmwareInfoRs", "CapabilityRs", "CapabilityRs", "AdvancedOkRs"),
                 received().stream().map(TerminalTraffic::decodedAs).toList());
-        assertEquals(3, published.size(), "the ok is still flow control: " + published);
+        assertEquals(2, published.size(),
+                "the header and one folded report, and the ok is still flow control: " + published);
     }
 
     /**

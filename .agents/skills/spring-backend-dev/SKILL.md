@@ -481,14 +481,26 @@ it leaves:
 
 ### The handshake's tail is capability-gated, and the gate is arrival and not change
 
-Issue #127. `PrinterState.onOnline` sends only what needs no permission - `M115`, then `M155 S1` -
-and **each remaining block is sent by the arrival of the `Cap:` line that decides it**, in
-`PrinterState.on(CapabilityRs)`. So the handshake is a property of the machine rather than a
-constant, there is no "is the handshake over yet" state and no timer, and the precondition of every
-block is exactly the fact that permits it. `MockPrinter.Profile.lastHandshakeBlock()` is how a test
-knows which block is last, and `HandshakeIntegrationTest` is the specification.
+Issues #127 and #144. `PrinterState.onOnline` sends only what needs no permission - `M115`, then
+`M155 S1` - and **every remaining block is decided from one whole `M115` answer**, a
+`CapabilitiesReport`, in `PrinterState.on(CapabilitiesReport)`: `startReportsFor(CapabilitiesReport)`
+iterates the answer's capabilities once, in the firmware's own order (which
+`CapabilitiesReportReader` preserves), applying the table below to each. So the handshake is a
+property of the machine rather than a constant, there is no "is the handshake over yet" state and no
+timer, and the precondition of every block is exactly the fact that permits it.
+`MockPrinter.Profile.lastHandshakeBlock()` is how a test knows which block is last, and
+`HandshakeIntegrationTest` is the specification.
 
-| `Cap:` line | what goes out | recorded as started |
+**A bare `CapabilityRs` never reaches `:backend:core` at all** - `HostTerminal.ReplyFlux` folds the
+burst and emits one `CapabilitiesReport` per answer, after the `ok`-adjacent line that ends it. Two
+consequences to carry: `ProfileControl.snapshot()` replays **one** folded report rather than N
+per-line ones, so a late subscriber sees the shape a live stream carries (name order, because the
+persisted capability map records no arrival order to replay); and `PrinterReactor.report()`'s
+capability arm reads the folded type and fans it out into one `MCapabilityReportedEvent` per
+capability - that event is unchanged, and an arm left keyed on `CapabilityRs` would be dead code
+that silently stops capabilities ever being persisted.
+
+| `Cap:` line in the answer | what goes out | recorded as started |
 |---|---|---|
 | `AUTOREPORT_POS:1` | `M154 S1` | yes |
 | `AUTOREPORT_POS:0` | `M114` | no - a read is not a subscription |
@@ -498,13 +510,17 @@ knows which block is last, and `HandshakeIntegrationTest` is the specification.
 
 Five rules fall out, each paid for by a measurement:
 
-- **IMPORTANT - the gate is the line *arriving*, never `profile.on(report)` returning true.**
-  `ProfileControl.on` answers false for a capability whose value has not changed, and a
-  `MachineProfile` is **seeded from the roster**, which persisted every capability the first session
-  reported. So from the second connect onwards - and after every application restart - no capability
-  line is news, and a gate written as `if (profile.on(report)) { ...send... }` **sends nothing at all
-  in production while passing every first-connect test**.
-  `HandshakeIntegrationTest.aSecondSessionAsksEverythingTheFirstOneDid` is that case.
+- **IMPORTANT - the gate is the answer *arriving*, never `profile.on(report)` returning true.**
+  `ProfileControl.on(CapabilitiesReport)` answers false for a batch in which no capability is new or
+  has flipped, and a `MachineProfile` is **seeded from the roster**, which persisted every capability
+  the first session reported. So from the second connect onwards - and after every application
+  restart - nothing in the answer is news, and a gate written as
+  `if (profile.on(report)) { ...send... }` **sends nothing at all in production while passing every
+  first-connect test**. The loop therefore never consults that return: a reconnect's `M115` answer
+  fires every gated block again, exactly as the per-line gate always did.
+  `HandshakeIntegrationTest.aSecondSessionAsksEverythingTheFirstOneDid` is that case over a real
+  socket, and `PrinterStateHandshakeTest.aBatchWhereEveryCapabilityWasAlreadyKnownStillSendsEveryBlock`
+  is the unit-level form.
 - **The capability must be read, because for `M27` there is nothing to learn from the reply.**
   Probed 2026-11-17 against `Marlin bugfix-2.1.x (Oct 29 2026 10:28:56)` on `localhost:8099`:
   `M154 S1` on a firmware without it is **refused** (`echo:Unknown command: "M154 S1"`), so
@@ -525,9 +541,15 @@ Five rules fall out, each paid for by a measurement:
   `AUTOREPORT_SD_STATUS:1` *adds* `M27 S3` without suppressing `SDCARD:1`'s one-shot `M27`, because
   `Cap:SDCARD` is line 22 of the simulator's answer and `Cap:AUTOREPORT_SD_STATUS` is line 26 - the
   card is announced before the report that would supersede polling it, so a suppressing rule would
-  have to know a fact that has not arrived. One extra `Not SD printing` is the price.
+  have to know a fact that comes later in the same answer. One extra `Not SD printing` is the price.
   Periods: 1 s for position (it moves as fast as temperature), 3 s for print status (a percentage
   does not move at 1 Hz, and every report is a message on every open SSE stream).
+  **Having the whole answer in hand does not change this.** The batch makes a suppressing rule
+  *possible* - the later capability is now visible when the earlier one is decided - and it is still
+  not taken: the loop decides each capability without looking at the rest, so the command sequence a
+  batch produces is identical by construction to the one the per-line gate produced, which is what
+  made #144 a refactor rather than a behaviour change. Changing it is a separate decision with its
+  own measurement to make.
 
 ### The goodbye is an operation of its own, and it moves no connection state
 
@@ -587,8 +609,11 @@ does show.
 The rules that follow:
 
 - **A firmware report replaces the profile wholesale; an edit replaces the spec wholesale.** Both
-  are complete statements from their source. The one exception is a capability, which upserts,
-  because a firmware sends them one line at a time with nothing marking the last.
+  are complete statements from their source. The one exception is a capability, which upserts: the
+  roster is told one `MCapabilityReportedEvent` per capability and `PrinterEntity.learnedCapability`
+  merges each into the stored map. That is unchanged by #144 - a `CapabilitiesReport` is a complete
+  statement and `ProfileControl` merges it in one step, but the roster's own event is still per
+  capability, so `printer-management` keeps the upsert and nothing there knows a batch exists.
 - **Where the two meet, declared wins**, and the rule lives once in
   `MachineSpec.extruderCountOr(profile)`. `Descriptor.extruderCount()` and `PrinterState` both call
   it rather than keeping a copy. A field that later gains a discovered counterpart - bed volume and

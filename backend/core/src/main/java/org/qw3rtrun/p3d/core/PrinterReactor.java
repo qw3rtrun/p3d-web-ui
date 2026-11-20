@@ -11,7 +11,7 @@ import org.qw3rtrun.p3d.api.msg.MCapabilityReportedEvent;
 import org.qw3rtrun.p3d.api.msg.MConnectionChangedEvent;
 import org.qw3rtrun.p3d.api.msg.MFirmwareReportedEvent;
 import org.qw3rtrun.p3d.api.msg.TerminalTraffic;
-import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilitiesReport;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.protocol.GRq;
@@ -912,12 +912,19 @@ public class PrinterReactor {
     // lossless: emitted only when PrinterState decided the report changed something, and
     // timestamped here, on the aggregate's own thread, so it says when the machine said it rather
     // than when a busy listener got round to it.
+    //
+    // The capability arm reads a CapabilitiesReport and not a CapabilityRs (#144): a bare Cap: line
+    // is folded away in the transport and never reaches the aggregate, let alone gets republished by
+    // it, so an arm keyed on one would be dead code and capabilities would silently stop being
+    // persisted. One MCapabilityReportedEvent per capability either way - the roster's event is
+    // unchanged and only the type this reads from moved.
     private void report(Object event) {
         switch (event) {
             case FirmwareInfoRs firmware -> toRoster.emit(new MFirmwareReportedEvent(
                     printer.getId(), firmware.getKeyValues(), LocalDateTime.now()));
-            case CapabilityRs capability -> toRoster.emit(new MCapabilityReportedEvent(
-                    printer.getId(), capability.getCapability(), capability.getEnabled(), LocalDateTime.now()));
+            case CapabilitiesReport report -> report.getCapabilities().forEach(cap ->
+                    toRoster.emit(new MCapabilityReportedEvent(
+                            printer.getId(), cap.getCapability(), cap.getEnabled(), LocalDateTime.now())));
             case ConnectionStateChanged change -> toRoster.emit(new MConnectionChangedEvent(
                     printer.getId(), change.to(), change.reason(), LocalDateTime.now()));
             default -> {

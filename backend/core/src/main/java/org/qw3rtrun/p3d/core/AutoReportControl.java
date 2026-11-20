@@ -44,7 +44,7 @@ import java.util.Set;
  * A plain field, confined to this machine's own {@code p3d-printer-<uuid>} thread - unlike the other
  * four controls, which are {@code volatile} because {@link PrinterState#snapshot()} reads them from
  * whichever thread subscribes. Nothing reads this one off the aggregate's thread: every caller is
- * {@code PrinterState.onOnline}, {@code on(CapabilityRs)} or {@code quiesce()}, and
+ * {@code PrinterState.onOnline}, {@code on(CapabilitiesReport)} or {@code quiesce()}, and
  * {@link PrinterReactor} reaches all three through its executor. A {@code volatile} here would be
  * cargo-culted from the neighbours. If a reader on another thread ever turns up, that is a design
  * change - the question being "who may ask what this machine is reporting" - and not a field

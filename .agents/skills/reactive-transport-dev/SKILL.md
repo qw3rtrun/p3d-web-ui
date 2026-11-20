@@ -312,6 +312,32 @@ into: `BlockAcknowledged` - see *An acknowledged block is announced* - and `Bloc
 *An abandoned block is announced too*. Anything else added to the bus that is not a decoded reply
 wants the same justification: a fact the layer above needs and genuinely cannot see from here.
 
+### An answer that is a block of lines arrives as one value
+
+Two answers are not one line, and a subscriber gets each as a single value rather than as a burst to
+re-assemble: `M20`'s listing as one `SdFileList`, and - issue #144 - `M115`'s capability block as one
+`CapabilitiesReport`. Three things a caller depends on:
+
+- **A single `CapabilityRs` never reaches the bus.** The fold is `ReplyFlux.accumulate`, and the
+  burst is scoped to "every reply that is a `CapabilityRs`", ended by the first reply that is not.
+  `CapabilitiesInterleaveProbe` is why that scope is safe: measured against MarlinSim on 2026-11-20,
+  the header, all 38 `Cap:` lines and the closing `ok P15 B3` arrive at one millisecond offset, with
+  `M155 S1` ticks strictly outside the burst on both sides (0 ms before, 651 ms after).
+- **Zero `Cap:` lines means no report, not an empty one** - a firmware older than Marlin 1.1.9
+  answers `M115` with the header alone, and nothing is invented for it. A burst the stream ended
+  inside publishes nothing either, the same answer an interrupted `SdFileList` gets and for a sharper
+  reason: a capability missing from a truncated list reads as one the firmware does not have.
+- **The reply that closed the burst is still emitted, after the report.** It is almost always the
+  `ok`, and it has to reach the send window as credit or the sender stalls by a block for the rest of
+  the session - which is why the fold is a `concatMapIterable` and not a second `handle` stage, whose
+  `SynchronousSink` permits one emission per input. `ReplyFluxCapabilitiesTest` pins both halves; the
+  live check is `probeCapabilitiesFold` (38 lines on the wire, one report on the bus, no bare
+  `CapabilityRs`).
+
+**The console's view is unchanged by any of this.** `decodedAs` annotates the *line* - 38
+`[CapabilityRs]` annotations still cross `observeTraffic` - for the same reason `End file list` reads
+as `SdFileListEnd` rather than as the `SdFileList` it assembles.
+
 ### `messageFlux()` terminates when the connection does, and at no other time
 
 A firmware error is a **value**. It goes down the flux as the `ErrorRs` it is, like any other reply,
@@ -663,20 +689,25 @@ is dropped at `ReplyFlux` with a `#traffic` debug line.
 
 **One answer, one value on the bus - including the answers that span several lines.** A stage after
 `.handle(this::decode)` - `ReplyFlux.accumulate`, reached through `concatMapIterable` - folds an
-`M119` endstop report and an `M503`/`M92` settings burst into one `EndstopReport` / `SettingsReport`
-each, through `:gcode`'s `EndstopReportReader` and `SettingsReportReader`. Same problem
-`SdFileListReader` solves for `M20`, different cut: a listing has a terminator line and these two
-have none, so the scope is **membership of the family** and a burst ends at the first reply that is
-not a member - almost always the `ok`, which is emitted straight after the report and must never be
-swallowed, since downstream it is window credit. That is why the stage is `concatMapIterable` and
-not a second `handle`: a `SynchronousSink` permits one emission per input and the line that ends a
-burst has two to make, in order. What makes family scoping safe is measured, not assumed -
-`MultilineInterleaveProbe`, 2026-11-19, MarlinSim on `localhost:8099`, with `M155 S1` ticking
-throughout: the report's four lines and its `ok P15 B3` all at 22ms, the auto-report ticks at 0ms
-and 691ms, nothing inside either answer. The generic rule ("accumulate everything until `ok`") was
-rejected for this transport and stays rejected: a `busy:` notice or a `Done printing file` really
-does land between an unrelated command and *its* `ok`. A burst a dead socket interrupts is never
-flushed and is lost, the same strict reading `SdFileListReader` takes.
+`M119` endstop report, an `M503`/`M92` settings burst and an `M115` capability block into one
+`EndstopReport` / `SettingsReport` / `CapabilitiesReport` each, through `:gcode`'s
+`EndstopReportReader`, `SettingsReportReader` and `CapabilitiesReportReader` - one shared stage, not
+three, since the three readers' `offer` methods type-check against disjoint `GRs` subtypes and a
+decoded reply can only ever be one of them. Same problem `SdFileListReader` solves for `M20`,
+different cut: a listing has a terminator line and these three have none, so the scope for each is
+**membership of its own family** and a burst ends at the first reply that is not a member of
+whichever one is open - almost always the `ok`, which is emitted straight after the report and must
+never be swallowed, since downstream it is window credit. That is why the stage is
+`concatMapIterable` and not a second `handle`: a `SynchronousSink` permits one emission per input
+and the line that ends a burst has two to make, in order. What makes family scoping safe is
+measured, not assumed, and twice over: `MultilineInterleaveProbe`, 2026-11-19, MarlinSim on
+`localhost:8099`, with `M155 S1` ticking throughout, found the `M119`/`M503` report's lines and its
+`ok P15 B3` all at 22ms, the auto-report ticks at 0ms and 691ms, nothing inside either answer;
+`CapabilitiesInterleaveProbe`, 2026-11-20, found `M115`'s header, all 38 `Cap:` lines and its `ok` at
+one millisecond offset, with the tick 0ms before and 651ms after. The generic rule ("accumulate
+everything until `ok`") was rejected for this transport and stays rejected: a `busy:` notice or a
+`Done printing file` really does land between an unrelated command and *its* `ok`. A burst a dead
+socket interrupts is never flushed and is lost, the same strict reading `SdFileListReader` takes.
 
 This module ran a second parser (`terminal.msg.Replay`) until it was deleted, and the cost is worth
 remembering, because every item was invisible until something was measured against a real printer:
@@ -807,15 +838,29 @@ replaces it must keep the two properties the current one has: a reply split acro
 rejoined, and a chunk holding several replies yields several. It should also drop the `.trim()`,
 which is not framing and loses a decoder's guard - see the debt entry below.
 
-**`flatMap` is also the wrong operator, and it is safe here by two accidents.** It does not preserve
-order across inner publishers, so two chunks in flight can interleave their characters and frame
-nonsense lines. It cannot happen today because (1) the source is one netty channel-read thread, so a
-chunk's `onNext` has returned before the next one starts, and (2) `ReplaySubscriber` requests
-`Long.MAX_VALUE` and nothing between here and it bounds the demand, so each synchronous inner is
-drained to exhaustion inside its own `onNext`. Bound the demand anywhere in that chain - a
-`limitRate`, a `publishOn`, an operator with a prefetch - and the second accident goes, with a
-half-drained inner left open when the next chunk arrives. `concatMap` states the intent and costs
-nothing here; change it in its own commit, because it is not the cause of anything known.
+**`flatMap` is also the wrong operator, and it was safe here by two accidents - now one.** It does
+not preserve order across inner publishers, so two chunks in flight can interleave their characters
+and frame nonsense lines. It cannot happen today because (1) the source is one netty channel-read
+thread, so a chunk's `onNext` has returned before the next one starts, and (2) `ReplaySubscriber`
+requested `Long.MAX_VALUE` with nothing between it and here bounding the demand, so each synchronous
+inner was drained to exhaustion inside its own `onNext`.
+
+**The second accident went quietly, at issue #35, and #144 is the one that noticed.**
+`ReplyFlux.accumulate` - the single `concatMapIterable` stage that folds `M119`, `M503` and `M115`
+into one event each - carries a prefetch (`Queues.XS_BUFFER_SIZE`, 32) and so is the first operator
+in this chain to bound the demand, which is exactly the "operator with a prefetch" this entry warned
+about. It went in for the first two families without anyone checking this interaction;
+`ReplyFluxMultilineTest` (#35) proves the fold but never drives more than a handful of lines through
+it, so it could not have caught a half-drained inner. `ReplyFluxCapabilitiesTest` (#144) is what
+measured it, and the finding is about the stage as a whole rather than about `M115` specifically:
+`framingSurvivesTheFoldBothAcrossAReadAndWithinOne` frames 100 replies out of one chunk, three times
+the prefetch, and one reply split across two reads, and both still come out whole and in order
+through all three readers - the synchronous chain replenishes its demand inside the same `onNext`,
+so no inner is left half-drained, and a third reader sharing the one stage changes nothing about
+that: it is still one buffer of 32, now serving three `offer`/`flush` pairs instead of one. So
+accident (1) is now the whole of it, which makes `concatMap` worth more than it was: it states the
+intent and costs nothing here. Change it in its own
+commit, because it is still not the cause of anything known.
 
 ### Keep blocking out of the pipeline
 

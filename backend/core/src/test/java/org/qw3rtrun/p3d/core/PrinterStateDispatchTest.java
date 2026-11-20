@@ -24,6 +24,7 @@ import org.qw3rtrun.p3d.g.marlin.command.StartSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.StopSDWrite;
 import org.qw3rtrun.p3d.g.marlin.command.ValidateEEPROMContents;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
+import org.qw3rtrun.p3d.g.marlin.event.CapabilitiesReport;
 import org.qw3rtrun.p3d.g.marlin.event.CapabilityRs;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopReport;
 import org.qw3rtrun.p3d.g.marlin.event.EndstopStateRs;
@@ -124,9 +125,9 @@ class PrinterStateDispatchTest {
         var printer = online();
 
         printer.onEvent(new FirmwareInfoRs(Map.of("FIRMWARE_NAME", "Marlin 2.1.2", "EXTRUDER_COUNT", "2")));
-        printer.onEvent(new CapabilityRs("EEPROM", true));
+        printer.onEvent(new CapabilitiesReport(List.of(new CapabilityRs("EEPROM", true))));
 
-        assertEquals(List.of(FirmwareInfoRs.class, CapabilityRs.class),
+        assertEquals(List.of(FirmwareInfoRs.class, CapabilitiesReport.class),
                 emitted.stream()
                         .filter(event -> !(event instanceof ConnectionStateChanged))
                         .map(Object::getClass).toList(),

@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -348,5 +349,80 @@ class HandshakeIntegrationTest extends FarmIntegrationTest {
         await(() -> "the machine to have received " + expected + ". It received "
                         + printer.commands(),
                 () -> printer.commands().containsAll(expected));
+    }
+
+    // ------------------------------------------------------------------ issue #144, folding Cap: lines
+
+    /**
+     * The opening handshake's {@code M115} answer crosses the aggregate as one event, not one per
+     * {@code Cap:} line - issue #144's fold, the same shape issue #35 gave {@code M119}/{@code M503}.
+     * {@code MockPrinter.marlin()} answers with eight {@code Cap:} lines (the subset this farm
+     * reads, in the firmware's own order); before this issue each would have reached the browser as
+     * its own {@code CapabilityRs} message, eight messages for one answer.
+     */
+    @Test
+    void theOpeningHandshakeBringsExactlyOneCapabilitiesEventToTheBrowser() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("capabilities fold to one event", printer);
+
+        var events = connectAndLearn(id);
+        events.await("CapabilitiesReport");
+        quiet();
+
+        assertEquals(1, events.allOf("CapabilitiesReport").size(),
+                "one M115 answer has to cross as one event, not one per Cap: line: " + events.types());
+
+        var report = events.allOf("CapabilitiesReport").getFirst();
+        @SuppressWarnings("unchecked")
+        var capabilities = (List<Map<String, Object>>) report.get("capabilities");
+        var names = capabilities.stream().map(c -> c.get("capability")).toList();
+        assertEquals(List.of("AUTOREPORT_TEMP", "AUTOREPORT_POS", "EEPROM", "SDCARD", "SD_WRITE",
+                        "AUTOREPORT_SD_STATUS", "BINARY_FILE_TRANSFER", "EMERGENCY_PARSER"), names,
+                "the firmware's own order, not an invented one");
+    }
+
+    /**
+     * The raw {@code Cap:} line never reaches the browser as its own type any more - folded away by
+     * {@code :backend:terminal}'s reader before the aggregate ever sees an individual line, the same
+     * claim {@code EndstopsIntegrationTest.theRawPerLineTypesNeverReachTheBrowser} makes for
+     * {@code M119}.
+     */
+    @Test
+    void theRawCapabilityLinesNeverReachTheBrowser() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("no raw Cap: lines", printer);
+
+        var events = connectAndLearn(id);
+        events.await("CapabilitiesReport");
+        quiet();
+
+        assertFalse(events.saw("CapabilityRs"),
+                "a Cap: line never travels on its own any more: " + events.types());
+    }
+
+    /**
+     * The trap item 4 of issue #144 names directly: a redesign that decides the gate from the whole
+     * batch must still fire the gated blocks on <strong>every</strong> {@code M115} answer, including
+     * a reconnect where every capability was already known from the roster - not just the first. This
+     * is {@link #aSecondSessionAsksEverythingTheFirstOneDid()} again, read for the fold rather than
+     * for the command list, so a regression in either direction (gating on change, or batching only
+     * the first report) fails here independently.
+     */
+    @Test
+    void aSecondSessionsCapabilitiesReportStillCrossesAsOneEventToo() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("capabilities fold on reconnect too", printer);
+        connectAndSettle(id, printer);
+        disconnect(id);
+        await("the first session to end", () -> !printer.sessionOpen());
+        printer.forget();
+
+        var events = connectAndLearn(id);
+        events.await("CapabilitiesReport");
+        quiet();
+
+        assertEquals(1, events.allOf("CapabilitiesReport").size(),
+                "the second session's M115 answer must also cross as exactly one event: "
+                        + events.types());
     }
 }

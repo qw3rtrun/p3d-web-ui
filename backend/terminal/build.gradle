@@ -308,3 +308,21 @@ tasks.register('probeSettingsLeadingIndent', JavaExec) {
             (findProperty('probePort') ?: '8099').toString(),
     ]
 }
+
+/**
+ * Issue #148: re-measure Cap:LONG_FILENAME/Cap:LFN_WRITE and upload a name longer than DOS 8.3,
+ * then read M20's listing to see what the card really holds it under.
+ *
+ * Hand-run only, like the probes above: it needs a listener on the far end, so it is deliberately
+ * not wired into `check`. It writes and deletes two small files on the card.
+ */
+tasks.register('probeLongFileName', JavaExec) {
+    group = 'verification'
+    description = 'Upload a name longer than DOS 8.3 and read back what M20 lists it as (default localhost:8099).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.LongFileNameProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

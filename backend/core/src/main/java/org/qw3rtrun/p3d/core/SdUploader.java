@@ -18,6 +18,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -80,10 +81,13 @@ import java.util.concurrent.atomic.AtomicReference;
  *       then {@code echo:SD card released} and {@code PFT:success}, after which {@code M20}
  *       answers {@code echo:No media} until an {@code M21} is sent. Without it the Storage tab's
  *       listing is broken for the rest of the session. The ASCII path has no equivalent.</li>
- *   <li><strong>A binary transfer is byte-exact and the ASCII one is not.</strong> 250 bytes sent,
- *       {@code MBP.GCO 250} listed; the ASCII path re-assembles lines through
- *       {@link GcodeLines#blocksOf} and the stored lines come back stripped of their {@code N} and
- *       {@code *} fields.</li>
+ *   <li><strong>A binary transfer is byte-exact and the ASCII one is not</strong> - unless the
+ *       request asks otherwise. 250 bytes sent, {@code MBP.GCO 250} listed; the ASCII path
+ *       re-assembles lines through {@link GcodeLines#blocksOf} and the stored lines come back
+ *       stripped of their {@code N} and {@code *} fields. Issue #146's {@code trim} makes the
+ *       byte-exactness opt-out: a binary transfer asked to trim sends
+ *       {@link #trimmedWholeOf} - the same stripped content the ASCII path always sends - and
+ *       {@link SdUploadProgressed#trimmed()} says which happened.</li>
  *   <li><strong>The capability is {@code Cap:BINARY_FILE_TRANSFER}</strong>, reported {@code 1} on
  *       that simulator beside {@code Cap:SDCARD:1} and {@code Cap:SD_WRITE:1}. A machine that
  *       never reported it is refused rather than downgraded: the server is the authority on what
@@ -97,7 +101,18 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code p3d.sd.binary-max-bytes} (64 MiB by default), above which the request is refused. The
  * honest fix is a block-at-a-time entry point in {@code :gcode} - named as future work in
  * {@code MbpTransfer}'s own javadoc and out of scope for issue #122. The ASCII path streams and
- * needs no such limit.
+ * needs no such limit. The ceiling is checked against {@link GcodeFile#sizeBytes()} whether or not
+ * {@code trim} was asked for - the trimmed length is not known until the file has been read, so
+ * sizing it against that would mean reading the file to find out whether it may be read.
+ *
+ * <p><strong>{@code bytesTotal} is the stored file in every mode, so a trimmed binary transfer can
+ * finish short of it.</strong> {@link SdUploadProgressed#bytesSent} is cumulative acknowledged
+ * <em>wire</em> bytes and a trimmed transfer puts fewer of those on the wire than the file holds, so
+ * the progress bar reaches {@code DONE} below 100%. Left as it is deliberately: the alternative is
+ * to read the file, strip it, and only then announce a denominator, which delays the first event
+ * until the whole transfer has been prepared. It is the same imprecision the ASCII path has already
+ * accepted for {@code blocksSent} - "worth showing but not dividing" - in the one count that was
+ * exact.
  */
 @Slf4j
 public class SdUploader {
@@ -161,15 +176,24 @@ public class SdUploader {
         /** Which mode this transfer is, carried on every event it produces - the timer's and the terminal one alike. */
         private final boolean binary;
 
-        Transfer(String cardName, long bytesTotal, boolean binary) {
+        /**
+         * Whether this transfer is dropping comments and blank lines. Resolved at construction
+         * rather than at {@link #at}, because for an ASCII transfer the answer is not the request's:
+         * that path strips regardless, so the flag is a fact about the mode and not a choice the
+         * caller made.
+         */
+        private final boolean trimmed;
+
+        Transfer(String cardName, long bytesTotal, boolean binary, boolean trim) {
             this.cardName = cardName;
             this.bytesTotal = bytesTotal;
             this.binary = binary;
+            this.trimmed = !binary || trim;
         }
 
         SdUploadProgressed at(SdUploadState state, String reason) {
             return new SdUploadProgressed(cardName, state, bytesSent.get(), bytesTotal,
-                    blocksSent.get(), reason, binary);
+                    blocksSent.get(), reason, binary, trimmed);
         }
     }
 
@@ -198,9 +222,13 @@ public class SdUploader {
      *                  refused rather than downgraded on a machine that never reported the
      *                  capability, since reporting success for a mode nobody asked for would hide a
      *                  client that ignored the UI's own check
+     * @param trim      whether to drop comments and blank lines rather than send the stored bytes
+     *                  (issue #146). Consulted on a <em>binary</em> transfer only: the ASCII write
+     *                  loop strips regardless, so it is not a check of its own and nothing refuses
+     *                  it - there is no capability behind it and no mode to fall back to
      */
     public Mono<ControlOutcome> start(PrinterReactor reactor, UUID machineId, UUID fileId,
-                                      String requested, boolean binary) {
+                                      String requested, boolean binary, boolean trim) {
         return Mono.defer(() -> {
             // asked of what the caller asked for, before any substitution: the short-name fallback
             // strips everything outside A-Za-z0-9, so a \n would be sanitised into an accepted
@@ -233,7 +261,8 @@ public class SdUploader {
                             files.fetch(fileId)))
                     .subscribeOn(Schedulers.boundedElastic())
                     .flatMap(resolved -> resolved.file()
-                            .map(file -> begin(reactor, machineId, fileId, file, resolved.cardName(), binary))
+                            .map(file -> begin(reactor, machineId, fileId, file, resolved.cardName(),
+                                    binary, trim))
                             .orElseGet(() -> Mono.just(ControlOutcome.absent(machineId,
                                     "there is no file " + fileId + " to upload"))));
         });
@@ -282,15 +311,19 @@ public class SdUploader {
      *                 {@link #cardNameFor} and already known to be one a block can carry
      */
     private Mono<ControlOutcome> begin(PrinterReactor reactor, UUID machineId, UUID fileId,
-                                       GcodeFile file, String cardName, boolean binary) {
-        // before the map is touched, so a refusal cannot leave the machine marked busy.
+                                       GcodeFile file, String cardName, boolean binary,
+                                       boolean trim) {
+        // before the map is touched, so a refusal cannot leave the machine marked busy. Against the
+        // stored size whether or not trim was asked for: the trimmed length is only known once the
+        // file has been read, so sizing the ceiling against it would mean reading the file to find
+        // out whether reading it is allowed.
         if (binary && file.sizeBytes() > binaryMaxBytes) {
             return Mono.just(ControlOutcome.wrongState(machineId, "file " + fileId + " is "
                     + file.sizeBytes() + " bytes and a binary transfer is held in memory, so it is"
                     + " capped at " + binaryMaxBytes + " bytes (p3d.sd.binary-max-bytes)"));
         }
 
-        var transfer = new Transfer(cardName, file.sizeBytes(), binary);
+        var transfer = new Transfer(cardName, file.sizeBytes(), binary, trim);
 
         // one at a time per machine - a second would have its M28 written into the first one's file.
         if (running.putIfAbsent(machineId, transfer) != null) {
@@ -298,11 +331,12 @@ public class SdUploader {
                     "printer " + machineId + " is already writing to its card"));
         }
 
-        log.info("writing {} ({} bytes) to {} as {}{}", file.name(), file.sizeBytes(), machineId,
-                cardName, binary ? " over the binary protocol" : "");
+        log.info("writing {} ({} bytes) to {} as {}{}{}", file.name(), file.sizeBytes(), machineId,
+                cardName, binary ? " over the binary protocol" : "",
+                transfer.trimmed ? " with comments stripped" : "");
 
         return binary
-                ? wholeOf(fileId, file)
+                ? (trim ? trimmedWholeOf(fileId) : wholeOf(fileId, file))
                         .map(bytes -> startedBinary(reactor, machineId, transfer, bytes))
                         // the slot is claimed before the read, so a read that fails has to give it
                         // back or this machine never takes another transfer.
@@ -391,6 +425,25 @@ public class SdUploader {
                             collected.write(bytes, 0, bytes.length);
                             return collected;
                         })
+                .map(ByteArrayOutputStream::toByteArray)
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * The whole file as one array, after the same comment/blank-line strip the ASCII write loop
+     * always applies ({@link GcodeLines#blocksOf}) - what "Trim GCode" (issue #146) asks a binary
+     * transfer to send instead of the stored file verbatim. Each surviving block is followed by a
+     * single {@code \n}, the plain convention a G-code file already uses, so the card holds a file
+     * that opens and prints the same as one the ASCII path would have produced. Same unbounded
+     * demand and same {@code boundedElastic} as {@link #wholeOf}, and the same ceiling in front of
+     * it - the stripped content is never larger than the file it came from.
+     */
+    private Mono<byte[]> trimmedWholeOf(UUID fileId) {
+        return GcodeLines.blocksOf(Flux.from(files.read(fileId)))
+                .reduce(new ByteArrayOutputStream(), (collected, block) -> {
+                    collected.writeBytes((block + "\n").getBytes(StandardCharsets.UTF_8));
+                    return collected;
+                })
                 .map(ByteArrayOutputStream::toByteArray)
                 .subscribeOn(Schedulers.boundedElastic());
     }

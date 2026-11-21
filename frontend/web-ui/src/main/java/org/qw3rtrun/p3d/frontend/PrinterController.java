@@ -96,7 +96,14 @@ import java.util.UUID;
  * {@code p3d.sd.binary-max-bytes}, since a binary transfer is held in memory - is a 409 rather than
  * a silent fall back to ASCII: the page disables the checkbox for an incapable machine, but a client
  * that ignored that is told so instead of being given a mode it did not ask for. Which mode actually
- * ran is observable on the stream as {@code SdUploadProgressed.binary}. {@code /sd/upload/cancel} is not a
+ * ran is observable on the stream as {@code SdUploadProgressed.binary}. <strong>{@code trim} on that
+ * body asks for comments and blank lines to be dropped</strong> (#146) - a question only a binary
+ * transfer has to answer, since the ASCII write loop strips on every transfer and always has, so
+ * this is the byte-exact path being asked to behave the same way. It defaults to {@code false} when
+ * omitted, keeping a binary transfer byte-exact, and nothing refuses it: there is no capability
+ * behind it and no second mode to fall back to. What actually happened is
+ * {@code SdUploadProgressed.trimmed}, which an ASCII transfer reports {@code true} as a fact rather
+ * than as a choice. {@code /sd/upload/cancel} is not a
  * Reactive Streams cancel: the content stops but {@code M29} still goes out, closing a short but
  * valid file; it answers 200 whether or not anything was running, and its only refusal is 404.
  *
@@ -291,7 +298,8 @@ public class PrinterController {
     // are posted to /api-files first and only named here (see UploadToCard).
     @PostMapping("/sd/upload")
     public Mono<ResponseEntity<?>> uploadToCard(@PathVariable UUID id, @RequestBody Mono<UploadToCard> command) {
-        return command.flatMap(c -> Mono.from(printers.uploadToCard(id, c.fileId(), c.name(), c.binary())))
+        return command.flatMap(c -> Mono.from(
+                        printers.uploadToCard(id, c.fileId(), c.name(), c.binary(), c.trim())))
                 .map(Outcomes::of);
     }
 

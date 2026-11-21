@@ -205,11 +205,12 @@ public class PrinterControlService implements PrinterControl {
      * way the old {@code runtimeOf(id) == null} branch read.
      */
     @Override
-    public Mono<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName, boolean binary) {
+    public Mono<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName, boolean binary,
+                                             boolean trim) {
         return Mono.fromSupplier(() -> manager.openReactorIfKnown(id))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(found -> found
-                        .map(reactor -> uploads.start(reactor, id, fileId, cardName, binary))
+                        .map(reactor -> uploads.start(reactor, id, fileId, cardName, binary, trim))
                         .orElseGet(() -> Mono.just(ControlOutcome.absent(id,
                                 "the farm has no machine " + id))));
     }

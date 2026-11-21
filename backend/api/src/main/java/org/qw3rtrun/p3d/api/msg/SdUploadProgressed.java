@@ -11,7 +11,10 @@ package org.qw3rtrun.p3d.api.msg;
  * bytes are the denominator ({@link #bytesTotal} is the stored file's exact size, so
  * {@link #fraction()} is honest), while blocks have no total, deliberately - a sliced file is up
  * to a tenth comments and blank lines dropped rather than sent, so line count is an upper bound
- * and {@link #blocksSent} is worth showing but not dividing.
+ * and {@link #blocksSent} is worth showing but not dividing. The one case where the denominator is
+ * honest and the numerator falls short of it is a {@link #trimmed} binary transfer, whose wire bytes
+ * are the stripped content while {@link #bytesTotal} stays the stored file's size - so it can report
+ * {@link SdUploadState#DONE} below 100%, the same already-accepted imprecision the ASCII path has.
  *
  * <p>Arrives on a timer, not per block: a real file is tens of thousands of round trips, and an
  * event each would be tens of thousands of messages for a page asking once a second. The last one
@@ -30,6 +33,13 @@ package org.qw3rtrun.p3d.api.msg;
  *                   proved rather than inferred. The two modes differ in what ends up on the card:
  *                   a binary transfer is a byte-for-byte copy, while the ASCII one re-assembles
  *                   G-code lines and stores them stripped of their {@code N} and {@code *} fields
+ * @param trimmed    whether comments and blank lines were dropped rather than written to the card -
+ *                   issue #146's "Trim GCode". Like {@link #binary}, what <em>ran</em> and not what
+ *                   was asked for, and for the same reason: this is the only place it can be proved
+ *                   rather than inferred. Always {@code true} on an ASCII transfer, where the strip
+ *                   is unconditional ({@code GcodeLines.blockOf}) and so a fact rather than a
+ *                   choice; on a binary transfer it is whatever the request asked for, since nothing
+ *                   gates or refuses it
  */
 public record SdUploadProgressed(String file,
                                  SdUploadState state,
@@ -37,7 +47,8 @@ public record SdUploadProgressed(String file,
                                  long bytesTotal,
                                  long blocksSent,
                                  String reason,
-                                 boolean binary) {
+                                 boolean binary,
+                                 boolean trimmed) {
 
     /**
      * How much of the file has gone, between 0 and 1. Zero when there is nothing to divide by;

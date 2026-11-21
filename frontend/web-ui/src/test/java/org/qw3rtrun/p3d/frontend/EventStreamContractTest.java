@@ -247,7 +247,7 @@ class EventStreamContractTest {
     @Test
     void anUploadProgressReportCarriesBothCountsAndTheNameOnTheCard() {
         var payload = mapper.readTree(streamed(new SdUploadProgressed(
-                "BENCHY.GCO", SdUploadState.UPLOADING, 1_200_000, 2_847_561, 31_006, null, false)));
+                "BENCHY.GCO", SdUploadState.UPLOADING, 1_200_000, 2_847_561, 31_006, null, false, true)));
 
         assertEquals("SdUploadProgressed", payload.get("type").asString());
         assertEquals("BENCHY.GCO", payload.get("event").get("file").asString());
@@ -266,9 +266,25 @@ class EventStreamContractTest {
     @Test
     void anUploadProgressReportSaysWhichModeRan() {
         var binary = mapper.readTree(streamed(new SdUploadProgressed(
-                "MBP.GCO", SdUploadState.DONE, 250, 250, 3, null, true)));
+                "MBP.GCO", SdUploadState.DONE, 250, 250, 3, null, true, false)));
 
         assertTrue(binary.get("event").get("binary").asBoolean());
+    }
+
+    // trimmed is the same kind of fact as binary and reaches the browser the same way (#146): what
+    // ran, not what was asked for. An ASCII transfer always reports true, since GcodeLines.blockOf
+    // strips unconditionally; a binary one reports whatever the request asked for, so the page's
+    // checkbox has something to be checked against.
+    @Test
+    void anUploadProgressReportSaysWhetherCommentsWereStripped() {
+        var trimmed = mapper.readTree(streamed(new SdUploadProgressed(
+                "TRIM.GCO", SdUploadState.DONE, 180, 250, 6, null, true, true)));
+        assertTrue(trimmed.get("event").get("trimmed").asBoolean());
+
+        var verbatim = mapper.readTree(streamed(new SdUploadProgressed(
+                "MBP.GCO", SdUploadState.DONE, 250, 250, 3, null, true, false)));
+        assertFalse(verbatim.get("event").get("trimmed").asBoolean(),
+                "a byte-exact binary transfer has to be visible as such");
     }
 
     // How a transfer ended decides what is on the card: a cancel sends M29, leaving a short but
@@ -278,12 +294,12 @@ class EventStreamContractTest {
     void theUploadStatesReachTheBrowserByName() {
         for (var state : SdUploadState.values()) {
             var payload = mapper.readTree(streamed(
-                    new SdUploadProgressed("B.GCO", state, 1, 2, 3, null, false)));
+                    new SdUploadProgressed("B.GCO", state, 1, 2, 3, null, false, true)));
             assertEquals(state.name(), payload.get("event").get("state").asString());
         }
 
         var failed = mapper.readTree(streamed(new SdUploadProgressed(
-                "B.GCO", SdUploadState.FAILED, 1, 2, 3, "the connection went away", false)));
+                "B.GCO", SdUploadState.FAILED, 1, 2, 3, "the connection went away", false, true)));
         assertEquals("the connection went away", failed.get("event").get("reason").asString());
     }
 

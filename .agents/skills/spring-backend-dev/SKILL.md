@@ -1143,7 +1143,7 @@ refuses `\n`, `\r`, `;`, `*` and anything outside printable ASCII.
   uploads is the obvious next caller. **Ask of any string a module takes from a caller: which of my
   callers is not the browser?**
 - **The refusal is a value, decided before anything is claimed.** `SdUploader.start` asks
-  `whyUnwritable(cardName)` first - in front of the link, the capability and the blocking store
+  `whyUnwritable(cardNameFor(requested))` first - in front of the link, the capability and the blocking store
   lookup, because it is pure CPU and certain - and answers `ControlOutcome.wrongState`, which is a
   409 through `Outcomes`. Thrown from `transferOf` instead it would have escaped *after*
   `running.putIfAbsent`, leaving the machine marked busy with no transfer left to clear it: the same
@@ -1155,6 +1155,57 @@ refuses `\n`, `\r`, `;`, `*` and anything outside printable ASCII.
 - **The rest of the pipeline stays `Flux<String>` on purpose.** The content is arbitrary G-code read
   off the store and not re-parsed; this is not "make the pipeline typed", it is "build the one thing
   that is built". `M29` stays a bare constant: no argument, nothing to check.
+
+### A name longer than DOS 8.3 is silently dropped, not rewritten, so the host shortens it first
+
+Issue #148. A firmware built without `LONG_FILENAME_WRITE_SUPPORT` takes only DOS 8.3 - at most
+eight base characters, at most three of extension, every one of them `A-Za-z0-9` - and **does not
+truncate or rewrite anything longer: it drops the write and says so where nothing is listening.**
+Measured by `LongFileNameProbe` (`:backend:terminal`, also the `probeLongFileName` task) against
+MarlinSim (`Marlin bugfix-2.1.x`, compiled Nov 18 2026) on 2026-11-21, repeatable across two
+independent connections:
+
+- `M28 eightchr.gco` opens, writes and lists back as `EIGHTCHR.GCO` - eight base characters is the
+  boundary that works.
+- `M28 ninechars.gco`, one character over, is echoed `echo:Now fresh file: ninechars.gco` and then
+  immediately `open failed, File: ninechars.gco.` **The `M28` line still answers `ok`**, so nothing
+  in the acknowledgement path notices; nothing is written; the next line meant for the file (`G28`)
+  **executed live on the machine** and answered with a position report; `M29` answered a bare `ok`
+  with no `Done saving file.`; `M20` showed no trace of the file under any name; `M30` on it
+  answered `Deletion failed`.
+- `M28 my file.gco` - seven base characters and one space - fails identically, as does
+  `M28 a_very_long_benchy_name.gco`. **Length is not the whole rule: a character outside
+  `A-Za-z0-9` is enough on its own.**
+
+The design, and the two places it deliberately differs from its neighbours:
+
+- **The gate is `Cap:LFN_WRITE`, via `MachineProfile.hasLongFilenameWrite()` - not
+  `Cap:LONG_FILENAME`.** In `Marlin/src/gcode/host/M115.cpp` the latter reports
+  `LONG_FILENAME_HOST_SUPPORT` (reading and listing long names) and the former reports
+  `LONG_FILENAME_WRITE_SUPPORT` (whether `M28` may create one). They are logically independent and
+  only `LFN_WRITE` governs the write. Both read `0` on the measured simulator.
+- **It substitutes rather than refuses, and that is a deliberate difference from the
+  binary-transfer precedent two sections later.** `Cap:BINARY_FILE_TRANSFER` missing is a 409
+  because the operator asked for a *mode* and the server will not silently give them another one;
+  #148 asks for an automatic fallback, because the operator asked for a *file to be on the card*
+  and a name is a means to that. `SdUploader.cardNameFor(String, boolean)` returns a deterministic
+  DOS-8.3 name - four stripped characters of the base, a tilde, a 12-bit fingerprint of the whole
+  requested name, the shape VFAT's own `~1`/`~2` short names take - and the existing
+  `SdUploadProgressed.cardName()` carries whatever was used back to the browser, so no new field or
+  event is needed for the operator to learn the real name.
+- **The refusal is decided on the requested name, *before* the substitution.** This is the ordering
+  trap: the short-name generator strips everything outside `A-Za-z0-9`, so running it first
+  **sanitises a `\n` into an accepted upload** and issue #82's refusal above is gone. The two
+  character rules are layered rather than one - a space is a legal bare string and an illegal DOS
+  8.3 name - so `start` asks `whyUnwritable(cardNameFor(requested))` and only then computes the
+  card name. `SdUploaderTest.aNameThatWouldCorruptTheBlockIsRefusedWithoutTheHttpBoundary` fails
+  under the other order, which is how this was found rather than reasoned.
+- **Open follow-on, named rather than built:** there is no decoder for `open failed, File:…`
+  anywhere in `:gcode`, so the firmware's own refusal is still dropped as unread
+  (`doc/specs/INTEGRATION_TESTS_spec.md`, *Unmeasured, and marked as such in the code*). Prevention
+  is in scope for #148; detection of a prevention that failed - a fingerprint collision, or a
+  firmware that refuses a name this rule thinks is safe - is not, and would want a typed `FAILED`
+  outcome for `SdUploader` behind it.
 
 ## REST, SSE and WebSocket
 
@@ -2202,6 +2253,16 @@ the source, not suspected.
   client bug - but it means a page that renders its controls before the handshake lands can offer a
   checkbox the next request refuses. The snapshot `updates()` opens with carries the profile, so a
   page that waits for it is right; one that does not sees a refusal it could have predicted.
+- **An over-long card name is prevented, not detected, and nothing reads the firmware's own
+  refusal.** `LongFileNameProbe` against MarlinSim (bugfix-2.1.x, compiled Nov 18 2026), 2026-11-21:
+  with `Cap:LFN_WRITE:0`, `M28 ninechars.gco` answers `open failed, File: ninechars.gco.` *and* `ok`
+  - nothing written, and the next content line runs live on the machine instead. Eight base
+  characters opens; nine does not, and neither does a space at seven. So `SdUploader` substitutes a
+  DOS-8.3 name itself (`MachineProfile.hasLongFilenameWrite()` is the gate, `Cap:LFN_WRITE` and not
+  `Cap:LONG_FILENAME`). There is still **no decoder for `open failed, File:…`** in `:gcode`, so if
+  the substitution ever produced a name a firmware refused anyway - a fingerprint collision, a
+  stricter build - the transfer would report `DONE` with an empty file on the card. Named as
+  follow-on in `doc/specs/INTEGRATION_TESTS_spec.md`.
 - **The slicer metadata windows are bounded to 64 KiB at each end of a file.** A slicer that writes
   its summary somewhere in the middle of a large file is not read. That is the price of not
   tokenizing two hundred megabytes of motion commands to find four numbers, and it is the right

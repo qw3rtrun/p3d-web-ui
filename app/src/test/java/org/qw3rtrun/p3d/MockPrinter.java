@@ -365,6 +365,27 @@ public final class MockPrinter implements AutoCloseable {
                 true, true, true, true, true);
     }
 
+    /**
+     * A firmware built with {@code LONG_FILENAME_WRITE_SUPPORT}: {@code Cap:LFN_WRITE:1}, so an
+     * upload keeps the name exactly as asked rather than being shortened to fit DOS 8.3.
+     *
+     * <p><strong>The absent/false side is measured, and this profile's true side is not.</strong>
+     * {@code LongFileNameProbe} against MarlinSim (bugfix-2.1.x, compiled Nov 18 2026), 2026-11-21,
+     * found {@code Cap:LFN_WRITE:0} and {@code Cap:LONG_FILENAME:0} - which is also what
+     * {@link #marlin()}'s {@code simCapabilities} leaves absent, so the baseline profile already
+     * reproduces the measured "cannot write a long name" machine. The simulator is not built with
+     * {@code LONG_FILENAME_WRITE_SUPPORT}, so a capable firmware's own behaviour here is not a
+     * capture: this profile simply opens, writes and closes whatever name {@code SdUploader} sends
+     * it, unshortened, which is enough to prove the capability is <em>read</em> rather than ignored -
+     * the same pairing {@link #withoutBinaryTransfer()} makes with {@link #marlin()}.
+     */
+    public static Profile withLongFilenameWrite() {
+        var caps = new LinkedHashMap<>(simCapabilities(true));
+        caps.put("LFN_WRITE", true);
+        return new Profile("marlin-lfn-write", MARLIN_SIM_M115, caps,
+                true, true, true, true, true);
+    }
+
     // ------------------------------------------------------------------ state
 
     private final Profile profile;

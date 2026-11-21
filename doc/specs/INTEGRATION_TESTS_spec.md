@@ -384,6 +384,25 @@ mock's "acknowledge and say nothing more" is what the machine does rather than a
   removes the probe's own `test.gco` again — but still decodes to nothing, so it is just as unread
   on the bus. Deletion is asserted by listing the card again either way: "it was deleted" can only
   honestly mean "it is no longer there".
+
+  **Issue #148 measured what provokes it.** `LongFileNameProbe` against MarlinSim (bugfix-2.1.x,
+  compiled Nov 18 2026, `Cap:LFN_WRITE:0`), 2026-11-21: an `M28` for a name that is not already DOS
+  8.3 — a base over eight characters, an extension over three, or any character outside
+  `A-Za-z0-9` (a bare space was enough on its own, at seven base characters) — is echoed
+  `echo:Now fresh file: <name>` and then immediately `open failed, File: <name>.`. The `M28` line
+  still answers `ok`, so nothing in the ordinary acknowledgement path notices; the file never opens,
+  so `G28` sent as the next "content" line executed for real (a full home, answered with a position
+  report) instead of landing in the file, and the closing `M29` answers a bare `ok` with no
+  `Done saving file.` An exactly-8.3 name (`EIGHTCHR.GCO`) opens, writes and lists normally; a
+  9-character one (`ninechars.gco`) and a 7-character one with an embedded space (`my file.gco`)
+  both fail identically. **This is why `SdUploader` now shortens a name itself before `M28` goes
+  out on a machine that has not reported `Cap:LFN_WRITE`** (`MachineProfile.hasLongFilenameWrite()`)
+  rather than relying on the firmware to truncate or rewrite it — there is no decoder for the
+  refusal, so nothing downstream would otherwise notice the write never happened, and the content
+  meant for the file would run on the machine instead. Still **unread on the bus**: a decoder for
+  `open failed, File:…` and a typed `FAILED` outcome for `SdUploader` when it fires anyway (a
+  collision in the generated name, or a firmware bug) is named as follow-on work, not built here —
+  prevention is in scope for #148, detection of a prevention that failed is not.
 * **`start`.** Decoded by `StartRs` but absent from the capture, because the probe attaches to an
   already-running simulator. `MockPrinter` does not send a boot banner.
 

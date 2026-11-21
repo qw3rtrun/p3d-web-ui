@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -955,6 +956,66 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         assertFalse(printer.sent("M28 B1"), "the ASCII path must not switch protocol");
         assertNull(printer.binaryWritten("PLAIN.GCO"), "nothing was written as packets");
         assertEquals(file.blocks(), printer.written("PLAIN.GCO"));
+        assertEquals(Boolean.TRUE, done.get("trimmed"),
+                "the ASCII write loop always strips comments - GcodeLines.blockOf, unconditional - "
+                        + "so this is a fact about every ASCII transfer, not a choice this request made");
+    }
+
+    // ---------------------------------------------------- stripping comments - issue #146
+
+    /**
+     * Issue #146's "Trim GCode" checkbox. The ASCII path already drops comments and blank lines on
+     * every transfer ({@code GcodeLines.blockOf}, unconditional - see the assertion above); the one
+     * place that was still a straight byte copy is a binary transfer, which the class javadoc on
+     * {@code SdUploader} calls out as byte-exact by design. {@code trim} asks a binary transfer to
+     * go through the same tokenizer-driven strip instead, so the card gets the content the ASCII
+     * path would have sent, as packets rather than as blocks.
+     */
+    @Test
+    void aTrimmedBinaryTransferDropsCommentsAndBlankLinesFromTheCard() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("trimmed binary", printer);
+        var file = GcodeFixture.cura("mbp-trim").named("trim.gcode").withBodyLines(6);
+        var events = connectAndSettle(id, printer);
+        printer.forget();
+
+        writeToCard(id, file, "TRIM.GCO", true, true);
+
+        var done = awaitTransfer(events, "DONE");
+
+        var expected = (String.join("\n", file.blocks()) + "\n").getBytes(StandardCharsets.UTF_8);
+        assertArrayEquals(expected, printer.binaryWritten("TRIM.GCO"),
+                "a trimmed binary transfer has to carry the same comment-stripped content the ASCII"
+                        + " path already sends, not the stored file verbatim");
+        assertEquals(Boolean.TRUE, done.get("trimmed"),
+                "the browser has to be told this transfer actually stripped comments");
+    }
+
+    /**
+     * The pair, pinning the default on a file that actually has something to strip:
+     * {@link #writingAFileAsPacketsPutsItOnTheCardByteForByte} makes the same claim with a
+     * comment-free fixture, which cannot tell "byte-exact" apart from "nothing to drop anyway".
+     */
+    @Test
+    void anUntrimmedBinaryTransferStaysByteExactEvenWithCommentsInTheFile() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("untrimmed binary", printer);
+        var file = GcodeFixture.cura("mbp-untrimmed").named("untrimmed.gcode").withBodyLines(6);
+        var events = connectAndSettle(id, printer);
+        printer.forget();
+
+        // Eight characters, DOS 8.3's own base limit: MockPrinter.marlin() never reports
+        // Cap:LFN_WRITE, so a longer name (e.g. "UNTRIMMED.GCO") would be shortened before it
+        // reached the wire and binaryWritten would have to be asked under that generated name
+        // instead - a different claim from the one this test makes.
+        writeToCard(id, file, "VERBATIM.GCO", true);
+
+        var done = awaitTransfer(events, "DONE");
+
+        assertArrayEquals(file.bytes(), printer.binaryWritten("VERBATIM.GCO"),
+                "the default must stay byte-exact, comments included - that invariant is the whole"
+                        + " reason binary mode exists beside the ASCII path");
+        assertEquals(Boolean.FALSE, done.get("trimmed"));
     }
 
     /**
@@ -1014,16 +1075,27 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
      * which protocol ran is the one thing these tests are about and a default would hide it.
      */
     private void writeToCard(UUID id, GcodeFixture file, String cardName, boolean binary) {
+        writeToCard(id, file, cardName, binary, false);
+    }
+
+    /** The same, also naming whether comments were asked to be stripped - issue #146. */
+    private void writeToCard(UUID id, GcodeFixture file, String cardName, boolean binary, boolean trim) {
         var stored = idOf(upload(file));
-        uploadStored(id, stored, cardName, binary).expectStatus().isOk();
+        uploadStored(id, stored, cardName, binary, trim).expectStatus().isOk();
     }
 
     /** The request itself, unasserted - for the tests whose subject is the refusal. */
     private WebTestClient.ResponseSpec uploadStored(UUID id, UUID stored, String cardName,
                                                     boolean binary) {
+        return uploadStored(id, stored, cardName, binary, false);
+    }
+
+    /** The same, also naming {@code trim} - omitted from the body everywhere else, the way an older client would. */
+    private WebTestClient.ResponseSpec uploadStored(UUID id, UUID stored, String cardName,
+                                                    boolean binary, boolean trim) {
         return command(id, "/sd/upload",
                 "{\"fileId\":\"" + stored + "\",\"name\":\"" + cardName
-                        + "\",\"binary\":" + binary + "}");
+                        + "\",\"binary\":" + binary + ",\"trim\":" + trim + "}");
     }
 
     /**

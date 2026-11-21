@@ -140,7 +140,7 @@ class PrinterControlServiceTest {
                 new SdUploader(manager, storeThatMustNotBeAsked()));
         var nobody = UUID.randomUUID();
 
-        StepVerifier.create(control.uploadToCard(nobody, UUID.randomUUID(), "GHOST.GCO", false))
+        StepVerifier.create(control.uploadToCard(nobody, UUID.randomUUID(), "GHOST.GCO", false, false))
                 .assertNext(outcome -> {
                     var refused = refusalOf(outcome);
                     assertEquals(ControlOutcome.Refusal.ABSENT, refused.refusal());
@@ -165,7 +165,7 @@ class PrinterControlServiceTest {
         var control = new PrinterControlService(manager,
                 new SdUploader(manager, storeThatMustNotBeAsked()));
 
-        StepVerifier.create(control.uploadToCard(id, UUID.randomUUID(), "OFFLINE.GCO", false))
+        StepVerifier.create(control.uploadToCard(id, UUID.randomUUID(), "OFFLINE.GCO", false, false))
                 .assertNext(outcome -> {
                     var refused = refusalOf(outcome);
                     assertEquals(ControlOutcome.Refusal.WRONG_STATE, refused.refusal());
@@ -179,38 +179,43 @@ class PrinterControlServiceTest {
     }
 
     /**
-     * The mode asked for over HTTP is the mode the uploader is started with. A flag can be added to
-     * an interface, a record and a controller and still be dropped at the last hop, where nothing
-     * would disagree with it: both modes answer 200 and both announce progress, so an upload
-     * silently running as ASCII looks exactly like one running as asked.
+     * The mode asked for over HTTP is the mode the uploader is started with, and so is {@code trim}
+     * (#146). A flag can be added to an interface, a record and a controller and still be dropped at
+     * the last hop, where nothing would disagree with it: both modes answer 200 and both announce
+     * progress, so an upload silently running as ASCII - or silently sending the stored bytes - looks
+     * exactly like one running as asked.
      */
     @Test
     void theChoiceOfModeReachesTheUploader() {
         var id = UUID.randomUUID();
         var manager = managerFor(directoryHolding(id));
         var asked = new AtomicReference<Boolean>();
+        var trimAsked = new AtomicReference<Boolean>();
         var uploads = new SdUploader(manager, storeThatMustNotBeAsked()) {
             @Override
             public Mono<ControlOutcome> start(PrinterReactor reactor, UUID machineId, UUID fileId,
-                                              String requested, boolean binary) {
+                                              String requested, boolean binary, boolean trim) {
                 asked.set(binary);
+                trimAsked.set(trim);
                 return Mono.just(ControlOutcome.accepted(machineId));
             }
         };
 
         StepVerifier.create(new PrinterControlService(manager, uploads)
-                        .uploadToCard(id, UUID.randomUUID(), "MBP.GCO", true))
+                        .uploadToCard(id, UUID.randomUUID(), "MBP.GCO", true, true))
                 .expectNextCount(1)
                 .verifyComplete();
 
         assertEquals(Boolean.TRUE, asked.get());
+        assertEquals(Boolean.TRUE, trimAsked.get());
 
         StepVerifier.create(new PrinterControlService(manager, uploads)
-                        .uploadToCard(id, UUID.randomUUID(), "BENCHY.GCO", false))
+                        .uploadToCard(id, UUID.randomUUID(), "BENCHY.GCO", false, false))
                 .expectNextCount(1)
                 .verifyComplete();
 
         assertEquals(Boolean.FALSE, asked.get());
+        assertEquals(Boolean.FALSE, trimAsked.get());
 
         manager.release(id);
     }

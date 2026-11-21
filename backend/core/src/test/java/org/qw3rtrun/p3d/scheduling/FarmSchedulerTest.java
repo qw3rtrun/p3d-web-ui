@@ -273,7 +273,8 @@ class FarmSchedulerTest {
             // Writing to a card is nothing to do with scheduling a job onto a machine, so these
             // two are here to satisfy the interface and for no other reason.
             @Override
-            public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName, boolean binary) {
+            public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName,
+                                                         boolean binary, boolean trim) {
                 return Mono.just(ControlOutcome.accepted(id));
             }
 

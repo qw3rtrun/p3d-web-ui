@@ -1090,6 +1090,38 @@ show.
   byte is read, so the refusal costs no I/O at all. A second one wants the streaming entry point in
   `:gcode` rather than a second ceiling.
 
+### A binary transfer's byte-exactness is opt-out, and the flag reports what ran
+
+Issue #146's "Trim GCode". `PrinterControl.uploadToCard(UUID, UUID, String, boolean binary,
+boolean trim)` and `SdUploadProgressed.trimmed()` are the contract; `SdUploader.trimmedWholeOf`
+is the implementation and `SdCardIntegrationTest` is the specification. Four parts worth stating,
+because three of them are asymmetries a reader would otherwise take for bugs:
+
+- **`trim` is only *consultable* on a binary transfer.** The ASCII write loop has stripped comments
+  and blank lines on every transfer since it was written - `GcodeLines.blockOf`, unconditional,
+  because a comment-only line spends a line number and a buffer slot to say nothing - so the one
+  place this can mean anything is the byte-exact path. **Do not make the ASCII strip conditional**:
+  it is well covered by `GcodeLinesTest`, it is on the live print path as well as the card path, and
+  issue #146 asked for the opposite - a *binary* transfer able to send what the ASCII one already
+  sends.
+- **`trimmed` is what ran, not what was asked for**, exactly as `binary` is, and for the same
+  reason: the SSE event is the only place either can be proved rather than inferred. It is
+  therefore resolved in `Transfer`'s constructor as `!binary || trim` and is **always `true` on an
+  ASCII transfer** - a fact about the mode, not a choice the caller made. A page reading it back
+  is reading what happened to the file on the card.
+- **Nothing refuses it.** Unlike `binary`, there is no `Cap:` line behind it and no mode to
+  downgrade to - it is host-side behaviour throughout, so the capability-refusal precedent two
+  sections up does not apply and `trim` adds no gate to `SdUploader.start`'s ordered checks.
+- **`bytesTotal` stays the stored file's size in every mode, so a trimmed binary transfer reports
+  `DONE` below 100%.** `bytesSent` is cumulative acknowledged *wire* bytes and a trimmed transfer
+  puts fewer of those out than the file holds. Left there deliberately: the trimmed length is not
+  known until the file has been read, so an honest denominator would delay the first progress event
+  until the whole transfer had been prepared - and it is the same imprecision the ASCII path already
+  accepts for `blocksSent` ("worth showing but not dividing"), now in the count that used to be
+  exact. **The ceiling is checked against `sizeBytes()` regardless of `trim`** for the same reason:
+  sizing it against the trimmed length means reading the file to find out whether it may be read.
+  Recorded in `SdUploader`'s class javadoc and in `SdUploadProgressed`'s.
+
 ### IMPORTANT - a transport method that starts listening at subscribe must be subscribed before the block it is listening for
 
 Issue #122, and the shape generalises to anything in `:backend:terminal` that waits for a reply.
@@ -1138,7 +1170,7 @@ refuses `\n`, `\r`, `;`, `*` and anything outside printable ASCII.
 
 - **A check at the request boundary is not a check at the wire.** `PrinterController`'s
   `UploadToCard` runs the name through `SdFileName.checked` and answers 400, so the hole was latent
-  - but `PrinterControl.uploadToCard(UUID, UUID, String, boolean)` is a public method of the `api`
+  - but `PrinterControl.uploadToCard` is a public method of the `api`
   module, `FarmScheduler` already implements that interface and a farm that schedules its own
   uploads is the obvious next caller. **Ask of any string a module takes from a caller: which of my
   callers is not the browser?**

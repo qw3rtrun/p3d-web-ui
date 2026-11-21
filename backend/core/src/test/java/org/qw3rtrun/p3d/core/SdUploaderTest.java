@@ -28,6 +28,7 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -171,7 +172,7 @@ class SdUploaderTest {
         files.rememberShortName(file.id(), "OLDNAME.GCO");
 
         StepVerifier.create(uploaderFor(id, reactor, files, DEFAULT_MAX)
-                        .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false))
+                        .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false, false))
                 .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
                 .verifyComplete();
 
@@ -197,7 +198,7 @@ class SdUploaderTest {
         assertEquals(Optional.empty(), files.shortName(file.id()), "nothing cached before the first upload");
 
         uploaderFor(id, reactor, files, DEFAULT_MAX)
-                .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false)
+                .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false, false)
                 .block(TIMEOUT);
 
         var firstLine = reactor.written.getFirst();
@@ -208,7 +209,7 @@ class SdUploaderTest {
 
         reactor.written.clear();
         uploaderFor(id, reactor, files, DEFAULT_MAX)
-                .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false)
+                .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false, false)
                 .block(TIMEOUT);
 
         assertEquals(firstLine, reactor.written.getFirst(),
@@ -229,7 +230,7 @@ class SdUploaderTest {
         var files = new ShortNameCachingFiles(file);
 
         uploaderFor(id, reactor, files, DEFAULT_MAX)
-                .start(reactor, id, file.id(), "benchy.gco", false)
+                .start(reactor, id, file.id(), "benchy.gco", false, false)
                 .block(TIMEOUT);
 
         assertEquals("M28 benchy.gco", reactor.written.getFirst());
@@ -592,7 +593,7 @@ class SdUploaderTest {
         // blocking round trip, so the cheap and certain check goes first.
         var uploader = uploaderFor(id, reactor, storeThatMustNotBeAsked(), DEFAULT_MAX);
 
-        StepVerifier.create(uploader.start(reactor, id, UUID.randomUUID(), "MBP.GCO", true))
+        StepVerifier.create(uploader.start(reactor, id, UUID.randomUUID(), "MBP.GCO", true, false))
                 .assertNext(outcome -> {
                     var refused = refusalOf(outcome);
                     assertEquals(ControlOutcome.Refusal.WRONG_STATE, refused.refusal());
@@ -607,7 +608,7 @@ class SdUploaderTest {
         // the machine was not left busy: a legitimate ASCII upload still goes.
         var file = OneFile.of("benchy.gco", "G28\nG1 X1\n");
         StepVerifier.create(uploaderFor(id, reactor, file, DEFAULT_MAX)
-                        .start(reactor, id, file.id(), "benchy.gco", false))
+                        .start(reactor, id, file.id(), "benchy.gco", false, false))
                 .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
                 .verifyComplete();
     }
@@ -620,7 +621,7 @@ class SdUploaderTest {
         var file = OneFile.of("benchy.gco", "G28\nG1 X1\nG1 X2\n");
 
         StepVerifier.create(uploaderFor(id, reactor, file, DEFAULT_MAX)
-                        .start(reactor, id, file.id(), "benchy", false))
+                        .start(reactor, id, file.id(), "benchy", false, false))
                 .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
                 .verifyComplete();
 
@@ -642,7 +643,7 @@ class SdUploaderTest {
         var file = OneFile.claiming("huge.gco", 2_000);
 
         StepVerifier.create(uploaderFor(id, reactor, file, 1_024)
-                        .start(reactor, id, file.id(), "huge.gco", true))
+                        .start(reactor, id, file.id(), "huge.gco", true, false))
                 .assertNext(outcome -> {
                     var refused = refusalOf(outcome);
                     assertEquals(ControlOutcome.Refusal.WRONG_STATE, refused.refusal());
@@ -675,7 +676,7 @@ class SdUploaderTest {
         var reactor = new StubReactor(id, CAPABLE);
         var uploader = uploaderFor(id, reactor, storeThatMustNotBeAsked(), DEFAULT_MAX);
 
-        StepVerifier.create(uploader.start(reactor, id, UUID.randomUUID(), "bad\nM112.gco", false))
+        StepVerifier.create(uploader.start(reactor, id, UUID.randomUUID(), "bad\nM112.gco", false, false))
                 .assertNext(outcome -> {
                     var refused = refusalOf(outcome);
                     assertEquals(ControlOutcome.Refusal.WRONG_STATE, refused.refusal());
@@ -686,7 +687,7 @@ class SdUploaderTest {
 
         // the same name over the binary protocol: the file would be created with a name no later
         // M23 could select, so one rule for the field rather than two that differ by mode.
-        StepVerifier.create(uploader.start(reactor, id, UUID.randomUUID(), "bad\nM112.gco", true))
+        StepVerifier.create(uploader.start(reactor, id, UUID.randomUUID(), "bad\nM112.gco", true, false))
                 .assertNext(outcome -> assertEquals(ControlOutcome.Refusal.WRONG_STATE,
                         refusalOf(outcome).refusal()))
                 .verifyComplete();
@@ -698,7 +699,7 @@ class SdUploaderTest {
         // the machine was not left busy: a legitimate upload still goes.
         var file = OneFile.of("benchy.gco", "G28\nG1 X1\n");
         StepVerifier.create(uploaderFor(id, reactor, file, DEFAULT_MAX)
-                        .start(reactor, id, file.id(), "benchy.gco", false))
+                        .start(reactor, id, file.id(), "benchy.gco", false, false))
                 .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
                 .verifyComplete();
     }
@@ -717,7 +718,7 @@ class SdUploaderTest {
         var file = OneFile.claiming("mbp.gco", 250);
 
         StepVerifier.create(uploaderFor(id, reactor, file, DEFAULT_MAX)
-                        .start(reactor, id, file.id(), "mbp.gco", true))
+                        .start(reactor, id, file.id(), "mbp.gco", true, false))
                 .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
                 .verifyComplete();
 
@@ -747,7 +748,7 @@ class SdUploaderTest {
         var file = OneFile.claiming("mbp.gco", 250);
         var uploader = uploaderFor(id, reactor, file, DEFAULT_MAX);
 
-        uploader.start(reactor, id, file.id(), "mbp.gco", true).block(TIMEOUT);
+        uploader.start(reactor, id, file.id(), "mbp.gco", true, false).block(TIMEOUT);
         reactor.acknowledged.next(96L);
         uploader.reportProgress();
         reactor.acknowledged.next(250L);
@@ -757,17 +758,106 @@ class SdUploaderTest {
                 "wanted the open, a tick and the close: " + reactor.announced);
         assertTrue(reactor.announced.stream().allMatch(SdUploadProgressed::binary),
                 "a binary transfer announced an ASCII event: " + reactor.announced);
+        assertTrue(reactor.announced.stream().noneMatch(SdUploadProgressed::trimmed),
+                "a binary transfer that was not asked to trim said it had: " + reactor.announced);
         assertEquals(SdUploadState.DONE, reactor.terminal().state());
 
         var ascii = new StubReactor(id, CAPABLE);
         var text = OneFile.of("benchy.gco", "G28\nG1 X1\n");
 
         uploaderFor(id, ascii, text, DEFAULT_MAX)
-                .start(ascii, id, text.id(), "benchy.gco", false).block(TIMEOUT);
+                .start(ascii, id, text.id(), "benchy.gco", false, false).block(TIMEOUT);
 
         assertFalse(ascii.announced.isEmpty());
         assertTrue(ascii.announced.stream().noneMatch(SdUploadProgressed::binary),
                 "an ASCII transfer announced a binary event: " + ascii.announced);
+        // the request asked for no trimming and gets it anyway: the ASCII write loop strips
+        // unconditionally, so the flag is a fact about the mode rather than the caller's choice.
+        assertTrue(ascii.announced.stream().allMatch(SdUploadProgressed::trimmed),
+                "an ASCII transfer always strips, so every event has to say so: " + ascii.announced);
         assertEquals(SdUploadState.DONE, ascii.terminal().state());
+    }
+
+    // ------------------------------------------------- stripping comments - issue #146
+
+    /** A comment, a blank line, and two blocks - the shape a sliced file has, in miniature. */
+    private static final String COMMENTED = "; a note\n\nG28\nG1 X1\n";
+
+    /** What the ASCII write loop would have sent for {@link #COMMENTED}, one block per line. */
+    private static final String STRIPPED = "G28\nG1 X1\n";
+
+    /**
+     * Issue #146's "Trim GCode", where the only mode it can mean anything: a binary transfer hands
+     * {@code MbpTransfer} the bytes that reach the card, so what it is handed <em>is</em> the file.
+     * Asserted on {@code binaryData} rather than on the event, because the event would read the same
+     * either way - the whole risk here is a flag that is reported and not acted on.
+     */
+    @Test
+    void aTrimmedBinaryTransferHandsOverTheStrippedContent() {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE);
+        var file = OneFile.of("trim.gco", COMMENTED);
+
+        StepVerifier.create(uploaderFor(id, reactor, file, DEFAULT_MAX)
+                        .start(reactor, id, file.id(), "trim.gco", true, true))
+                .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
+                .verifyComplete();
+
+        assertEquals("trim.gco", reactor.binaryCardName);
+        assertArrayEquals(STRIPPED.getBytes(StandardCharsets.UTF_8), reactor.binaryData,
+                "a trimmed binary transfer carries the blocks the ASCII path would have sent, each"
+                        + " followed by one \\n - not the stored file");
+
+        reactor.acknowledged.complete();
+        assertTrue(reactor.terminal().trimmed(),
+                "the browser has to be told the comments actually went");
+    }
+
+    /**
+     * The pair, on a file that has something to drop. {@code binaryProgressIsAbsoluteAndNotAccumulated}
+     * uses a fixture with no comments in it, so it cannot tell "byte-exact" apart from "nothing to
+     * drop anyway" - and byte-exactness is the whole reason the binary path exists beside the ASCII
+     * one.
+     */
+    @Test
+    void anUntrimmedBinaryTransferHandsOverTheStoredBytes() {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE);
+        var file = OneFile.of("verbatim.gco", COMMENTED);
+
+        uploaderFor(id, reactor, file, DEFAULT_MAX)
+                .start(reactor, id, file.id(), "verbatim.gco", true, false)
+                .block(TIMEOUT);
+
+        assertArrayEquals(COMMENTED.getBytes(StandardCharsets.UTF_8), reactor.binaryData,
+                "the default stays byte-exact, comments and blank lines included");
+
+        reactor.acknowledged.complete();
+        assertFalse(reactor.terminal().trimmed());
+    }
+
+    /**
+     * {@code trim} is not a second way to ask for the ASCII path: that path strips on every transfer
+     * already, so the flag changes nothing it does and the blocks on the wire are the same either
+     * way. Worth pinning rather than assuming - a branch wired into {@code asciiContentOf} would
+     * pass every other test in this class.
+     */
+    @Test
+    void anAsciiTransferWritesTheSameBlocksWhateverTrimSays() {
+        var id = UUID.randomUUID();
+        var asked = new StubReactor(id, CAPABLE);
+        var notAsked = new StubReactor(id, CAPABLE);
+        var file = OneFile.of("ascii.gco", COMMENTED);
+
+        uploaderFor(id, asked, file, DEFAULT_MAX)
+                .start(asked, id, file.id(), "ascii.gco", false, true).block(TIMEOUT);
+        uploaderFor(id, notAsked, file, DEFAULT_MAX)
+                .start(notAsked, id, file.id(), "ascii.gco", false, false).block(TIMEOUT);
+
+        assertEquals(List.of("M28 ascii.gco", "G28", "G1 X1", "M29"), asked.written);
+        assertEquals(asked.written, notAsked.written);
+        assertTrue(asked.terminal().trimmed());
+        assertTrue(notAsked.terminal().trimmed(),
+                "an ASCII transfer strips whatever the request said, and has to report what it did");
     }
 }

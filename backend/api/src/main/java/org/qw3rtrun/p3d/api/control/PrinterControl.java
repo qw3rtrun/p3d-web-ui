@@ -127,10 +127,26 @@ public interface PrinterControl {
      * back would report success for something the operator did not ask for. There is no overload:
      * one way to ask means no caller can get the other mode by accident.
      *
+     * <p><strong>{@code trim} is only consultable on a binary transfer</strong>, because the ASCII
+     * write loop already strips comments and blank lines on every transfer and unconditionally
+     * ({@code GcodeLines.blockOf} in {@code :backend:core}) - a line that says nothing would
+     * otherwise spend a line number and a slot in the printer's buffer. So this asks a <em>binary</em>
+     * transfer to send that same stripped content instead of the stored file verbatim, and the ASCII
+     * path strips whatever this says. It is host-side behaviour throughout, gated by no capability
+     * and refused by nothing. What actually happened comes back as
+     * {@code SdUploadProgressed.trimmed()}, which is {@code true} on every ASCII transfer as a matter
+     * of fact rather than of choice.
+     *
      * @param cardName what to call the file on the card - what will be listed, printed and deleted
      * @param binary   whether to use the binary protocol rather than the ASCII write loop
+     * @param trim     whether a binary transfer should strip comments and blank lines rather than
+     *                 copy the stored bytes. {@code false} is the default over the wire, the same
+     *                 reasoning {@code binary} carries: a client that posts a body without the field
+     *                 gets the behaviour it was written for, and byte-exactness is what a binary
+     *                 transfer is for
      */
-    Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName, boolean binary);
+    Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName, boolean binary,
+                                           boolean trim);
 
     /**
      * Stops a running transfer, leaving a short but closed file on the card - a stop, not a

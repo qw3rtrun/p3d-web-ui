@@ -26,23 +26,32 @@ import java.util.UUID;
  *               reported {@code Cap:BINARY_FILE_TRANSFER} is refused with 409 rather than quietly
  *               downgraded. <strong>{@code Boolean} and not {@code boolean}</strong>, normalised
  *               below - see the class note
+ * @param trim   whether to drop comments and blank lines rather than put the stored bytes on the
+ *               card - issue #146's "Trim GCode". Only a <em>binary</em> transfer has anything to
+ *               decide: the ASCII write loop strips on every transfer and always has, so this asks
+ *               the byte-exact path to behave the same way. Omitted binds {@code false}, which keeps
+ *               a binary transfer byte-exact for a client written against the older contract, and
+ *               nothing refuses it - there is no capability behind it. What actually ran comes back
+ *               as {@code SdUploadProgressed.trimmed}. {@code Boolean} for the same reason
+ *               {@code binary} is
  */
-public record UploadToCard(UUID fileId, String name, Boolean binary) {
+public record UploadToCard(UUID fileId, String name, Boolean binary, Boolean trim) {
 
     // See SdFileName: the name reaches the printer verbatim in an M28 - the longest of the commands
     // that carry a filename, which is why its length budget is sized against M28 specifically.
     //
-    // binary is boxed because a primitive one cannot be omitted from the body: Jackson 3's
+    // binary and trim are boxed because a primitive one cannot be omitted from the body: Jackson 3's
     // FAIL_ON_NULL_FOR_PRIMITIVES is on by default, so `boolean` answers every body without the
     // field with "Cannot map `null` into type `boolean`" - a 400 on the request every existing
     // client sends, measured rather than reasoned about. Normalising here rather than at the two
-    // call sites keeps binary() non-null, so unboxing it is safe; the same reason HomeAxes and
-    // MoveAxes carry Boolean.
+    // call sites keeps the accessors non-null, so unboxing them is safe; the same reason HomeAxes
+    // and MoveAxes carry Boolean.
     public UploadToCard {
         if (fileId == null) {
             throw new IllegalArgumentException("a file is required");
         }
         name = SdFileName.checked(name);
         binary = binary != null && binary;
+        trim = trim != null && trim;
     }
 }

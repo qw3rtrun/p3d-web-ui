@@ -50,6 +50,9 @@ class PrinterCommandBindingTest {
     /** Which mode the upload endpoint asked for - null until it has been asked at all, so a test can tell "bound false" from "never reached". */
     private final AtomicReference<Boolean> uploadBinary = new AtomicReference<>();
 
+    /** Whether the upload endpoint asked for comments to be stripped (#146) - null on the same terms as {@link #uploadBinary}. */
+    private final AtomicReference<Boolean> uploadTrim = new AtomicReference<>();
+
     private final AtomicBoolean cancelled = new AtomicBoolean();
 
     /** The line the terminal endpoint handed to the runtime - null until it has been asked at all. */
@@ -107,9 +110,11 @@ class PrinterCommandBindingTest {
             }
 
             @Override
-            public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName, boolean binary) {
+            public Publisher<ControlOutcome> uploadToCard(UUID id, UUID fileId, String cardName,
+                                                         boolean binary, boolean trim) {
                 uploaded.set(fileId + " -> " + cardName);
                 uploadBinary.set(binary);
+                uploadTrim.set(trim);
                 var answer = uploadAnswers.get();
                 return Mono.just(answer == null ? ControlOutcome.accepted(id) : answer);
             }
@@ -394,6 +399,33 @@ class PrinterCommandBindingTest {
         post("/sd/upload", "{\"fileId\":\"" + fileId + "\",\"name\":\"BENCHY.GCO\"}");
 
         assertEquals(Boolean.FALSE, uploadBinary.get(),
+                "an omitted flag must not bind as \"whatever the server prefers\"");
+    }
+
+    // Issue #146's "Trim GCode". Binds on the same terms as binary and for the same reason: the only
+    // place the answer is observable afterwards is SdUploadProgressed.trimmed, so a flag dropped at
+    // this hop would run a byte-exact transfer while the page said otherwise.
+    @Test
+    void theUploadPayloadCarriesTheChoiceToStripComments() {
+        var fileId = UUID.randomUUID();
+
+        post("/sd/upload", "{\"fileId\":\"" + fileId + "\",\"name\":\"TRIM.GCO\","
+                + "\"binary\":true,\"trim\":true}");
+
+        assertEquals(Boolean.TRUE, uploadTrim.get());
+    }
+
+    // A body with no "trim" binds false: byte-exactness is what a binary transfer is for, so a
+    // client written against the older contract keeps getting it. Jackson 3 rejects an omitted
+    // primitive outright, which is why the record's field is boxed - this is the case that fails
+    // if it stops being.
+    @Test
+    void anUploadThatSaysNothingAboutTrimmingKeepsTheStoredBytes() {
+        var fileId = UUID.randomUUID();
+
+        post("/sd/upload", "{\"fileId\":\"" + fileId + "\",\"name\":\"BENCHY.GCO\",\"binary\":true}");
+
+        assertEquals(Boolean.FALSE, uploadTrim.get(),
                 "an omitted flag must not bind as \"whatever the server prefers\"");
     }
 

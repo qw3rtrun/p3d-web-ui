@@ -154,6 +154,47 @@ class MachineProfileTest {
         assertFalse(unknown.isKnown(), "the checkbox must be able to say 'not reported yet' instead");
     }
 
+    // ------------------------------------------------------- the long-filename write
+
+    /**
+     * {@code Cap:LFN_WRITE:1} is what a build with {@code LONG_FILENAME_WRITE_SUPPORT} writes.
+     * Measured the other way round: {@code LongFileNameProbe} against MarlinSim
+     * ({@code Marlin bugfix-2.1.x}, compiled Nov 18 2026) on 2026-11-21 reported
+     * {@code Cap:LFN_WRITE:0}, and on that machine {@code M28 ninechars.gco} answered
+     * {@code open failed, File: ninechars.gco.} while still answering {@code ok}.
+     */
+    @Test
+    void aFirmwareReportingTheLongFilenameWriteHasIt() {
+        assertTrue(reported(Map.of("LFN_WRITE", true)).hasLongFilenameWrite());
+    }
+
+    @Test
+    void aFirmwareReportingNoLongFilenameWriteHasNone() {
+        assertFalse(reported(Map.of("LFN_WRITE", false)).hasLongFilenameWrite());
+    }
+
+    /**
+     * {@code Cap:LONG_FILENAME} and {@code Cap:LFN_WRITE} are two capabilities and only the second
+     * governs what {@code M28} will accept - {@code Marlin/src/gcode/host/M115.cpp} reports the
+     * first from {@code LONG_FILENAME_HOST_SUPPORT} (reading and listing long names) and the second
+     * from {@code LONG_FILENAME_WRITE_SUPPORT}. A host gated on the wrong one would shorten a name
+     * a capable machine would have taken, or send one an incapable machine silently drops.
+     */
+    @Test
+    void readingLongNamesIsNotWritingThem() {
+        assertFalse(reported(Map.of("LONG_FILENAME", true)).hasLongFilenameWrite(),
+                "LONG_FILENAME is host-side reading support; LFN_WRITE is what M28 obeys");
+    }
+
+    /** Never reported and "firmware does not know the capability" are both false; {@code isKnown} tells them apart. */
+    @Test
+    void aMachineNothingHasAskedIsNotKnownAndCannotWriteALongName() {
+        var unknown = MachineProfile.unknown();
+
+        assertFalse(unknown.hasLongFilenameWrite());
+        assertFalse(unknown.isKnown(), "the upload must be able to say 'not reported yet' instead");
+    }
+
     /** The capability map is the firmware's own, so an unusual key is carried rather than dropped. */
     @Test
     void theCapabilityMapIsKeptAsReported() {

@@ -546,6 +546,87 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
                 () -> names(events.payloadOf("SdFileList")).contains("BENCHY.gco"));
     }
 
+    // ------------------------------------------------- the short-name fallback - issue #148
+
+    /**
+     * {@code LongFileNameProbe} against MarlinSim, 2026-11-21: a name sent to {@code M28} that is
+     * not already DOS 8.3 - a base over eight characters, here twenty-four - is echoed
+     * {@code Now fresh file: <name>} and then immediately {@code open failed, File: <name>.}; the
+     * line still answers {@code ok}, nothing is written, and every line sent afterwards runs live
+     * instead of landing in a file, because the firmware never entered its write state. A machine
+     * that has never reported {@code Cap:LFN_WRITE} - every {@link MockPrinter#marlin()} printer, and
+     * the measured truth of the simulator itself - must therefore never be asked to open that name;
+     * {@code SdUploader} has to generate one that already fits before {@code M28} goes out.
+     *
+     * <p>The generated name itself is not pinned to a literal here - it is a hash, and re-deriving
+     * one by hand would make this a test of the test. What is pinned is the DOS 8.3 shape and the
+     * three places that name has to agree: the wire, the progress event, and the card's own storage
+     * key.
+     */
+    @Test
+    void aNameLongerThanDos83IsShortenedBeforeM28GoesOut() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("needs a short name", printer);
+        var file = GcodeFixture.unsliced("sd-upload-longname").named("longname.gcode").withBodyLines(2);
+        var events = connectAndSettle(id, printer);
+
+        writeToCard(id, file, "a_very_long_benchy_name.gco");
+
+        var done = awaitTransfer(events, "DONE");
+
+        var opened = printer.commands().getFirst();
+        assertTrue(opened.startsWith("M28 "), "the first block of a transfer is always the open: " + opened);
+        var wireName = opened.substring("M28 ".length());
+
+        assertDos83Shape(wireName);
+        assertFalse(wireName.equalsIgnoreCase("a_very_long_benchy_name.gco"),
+                "the long name must never reach the wire on a machine that cannot write one");
+
+        assertEquals(wireName, done.get("file"),
+                "the page has to be told the name that is really on the card, not what was typed");
+        assertFalse(printer.written(wireName).isEmpty(),
+                "the shortened name is what the content actually landed under on the card");
+    }
+
+    /**
+     * The pair with the test above, proving the capability gate is read rather than assumed -
+     * {@link MockPrinter#withLongFilenameWrite()}'s {@code Cap:LFN_WRITE:1} is the one difference,
+     * and it is enough to keep the name exactly as asked.
+     */
+    @Test
+    void aMachineThatReportsLfnWriteGetsTheNameItWasAskedForVerbatim() {
+        var printer = machine(MockPrinter.withLongFilenameWrite());
+        var id = register("can write a long name", printer);
+        var file = GcodeFixture.unsliced("sd-upload-longname-ok").named("longname-ok.gcode").withBodyLines(2);
+        var events = connectAndSettle(id, printer);
+
+        writeToCard(id, file, "a_very_long_benchy_name.gco");
+
+        var done = awaitTransfer(events, "DONE");
+
+        assertEquals("M28 a_very_long_benchy_name.gco", printer.commands().getFirst(),
+                "a machine that reported Cap:LFN_WRITE must get the long name unshortened");
+        assertEquals("a_very_long_benchy_name.gco", done.get("file"));
+        assertFalse(printer.written("a_very_long_benchy_name.gco").isEmpty());
+    }
+
+    /**
+     * The shape {@code LongFileNameProbe} measured as the only one this simulator opens without
+     * refusing: a base of at most eight characters, an extension of at most three, both drawn from
+     * {@code A-Z0-9} only - a space was enough on its own to trigger {@code open failed} even at
+     * seven base characters, so the check is exact rather than "looks short enough".
+     */
+    private static void assertDos83Shape(String name) {
+        var dot = name.lastIndexOf('.');
+        assertTrue(dot > 0, "a card name always has an extension: " + name);
+        var base = name.substring(0, dot);
+        var ext = name.substring(dot + 1);
+        assertTrue(base.length() <= 8, "base too long for DOS 8.3: " + name);
+        assertTrue(ext.length() <= 3, "extension too long for DOS 8.3: " + name);
+        assertTrue((base + ext).matches("[A-Za-z0-9~]+"),
+                "a character outside A-Z0-9~ was enough to make this simulator refuse the open: " + name);
+    }
+
     /**
      * The same validator as {@code /sd/delete}, with a worse consequence if it let one through: a
      * {@code ;} in a deleted file's name costs a rejected block, but in an {@code M28} it opens a

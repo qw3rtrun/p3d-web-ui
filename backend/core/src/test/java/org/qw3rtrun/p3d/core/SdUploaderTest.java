@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.core;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.qw3rtrun.p3d.api.control.ControlOutcome;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
@@ -30,6 +31,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -78,6 +80,176 @@ class SdUploaderTest {
     @Test
     void aPrintableExtensionInTheMiddleDoesNotCount() {
         assertEquals("notes.gco.txt.gco", SdUploader.cardNameFor("notes.gco.txt"));
+    }
+
+    // -------------------------------------- the short-name fallback - issue #148
+
+    // LongFileNameProbe against MarlinSim (bugfix-2.1.x, compiled Nov 18 2026) on 2026-11-21,
+    // Cap:LFN_WRITE:0: an M28 whose name is already DOS 8.3 opens, writes and lists back; anything
+    // else is echoed "Now fresh file: <name>" and then "open failed, File: <name>." while the M28
+    // line still answers ok, so nothing is written and the next content line runs live on the
+    // machine instead. Eight base characters is the boundary that worked.
+    @Test
+    void anExactlyEightThreeNameIsLeftAloneOnAMachineThatCannotWriteALongOne() {
+        assertEquals("eightchr.gco", SdUploader.cardNameFor("eightchr.gco", false));
+    }
+
+    /**
+     * Each of these was measured as failing identically on that simulator, for a different reason:
+     * {@code ninechars.gco} is one character over the eight-character base,
+     * {@code my file.gco} is short enough and carries a space, and
+     * {@code a_very_long_benchy_name.gco} is both long and full of underscores. Length is not the
+     * whole rule - an illegal character is enough on its own.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"ninechars.gco", "my file.gco", "a_very_long_benchy_name.gco"})
+    void aNameTheFirmwareWouldRefuseIsShortenedToFit(String requested) {
+        var shortened = SdUploader.cardNameFor(requested, false);
+
+        assertNotEquals(requested, shortened,
+                "this name would have been answered 'open failed' with nothing written");
+        assertDos83(shortened);
+    }
+
+    /** The extension is checked on its own: {@code benchy} fits in eight, {@code gcode} does not fit in three. */
+    @Test
+    void anExtensionOverThreeCharactersIsShortenedEvenWhenTheBaseFits() {
+        var shortened = SdUploader.cardNameFor("benchy.gcode", false);
+
+        assertNotEquals("benchy.gcode", shortened);
+        assertDos83(shortened);
+    }
+
+    /**
+     * The same requested name always becomes the same card name, so an operator who uploads twice
+     * overwrites one file rather than filling the card with near-duplicates - the fingerprint is a
+     * hash of the name and nothing else, with no clock and no counter in it.
+     */
+    @Test
+    void theShortNameIsDeterministic() {
+        assertEquals(SdUploader.cardNameFor("a_very_long_benchy_name.gco", false),
+                SdUploader.cardNameFor("a_very_long_benchy_name.gco", false));
+    }
+
+    /**
+     * Two names sharing the four-character prefix the short name is built from must still differ,
+     * which is what the fingerprint is for. Asserted as inequality rather than against literals, so
+     * the test says the property instead of re-deriving the hash.
+     */
+    @Test
+    void twoNamesSharingAPrefixGetDifferentShortNames() {
+        assertNotEquals(SdUploader.cardNameFor("averylongname1.gco", false),
+                SdUploader.cardNameFor("averylongname2.gco", false));
+    }
+
+    /** {@code Cap:LFN_WRITE} is the gate, and a machine that reported it gets the name verbatim. */
+    @Test
+    void aMachineThatReportedLfnWriteKeepsTheNameItWasGiven() {
+        assertEquals("a_very_long_benchy_name.gco",
+                SdUploader.cardNameFor("a_very_long_benchy_name.gco", true));
+    }
+
+    // -------------------------------------- the short name is persisted - issue #148's follow-on
+
+    /**
+     * The whole point of persisting rather than recomputing: a name already written to a card must
+     * not move under it. A second upload of the same file is answered from the row {@code rememberShortName}
+     * wrote on the first, not from a fresh call to {@link SdUploader#cardNameFor(String, boolean)} -
+     * so even a name that no longer matches what the generator would choose today (standing in for
+     * a future change to it) is the one that goes out.
+     */
+    @Test
+    void aPersistedShortNameIsUsedEvenIfTheGeneratorWouldNowChooseDifferently() {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE); // LFN_WRITE absent on this profile -> false
+        var file = OneFile.of("a_very_long_benchy_name.gco", "G28\n");
+        var files = new ShortNameCachingFiles(file);
+
+        // stands in for a name an earlier version of the generator chose and wrote back - the
+        // round trip under test is "read this before computing", not "compute, then happen to
+        // match it".
+        files.rememberShortName(file.id(), "OLDNAME.GCO");
+
+        StepVerifier.create(uploaderFor(id, reactor, files, DEFAULT_MAX)
+                        .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false))
+                .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
+                .verifyComplete();
+
+        assertEquals("M28 OLDNAME.GCO", reactor.written.getFirst(),
+                "a once-persisted short name must survive a change to the generator, not be recomputed");
+        assertEquals(Optional.of("OLDNAME.GCO"), files.shortName(file.id()),
+                "the cache is unchanged by a read");
+    }
+
+    /**
+     * The other half: a file that has never needed a short name gets one computed and written back
+     * on its first upload to a machine without {@code Cap:LFN_WRITE}, and a second upload of the
+     * same file reuses exactly that value rather than computing again - asserted by reading the
+     * cache back explicitly, not merely by observing the same bytes on the wire twice.
+     */
+    @Test
+    void aShortNameIsComputedOnceAndReadBackOnASecondUpload() {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE);
+        var file = OneFile.of("a_very_long_benchy_name.gco", "G28\n");
+        var files = new ShortNameCachingFiles(file);
+
+        assertEquals(Optional.empty(), files.shortName(file.id()), "nothing cached before the first upload");
+
+        uploaderFor(id, reactor, files, DEFAULT_MAX)
+                .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false)
+                .block(TIMEOUT);
+
+        var firstLine = reactor.written.getFirst();
+        assertNotEquals("M28 a_very_long_benchy_name.gco", firstLine);
+        var persisted = files.shortName(file.id());
+        assertTrue(persisted.isPresent(), "the generated short name must be written back to the file's row");
+        assertEquals("M28 " + persisted.get(), firstLine);
+
+        reactor.written.clear();
+        uploaderFor(id, reactor, files, DEFAULT_MAX)
+                .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false)
+                .block(TIMEOUT);
+
+        assertEquals(firstLine, reactor.written.getFirst(),
+                "the second upload must reuse the persisted name rather than recompute one");
+        assertEquals(persisted, files.shortName(file.id()), "the cache is still exactly what the first upload wrote");
+    }
+
+    /**
+     * A name that already fits DOS 8.3 needs no cache entry at all - most files never need
+     * shortening, so most rows should stay with no {@code short_name} rather than one computed for
+     * nothing.
+     */
+    @Test
+    void aNameThatAlreadyFitsIsNeverCached() {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE);
+        var file = OneFile.of("benchy.gco", "G28\n");
+        var files = new ShortNameCachingFiles(file);
+
+        uploaderFor(id, reactor, files, DEFAULT_MAX)
+                .start(reactor, id, file.id(), "benchy.gco", false)
+                .block(TIMEOUT);
+
+        assertEquals("M28 benchy.gco", reactor.written.getFirst());
+        assertEquals(Optional.empty(), files.shortName(file.id()),
+                "a name that already fits DOS 8.3 needs no persisted fallback");
+    }
+
+    /** The shape the probe measured as the only one that opens: 8.3, uppercase and digits, one tilde. */
+    private static void assertDos83(String name) {
+        var dot = name.lastIndexOf('.');
+        assertTrue(dot > 0, "a card name always has an extension: " + name);
+        var base = name.substring(0, dot);
+        var extension = name.substring(dot + 1);
+
+        assertTrue(base.length() <= 8, "base too long for DOS 8.3: " + name);
+        assertTrue(extension.length() <= 3, "extension too long for DOS 8.3: " + name);
+        assertTrue(base.matches("[A-Z0-9~]+"),
+                "a generated base is uppercase A-Z0-9 with the one tilde: " + name);
+        assertTrue(extension.matches("[A-Z0-9]+"),
+                "a generated extension is uppercase A-Z0-9: " + name);
     }
 
     // ------------------------------------------------- the shape of a transfer
@@ -304,6 +476,57 @@ class SdUploaderTest {
         @Override
         public void delete(UUID id) {
             fail("the file store was deleted from");
+        }
+    }
+
+    /**
+     * Wraps a {@link GcodeFileService} and adds the in-memory short-name cache
+     * {@code GcodeFileServiceImpl} keeps on the row - what the override is for: {@link OneFile} is
+     * a record built for the earlier tests, so this is a second, mutable fixture rather than a
+     * third field bolted onto that one.
+     */
+    private static final class ShortNameCachingFiles implements GcodeFileService {
+
+        private final GcodeFileService delegate;
+        private final Map<UUID, String> shortNames = new java.util.concurrent.ConcurrentHashMap<>();
+
+        ShortNameCachingFiles(GcodeFileService delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public Publisher<GcodeFile> store(String name, Publisher<ByteBuffer> content) {
+            return delegate.store(name, content);
+        }
+
+        @Override
+        public Optional<GcodeFile> fetch(UUID id) {
+            return delegate.fetch(id);
+        }
+
+        @Override
+        public Stream<GcodeFile> fetchAll() {
+            return delegate.fetchAll();
+        }
+
+        @Override
+        public Publisher<ByteBuffer> read(UUID id) {
+            return delegate.read(id);
+        }
+
+        @Override
+        public void delete(UUID id) {
+            delegate.delete(id);
+        }
+
+        @Override
+        public Optional<String> shortName(UUID id) {
+            return Optional.ofNullable(shortNames.get(id));
+        }
+
+        @Override
+        public void rememberShortName(UUID id, String shortName) {
+            shortNames.put(id, shortName);
         }
     }
 

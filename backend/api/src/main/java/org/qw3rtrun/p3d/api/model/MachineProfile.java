@@ -108,6 +108,31 @@ public record MachineProfile(Map<String, String> firmware,
         return Boolean.TRUE.equals(capabilities.get("BINARY_FILE_TRANSFER"));
     }
 
+    /**
+     * Whether the firmware said {@code M28} can create a file under a name longer than DOS 8.3 -
+     * Marlin's {@code Cap:LFN_WRITE}, which decides whether an upload may send the name an operator
+     * typed or has to generate a short one first.
+     *
+     * <p><strong>{@code Cap:LONG_FILENAME} is a different capability and is the wrong gate for
+     * this.</strong> In {@code Marlin/src/gcode/host/M115.cpp} the first reports
+     * {@code LONG_FILENAME_HOST_SUPPORT} - reading and listing long names - and this one reports
+     * {@code LONG_FILENAME_WRITE_SUPPORT}, specifically whether a write may open one. They are
+     * logically independent, and only this one governs what {@code M28} accepts.
+     *
+     * <p>Like {@link #hasSdCard()} and {@link #hasBinaryFileTransfer()}, a question about the
+     * <em>firmware</em> rather than the card: a build without it answers an over-long
+     * {@code M28} with {@code open failed, File: <name>.} and an {@code ok}, writing nothing, while
+     * every line meant for the file then runs live on the machine. Measured value {@code 0} -
+     * together with {@code Cap:LONG_FILENAME:0} - by {@code LongFileNameProbe} against MarlinSim
+     * ({@code Marlin bugfix-2.1.x}, compiled Nov 18 2026) on 2026-11-21.
+     *
+     * <p>Absent is false, covering both "never reported" and "firmware does not know the
+     * capability"; {@link #isKnown()} tells those apart.
+     */
+    public boolean hasLongFilenameWrite() {
+        return Boolean.TRUE.equals(capabilities.get("LFN_WRITE"));
+    }
+
     public String firmwareName() {
         return firmware.get("FIRMWARE_NAME");
     }

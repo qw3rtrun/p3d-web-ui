@@ -306,6 +306,12 @@ export type SdUploadState = 'UPLOADING' | 'DONE' | 'CANCELLED' | 'FAILED'
  * downgraded, so this says ASCII only when ASCII was asked for. The states below mean the same
  * thing either way.
  *
+ * `trimmed` is the same kind of fact and not an echo of the request: it says whether comments and
+ * blank lines were stripped out of what reached the card. An ASCII transfer strips them
+ * unconditionally, so this is true there whatever was asked for; a binary transfer copies the file
+ * byte for byte unless trimming was requested, so there it is the request. Which is why a page
+ * showing what happened reads this rather than the checkbox the operator ticked.
+ *
  * Arrives about once a second while running, and once more, exact, when it ends.
  */
 export interface SdUploadProgressed {
@@ -316,6 +322,7 @@ export interface SdUploadProgressed {
     blocksSent: number
     reason: string | null
     binary: boolean
+    trimmed: boolean
 }
 
 /**

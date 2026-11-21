@@ -80,6 +80,41 @@ export function fileSize(bytes: number): string {
 }
 
 /**
+ * Seconds as a stopwatch: `95` is `1:35`, `3700` is `1:01:40`.
+ *
+ * The measure for something being watched while it happens - how long a transfer has been running
+ * and how much of it is left - where {@link duration}'s coarseness would read "under a minute" for
+ * most of one and then jump. Seconds are always two digits so the reading does not change width
+ * under itself; the hour only appears when there is one.
+ *
+ * Null and nonsense are null, as in {@link duration}.
+ */
+export function clock(seconds: number | null): string | null {
+    if (seconds === null || !Number.isFinite(seconds) || seconds < 0) {
+        return null
+    }
+    const pad = (value: number) => String(value).padStart(2, '0')
+    const whole = Math.round(seconds)
+    const hours = Math.floor(whole / 3600)
+    const minutes = Math.floor((whole % 3600) / 60)
+    const rest = whole % 60
+    return hours === 0 ? `${minutes}:${pad(rest)}` : `${hours}:${pad(minutes)}:${pad(rest)}`
+}
+
+/**
+ * A rate in {@link fileSize}'s units: `1468006` bytes a second is `1.4 MB/s`.
+ *
+ * Null and nonsense are null, as in {@link duration} - a rate nothing can be divided to get yet is
+ * not zero bytes a second.
+ */
+export function transferRate(bytesPerSecond: number | null): string | null {
+    if (bytesPerSecond === null || !Number.isFinite(bytesPerSecond) || bytesPerSecond < 0) {
+        return null
+    }
+    return `${fileSize(Math.round(bytesPerSecond))}/s`
+}
+
+/**
  * Epoch milliseconds as a local wall-clock time, to the millisecond: `14:03:21.472`.
  *
  * The console's measure, so the date is deliberately absent and the milliseconds deliberately are

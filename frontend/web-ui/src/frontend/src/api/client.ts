@@ -242,8 +242,13 @@ export function printer(uuid: string) {
         // wants is a caller picking one by accident. The server answers 409 if the firmware did not
         // report BINARY_FILE_TRANSFER, so it is the authority and the browser's capability check is
         // only courtesy; the mode that actually ran comes back on SdUploadProgressed.binary.
-        uploadToCard: (fileId: string, name: string, binary: boolean) =>
-            send(at('/sd/upload'), {fileId, name, binary}),
+        //
+        // `trim` asks for comments and blank lines to be left out of what reaches the card, and is
+        // required for the same reason - except that it only decides anything for a binary
+        // transfer, since the ASCII path strips them unconditionally. What actually ran comes back
+        // on SdUploadProgressed.trimmed, which is therefore not an echo of this.
+        uploadToCard: (fileId: string, name: string, binary: boolean, trim: boolean) =>
+            send(at('/sd/upload'), {fileId, name, binary, trim}),
 
         // A stop, not a cancel: the content ends but M29 still goes out, leaving a short closed file
         // (safe to delete, not to print). Expect state: 'CANCELLED'.

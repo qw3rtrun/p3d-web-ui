@@ -149,6 +149,94 @@ class SdUploaderTest {
                 SdUploader.cardNameFor("a_very_long_benchy_name.gco", true));
     }
 
+    // -------------------------------------- the short name is persisted - issue #148's follow-on
+
+    /**
+     * The whole point of persisting rather than recomputing: a name already written to a card must
+     * not move under it. A second upload of the same file is answered from the row {@code rememberShortName}
+     * wrote on the first, not from a fresh call to {@link SdUploader#cardNameFor(String, boolean)} -
+     * so even a name that no longer matches what the generator would choose today (standing in for
+     * a future change to it) is the one that goes out.
+     */
+    @Test
+    void aPersistedShortNameIsUsedEvenIfTheGeneratorWouldNowChooseDifferently() {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE); // LFN_WRITE absent on this profile -> false
+        var file = OneFile.of("a_very_long_benchy_name.gco", "G28\n");
+        var files = new ShortNameCachingFiles(file);
+
+        // stands in for a name an earlier version of the generator chose and wrote back - the
+        // round trip under test is "read this before computing", not "compute, then happen to
+        // match it".
+        files.rememberShortName(file.id(), "OLDNAME.GCO");
+
+        StepVerifier.create(uploaderFor(id, reactor, files, DEFAULT_MAX)
+                        .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false))
+                .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
+                .verifyComplete();
+
+        assertEquals("M28 OLDNAME.GCO", reactor.written.getFirst(),
+                "a once-persisted short name must survive a change to the generator, not be recomputed");
+        assertEquals(Optional.of("OLDNAME.GCO"), files.shortName(file.id()),
+                "the cache is unchanged by a read");
+    }
+
+    /**
+     * The other half: a file that has never needed a short name gets one computed and written back
+     * on its first upload to a machine without {@code Cap:LFN_WRITE}, and a second upload of the
+     * same file reuses exactly that value rather than computing again - asserted by reading the
+     * cache back explicitly, not merely by observing the same bytes on the wire twice.
+     */
+    @Test
+    void aShortNameIsComputedOnceAndReadBackOnASecondUpload() {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE);
+        var file = OneFile.of("a_very_long_benchy_name.gco", "G28\n");
+        var files = new ShortNameCachingFiles(file);
+
+        assertEquals(Optional.empty(), files.shortName(file.id()), "nothing cached before the first upload");
+
+        uploaderFor(id, reactor, files, DEFAULT_MAX)
+                .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false)
+                .block(TIMEOUT);
+
+        var firstLine = reactor.written.getFirst();
+        assertNotEquals("M28 a_very_long_benchy_name.gco", firstLine);
+        var persisted = files.shortName(file.id());
+        assertTrue(persisted.isPresent(), "the generated short name must be written back to the file's row");
+        assertEquals("M28 " + persisted.get(), firstLine);
+
+        reactor.written.clear();
+        uploaderFor(id, reactor, files, DEFAULT_MAX)
+                .start(reactor, id, file.id(), "a_very_long_benchy_name.gco", false)
+                .block(TIMEOUT);
+
+        assertEquals(firstLine, reactor.written.getFirst(),
+                "the second upload must reuse the persisted name rather than recompute one");
+        assertEquals(persisted, files.shortName(file.id()), "the cache is still exactly what the first upload wrote");
+    }
+
+    /**
+     * A name that already fits DOS 8.3 needs no cache entry at all - most files never need
+     * shortening, so most rows should stay with no {@code short_name} rather than one computed for
+     * nothing.
+     */
+    @Test
+    void aNameThatAlreadyFitsIsNeverCached() {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE);
+        var file = OneFile.of("benchy.gco", "G28\n");
+        var files = new ShortNameCachingFiles(file);
+
+        uploaderFor(id, reactor, files, DEFAULT_MAX)
+                .start(reactor, id, file.id(), "benchy.gco", false)
+                .block(TIMEOUT);
+
+        assertEquals("M28 benchy.gco", reactor.written.getFirst());
+        assertEquals(Optional.empty(), files.shortName(file.id()),
+                "a name that already fits DOS 8.3 needs no persisted fallback");
+    }
+
     /** The shape the probe measured as the only one that opens: 8.3, uppercase and digits, one tilde. */
     private static void assertDos83(String name) {
         var dot = name.lastIndexOf('.');
@@ -388,6 +476,57 @@ class SdUploaderTest {
         @Override
         public void delete(UUID id) {
             fail("the file store was deleted from");
+        }
+    }
+
+    /**
+     * Wraps a {@link GcodeFileService} and adds the in-memory short-name cache
+     * {@code GcodeFileServiceImpl} keeps on the row - what the override is for: {@link OneFile} is
+     * a record built for the earlier tests, so this is a second, mutable fixture rather than a
+     * third field bolted onto that one.
+     */
+    private static final class ShortNameCachingFiles implements GcodeFileService {
+
+        private final GcodeFileService delegate;
+        private final Map<UUID, String> shortNames = new java.util.concurrent.ConcurrentHashMap<>();
+
+        ShortNameCachingFiles(GcodeFileService delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public Publisher<GcodeFile> store(String name, Publisher<ByteBuffer> content) {
+            return delegate.store(name, content);
+        }
+
+        @Override
+        public Optional<GcodeFile> fetch(UUID id) {
+            return delegate.fetch(id);
+        }
+
+        @Override
+        public Stream<GcodeFile> fetchAll() {
+            return delegate.fetchAll();
+        }
+
+        @Override
+        public Publisher<ByteBuffer> read(UUID id) {
+            return delegate.read(id);
+        }
+
+        @Override
+        public void delete(UUID id) {
+            delegate.delete(id);
+        }
+
+        @Override
+        public Optional<String> shortName(UUID id) {
+            return Optional.ofNullable(shortNames.get(id));
+        }
+
+        @Override
+        public void rememberShortName(UUID id, String shortName) {
+            shortNames.put(id, shortName);
         }
     }
 

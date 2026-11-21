@@ -123,4 +123,20 @@ public class GcodeFileServiceImpl implements GcodeFileService {
             blobs.remove(entity.getContentHash());
         });
     }
+
+    @Override
+    public Optional<String> shortName(UUID id) {
+        return repo.findById(id).map(GcodeFileEntity::getShortName);
+    }
+
+    @Override
+    public void rememberShortName(UUID id, String shortName) {
+        // findById and save are each their own transaction here, like every other multi-step
+        // method in this class - so the entity is detached by the time it is mutated, and the
+        // mutation needs its own save to reach the row.
+        repo.findById(id).ifPresent(entity -> {
+            entity.rememberShortName(shortName);
+            repo.save(entity);
+        });
+    }
 }

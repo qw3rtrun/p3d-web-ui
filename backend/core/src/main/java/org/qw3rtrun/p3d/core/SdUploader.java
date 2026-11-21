@@ -20,6 +20,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -58,8 +59,13 @@ import java.util.concurrent.atomic.AtomicReference;
  *       own check is not on the path a caller inside the farm takes (issue #82).</li>
  *   <li><strong>The name has to be one the firmware will open.</strong> A machine that never
  *       reported {@code Cap:LFN_WRITE} drops an over-long {@code M28} while still answering
- *       {@code ok}, so {@link #cardNameFor(String, boolean)} substitutes a DOS-8.3 name before the
- *       open goes out - its javadoc carries the measurement (issue #148).</li>
+ *       {@code ok}, so {@link #resolveCardName} substitutes a DOS-8.3 name before the open goes
+ *       out - {@link #cardNameFor(String, boolean)}'s javadoc carries the measurement (issue
+ *       #148). The substitution is <strong>persisted</strong> on {@code GcodeFile}'s own row,
+ *       not recomputed every time: the generator is pure and deterministic today, but a card
+ *       already holding a file under a generated name must not have that name move under it if
+ *       the generator's own output ever changes, which only persisting - and not mere
+ *       determinism - can promise.</li>
  * </ol>
  *
  * <h3>Two modes</h3>
@@ -174,11 +180,13 @@ public class SdUploader {
      * event stream says how it is going. Every way this can decline is a {@link ControlOutcome}, not
      * an exception - a stale file id and an unplugged printer are ordinary, and as exceptions both
      * used to answer 500. Checks run cheapest and most certain first (known machine, then the name,
-     * then link, then the capability if {@code binary} was asked for, then file, then "one at a
-     * time"), so a blocking file-store lookup never runs for a printer that could not have taken the
-     * file anyway - the common case on a farm that is mostly idle. The capability joins the link in
-     * that first tier because it is the same kind of question: one volatile read of what the machine
-     * already said, with no store behind it.
+     * then link, then the capability if {@code binary} was asked for, then the card name's own cache
+     * and the file together, then "one at a time"), so a blocking round trip never runs for a
+     * printer that could not have taken the file anyway - the common case on a farm that is mostly
+     * idle. The capability joins the link in that first tier because it is the same kind of
+     * question: one volatile read of what the machine already said, with no store behind it. The
+     * card-name lookup moved behind both of those with issue #148's follow-on, once it stopped being
+     * pure CPU - see {@link #resolveCardName}.
      *
      * <p>The name is checked here, in front of all of it, because this is the entry a caller that is
      * <em>not</em> the HTTP surface uses: {@code PrinterController}'s {@code UploadToCard} already
@@ -200,14 +208,14 @@ public class SdUploader {
             // not one - a space is a legal bare string and an illegal DOS 8.3 name - so a name the
             // wire cannot carry is refused here and a name the card cannot hold is substituted
             // below.
-            var unwritable = whyUnwritable(cardNameFor(requested));
+            var extended = cardNameFor(requested);
+            var unwritable = whyUnwritable(extended);
             if (unwritable != null) {
                 // the name itself is not quoted back: it is the thing carrying a control character,
                 // and the DSL's message already names the character and its position.
                 return Mono.just(ControlOutcome.wrongState(machineId,
                         "that name cannot open a file on the card - " + unwritable));
             }
-            var cardName = cardNameFor(requested, reactor.profile().hasLongFilenameWrite());
             if (!reactor.linked()) {
                 return Mono.just(ControlOutcome.wrongState(machineId, "printer " + machineId
                         + " is not connected, so nothing can be written to its card"));
@@ -216,12 +224,51 @@ public class SdUploader {
                 return Mono.just(ControlOutcome.wrongState(machineId, "printer " + machineId
                         + " did not report Cap:BINARY_FILE_TRANSFER, so it cannot take a binary transfer"));
             }
-            return Mono.fromCallable(() -> files.fetch(fileId))
+            var longFilenameWriteSupported = reactor.profile().hasLongFilenameWrite();
+            // one blocking round trip, not two: the card name's own cache lookup (and the write
+            // behind a miss) shares the thread the file lookup already needed, rather than hopping
+            // onto boundedElastic twice for one request.
+            return Mono.fromCallable(() -> new Resolved(
+                            resolveCardName(fileId, extended, longFilenameWriteSupported),
+                            files.fetch(fileId)))
                     .subscribeOn(Schedulers.boundedElastic())
-                    .flatMap(found -> found
-                            .map(file -> begin(reactor, machineId, fileId, file, cardName, binary))
+                    .flatMap(resolved -> resolved.file()
+                            .map(file -> begin(reactor, machineId, fileId, file, resolved.cardName(), binary))
                             .orElseGet(() -> Mono.just(ControlOutcome.absent(machineId,
                                     "there is no file " + fileId + " to upload"))));
+        });
+    }
+
+    /** What {@link #start} needs out of its one blocking round trip. */
+    private record Resolved(String cardName, Optional<GcodeFile> file) {
+    }
+
+    /**
+     * The name this upload will actually use: {@code extended} verbatim when the machine can write
+     * a long name or it already fits DOS 8.3; otherwise the file's own cached short name
+     * ({@link GcodeFileService#shortName}), or - on a cache miss - a freshly generated one, written
+     * back through {@link GcodeFileService#rememberShortName} before it is used. The cache wins over
+     * a recomputation on purpose: {@link #shortened} is pure and deterministic today, but persisting
+     * is what keeps a name already on a card stable even if a future change to the fingerprint ever
+     * moved what that function would now produce.
+     *
+     * <p>Blocking - called only from inside the one {@code boundedElastic} callable {@link #start}
+     * already schedules for the file lookup, never from the event loop.
+     *
+     * <p>Keyed by the file alone, not by this request's own {@code extended} name. That is correct
+     * for every caller in this farm today: the UI always asks for a file under its own stored name
+     * ({@code StorageTab.vue}), so the two agree on every real upload. A caller that asked for a
+     * different display name for the same file would still be handed whatever was cached for the
+     * first request, which is a known, narrow limitation rather than an oversight.
+     */
+    private String resolveCardName(UUID fileId, String extended, boolean longFilenameWriteSupported) {
+        if (!needsShortening(extended, longFilenameWriteSupported)) {
+            return extended;
+        }
+        return files.shortName(fileId).orElseGet(() -> {
+            var shortName = shortened(extended);
+            files.rememberShortName(fileId, shortName);
+            return shortName;
         });
     }
 
@@ -565,6 +612,12 @@ public class SdUploader {
      * {@code open failed, File:…} anywhere in {@code :gcode}, which is why this prevents rather
      * than detects.
      *
+     * <p>Pure, and kept so: this is the reference algorithm the deterministic shape is pinned
+     * against, and {@link #resolveCardName} is the production entry point - it asks
+     * {@link #needsShortening} the same question, but checks a per-file cache before shortening
+     * and writes the result back rather than returning it unconditionally (issue #148's
+     * follow-on).
+     *
      * @param longFilenameWriteSupported {@code Cap:LFN_WRITE}, via
      *        {@link org.qw3rtrun.p3d.api.model.MachineProfile#hasLongFilenameWrite()} - gated the
      *        same way {@link #start} gates {@code Cap:BINARY_FILE_TRANSFER}, but
@@ -573,10 +626,15 @@ public class SdUploader {
      */
     static String cardNameFor(String requested, boolean longFilenameWriteSupported) {
         var extended = cardNameFor(requested);
-        if (longFilenameWriteSupported || fitsDos83(extended)) {
-            return extended;
-        }
-        return shortened(extended);
+        return needsShortening(extended, longFilenameWriteSupported) ? shortened(extended) : extended;
+    }
+
+    /**
+     * Whether this name needs the DOS-8.3 fallback at all - named once so {@link #cardNameFor} and
+     * {@link #resolveCardName} ask the same question rather than two copies of it that could drift.
+     */
+    private static boolean needsShortening(String extended, boolean longFilenameWriteSupported) {
+        return !longFilenameWriteSupported && !fitsDos83(extended);
     }
 
     /** Whether this name is one the measured firmware opens as it stands. */

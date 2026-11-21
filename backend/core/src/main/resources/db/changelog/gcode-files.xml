@@ -50,4 +50,22 @@
         </createTable>
     </changeSet>
 
+    <!--
+      The DOS-8.3 short name a machine without Cap:LFN_WRITE will use for this file (issue #148's
+      follow-on). Nullable: most rows never need one - a name that already fits DOS 8.3, and every
+      row uploaded before this changeset, has none - and a file is never deleted just because a
+      later upload needed shortening.
+
+      Written once, by SdUploader, the first time a machine without long-filename write support
+      asks for this file; read before any later upload recomputes one. The reason this is a column
+      and not a recomputation every time: the generator (SdUploader.shortened) is pure and
+      deterministic today, but persisting is what keeps a name already on a card stable even if a
+      future change to the fingerprint ever moved what that function would now produce.
+    -->
+    <changeSet id="2" author="agentic">
+        <addColumn tableName="gcode_file">
+            <column name="short_name" type="varchar(12)"/>
+        </addColumn>
+    </changeSet>
+
 </databaseChangeLog>

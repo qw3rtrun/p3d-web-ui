@@ -57,4 +57,29 @@ public interface GcodeFileService {
      * record on identical bytes.
      */
     void delete(UUID id);
+
+    /**
+     * The DOS-8.3 short name recorded against this file, if {@link #rememberShortName} has ever
+     * been called for it - a cache the SD-card upload reads before generating one itself, so a
+     * name already written to a card stays stable even if the generator's own output would later
+     * differ. Empty for a file whose own name already fits DOS 8.3 and for one that has never been
+     * uploaded to a machine without {@code Cap:LFN_WRITE}.
+     *
+     * <p>Defaults to "never cached" so a store that has no use for the SD-card feature - most test
+     * doubles - need not implement it.
+     */
+    default Optional<String> shortName(UUID id) {
+        return Optional.empty();
+    }
+
+    /**
+     * Records the short name this file will use on a machine without {@code Cap:LFN_WRITE} from
+     * now on. Idempotent: the generator is deterministic, so calling this again for the same file
+     * writes the same value.
+     *
+     * <p>Defaults to forgetting it immediately, which is exactly today's "always recompute"
+     * behaviour and is correct for any store that does not persist the value.
+     */
+    default void rememberShortName(UUID id, String shortName) {
+    }
 }

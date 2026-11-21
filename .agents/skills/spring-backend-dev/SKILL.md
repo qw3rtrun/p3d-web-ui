@@ -1200,6 +1200,36 @@ The design, and the two places it deliberately differs from its neighbours:
   8.3 name - so `start` asks `whyUnwritable(cardNameFor(requested))` and only then computes the
   card name. `SdUploaderTest.aNameThatWouldCorruptTheBlockIsRefusedWithoutTheHttpBoundary` fails
   under the other order, which is how this was found rather than reasoned.
+- **The chosen short name is persisted on `GcodeFile`'s own row, not recomputed every upload -
+  the repository owner's follow-on request, and the reason is stronger than "the owner asked":
+  `shortened` is pure and deterministic *today*, but determinism alone cannot promise a name stays
+  the same forever, only that it is reproducible from the same inputs under the same code. A card
+  already holding a file under a generated short name must not have that name move under it if the
+  fingerprint ever changes - truncating a different number of base characters, hashing with a
+  different width, anything - and only persisting the chosen value, not merely computing it
+  deterministically, can promise that.** `gcode_file.short_name` (`gcode-files.xml` changeset 2,
+  nullable - most rows never need one) carries it, and `GcodeFileEntity` gained `@DynamicUpdate`
+  for exactly this write: a row that is otherwise insert-once-and-done (#100's note) now takes one
+  more kind of write, and without `@DynamicUpdate` that write would be a full-row `UPDATE` stating
+  the wrong thing in SQL about what it decides.
+  `GcodeFileService.shortName(UUID)`/`rememberShortName(UUID, String)` are **default methods that
+  no-op** ("never cached" / "forget it immediately") precisely so every existing test double for
+  the interface - and there are eight - keeps compiling and keeps today's "always recompute"
+  behaviour without having to know the SD-card feature exists; only `GcodeFileServiceImpl` and a
+  test double built to exercise the cache override them.
+  **The read-then-generate-then-write is lazy and scoped to the one case that needs it**:
+  `SdUploader.resolveCardName` asks the cache only when `needsShortening` is true - a name that
+  already fits DOS 8.3, or a machine that reported `Cap:LFN_WRITE`, never touches the row at all,
+  which is why the column is nullable and most rows stay that way. **It is keyed by the file alone,
+  not by the request's own name** - correct for every caller in this farm today, since the UI
+  always asks for a file under its own stored name (`StorageTab.vue`), so cache key and request
+  agree on every real upload; a caller that asked for a different display name for the same file
+  would still be handed whatever was cached for the first request, a narrow, named limitation
+  rather than a second cache keyed on the pair. **The lookup moved behind the link and capability
+  checks in `start`**, not in front of them as the pure character check still is: it is now a
+  blocking round trip rather than CPU, so "cheapest and most certain first" puts it after the two
+  volatile reads and shares one `boundedElastic` hop with the file-store lookup that was already
+  there, rather than adding a second hop for one request.
 - **Open follow-on, named rather than built:** there is no decoder for `open failed, File:…`
   anywhere in `:gcode`, so the firmware's own refusal is still dropped as unread
   (`doc/specs/INTEGRATION_TESTS_spec.md`, *Unmeasured, and marked as such in the code*). Prevention
@@ -1733,6 +1763,19 @@ what travels, and that is rule 7 of `doc/sub_boundaries.txt`.
   took a reproduction to find is that the culprit is not a transition**: `blocked` never calls
   `moveTo`, so reading the state machine clears it of suspicion, and the write is still a row write.
   Ask of any new annotate-the-row method: *which columns does this actually send?*
+- **An entity documented as insert-once-and-done can still gain exactly one mutable column, and
+  that is what moves the answer rather than what invalidates it.** `GcodeFileEntity` carried
+  neither `@DynamicUpdate` nor `@Version` because nothing on it was ever written after the insert
+  (#100). Issue #148's follow-on gave it `short_name` - the DOS-8.3 card name a machine without
+  `Cap:LFN_WRITE` gets, lazily generated and then persisted so a future change to the generator
+  cannot move a name already on a card - and that one write is why the entity now carries
+  `@DynamicUpdate`: without it, `rememberShortName`'s write would be a full-row `UPDATE` restating
+  every other column, which costs nothing *incorrect* here (nothing else concurrently writes this
+  row) but states the wrong thing in SQL about what the write decides. Still no `@Version`: two
+  machines racing to generate the same file's short name both compute the same deterministic value,
+  so the second write is a no-op rather than a conflict - the same reasoning `PrinterEntity` applies
+  to skip a version it has no use for. See *A name longer than DOS 8.3…* under *Large content never
+  touches the heap* for the full design and why determinism alone was not enough to skip persisting.
 - **IMPORTANT - a listener that will move an aggregate again must not be run inside the transaction
   that established its own precondition.** This is the contract `JobFeeder` now holds and callers
   depend on: a feed is started from

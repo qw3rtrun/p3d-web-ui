@@ -3,6 +3,7 @@ package org.qw3rtrun.p3d.core;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.qw3rtrun.p3d.api.control.ControlOutcome;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
@@ -30,6 +31,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -78,6 +80,88 @@ class SdUploaderTest {
     @Test
     void aPrintableExtensionInTheMiddleDoesNotCount() {
         assertEquals("notes.gco.txt.gco", SdUploader.cardNameFor("notes.gco.txt"));
+    }
+
+    // -------------------------------------- the short-name fallback - issue #148
+
+    // LongFileNameProbe against MarlinSim (bugfix-2.1.x, compiled Nov 18 2026) on 2026-11-21,
+    // Cap:LFN_WRITE:0: an M28 whose name is already DOS 8.3 opens, writes and lists back; anything
+    // else is echoed "Now fresh file: <name>" and then "open failed, File: <name>." while the M28
+    // line still answers ok, so nothing is written and the next content line runs live on the
+    // machine instead. Eight base characters is the boundary that worked.
+    @Test
+    void anExactlyEightThreeNameIsLeftAloneOnAMachineThatCannotWriteALongOne() {
+        assertEquals("eightchr.gco", SdUploader.cardNameFor("eightchr.gco", false));
+    }
+
+    /**
+     * Each of these was measured as failing identically on that simulator, for a different reason:
+     * {@code ninechars.gco} is one character over the eight-character base,
+     * {@code my file.gco} is short enough and carries a space, and
+     * {@code a_very_long_benchy_name.gco} is both long and full of underscores. Length is not the
+     * whole rule - an illegal character is enough on its own.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"ninechars.gco", "my file.gco", "a_very_long_benchy_name.gco"})
+    void aNameTheFirmwareWouldRefuseIsShortenedToFit(String requested) {
+        var shortened = SdUploader.cardNameFor(requested, false);
+
+        assertNotEquals(requested, shortened,
+                "this name would have been answered 'open failed' with nothing written");
+        assertDos83(shortened);
+    }
+
+    /** The extension is checked on its own: {@code benchy} fits in eight, {@code gcode} does not fit in three. */
+    @Test
+    void anExtensionOverThreeCharactersIsShortenedEvenWhenTheBaseFits() {
+        var shortened = SdUploader.cardNameFor("benchy.gcode", false);
+
+        assertNotEquals("benchy.gcode", shortened);
+        assertDos83(shortened);
+    }
+
+    /**
+     * The same requested name always becomes the same card name, so an operator who uploads twice
+     * overwrites one file rather than filling the card with near-duplicates - the fingerprint is a
+     * hash of the name and nothing else, with no clock and no counter in it.
+     */
+    @Test
+    void theShortNameIsDeterministic() {
+        assertEquals(SdUploader.cardNameFor("a_very_long_benchy_name.gco", false),
+                SdUploader.cardNameFor("a_very_long_benchy_name.gco", false));
+    }
+
+    /**
+     * Two names sharing the four-character prefix the short name is built from must still differ,
+     * which is what the fingerprint is for. Asserted as inequality rather than against literals, so
+     * the test says the property instead of re-deriving the hash.
+     */
+    @Test
+    void twoNamesSharingAPrefixGetDifferentShortNames() {
+        assertNotEquals(SdUploader.cardNameFor("averylongname1.gco", false),
+                SdUploader.cardNameFor("averylongname2.gco", false));
+    }
+
+    /** {@code Cap:LFN_WRITE} is the gate, and a machine that reported it gets the name verbatim. */
+    @Test
+    void aMachineThatReportedLfnWriteKeepsTheNameItWasGiven() {
+        assertEquals("a_very_long_benchy_name.gco",
+                SdUploader.cardNameFor("a_very_long_benchy_name.gco", true));
+    }
+
+    /** The shape the probe measured as the only one that opens: 8.3, uppercase and digits, one tilde. */
+    private static void assertDos83(String name) {
+        var dot = name.lastIndexOf('.');
+        assertTrue(dot > 0, "a card name always has an extension: " + name);
+        var base = name.substring(0, dot);
+        var extension = name.substring(dot + 1);
+
+        assertTrue(base.length() <= 8, "base too long for DOS 8.3: " + name);
+        assertTrue(extension.length() <= 3, "extension too long for DOS 8.3: " + name);
+        assertTrue(base.matches("[A-Z0-9~]+"),
+                "a generated base is uppercase A-Z0-9 with the one tilde: " + name);
+        assertTrue(extension.matches("[A-Z0-9]+"),
+                "a generated extension is uppercase A-Z0-9: " + name);
     }
 
     // ------------------------------------------------- the shape of a transfer

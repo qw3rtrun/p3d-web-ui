@@ -33,7 +33,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * behind {@code /api-files}, which is what makes {@link GcodeFile#sizeBytes()} an exact denominator
  * before a single line goes out and lets a second machine reuse the same upload.
  *
- * <p>Three things this has to get right:
+ * <p>What this has to get right - the count is deliberately not stated, since the list has already
+ * outgrown it twice:
  * <ol>
  *   <li><strong>Exclusivity.</strong> {@code M28} turns the wire into a file sink until
  *       {@code M29}; any other command landing in between is written into the G-code rather than
@@ -55,6 +56,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *       {@code ;}, {@code *} and anything outside printable ASCII. {@link #start} asks the same
  *       question as a {@link ControlOutcome} in front of everything else, because the HTTP boundary's
  *       own check is not on the path a caller inside the farm takes (issue #82).</li>
+ *   <li><strong>The name has to be one the firmware will open.</strong> A machine that never
+ *       reported {@code Cap:LFN_WRITE} drops an over-long {@code M28} while still answering
+ *       {@code ok}, so {@link #cardNameFor(String, boolean)} substitutes a DOS-8.3 name before the
+ *       open goes out - its javadoc carries the measurement (issue #148).</li>
  * </ol>
  *
  * <h3>Two modes</h3>
@@ -189,14 +194,20 @@ public class SdUploader {
     public Mono<ControlOutcome> start(PrinterReactor reactor, UUID machineId, UUID fileId,
                                       String requested, boolean binary) {
         return Mono.defer(() -> {
-            var cardName = cardNameFor(requested);
-            var unwritable = whyUnwritable(cardName);
+            // asked of what the caller asked for, before any substitution: the short-name fallback
+            // strips everything outside A-Za-z0-9, so a \n would be sanitised into an accepted
+            // upload and issue #82's refusal would be gone. The two character rules are layered,
+            // not one - a space is a legal bare string and an illegal DOS 8.3 name - so a name the
+            // wire cannot carry is refused here and a name the card cannot hold is substituted
+            // below.
+            var unwritable = whyUnwritable(cardNameFor(requested));
             if (unwritable != null) {
                 // the name itself is not quoted back: it is the thing carrying a control character,
                 // and the DSL's message already names the character and its position.
                 return Mono.just(ControlOutcome.wrongState(machineId,
                         "that name cannot open a file on the card - " + unwritable));
             }
+            var cardName = cardNameFor(requested, reactor.profile().hasLongFilenameWrite());
             if (!reactor.linked()) {
                 return Mono.just(ControlOutcome.wrongState(machineId, "printer " + machineId
                         + " is not connected, so nothing can be written to its card"));
@@ -532,5 +543,108 @@ public class SdUploader {
             }
         }
         return trimmed + DEFAULT_EXTENSION;
+    }
+
+    /**
+     * The name this machine will actually accept for a write. A firmware built without
+     * {@code LONG_FILENAME_WRITE_SUPPORT} takes only DOS 8.3 - at most eight base characters, at
+     * most three of extension, every one of them {@code A-Za-z0-9} - and <strong>does not truncate
+     * or rewrite anything longer: it drops the write and says so where nothing is listening.</strong>
+     * Measured by {@code LongFileNameProbe} against MarlinSim ({@code Marlin bugfix-2.1.x},
+     * compiled Nov 18 2026) on 2026-11-21, repeatable across two connections: {@code M28
+     * eightchr.gco} opens, writes and lists back as {@code EIGHTCHR.GCO}, while
+     * {@code M28 ninechars.gco} - one character over - is echoed
+     * {@code echo:Now fresh file: ninechars.gco} and then {@code open failed, File: ninechars.gco.}
+     * The {@code M28} line still answers {@code ok}, so nothing in the acknowledgement path
+     * notices; the next content line ({@code G28}) <em>executed live on the machine</em> instead of
+     * landing in a file, {@code M29} answered a bare {@code ok} with no {@code Done saving file.},
+     * and {@code M20} showed no trace of the file under any name. {@code M28 my file.gco} fails
+     * identically at seven base characters - <strong>length is not the whole rule, an illegal
+     * character is enough on its own</strong> - as does
+     * {@code M28 a_very_long_benchy_name.gco}. There is no decoder for
+     * {@code open failed, File:…} anywhere in {@code :gcode}, which is why this prevents rather
+     * than detects.
+     *
+     * @param longFilenameWriteSupported {@code Cap:LFN_WRITE}, via
+     *        {@link org.qw3rtrun.p3d.api.model.MachineProfile#hasLongFilenameWrite()} - gated the
+     *        same way {@link #start} gates {@code Cap:BINARY_FILE_TRANSFER}, but
+     *        <em>substituted</em> rather than refused: issue #148 asks for an automatic fallback,
+     *        not a 409
+     */
+    static String cardNameFor(String requested, boolean longFilenameWriteSupported) {
+        var extended = cardNameFor(requested);
+        if (longFilenameWriteSupported || fitsDos83(extended)) {
+            return extended;
+        }
+        return shortened(extended);
+    }
+
+    /** Whether this name is one the measured firmware opens as it stands. */
+    private static boolean fitsDos83(String name) {
+        var dot = name.lastIndexOf('.');
+        if (dot < 0) {
+            return false; // cardNameFor always appends one; defensive only
+        }
+        return isDos83Safe(name.substring(0, dot), 8) && isDos83Safe(name.substring(dot + 1), 3);
+    }
+
+    /** One part of a DOS 8.3 name: non-empty, within {@code maxLength}, and alphanumeric throughout. */
+    private static boolean isDos83Safe(String part, int maxLength) {
+        if (part.isEmpty() || part.length() > maxLength) {
+            return false;
+        }
+        for (int i = 0; i < part.length(); i++) {
+            char c = part.charAt(i);
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * A deterministic, DOS-8.3-safe name generated without consulting the card: up to four
+     * characters from the requested base plus a tilde plus a 3-hex-digit fingerprint of the whole
+     * requested name - the shape VFAT's own {@code ~1}/{@code ~2}/{@code ~3} short names take, with
+     * a hash standing in for the sequential counter since nothing here tracks what the card already
+     * holds.
+     */
+    private static String shortened(String extended) {
+        var dot = extended.lastIndexOf('.');
+        var base = dot < 0 ? extended : extended.substring(0, dot);
+        var ext = dot < 0 ? "" : extended.substring(dot + 1);
+
+        var strippedBase = stripToDos83(base).toUpperCase(java.util.Locale.ROOT);
+        var prefix = strippedBase.isEmpty()
+                ? "FILE"
+                : strippedBase.substring(0, Math.min(4, strippedBase.length()));
+
+        var strippedExt = stripToDos83(ext).toUpperCase(java.util.Locale.ROOT);
+        var shortExt = strippedExt.isEmpty()
+                ? "GCO"
+                : strippedExt.substring(0, Math.min(3, strippedExt.length()));
+
+        return prefix + "~" + fingerprint(extended) + "." + shortExt;
+    }
+
+    /** Everything outside {@code A-Za-z0-9}, dropped rather than substituted. */
+    private static String stripToDos83(String s) {
+        var out = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+                out.append(c);
+            }
+        }
+        return out.toString();
+    }
+
+    /** A 3-hex-digit (12-bit), deterministic fingerprint of the whole requested name. */
+    private static String fingerprint(String s) {
+        int h = 0;
+        for (byte b : s.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            h = (h * 31 + (b & 0xFF)) & 0xFFF;
+        }
+        return String.format("%03X", h);
     }
 }

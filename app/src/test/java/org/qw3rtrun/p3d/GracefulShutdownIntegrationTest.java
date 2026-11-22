@@ -214,7 +214,11 @@ class GracefulShutdownIntegrationTest {
             await(() -> "the farm to have turned its reports off before closing the socket."
                             + " The machine received " + printer.commands(),
                     () -> printer.commands().containsAll(List.of("M155 S0", "M154 S0")));
-            assertEquals(List.of("M155 S0", "M154 S0"), printer.commands(),
+            // M27 is SdStatusPoll's own housekeeping (#147), filtered for the same reason
+            // FarmIntegrationTest.withoutSdStatusPoll exists - this test does not share that base
+            // class, so the one line is repeated rather than reached for across modules.
+            assertEquals(List.of("M155 S0", "M154 S0"),
+                    printer.commands().stream().filter(c -> !c.equals("M27")).toList(),
                     "a shutdown turns off exactly what the session turned on");
             await("the socket to be shut", () -> !printer.sessionOpen());
         }

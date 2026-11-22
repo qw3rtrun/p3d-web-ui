@@ -184,7 +184,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         command(id, "/sd/print", "{\"name\":\"TEST.GCO\"}").expectStatus().isOk();
 
         await("both commands to reach the machine", () -> printer.sent("M24"));
-        assertEquals(List.of("M23 TEST.GCO", "M24"), printer.commands(),
+        assertEquals(List.of("M23 TEST.GCO", "M24"), withoutSdStatusPoll(printer),
                 "select then start, and nothing between them");
 
         var opened = events.await("SdFileOpened");
@@ -362,7 +362,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         expected.add("M28 UPLOAD.GCO");
         expected.addAll(file.blocks());
         expected.add("M29");
-        assertEquals(expected, printer.commands(),
+        assertEquals(expected, withoutSdStatusPoll(printer),
                 "open the file, write it, close it - and nothing else on the wire");
 
         assertEquals(file.blocks(), printer.written("UPLOAD.GCO"),
@@ -500,7 +500,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
                         + onCard.size() + " of " + blocks.size() + " blocks");
         assertEquals(blocks.subList(0, onCard.size()), onCard,
                 "what did get written has to be the start of the file, in order");
-        assertEquals("M29", printer.commands().getLast(),
+        assertEquals("M29", withoutSdStatusPoll(printer).getLast(),
                 "the close has to be the last thing on the wire: " + printer.commands());
         assertEquals((long) onCard.size(), number(cancelled.get("blocksSent")),
                 "the page is told how much got there, and it has to be how much got there");
@@ -538,7 +538,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
 
         assertEquals("BENCHY.gco", done.get("file"),
                 "the page shows what is really on the card, not what was typed");
-        assertEquals("M28 BENCHY.gco", printer.commands().getFirst(),
+        assertEquals("M28 BENCHY.gco", withoutSdStatusPoll(printer).getFirst(),
                 "the extension has to be on the wire, not only in the report");
 
         command(id, "/sd/list").expectStatus().isOk();
@@ -575,7 +575,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
 
         var done = awaitTransfer(events, "DONE");
 
-        var opened = printer.commands().getFirst();
+        var opened = withoutSdStatusPoll(printer).getFirst();
         assertTrue(opened.startsWith("M28 "), "the first block of a transfer is always the open: " + opened);
         var wireName = opened.substring("M28 ".length());
 
@@ -605,7 +605,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
 
         var done = awaitTransfer(events, "DONE");
 
-        assertEquals("M28 a_very_long_benchy_name.gco", printer.commands().getFirst(),
+        assertEquals("M28 a_very_long_benchy_name.gco", withoutSdStatusPoll(printer).getFirst(),
                 "a machine that reported Cap:LFN_WRITE must get the long name unshortened");
         assertEquals("a_very_long_benchy_name.gco", done.get("file"));
         assertFalse(printer.written("a_very_long_benchy_name.gco").isEmpty());
@@ -693,7 +693,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         assertEquals(nobody.toString(), refusal.get("machineId"));
 
         quiet();
-        assertEquals(List.of(), witness.commands(),
+        assertEquals(List.of(), withoutSdStatusPoll(witness),
                 "a transfer addressed to nobody reached a machine that was not asked");
     }
 
@@ -788,7 +788,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         command(id, "/sd/upload/cancel").expectStatus().isOk();
 
         quiet();
-        assertEquals(List.of(), printer.commands(),
+        assertEquals(List.of(), withoutSdStatusPoll(printer),
                 "a cancel with nothing to cancel reached the machine: " + printer.commands());
     }
 
@@ -845,7 +845,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
 
         var done = awaitTransfer(events, "DONE");
 
-        assertEquals(List.of("M28 B1", "M21"), printer.commands(),
+        assertEquals(List.of("M28 B1", "M21"), withoutSdStatusPoll(printer),
                 "the switch and the remount are the only two blocks a binary transfer writes;"
                         + " everything else was packets");
 
@@ -1056,7 +1056,7 @@ class SdCardIntegrationTest extends FarmIntegrationTest {
         printer.answerFreely();
         awaitTransfer(events, "DONE");
 
-        var commands = printer.commands();
+        var commands = withoutSdStatusPoll(printer);
         assertEquals("M28 B1", commands.getFirst());
         assertTrue(commands.indexOf("M21") < commands.lastIndexOf("M21"),
                 "the transfer's own remount and the operator's held M21 should both be there,"

@@ -523,6 +523,30 @@ public final class MockPrinter implements AutoCloseable {
     /** The lines that have gone into {@link #openFile} so far. */
     private List<String> openLines = new ArrayList<>();
 
+    // ---------------------------------------------------- printing from the card - issue #147
+
+    /** The file {@code M23} selected for printing, or null - separate from {@link #openFile}, which is a write. */
+    private volatile String selectedFile;
+
+    /** {@link #selectedFile}'s size, so {@link #printPosition} has a denominator to report against. */
+    private volatile int selectedSize;
+
+    /**
+     * Whether {@code M24} has started the selected file - {@code M27} answers {@code Not SD
+     * printing} until it has, and {@code SD printing byte 0/<size>} the instant it has, both
+     * measured by {@code SdPrintProbe} (class doc, "M27 after the select alone already answers
+     * SD printing byte 0/&lt;size&gt;" is the one exception reproduced below in {@link #respond}).
+     */
+    private volatile boolean sdPrinting;
+
+    /**
+     * How far into {@link #selectedFile} the mock has got. Advanced one fifth of the file at a
+     * time on every {@code M27} that finds {@link #sdPrinting} true, which is enough for a test to
+     * see successive polls disagree without timing anything - a real machine advances on its own
+     * clock, which is not what is under test here.
+     */
+    private final AtomicInteger printPosition = new AtomicInteger();
+
     // ------------------------------------------------- the binary protocol, measured 2026-11-16
 
     /**
@@ -1447,6 +1471,12 @@ public final class MockPrinter implements AutoCloseable {
                 if (profile.sdCard() && size != null) {
                     lines.add("File opened: " + name + " Size: " + size);
                     lines.add("File selected");
+                    // A select, even with no M24 behind it yet, ends whatever was printing before -
+                    // measured by SdPrintProbe's "P1: leave live.gco open at byte 0, not started".
+                    selectedFile = name;
+                    selectedSize = size;
+                    sdPrinting = false;
+                    printPosition.set(0);
                 } else {
                     lines.add("open failed, File: " + name + ".");
                 }
@@ -1591,12 +1621,43 @@ public final class MockPrinter implements AutoCloseable {
             // answered Cap:SDCARD:1, and the simulator always has a card. It is here so a profile
             // that reaches it does not fall to the Unknown-command default, which would be a reply
             // no Marlin sends.
+            // sdPrinting answers SdPrintProbe's shape exactly: `SD printing byte 0/<size>` the
+            // instant M24 has run (not "not printing", which a select-only read already measures
+            // differently - see M23 above), advancing on each ask rather than on a clock, since a
+            // test drives this by asking again, not by waiting.
             case "M27" -> {
-                lines.add(profile.sdCard() ? "Not SD printing" : "echo:No SD card");
+                if (!profile.sdCard()) {
+                    lines.add("echo:No SD card");
+                } else if (sdPrinting && selectedFile != null) {
+                    var step = Math.max(1, selectedSize / 5);
+                    var at = printPosition.updateAndGet(p -> Math.min(selectedSize, p + step));
+                    lines.add("SD printing byte " + at + "/" + selectedSize);
+                } else {
+                    lines.add("Not SD printing");
+                }
                 lines.add(ok());
             }
 
-            case "M110", "M22", "M24", "M83", "M84", "M104", "M140", "M155", "M106", "M107",
+            // M24 after an M23 starts the print - see PrintFile.java. M25 pauses it and M524 aborts
+            // it; issue #147 is the first thing here to ask for either, so this mock now tracks
+            // whether it is printing instead of answering M27 the same way regardless.
+            case "M24" -> {
+                if (selectedFile != null) {
+                    sdPrinting = true;
+                }
+                lines.add(ok());
+            }
+            case "M25" -> {
+                sdPrinting = false;
+                lines.add(ok());
+            }
+            case "M524" -> {
+                sdPrinting = false;
+                selectedFile = null;
+                lines.add(ok());
+            }
+
+            case "M110", "M22", "M83", "M84", "M104", "M140", "M155", "M106", "M107",
                  "G21", "G28", "G1", "G0", "G90", "G91" -> lines.add(ok());
             default -> {
                 lines.add("echo:Unknown command: \"" + command + "\"");

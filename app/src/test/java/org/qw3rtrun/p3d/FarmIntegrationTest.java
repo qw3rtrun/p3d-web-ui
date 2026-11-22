@@ -750,13 +750,28 @@ abstract class FarmIntegrationTest {
         int unchanged = 0;
         while (unchanged < 2 && System.nanoTime() < deadline) {
             quiet();
-            int now = printer.commands().size();
+            int now = withoutSdStatusPoll(printer).size();
             unchanged = now == sampled ? unchanged + 1 : 0;
             sampled = now;
         }
         assertTrue(unchanged >= 2, "the machine stopped answering at " + stopsAt
                 + ", so the conversation should have stopped and it has not: " + printer.commands());
         return sampled;
+    }
+
+    /**
+     * {@link MockPrinter#commands()} with {@code SdStatusPoll}'s own {@code M27} (#147) taken out -
+     * a bare read a connected, SD-capable mock draws every three seconds regardless of what a test
+     * is about, the first thing in this farm that re-sends anything on its own clock rather than in
+     * answer to a request. A test asserting an exact list or count on {@code commands()} is asserting
+     * about a conversation it caused; this is how it stops being about one it did not. Used here by
+     * {@link #stalled}, whose sampled count and returned index both read it directly, and by any
+     * test whose machine is {@link MockPrinter.Profile#sdCard()} and stays connected long enough for
+     * a tick to land - {@code PrintJobIntegrationTest} and {@code TerminalIntegrationTest} are the
+     * two measured to need it.
+     */
+    protected static List<String> withoutSdStatusPoll(MockPrinter printer) {
+        return printer.commands().stream().filter(c -> !c.equals("M27")).toList();
     }
 
     /** JSON has one number type; which Java box it arrives in depends on its magnitude. */

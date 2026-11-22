@@ -73,6 +73,58 @@ What a caller may rely on: between two acknowledgements, the number of commands 
 more than the last reported block queue, nor more than the window can replay. Nothing wider, and no
 credit invented from a reply.
 
+### An emergency stop is not in the window at all
+
+`HostTerminal.emergencyStop()` writes `M112` **unframed and past every term of `canProcess()`**, and
+it is the one write in this module that costs the send window nothing: no line number, no checksum,
+no `sentWithoutAck` credit, nothing told to `GSendWindow`. A session that survives the stop numbers
+its next block exactly where it would have.
+
+**Why it cannot be a priority.** Both terms `canProcess()` is bounded by - the printer's block queue
+and the window - count a G-code command stream that a wedged firmware is by definition not
+advancing, so they are zero precisely when a stop matters. With them at zero `processRequest` never
+calls `subscription.request(n)` again, so `PublisherQueue` is never asked for a value and never
+resolves anything in `EMERGENCY`'s favour: the item sits un-pulled behind a printer that has stopped
+talking. Measured at the `:app` level with a `MockPrinter` holding acknowledgements from block 5, and
+pinned here by `HostTerminalEmergencyTest.anEmergencyQueuedAsAGCodeSourceNeverReachesAShutWindow` -
+which shows the queued `EMERGENCY` source is **not even subscribed**. Priority decides who gets
+demand; it cannot conjure demand the printer's buffer is refusing to release.
+
+**Why unframed and not "framed but written early".** Framing means asking `GSendWindow.send` for a
+number, and that call *refuses* once the window is full. Measured, by routing the lane through
+`window.send` and re-running `HostTerminalEmergencyTest`: with a printer reporting `B8` and then
+going quiet on four outstanding blocks the framed stop was **never written at all** (the verifier
+timed out), and with the window one block deep it went out as `N2 M112*35`, taking a number and a
+slot nothing would ever acknowledge. Unframed is also the faithful reading of the firmware - Marlin's
+emergency parser reads `M112` off the serial RX bytes ahead of the command queue and the line-number
+bookkeeping, and reads neither the `N` nor the `*` - and Marlin's ordinary queue takes a bare line
+anyway, since `GCodeQueue::get_serial_commands` checks continuity only on a command carrying an `N`
+and a checksum only on one carrying a `*`. That last part is **read off the firmware, not measured
+here**: the starved case cannot be staged against a live printer, which is why `:app`'s own test for
+it uses a `MockPrinter` that withholds acknowledgements, and why no probe covers the lane.
+
+Four things a caller depends on:
+
+- **It is written from the one drain loop**, parked by `CommandProcessor.writeEmergency` the same way
+  `writeRaw` and `rewind` park their work. There is no second writer of the socket and no second
+  toucher of `window`/`sentWithoutAck` - which is the constraint that rules out poking the connection
+  from the caller's thread, however urgent the caller is.
+- **It still spends one unit of the subscriber's demand.** Rule 1.1 has no exemption for an
+  emergency, and an unasked `onNext` is the exact failure the send window exists to prevent. That is
+  not the demand that starves: the subscriber on this side is `reactor-netty`'s send, whose demand is
+  room in a socket queue, and the terms a stalled printer closes are its buffer and the window. A
+  stop raised with no socket room is parked and goes out when room appears - `completeIfDrained`
+  counts it as owed, like a replay.
+- **It goes out ahead of everything, including the session's own `M110`.** An unnumbered line needs
+  no agreed sequence to take a place in, which is the only thing the opening block is owed for.
+- **It does not abort an exclusive source holding `PublisherQueue`.** A transfer that is still
+  *flowing* is preempted and failed with `Preempted` by queueing at `EMERGENCY`, which is unchanged
+  and still tested. The lane is about the wire and nothing else, so a caller that wants both does
+  both.
+
+`:backend:core` therefore calls `terminal.emergencyStop()` rather than relying on
+`queue.addPublisher(EMERGENCY, Mono.just("M112"))` to reach the wire.
+
 ### A session opens with `M110 N0`
 
 The first block of every session is the counter reset, framed and written through the drain loop
@@ -1100,8 +1152,9 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   `ReplyFluxMultilineTest` (#35) and `ReplyFluxCapabilitiesTest` (#144) still pass unchanged, so the
   rewrite did not disturb the accumulation stage sitting on top of it.
 - **There is no written spec for this module.** `:gcode` has `doc/specs/GCODE_spec.md` and its
-  Appendix B; the transport has this skill and nothing else. Five contracts are written down now -
-  the send window, what a terminal signal on `messageFlux()` means, the binary transfer, what
+  Appendix B; the transport has this skill and nothing else. Six contracts are written down now -
+  the send window, the emergency lane that is exempt from it, what a terminal signal on
+  `messageFlux()` means, the binary transfer, what
   closing the socket may not throw away, and the traffic observer, all
   under *The contracts callers depend on* above - and anything else callers come to rely on goes in
   the same place, in the change that establishes it.
@@ -1125,3 +1178,20 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   contract rules it out and `:backend:core` honours it, but nothing here enforces it and no test
   pins the behaviour. A `compareAndSet` on the driver slot that failed the second subscriber loudly
   would be the honest version.
+- **The emergency lane carries `M112` and nothing else, and that narrowness is load-bearing rather
+  than lazy.** Marlin's emergency parser also claims `M108`, `M410` and `M876`, and the same
+  out-of-band write would reach them - but `M112` is the only one of the four after which the
+  firmware does not answer. `kill()` never returns, so no `ok` comes back; the other three are *also*
+  executed out of the ordinary command queue and *do* produce one, and that `ok` is a credit this
+  host never spent. It would reach `handleBackpressure` as a free `sentWithoutAck.dec()` and a
+  `window.acknowledge()` that releases the oldest block the window is holding - a false
+  `BlockAcknowledged` and a block dropped from the replay set. So `emergencyStop()` is deliberately
+  no-arg and `writeEmergency` is package-private: widening it to any emergency-parser command means
+  first deciding what to do with the acknowledgement it earns, and that needs a printer to measure
+  rather than an argument to add.
+- **`HostTerminal.stop()` does not force a parked emergency out.** It sets `terminated`, after which
+  `write0` refuses, so a stop raised in the same breath as a disconnect can be discarded if the
+  socket had no room for it. The window is the same one `closeAfterFlush` closes (see *Closing the
+  socket does not throw away what was written*), and a stop raised by a caller who is also tearing
+  the session down is arguably moot - but it is a hole, and the honest version is `stop()` draining
+  the lane before it terminates.

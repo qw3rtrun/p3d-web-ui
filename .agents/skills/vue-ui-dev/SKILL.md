@@ -216,6 +216,22 @@ what `EventMessageCatalogueTest` covers, so putting it on the farm or per-printe
 `spring-backend-dev`'s work. Do not reach around that with a `case` for the raw block events; see
 *When a control has no command* for the same rule in the outbound direction.
 
+**Still true as of #147, and do not mistake the feature below for it closing.** `SdPrinting`/
+`SdNotPrinting` - `M27`'s two answers, with a `case` in `PrinterMonitor.vue` and `FarmDashboard.vue`
+now - are a *different* print entirely: whatever is already on the card, started by `/sd/print`
+(`M23`+`M24`) or by the printer's own screen, which the farm polls for every three seconds
+(`spring-backend-dev`'s `SdStatusPoll`) because nothing on this farm's firmware reports it
+unasked. A `Job` is a row created by a host `POST`, fed line by line by `JobFeeder`, and cannot be
+what a printer's own screen started - the two are structurally different prints, not one feature in
+two states of completion. `/api-jobs` is still unmounted here. Pause/Resume/Stop on the monitor page
+are `M25`/`M24`/`M524`, the firmware's own card-print verbs, and not `JobService.pause`/`resume`/
+`cancel` - **there is no event that distinguishes a paused card print from a running one** (`M27`
+answers the same `SD printing byte` either way), so Resume is offered whenever a print is open and
+Pause/Stop whenever one is, with no sharper gate invented for either. Elapsed/remaining time on the
+bar are watched-since-this-tab-opened, not since the print started - Marlin's `M31` arrives as an
+unstructured `EchoMessage` with no typed reply behind it yet, so a correct elapsed figure starts with
+a `ReportPrintTime` reply in `:gcode`, not with more arithmetic here.
+
 **A reading's `target` and `power` are nullable, and null is not zero.** A build that reports no
 target has not been asked for one; a target of zero is a heater on its way off. The server used to
 flatten the first into the second before the browser saw it and no longer does, so a control that

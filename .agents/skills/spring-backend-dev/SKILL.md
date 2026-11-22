@@ -356,6 +356,31 @@ Four commands are declined rather than sent, each because this route cannot carr
 - **`M112`** (`FullShutdown`) - an emergency stop queued behind a print is not one. It needs
   `Priority.EMERGENCY`.
 
+That route now exists (#147), and past #147's first attempt it is two routes, not one, because a
+stop has two failure modes and neither alone covers both: `PrinterReactor.emergencyStop()` calls
+`HostTerminal.emergencyStop()` (`reactive-transport-dev`'s own territory - see *An emergency stop is
+not in the window at all*), which writes `M112` unframed, past the send window, which is what
+actually reaches the wire once a printer has stopped acknowledging - a `Priority.EMERGENCY` item
+queued the way `interject` queues one is never even pulled in that state, measured
+(`HostTerminalEmergencyTest.anEmergencyQueuedAsAGCodeSourceNeverReachesAShutWindow`). *And* it still
+queues the raw line at `Priority.EMERGENCY` through `commandQueue`, unchanged - that is the only
+thing that preempts and fails a flowing exclusive SD transfer's `Mono` with `Preempted`
+(`PublisherQueueExclusivityTest.anEmergencyPreemptsAnUploadAndAbortsIt`), which the unframed write
+does not touch. **That abort is the contract an uploading caller depends on**: the exclusive source
+is cancelled rather than completed, so its own `M29` is never pulled, and `SdUploader` turns the
+`Preempted` into `SdUploadState.FAILED` - a short, *open* file on the card and a browser told so,
+which is the right answer on a machine that has just been halted and will be reset. The cost, named
+rather than engineered around: on a flowing stream `M112` goes out twice, once immediately unframed
+and once shortly after through the queue, harmlessly on a machine that has already stopped - and
+the queued copy doubles as a backstop, since the unframed write spends a unit of the socket's own
+demand and a write queue that is full at that instant parks it. Either way this bypasses
+`onCommand`'s switch entirely, never through the
+`refuse(FullShutdown, …)` arm above. `PrinterControl.emergencyStop(UUID)` /
+`PrinterControlService.emergencyStop` are the only command route with **no link check**: `send` and
+`sendRaw` both refuse a machine this layer does not believe is linked, but a stop sent at a dead
+socket costs nothing, and one withheld because the host doubted the link is the failure this route
+exists to prevent. Its only refusal is `ABSENT`, for a machine the farm does not hold.
+
 `refuse(command, why)` is a separate method from the old warn-and-drop on purpose. The two read
 identically in a log and mean opposite things: *"nobody has got round to this yet"*, which was a bug
 every time it fired, against *"this is the wrong way to ask"*, which names the right route.
@@ -528,6 +553,16 @@ Five rules fall out, each paid for by a measurement:
   byte-identical to a bare `M27` (`Not SD printing`, `ok P15 B3`), and then reports nothing, ever.
   No signal on the wire at all. That one measurement is why this feature reads `Cap:` lines instead
   of asking, and it is recorded in `AutoReportControl`'s javadoc.
+- **This farm's own printers are on the `AUTOREPORT_SD_STATUS:0` side of that measurement**, reprobed
+  2026-11-21 with the same result, so a print's progress had exactly one `M27` reading for the whole
+  session - the `SDCARD:1` one-shot above - however the print was started, until #147's
+  `SdStatusPoll` (`org.qw3rtrun.p3d.core.SdStatusPoll`): a `@Scheduled` bean, independent of the
+  handshake table above, that sends a bare `ReportSDPrintStatus()` to every connected, `hasSdCard()`
+  machine every three seconds (`p3d.printer.sd-status-poll-interval`, same period as `M27 S3`'s row
+  above, for the same reason). It adds no event and no emission - `PrinterState.on(SdCardRs)` already
+  emits every card reply - and it must subscribe the `Mono` `PrinterReactor.handle` returns, not
+  merely compose it, or the dead-feature failure below fires silently (`SdStatusPollTest` is built
+  to catch exactly that).
 - **The spelling on the wire is `AUTOREPORT_POS`.** Marlin's build macro is `AUTOREPORT_POSITION`
   and the G-code is `M154`; no line under any longer spelling appears among the simulator's 38, so a
   host keyed on the macro name finds nothing and says nothing.

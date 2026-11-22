@@ -546,6 +546,21 @@ Five rules fall out, each paid for by a measurement:
   `HandshakeIntegrationTest.aSecondSessionAsksEverythingTheFirstOneDid` is that case over a real
   socket, and `PrinterStateHandshakeTest.aBatchWhereEveryCapabilityWasAlreadyKnownStillSendsEveryBlock`
   is the unit-level form.
+- **IMPORTANT - "arrival, not change" answers *which* `M115` answers run the tail, not *how many
+  times* one session gets to run it (#154).** `startReportsFor` is gated a second way, by
+  `PrinterState.handshakeTailStarted`, a plain field reset in `onOnline` alongside the controls' own
+  `sessionStarted()` and set the moment the tail is about to run, in `on(CapabilitiesReport)` - so it
+  runs once per **session**, not once per **answer**. Without it, a manual `M115` typed into the
+  Terminal tab (#135) long after the connection's own handshake already ran the tail re-sent `M114`,
+  `M154 S1` and the rest as an unwanted side effect of a diagnostic read, because the only gate that
+  existed was the one above and it answers the same way for a second answer in one session as it
+  does for a reconnect's first. The fix adds the session-scoped flag rather than touching the bullet
+  above's reasoning, which still holds for an actual reconnect: a fresh `onOnline` clears the flag,
+  so that session's own first `M115` answer still runs every gated block regardless of what the
+  roster already knew. `PrinterStateHandshakeTest.aSecondCapabilitiesReportInTheSameSessionDoesNotRerunTheTail`
+  and `.aCapabilitiesReportAfterAFreshOnlineRunsTheTailAgain` are the pair that pins both halves; the
+  report itself is still republished either way - `profile.on(report)` and `emitter.accept(report)`
+  are outside this gate entirely.
 - **The capability must be read, because for `M27` there is nothing to learn from the reply.**
   Probed 2026-11-17 against `Marlin bugfix-2.1.x (Oct 29 2026 10:28:56)` on `localhost:8099`:
   `M154 S1` on a firmware without it is **refused** (`echo:Unknown command: "M154 S1"`), so

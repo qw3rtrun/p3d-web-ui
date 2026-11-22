@@ -80,8 +80,12 @@ import java.util.function.Consumer;
  * {@link #onOnline} sends the two blocks that need no permission ({@code M115}, {@code M155 S1}) and
  * {@link #on(CapabilitiesReport)} sends the rest, deciding the whole {@code M115} answer at once -
  * so the handshake's tail is a property of the machine rather than a constant, with no "is the
- * handshake over yet" state anywhere. {@link #quiesce()} is the other end of it, and is deliberately
- * separate from the disconnect intent; both are documented where they are declared (#127).
+ * handshake over yet" state anywhere. It runs once per session, not once per answer: a later
+ * {@code M115} in the same, already-established session (typically a manual one from the Terminal
+ * tab, #135) is still republished but does not re-send the tail; {@link #onOnline} is what resets
+ * the session, so a genuine reconnect runs it again (#154). {@link #quiesce()} is the other end of
+ * it, and is deliberately separate from the disconnect intent; both are documented where they are
+ * declared (#127).
  *
  * <h3>Threading: every mutator is this machine's thread, and the exceptions are reads</h3>
  * Every method that <em>changes</em> anything here is reached only from that printer's own
@@ -150,6 +154,13 @@ public class PrinterState implements PrinterAggregate {
     private final EndstopsControl endstops = new EndstopsControl();
 
     private final AutoReportControl autoReports = new AutoReportControl();
+
+    // confined to this machine's aggregate thread, like every other mutator (#80). Reset in
+    // onOnline alongside the controls' own sessionStarted(), so a genuine reconnect runs the tail
+    // again; set the moment startReportsFor is about to run, in on(CapabilitiesReport). The gate is
+    // purely "has this session's tail already fired" - never "did the answer contain anything new" -
+    // see on(CapabilitiesReport)'s javadoc (#154).
+    private boolean handshakeTailStarted;
 
     private final ConnectionLifecycle connection;
 
@@ -682,6 +693,7 @@ public class PrinterState implements PrinterAggregate {
         settings.sessionStarted();
         endstops.sessionStarted();
         autoReports.sessionStarted();
+        handshakeTailStarted = false;
         emitter.accept(new SessionStarted());
         var change = connection.linkEstablished();
         if (change == null) {
@@ -856,14 +868,26 @@ public class PrinterState implements PrinterAggregate {
      * One whole {@code M115} answer's capabilities - one arm for the batch since #144, where it was
      * one arm per {@code Cap:} line. Republished only when
      * {@link ProfileControl#on(CapabilitiesReport)} says the batch taught the profile something
-     * new, the same reading {@link #on(FirmwareInfoRs)} takes; {@link #startReportsFor} runs
-     * regardless of that answer, for the reason given in its own javadoc.
+     * new, the same reading {@link #on(FirmwareInfoRs)} takes; that half is unaffected by what
+     * follows.
+     *
+     * <p><strong>{@link #startReportsFor} runs once per session, not once per answer (#154).</strong>
+     * It is the connection's own {@code M115} - the one {@link #onOnline} sends - that this tail
+     * belongs to; a second one arriving later in the same, already-established session (typically a
+     * manual {@code M115} typed into the Terminal tab, #135) must not re-send {@code M114},
+     * {@code M154 S1} and the rest, because nothing the operator asked for implied that. A genuine
+     * reconnect is a different session - {@link #onOnline} clears {@link #handshakeTailStarted} along
+     * with the controls' own {@code sessionStarted()} - so its own {@code M115} answer still runs the
+     * whole tail, exactly as it always did.
      */
     public void on(CapabilitiesReport report) {
         if (profile.on(report)) {
             emitter.accept(report);
         }
-        startReportsFor(report);
+        if (!handshakeTailStarted) {
+            handshakeTailStarted = true;
+            startReportsFor(report);
+        }
     }
 
     /**
@@ -879,6 +903,15 @@ public class PrinterState implements PrinterAggregate {
      * session reported - so from the second connect onwards, and after every restart, nothing in the
      * answer is news. A gate inside that condition would send nothing at all in production while
      * passing a first-connect test.
+     *
+     * <p><strong>This method itself runs once per session, guarded by
+     * {@link #handshakeTailStarted} in {@link #on(CapabilitiesReport)} (#154).</strong> A second
+     * {@code M115} answer arriving later in an already-established session (a manual one from the
+     * Terminal tab, #135) finds the flag already set and this method is not called at all for it, so
+     * none of the follow-ups below re-fire. That is a different axis from the one above: the loop
+     * inside this method still never consults whether anything changed, and a genuine reconnect - a
+     * new {@link #onOnline}, which clears the flag - still runs the whole tail again from the first
+     * {@code M115} answer of the new session, exactly as before.
      *
      * <p>Two of the four decisions need their reason beside them:
      * <ul>

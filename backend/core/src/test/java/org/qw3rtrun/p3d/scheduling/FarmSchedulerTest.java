@@ -282,6 +282,13 @@ class FarmSchedulerTest {
             public Publisher<ControlOutcome> cancelCardUpload(UUID id) {
                 return Mono.just(ControlOutcome.accepted(id));
             }
+
+            // Nor is stopping a machine dead: a scheduler assigns work, and never takes that
+            // decision.
+            @Override
+            public Publisher<ControlOutcome> emergencyStop(UUID id) {
+                return Mono.just(ControlOutcome.accepted(id));
+            }
         };
     }
 

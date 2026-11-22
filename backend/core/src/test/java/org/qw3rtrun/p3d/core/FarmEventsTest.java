@@ -15,6 +15,7 @@ import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
 import org.qw3rtrun.p3d.g.marlin.event.BareTemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
+import org.qw3rtrun.p3d.g.marlin.event.SdPrinting;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
 import reactor.test.StepVerifier;
@@ -237,6 +238,36 @@ class FarmEventsTest {
                 .assertNext(message -> {
                     assertEquals(id, message.id());
                     assertEquals(temperature(210), message.event());
+                })
+                .verifyComplete();
+
+        reactors.release(id);
+    }
+
+    /**
+     * A dashboard opened while a card print is already under way is told so (#147). The live half
+     * was never filtered - {@code onMachineEvent} forwards every {@code EventMessage} - so this is
+     * about the catch-up alone, which carried connection and temperature and dropped the one fact a
+     * row's "is this machine printing" chip is drawn from. Asserted as the event reaching a
+     * subscriber, since a filter is exactly the kind of list that reads correct and is not.
+     */
+    @Test
+    void aMachineAlreadyPrintingFromItsCardIsDrawnThatWay() {
+        var id = theFarmHas("alpha");
+        var aggregates = new HashMap<UUID, PrinterState>();
+        reactors = new PrinterReactorManager(directory,
+                machine -> aggregates.computeIfAbsent(machine, PrinterState::new), event -> {
+        });
+        farm = new FarmEvents(directory, reactors);
+        reactors.openReactor(id);
+        var printing = new SdPrinting(1024L, 2847561L);
+        aggregates.get(id).onEvent(printing);
+
+        StepVerifier.create(Flux.from(farm.updates()).take(Duration.ofMillis(200)))
+                .assertNext(FarmEventsTest::assertState)
+                .assertNext(message -> {
+                    assertEquals(id, message.id());
+                    assertEquals(printing, message.event());
                 })
                 .verifyComplete();
 

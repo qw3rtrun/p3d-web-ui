@@ -2,9 +2,11 @@ package org.qw3rtrun.p3d.core;
 
 import org.junit.jupiter.api.Test;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
+import org.qw3rtrun.p3d.g.marlin.command.AbortSDPrint;
 import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
 import org.qw3rtrun.p3d.g.marlin.command.InitSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
+import org.qw3rtrun.p3d.g.marlin.command.PauseSDPrint;
 import org.qw3rtrun.p3d.g.marlin.command.ReleaseSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.SelectSDFile;
 import org.qw3rtrun.p3d.g.marlin.command.StartOrResumeSDPrint;
@@ -118,16 +120,33 @@ class PrinterStateStorageTest {
                 wire(new SelectSDFile("BENCHY.GCO"), new StartOrResumeSDPrint()));
     }
 
+    /**
+     * Pause and Stop, the other two buttons a running card print needs (#147) - {@code M25} and
+     * {@code M524}, beside the {@code M24} that resumes. Both reached the wire through
+     * {@code onCommand}'s pass-through before they were named there, so this asserts what the farm
+     * can do rather than guarding a drop: the firmware holds a paused print, not the host, so there
+     * is nothing for the aggregate to decide about either.
+     */
+    @Test
+    void pausingAndStoppingACardPrintSendM25AndM524() {
+        assertEquals(List.of("M25"), wire(new PauseSDPrint()));
+        assertEquals(List.of("M524"), wire(new AbortSDPrint()));
+    }
+
     // six commands through one aggregate - the per-command tests above would still pass if
     // something between them cleared the sender.
     @Test
     void aWholeSessionAtTheCardReachesTheWireInOrder() {
         assertEquals(
-                List.of("M21", "M20", "M23 BENCHY.GCO", "M24", "M30 OLD.GCO", "M22"),
+                List.of("M21", "M20", "M23 BENCHY.GCO", "M24", "M25", "M24", "M524", "M30 OLD.GCO",
+                        "M22"),
                 wire(new InitSDCard(),
                         new ListSDCard(),
                         new SelectSDFile("BENCHY.GCO"),
                         new StartOrResumeSDPrint(),
+                        new PauseSDPrint(),
+                        new StartOrResumeSDPrint(),
+                        new AbortSDPrint(),
                         new DeleteSDFile("OLD.GCO"),
                         new ReleaseSDCard()));
     }

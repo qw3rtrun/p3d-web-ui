@@ -94,6 +94,16 @@ public class CoreConfiguration {
     }
 
     /**
+     * Keeps a card print's progress alive - issue #147. A timer rather than a firmware subscription
+     * because these printers report {@code Cap:AUTOREPORT_SD_STATUS:0}; see {@link SdStatusPoll} for
+     * the measurement and for why the interval is three seconds.
+     */
+    @Bean
+    public SdStatusPoll sdStatusPoll(PrinterDirectory directory, PrinterReactorManager reactors) {
+        return new SdStatusPoll(directory, reactors);
+    }
+
+    /**
      * The farm-wide stream - plan item D2. Opens nothing: listens where every machine's events
      * already go, so watching forty printers costs forty listeners rather than forty sockets.
      * Returns the concrete type, not {@link FarmView} - {@code frontend} still gets it injected by

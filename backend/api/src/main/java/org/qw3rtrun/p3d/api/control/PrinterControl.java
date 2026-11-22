@@ -158,6 +158,23 @@ public interface PrinterControl {
      */
     Publisher<ControlOutcome> cancelCardUpload(UUID id);
 
+    /**
+     * Sends {@code M112} at the one priority above everything else the machine's send queue carries
+     * - ahead of a print already streaming and ahead of an SD upload holding the wire exclusively.
+     * Completes when the stop is in that queue.
+     *
+     * <p><strong>The only refusal is {@link ControlOutcome.Refusal#ABSENT}</strong>, for a machine
+     * the farm does not hold. There is deliberately no {@code WRONG_STATE}: {@link #send} and
+     * {@link #sendRaw} both refuse a machine this layer does not believe is linked, and an emergency
+     * stop is the one command still worth putting on the wire when that belief is in doubt - a stop
+     * arriving at a dead socket costs nothing, and one withheld because the host was unsure is the
+     * whole failure this route exists to prevent.
+     *
+     * <p>It is <em>not</em> reachable through {@link #send}: a {@code FullShutdown} handed to that
+     * route is refused, because an emergency stop queued behind a print is not one.
+     */
+    Publisher<ControlOutcome> emergencyStop(UUID id);
+
     /** Connects to the machine, or disconnects from it. */
     Publisher<Void> connect(UUID id, ConnectCmd command);
 

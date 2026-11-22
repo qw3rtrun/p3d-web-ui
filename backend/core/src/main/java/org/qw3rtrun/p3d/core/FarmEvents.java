@@ -10,6 +10,7 @@ import org.qw3rtrun.p3d.api.msg.MDeletedEvent;
 import org.qw3rtrun.p3d.api.msg.MRegisteredEvent;
 import org.qw3rtrun.p3d.api.msg.MachineJoinedFarm;
 import org.qw3rtrun.p3d.api.msg.MachineLeftFarm;
+import org.qw3rtrun.p3d.g.marlin.event.SdStatusRs;
 import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
 import org.reactivestreams.Publisher;
 import org.springframework.context.event.EventListener;
@@ -86,15 +87,19 @@ public class FarmEvents implements FarmView {
     /** Forty machines auto-reporting once a second is a few seconds of this; further behind than that, a dashboard has stopped reading. */
     private static final int SUBSCRIBER_BACKLOG = 1024;
 
-    /** A dashboard's share of {@link PrinterReactor#snapshot()} - connection and last temperature only, not the firmware/capabilities a printer's own page wants. */
+    /** A dashboard's share of {@link PrinterReactor#snapshot()} - connection, last temperature and last SD print status, not the firmware/capabilities a printer's own page wants. */
     private Flux<EventMessage> currentStateOf(UUID machineId) {
         var runtime = reactors.runtimeOf(machineId);
         if (runtime == null) {
             return Flux.just(new EventMessage(machineId, offline()));
         }
+        // SdStatusRs for #147: the live half was never filtered (onMachineEvent forwards every
+        // EventMessage), so a dashboard already open sees a print start - a dashboard opened while
+        // one is already under way needs the catch-up, exactly as connection and temperature do.
         return runtime.snapshot()
                 .filter(message -> message.event() instanceof ConnectionStateChanged
-                        || message.event() instanceof TemperatureRs<?>);
+                        || message.event() instanceof TemperatureRs<?>
+                        || message.event() instanceof SdStatusRs<?>);
     }
 
     /** Nothing has dialled it, so there is nothing it could be doing. */

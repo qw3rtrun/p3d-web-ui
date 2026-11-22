@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {computed, onMounted, onUnmounted, ref} from 'vue'
+import {Tab} from 'bootstrap'
 import {files as fileStore, printer, RequestFailed, watchPrinter, type Subscription} from '../api/client'
 import type {EventMessage, FarmRole, GcodeFile, SdFile, SdFileList, SdUploadProgressed} from '../api/types'
 import {clock, estimate, fileSize, filamentUsed, sliceDetail, transferRate} from '../format'
@@ -298,7 +299,16 @@ const release = () => guarded(async () => {
     listed.value = null
 })
 
-const print = (name: string) => guarded(() => api.printFile(name))
+// #147 item 4: pressing Print moves the operator to the Monitor tab, which is where the progress of
+// what they just started shows up. Inside the guarded call, so a refused print leaves them here with
+// the failure in front of them instead of on a tab that will never show a bar.
+const print = (name: string) => guarded(async () => {
+    await api.printFile(name)
+    const monitor = document.getElementById('home-tab')
+    if (monitor) {
+        Tab.getOrCreateInstance(monitor).show()
+    }
+})
 
 function remove(name: string) {
     if (!window.confirm(`Delete ${name} from the card?\n\nThis cannot be undone.`)) {

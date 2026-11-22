@@ -10,11 +10,14 @@ import org.qw3rtrun.p3d.frontend.command.HomeAxes;
 import org.qw3rtrun.p3d.frontend.command.ListFiles;
 import org.qw3rtrun.p3d.frontend.command.MountCard;
 import org.qw3rtrun.p3d.frontend.command.MoveAxes;
+import org.qw3rtrun.p3d.frontend.command.PauseSdPrint;
 import org.qw3rtrun.p3d.frontend.command.PrintFile;
 import org.qw3rtrun.p3d.frontend.command.PrinterCommand;
 import org.qw3rtrun.p3d.frontend.command.ReadEndstops;
 import org.qw3rtrun.p3d.frontend.command.ReadSettings;
 import org.qw3rtrun.p3d.frontend.command.ReleaseCard;
+import org.qw3rtrun.p3d.frontend.command.ResumeSdPrint;
+import org.qw3rtrun.p3d.frontend.command.StopSdPrint;
 import org.qw3rtrun.p3d.frontend.command.SendRawLine;
 import org.qw3rtrun.p3d.frontend.command.RequestPosition;
 import org.qw3rtrun.p3d.frontend.command.RequestTemperatureReport;
@@ -106,6 +109,22 @@ import java.util.UUID;
  * than as a choice. {@code /sd/upload/cancel} is not a
  * Reactive Streams cancel: the content stops but {@code M29} still goes out, closing a short but
  * valid file; it answers 200 whether or not anything was running, and its only refusal is 404.
+ *
+ * <p><strong>{@code /sd/pause}, {@code /sd/resume} and {@code /sd/stop}</strong> (#147) act on
+ * whatever the card is already printing, so none of them takes a body. {@code /sd/resume} sends
+ * {@code M24} - the same command {@code /sd/print} ends with, which the firmware reads as a resume
+ * once a file is selected ({@link PrintFile}'s javadoc carries the capture) - and {@code /sd/stop}
+ * sends {@code M524} alone, with no cooldown behind it; see {@link StopSdPrint} for why. None of the
+ * three is gated or refused, and that is also the limit of what they report back: Marlin's
+ * {@code SD printing byte} answer to {@code M27} does not distinguish a paused print from a running
+ * one, so a page cannot tell the two apart and must not pretend to.
+ *
+ * <p><strong>{@code /emergency-stop} is the second route here that is not a {@link PrinterCommand}</strong>
+ * (#147), and for the opposite reason to {@code /terminal} below: {@code M112} has to reach the wire
+ * ahead of everything already queued, including an {@code M28} transfer holding it exclusively, which
+ * {@code PrinterControl.send} cannot promise for a translated command. It is not the escape hatch
+ * {@link PrinterCommand} rules out - it is a named intent with no payload whose only unusual property
+ * is its priority.
  *
  * <p><strong>{@code /terminal} is the one endpoint that takes G-code text</strong> (#135), and it is
  * a narrow exception rather than an escape hatch: everything with a shape keeps its own endpoint and
@@ -294,6 +313,23 @@ public class PrinterController {
         return send(id, command);
     }
 
+    // The three that act on whatever is already printing, so none takes a body. M24 here is a
+    // resume, which is the same command /sd/print ends with - see ResumeSdPrint.
+    @PostMapping("/sd/pause")
+    public Mono<Void> pauseSdPrint(@PathVariable UUID id) {
+        return send(id, new PauseSdPrint());
+    }
+
+    @PostMapping("/sd/resume")
+    public Mono<Void> resumeSdPrint(@PathVariable UUID id) {
+        return send(id, new ResumeSdPrint());
+    }
+
+    @PostMapping("/sd/stop")
+    public Mono<Void> stopSdPrint(@PathVariable UUID id) {
+        return send(id, new StopSdPrint());
+    }
+
     // Progress and completion both arrive on the stream as SdUploadProgressed; the bytes themselves
     // are posted to /api-files first and only named here (see UploadToCard).
     @PostMapping("/sd/upload")
@@ -311,6 +347,14 @@ public class PrinterController {
     @PostMapping("/connect")
     public Mono<Void> connect(@PathVariable UUID id, @RequestBody Mono<ConnectCmd> cmd) {
         return cmd.flatMap(c -> Mono.from(printers.connect(id, c)));
+    }
+
+    // Not a PrinterCommand, and deliberately so: M112 has to go out ahead of everything already
+    // queued, including an SD transfer holding the wire, which is the one thing send() cannot
+    // promise - so this is PrinterControl's own call rather than a record with a toMarlin().
+    @PostMapping("/emergency-stop")
+    public Mono<ResponseEntity<?>> emergencyStop(@PathVariable UUID id) {
+        return Mono.from(printers.emergencyStop(id)).map(Outcomes::of);
     }
 
     // The Terminal tab's typed line (#135) - the one body on this surface that is G-code rather than

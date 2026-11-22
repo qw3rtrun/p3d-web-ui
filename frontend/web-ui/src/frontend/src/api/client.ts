@@ -231,6 +231,19 @@ export function printer(uuid: string) {
         // M23 then M24, sent as one unit. name is the card's spelling, as for deleteFile.
         printFile: (name: string) => send(at('/sd/print'), {name}),
 
+        // M25. Pauses a print running from the card; the firmware holds it, not the host, so it
+        // outlives this page and nothing here has to be kept to resume it.
+        pauseSdPrint: () => send(at('/sd/pause'), {}),
+
+        // M24 after a pause - see printFile's own comment on what M24 means after an M23/M25. There
+        // is no event that says a print is paused rather than running (M27 answers the same either
+        // way), so this is offered whenever a print is open and not gated on a paused state.
+        resumeSdPrint: () => send(at('/sd/resume'), {}),
+
+        // M524. Aborts a print running from the card. Does not touch the heaters or fan - see
+        // StopSdPrint.java for why.
+        stopSdPrint: () => send(at('/sd/stop'), {}),
+
         // M28, the file, M29. Resolves when the transfer has started, not finished - watch the
         // stream for SdUploadProgressed and treat any state but UPLOADING as the end. fileId names
         // something uploaded to /api-files first (see files.upload); an extension is not required,
@@ -253,6 +266,12 @@ export function printer(uuid: string) {
         // A stop, not a cancel: the content ends but M29 still goes out, leaving a short closed file
         // (safe to delete, not to print). Expect state: 'CANCELLED'.
         cancelCardUpload: () => send(at('/sd/upload/cancel'), {}),
+
+        // M112, at the one priority above everything else on the wire - including an M28 transfer
+        // holding it exclusively, which is why this is not one of the commands above. Answers a
+        // ControlOutcome like cancelCardUpload does, so a refusal arrives as a RequestFailed
+        // carrying the server's own sentence; nothing in the body is read here.
+        emergencyStop: () => send(at('/emergency-stop'), {}),
 
         // The Terminal tab's typed line (#135), and the one call on this surface carrying G-code
         // rather than a description of an intent. It is a narrow exception, not the escape hatch the

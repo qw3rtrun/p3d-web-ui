@@ -55,6 +55,12 @@ class PrinterCommandBindingTest {
 
     private final AtomicBoolean cancelled = new AtomicBoolean();
 
+    /** Whether the emergency-stop route reached the runtime (#147) - the one control that is not a command. */
+    private final AtomicBoolean halted = new AtomicBoolean();
+
+    /** What the stubbed runtime answers an emergency stop with; accepted unless a test says otherwise. */
+    private final AtomicReference<ControlOutcome> haltAnswers = new AtomicReference<>();
+
     /** The line the terminal endpoint handed to the runtime - null until it has been asked at all. */
     private final AtomicReference<String> typed = new AtomicReference<>();
 
@@ -123,6 +129,13 @@ class PrinterCommandBindingTest {
             public Publisher<ControlOutcome> cancelCardUpload(UUID id) {
                 cancelled.set(true);
                 return Mono.just(ControlOutcome.accepted(id));
+            }
+
+            @Override
+            public Publisher<ControlOutcome> emergencyStop(UUID id) {
+                halted.set(true);
+                var answer = haltAnswers.get();
+                return Mono.just(answer == null ? ControlOutcome.accepted(id) : answer);
             }
         };
         return WebTestClient.bindToController(new PrinterController(control)).build();
@@ -347,6 +360,52 @@ class PrinterCommandBindingTest {
         post("/sd/print", "{\"name\":\"BENCHY.GCO\"}");
 
         assertEquals(List.of("M23 BENCHY.GCO", "M24"), received.get());
+    }
+
+    /**
+     * The three controls over a print already running (#147). No body on any of them - they act on
+     * whatever the card is printing, so there is nothing to name - and each is one line, including
+     * the resume: {@code M24} is the same command {@code /sd/print} ends with, which is what makes it
+     * a resume rather than a second start.
+     */
+    @Test
+    void pauseResumeAndStopNeedNoBodyAndAreOneLineEach() {
+        client().post().uri("/api-printer/" + id + "/sd/pause").exchange().expectStatus().isOk();
+        assertEquals("M25", sent());
+
+        client().post().uri("/api-printer/" + id + "/sd/resume").exchange().expectStatus().isOk();
+        assertEquals("M24", sent());
+
+        client().post().uri("/api-printer/" + id + "/sd/stop").exchange().expectStatus().isOk();
+        assertEquals("M524", sent());
+    }
+
+    /**
+     * The emergency stop is deliberately <em>not</em> on the command path (#147), which is the whole
+     * assertion: {@code M112} has to overtake whatever is queued, so it reaches
+     * {@link PrinterControl#emergencyStop} and nothing reaches {@code send}. A route written as a
+     * {@code PrinterCommand} would pass every other test and queue behind an SD transfer.
+     */
+    @Test
+    void theEmergencyStopBypassesTheCommandPath() {
+        client().post().uri("/api-printer/" + id + "/emergency-stop").exchange().expectStatus().isOk();
+
+        assertTrue(halted.get());
+        assertEquals(List.of(), received.get(),
+                "an emergency stop must not queue behind the commands it exists to overtake");
+    }
+
+    /** A machine the farm does not hold is 404 here like everywhere else, with its reason in the body. */
+    @Test
+    void anEmergencyStopForAnUnknownMachineIsNotFound() {
+        haltAnswers.set(ControlOutcome.absent(id, "there is no printer " + id));
+
+        client().post().uri("/api-printer/" + id + "/emergency-stop")
+                .exchange()
+                .expectStatus().isNotFound()
+                .expectBody()
+                .jsonPath("$.refusal").isEqualTo("ABSENT")
+                .jsonPath("$.reason").isEqualTo("there is no printer " + id);
     }
 
     // The status is the point: the check lives in a record's compact constructor and throws

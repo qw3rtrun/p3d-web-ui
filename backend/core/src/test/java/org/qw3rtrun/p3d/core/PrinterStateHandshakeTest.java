@@ -219,6 +219,67 @@ class PrinterStateHandshakeTest {
                         + " arrival, not change, same as the per-line gate always did");
     }
 
+    // ------------------------------------------------------------------ once per session, #154
+
+    /**
+     * The first {@code CapabilitiesReport} after {@code onOnline} runs the tail - existing coverage
+     * above, restated here beside its sequel so the three belong to the same story: fire once, don't
+     * re-fire in the same session, fire again after a reconnect.
+     */
+    @Test
+    void theFirstCapabilitiesReportAfterOnlineRunsTheTail() {
+        assertEquals(List.of("M114"), gatedBy("AUTOREPORT_POS", false));
+    }
+
+    /**
+     * A second {@code CapabilitiesReport} delivered to the same aggregate instance, with no
+     * intervening {@code onOnline} - a manual {@code M115} typed into the Terminal tab (#135), long
+     * after the connection's own handshake already ran the tail - must not re-run
+     * {@link PrinterState#on(CapabilitiesReport)}'s follow-up commands. {@code profile.on(report)}
+     * and {@code emitter.accept(report)} are unaffected by the gate, so the capability is reported
+     * with a changed value here precisely to prove the report itself still reaches the browser while
+     * the command it would otherwise have caused does not.
+     */
+    @Test
+    void aSecondCapabilitiesReportInTheSameSessionDoesNotRerunTheTail() {
+        var printer = online();
+        var received = new ArrayList<Object>();
+        printer.setEmitter(received::add);
+
+        printer.onEvent(new CapabilitiesReport(List.of(new CapabilityRs("AUTOREPORT_POS", false))));
+        sent.clear();
+        received.clear();
+
+        var secondAnswer = new CapabilitiesReport(List.of(new CapabilityRs("AUTOREPORT_POS", true)));
+        printer.onEvent(secondAnswer);
+
+        assertEquals(List.of(secondAnswer), received,
+                "profile.on(report) and emitter.accept(report) must be unaffected by the tail gate");
+        assertEquals(List.of(), sent,
+                "the tail already ran this session; a manual M115 must not re-send M154 S1 even "
+                        + "though the capability's own reported value changed");
+    }
+
+    /**
+     * A third {@code CapabilitiesReport} delivered after a fresh {@code onOnline()} - simulating a
+     * real reconnect - DOES run the tail again. This is the critical regression case: the fix above
+     * must gate a repeat within one session without also gating the next session's own first answer.
+     */
+    @Test
+    void aCapabilitiesReportAfterAFreshOnlineRunsTheTailAgain() {
+        var printer = online();
+        printer.onEvent(new CapabilitiesReport(List.of(new CapabilityRs("AUTOREPORT_POS", false))));
+        sent.clear();
+
+        printer.onOnline(new GSender(this::capture)); // a real reconnect
+        sent.clear(); // the opening pair, if any - this printer was already ONLINE, so none is resent
+        printer.onEvent(new CapabilitiesReport(List.of(new CapabilityRs("AUTOREPORT_POS", false))));
+
+        assertEquals(List.of("M114"), sent,
+                "a fresh onOnline resets this session's tail flag, so the reconnect's own M115 "
+                        + "answer runs the tail again");
+    }
+
     /** A pre-1.1.9 firmware with no {@code Cap:} lines at all: an empty answer starts nothing. */
     @Test
     void aFirmwareThatReportsNoCapabilitiesAtAllIsAskedNothingFurther() {

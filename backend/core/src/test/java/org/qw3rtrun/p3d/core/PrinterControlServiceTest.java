@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
@@ -392,6 +393,75 @@ class PrinterControlServiceTest {
 
         assertEquals(ControlOutcome.Refusal.WRONG_STATE, refused.refusal());
         assertEquals(id, refused.machineId());
+    }
+
+    // ------------------------------------------------- the emergency stop (issue #147)
+
+    /**
+     * {@code M112} at an id the farm does not hold is {@code ABSENT} and opens no runtime - the one
+     * refusal this route has, and the same leak claim the upload and console tests above make.
+     */
+    @Test
+    void anEmergencyStopForAMachineTheFarmDoesNotHaveIsAbsentAndOpensNoRuntime() {
+        var manager = managerFor(directoryHolding(UUID.randomUUID()));
+        var control = new PrinterControlService(manager,
+                new SdUploader(manager, storeThatMustNotBeAsked()));
+        var nobody = UUID.randomUUID();
+
+        StepVerifier.create(control.emergencyStop(nobody))
+                .assertNext(outcome -> {
+                    var refused = refusalOf(outcome);
+                    assertEquals(ControlOutcome.Refusal.ABSENT, refused.refusal());
+                    assertEquals(nobody, refused.machineId());
+                })
+                .verifyComplete();
+
+        assertNull(manager.runtimeOf(nobody), "an emergency stop built a runtime for nothing");
+    }
+
+    /**
+     * And at a machine the farm holds it reaches the reactor and is {@code Accepted}, with
+     * <strong>no state gate at all</strong> - deliberately unlike {@link PrinterControlService#send}
+     * and {@link PrinterControlService#sendRaw}, which both refuse a machine the aggregate does not
+     * believe is linked. {@code M112} is the one command worth sending to a machine this layer is
+     * not sure about: a stop that arrives at a dead socket costs nothing, and one withheld because
+     * the host doubted the link is the whole failure this route exists to prevent. This runtime has
+     * never been dialled, so a copy of {@code sendRaw}'s gate would answer {@code WRONG_STATE}
+     * here.
+     *
+     * <p>Asserted at the reactor seam rather than on the wire: the byte going out at
+     * {@code Priority.EMERGENCY} ahead of a running feed needs a socket, which is
+     * {@code :app}'s integration test. What a unit test can lose is the last hop - a method added to
+     * an interface, implemented, and never actually called - so that is what this pins.
+     */
+    @Test
+    void anEmergencyStopAtAKnownMachineReachesItWithNoStateGate() {
+        var id = UUID.randomUUID();
+        var stopped = new AtomicInteger();
+        // a runtime with no socket behind it, so "never dialled" is the state under test; its two
+        // schedulers are the JVM-cached ones, whose dispose() is a no-op, so nothing is leaked.
+        var undialled = new PrinterReactor(null, new PrinterState(id)) {
+            @Override
+            public void emergencyStop() {
+                stopped.incrementAndGet();
+            }
+        };
+        var manager = new PrinterReactorManager(directoryHolding(id), PrinterState::new, event -> {
+        }) {
+            @Override
+            public synchronized Optional<PrinterReactor> openReactorIfKnown(UUID uuid) {
+                return knows(uuid) ? Optional.of(undialled) : Optional.empty();
+            }
+        };
+        var control = new PrinterControlService(manager,
+                new SdUploader(manager, storeThatMustNotBeAsked()));
+
+        StepVerifier.create(control.emergencyStop(id))
+                .assertNext(outcome -> assertTrue(outcome instanceof ControlOutcome.Accepted,
+                        "an emergency stop at a known machine was " + outcome))
+                .verifyComplete();
+
+        assertEquals(1, stopped.get(), "the outcome said Accepted and nothing was stopped");
     }
 
     // the reason PrinterReactorManager.knows exists separately from openReactorIfKnown: a cancel

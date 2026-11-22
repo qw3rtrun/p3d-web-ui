@@ -224,7 +224,7 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
                         + " and the machine received " + printer.commands(),
                 () -> "COMPLETED".equals(stateOf(job)));
 
-        assertEquals(file.blocks(), printer.commands(),
+        assertEquals(file.blocks(), withoutSdStatusPoll(printer),
                 "every block of the file, in order, and nothing else");
 
         var finished = fetch(job);
@@ -327,7 +327,11 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
                         + " and the machine received " + printer.commands(),
                 () -> "COMPLETED".equals(stateOf(job)));
 
-        var received = printer.commands();
+        // M27 is SdStatusPoll's own housekeeping (#147) - a bare read this machine's card capability
+        // draws every few seconds regardless of what else is on the wire, same as any other
+        // unsolicited chatter this suite already looks past. It is not the interleaving this test is
+        // about, so it is filtered before the position is checked, not raced against.
+        var received = printer.commands().stream().filter(c -> !c.equals("M27")).toList();
         assertEquals(1, received.stream().filter("M105"::equals).count(),
                 "the interactive command was asked for once: " + received);
         assertEquals(onTheWire, received.indexOf("M105"),
@@ -375,7 +379,7 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
                         + " and the machine received " + printer.commands(),
                 () -> "COMPLETED".equals(stateOf(job)));
 
-        assertEquals(blocks, printer.commands(),
+        assertEquals(blocks, withoutSdStatusPoll(printer),
                 "resumed at the block it had reached: nothing sent twice and nothing skipped");
     }
 
@@ -408,7 +412,7 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
                 () -> printer.sent("G1 E-2"));
         quiet();
 
-        var received = printer.commands();
+        var received = withoutSdStatusPoll(printer);
         assertEquals(COOL_DOWN, received.subList(onTheWire, received.size()),
                 "the cool-down must go in front of what is left of the file, and nothing else"
                         + " after it: " + received);
@@ -613,12 +617,13 @@ class PrintJobIntegrationTest extends FarmIntegrationTest {
         var over = firstTerminalAnswer.get();
         assertEquals("COMPLETED", over.get("state"),
                 "the file ran out against a machine answering every block: " + printer.commands());
-        assertEquals((long) printer.commands().size(), number(progressOf(over).get("blocksSent")),
+        var received = withoutSdStatusPoll(printer);
+        assertEquals((long) received.size(), number(progressOf(over).get("blocksSent")),
                 "the first answer that reported the job finished reported a checkpoint that is not"
                         + " the blocks that actually went out, so the exact end-of-feed reading"
                         + " landed after the state that says it is over - which is the number the"
                         + " job keeps, because nothing checkpoints it again: " + over);
-        assertEquals(file.blocks().size(), printer.commands().size(),
+        assertEquals(file.blocks().size(), received.size(),
                 "the premise is a whole file on the wire: " + printer.commands());
     }
 

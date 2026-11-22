@@ -231,6 +231,25 @@ export interface SdFileOpened {
 }
 
 /**
+ * `type: "SdPrinting"` - `M27`'s answer while something is printing from the card: how far the
+ * firmware has read into the file, in bytes. `size` is the same number {@link SdFileOpened} named
+ * when the file was selected - a progress bar's denominator.
+ *
+ * Says nothing about whether the print is paused: the firmware answers this for a paused print too,
+ * so a page that offers Pause and Resume cannot tell which is live from this event alone.
+ */
+export interface SdPrinting {
+    position: number
+    size: number
+}
+
+/**
+ * `type: "SdNotPrinting"` - `M27`'s other answer: nothing is printing from the card right now.
+ * Carries nothing.
+ */
+export type SdNotPrinting = Record<string, never>
+
+/**
  * `type: "SdCardOk"` - `M21` mounted the card and it answered. Carries nothing.
  *
  * The only way to learn a card is present, since no command asks directly: this event means a card,

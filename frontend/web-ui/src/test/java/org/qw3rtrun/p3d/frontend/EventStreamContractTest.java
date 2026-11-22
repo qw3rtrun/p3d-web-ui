@@ -21,6 +21,8 @@ import org.qw3rtrun.p3d.g.marlin.event.SdCardOk;
 import org.qw3rtrun.p3d.g.marlin.event.SdFile;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileList;
 import org.qw3rtrun.p3d.g.marlin.event.SdFileOpened;
+import org.qw3rtrun.p3d.g.marlin.event.SdNotPrinting;
+import org.qw3rtrun.p3d.g.marlin.event.SdPrinting;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsReport;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsSection;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsValue;
@@ -238,6 +240,30 @@ class EventStreamContractTest {
         assertEquals("SdFileOpened", opened.get("type").asString());
         assertEquals("BENCHY.GCO", opened.get("event").get("file").asString());
         assertEquals(2847561, opened.get("event").get("size").asLong());
+    }
+
+    /**
+     * {@code M27}'s two answers, which are the whole of what the browser knows about a running print
+     * (#147) - the monitor page's progress bar and the dashboard's chip both switch on these strings.
+     *
+     * <p>{@code position} and {@code size} are {@code uint32_t} in the firmware and {@code Long}
+     * here, so they reach the browser as JSON numbers a progress bar can divide. {@code
+     * SdNotPrinting} is a Kotlin {@code object} and has to serialise as an empty <em>object</em>, not
+     * as a string or a null, for the same reason {@code SessionStarted} does: the type string is the
+     * whole content and the envelope's {@code id} says which machine.
+     */
+    @Test
+    void theTwoCardPrintStatusesCarryTheirNamesAndThePositionAPageDivides() {
+        var printing = mapper.readTree(streamed(new SdPrinting(1_200_000L, 2_847_561L)));
+
+        assertEquals("SdPrinting", printing.get("type").asString());
+        assertEquals(1_200_000L, printing.get("event").get("position").asLong());
+        assertEquals(2_847_561L, printing.get("event").get("size").asLong());
+
+        var idle = mapper.readTree(streamed(SdNotPrinting.INSTANCE));
+
+        assertEquals("SdNotPrinting", idle.get("type").asString());
+        assertTrue(idle.get("event").isObject(), "an object, not a null or a string");
     }
 
     // bytesSent/bytesTotal is the exact progress bar - the file's size is known before a line goes

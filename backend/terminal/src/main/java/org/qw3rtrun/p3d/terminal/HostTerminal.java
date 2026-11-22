@@ -88,6 +88,16 @@ import static org.qw3rtrun.p3d.api.msg.TerminalTraffic.Direction.SENT;
  * (see {@link ReplaySubscriber#onNext}). {@link #stop()} cancels both halves and disposes the
  * connection, because cancelling alone does not close the socket.
  *
+ * <p><strong>One command does not go through any of that.</strong> {@link #emergencyStop()} writes
+ * {@code M112} out of band - unframed, and without waiting for room either in {@link GSendWindow}
+ * or in the printer's block queue. Both of those count a G-code command stream that a wedged
+ * firmware is by definition not advancing, so {@link CommandProcessor#canProcess()} is zero exactly
+ * when a stop matters most: measured at the {@code :app} level with a printer holding its
+ * acknowledgements from block 5, an {@code M112} queued at {@code Priority.EMERGENCY} was never
+ * pulled and never reached the wire at all. It is still written from the one drain loop, so there is
+ * no second writer of the socket and no second toucher of the window; see
+ * {@link CommandProcessor#emergency}.
+ *
  * <p><strong>There is a third thing on the wire.</strong> {@link #binaryTransfer} drives Marlin's
  * Binary Protocol over the same socket: packets out through {@link CommandProcessor#writeRaw} and
  * replies in through the same {@link ReplyFlux}, which decodes them with {@code MbpRsDecoder} while
@@ -414,6 +424,47 @@ public class HostTerminal {
         outSide.cancel();
         inSide.handleCancel();
         disposeConnection.run();
+    }
+
+    /** Marlin's emergency stop, spec Appendix B - the only command this transport writes out of
+     * band, and the only one it names itself besides the session's own {@code M110}. */
+    static final String EMERGENCY_STOP = "M112";
+
+    /**
+     * Stops the machine, bypassing the send window entirely: {@code M112} is written unframed - no
+     * {@code N}, no checksum - and is gated on nothing the printer has to say first.
+     *
+     * <p><strong>Why it cannot be an ordinary command.</strong> Everything else here is paced by
+     * {@link CommandProcessor#canProcess()}, which is the printer's block queue and the send window
+     * and not the subscriber's demand. A firmware that has stopped acknowledging closes both terms
+     * to zero, nothing is pulled from the G-code source again, and an {@code M112} queued at
+     * {@code Priority.EMERGENCY} sits behind a printer that has stopped talking - which is the one
+     * situation an emergency stop exists for. Marlin's own answer to this is the same shape: its
+     * emergency parser reads {@code M112} straight off the serial RX bytes, ahead of the command
+     * queue and of the line-number bookkeeping, and does not wait for buffer room.
+     *
+     * <p><strong>What it does not do.</strong> It does not abort an exclusive source that is holding
+     * {@link PublisherQueue} - a transfer that is still <em>flowing</em> is preempted and failed with
+     * {@link PublisherQueue.Preempted} by queueing at {@code Priority.EMERGENCY}, which works and is
+     * unchanged. This method is about the wire, and nothing else.
+     *
+     * <p>It appears on {@link #observeTraffic} as an ordinary {@code SENT} line with no decode, and
+     * costs the send window nothing: no line number is burnt, no slot is taken, no
+     * {@code sentWithoutAck} credit is spent, so a session that survives the stop numbers its next
+     * block exactly where it would have.
+     *
+     * @return false when there is no session to write into, because {@link #start} has not been
+     * called; true when the stop has been handed to the drain loop
+     */
+    public boolean emergencyStop() {
+        CommandProcessor out = outSide;
+        if (out == null) {
+            log.warn("OUT: no emergency stop to send - start() has not been called");
+            return false;
+        }
+        log.warn("OUT: emergency stop - writing {} out of band, past the send window", EMERGENCY_STOP);
+        out.writeEmergency(EMERGENCY_STOP);
+        return true;
     }
 
     /**
@@ -979,6 +1030,42 @@ public class HostTerminal {
          * Touched only from the drain loop, so a plain {@link ArrayDeque} is enough. */
         private final Deque<String> replaying = new ArrayDeque<>();
 
+        /**
+         * The emergency lane: {@code M112} parked by {@link #writeEmergency}, and the one write in
+         * this class that costs the send window nothing - see {@link HostTerminal#emergencyStop()}
+         * for why it may not be paced by it.
+         *
+         * <p><strong>Unframed, rather than framed but unqueued.</strong> Framing means asking
+         * {@link GSendWindow#send} for a number, and that call <em>refuses</em> once the window is
+         * full - which is one shape of the starved state itself. Measured, by writing the lane
+         * through {@code window.send} and running {@code HostTerminalEmergencyTest} against it: with
+         * a printer reporting {@code B8} and then going quiet on four outstanding blocks, the framed
+         * stop was <strong>never written at all</strong> and the test timed out; with the window one
+         * block deep it went out as {@code N2 M112*35}, having taken a line number and a window slot
+         * that nothing would ever acknowledge. A number taken out of band would be wrong anyway: it
+         * would move the
+         * firmware's counter without moving this window's, which is the whole reason the line
+         * counter is this layer's and never a caller's.
+         *
+         * <p>That the firmware takes an unnumbered line mid-session is read off Marlin rather than
+         * measured here: {@code GCodeQueue::get_serial_commands} applies its continuity check only to
+         * a command carrying an {@code N} and its checksum check only to one carrying a {@code *},
+         * and the emergency parser that really answers an {@code M112} reads neither field. No probe
+         * has confirmed it on a wire - the starved case cannot be staged against a live printer,
+         * which is why {@code :app}'s own test for this uses a {@code MockPrinter} that withholds
+         * acknowledgements.
+         *
+         * <p>It does spend one unit of the <em>subscriber's</em> demand, like every other write here:
+         * Reactive Streams rule 1.1 has no exemption for an emergency, and an unasked {@code onNext}
+         * is the exact failure the send window exists to prevent. That is not the demand that
+         * starves - the subscriber on this side is {@code reactor-netty}'s send, whose demand is room
+         * in a socket queue, while the two terms a stalled printer closes are its block queue and the
+         * window. So no term is added to {@link #canProcess()} for a parked stop either: that method
+         * is already {@code min}'d with the same counter this stage spends, and {@link #write()}
+         * drains the lane before it is ever consulted.
+         */
+        private final Queue<String> emergency = new ConcurrentLinkedQueue<>();
+
         /** Binary packets parked by {@link #writeRaw}, waiting for demand. Holds at most one in
          * practice - the Marlin Binary Protocol's window is one packet deep - but a queue rather
          * than a slot so a second can only ever be late, never lost. */
@@ -1221,7 +1308,8 @@ public class HostTerminal {
         }
 
         /**
-         * Writes what is owed: the session's {@code M110} first (nothing may go out ahead of it, or
+         * Writes what is owed: an emergency stop before everything, then the session's
+         * {@code M110} (nothing <em>numbered</em> may go out ahead of it, or
          * the firmware rejects the gap), then a parked binary packet (the firmware is reading packets
          * and an ASCII block between two of them is bytes inside a packet), then replay (its blocks
          * carry numbers the firmware is waiting for), then what was pulled since. A replayed block or
@@ -1229,8 +1317,19 @@ public class HostTerminal {
          * subscriber's demand - the unit it spent when first written is gone, and no {@code onNext}
          * goes out unasked even for a retransmission - which is why each of the three stages returns
          * rather than falling through once demand runs out. See {@link #opening}.
+         *
+         * <p>The emergency lane is the exception to all of it, and gated on demand alone: a stop
+         * that waited for the session's {@code M110}, for a replay or for a window slot would be
+         * waiting on the stalled firmware that is the reason it was raised. See {@link #emergency}.
          */
         private void write() {
+            while (!emergency.isEmpty() && subscriptionRequested.get() > 0) {
+                subscriptionRequested.dec();
+                write0(emergency.poll());
+            }
+            // No return when one is still parked, unlike the stages below: that only happens when the
+            // socket has no room, and holding back a block already paid for would stall the session
+            // without getting the stop out any sooner.
             if (opening != null) {
                 if (subscriptionRequested.get() <= 0) {
                     return;
@@ -1330,6 +1429,16 @@ public class HostTerminal {
         }
 
         /**
+         * Parks an emergency stop for the drain loop - the same hand-off as {@link #writeRaw} and
+         * {@link #rewind}, because the thread that raised it is a caller's and may neither write nor
+         * touch {@link #window}. See {@link #emergency}.
+         */
+        void writeEmergency(String command) {
+            emergency.add(command);
+            processRequest();
+        }
+
+        /**
          * Parks a {@code Resend: n} for the drain loop, and marks the {@code ok} behind it.
          *
          * <p>Called from the inbound thread, which may not touch the window and may not write.
@@ -1422,8 +1531,8 @@ public class HostTerminal {
 
         /**
          * Completes the subscriber once the source is done <em>and</em> everything owed - the
-         * session's {@code M110}, a requested replay, payloads pulled but not yet framed - is on the
-         * wire. Drain loop only, so "anything left to write" is asked on the one thread that could be
+         * session's {@code M110}, a requested replay, payloads pulled but not yet framed, an
+         * emergency stop still waiting for socket room - is on the wire. Drain loop only, so "anything left to write" is asked on the one thread that could be
          * writing. It does not wait for acknowledgements: whether the firmware has taken a block is a
          * different question, answered block by block by {@code BlockAcknowledged}.
          */
@@ -1431,7 +1540,8 @@ public class HostTerminal {
             if (!sourceComplete.get() || terminated.get()) {
                 return;
             }
-            if (opening != null || !replaying.isEmpty() || !pending.isEmpty() || !rawPackets.isEmpty()) {
+            if (opening != null || !replaying.isEmpty() || !pending.isEmpty() || !rawPackets.isEmpty()
+                    || !emergency.isEmpty()) {
                 return;
             }
             if (!terminated.compareAndSet(false, true)) {

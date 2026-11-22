@@ -92,7 +92,7 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         assertEquals("ONLINE", connectionState(id),
                 "a socket is not a firmware; nothing acknowledged a block, so this is not IDLE");
-        assertEquals(List.of("M110 N0"), printer.commands(),
+        assertEquals(List.of("M110 N0"), withoutSdStatusPoll(printer),
                 "the send window must not pull a second block while the first is unacknowledged");
     }
 
@@ -161,7 +161,7 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
                         + ". A second M110 N0 there means the stray ok released the G28 and the"
                         + " session was resynchronised instead of replayed",
                 () -> Collections.frequency(printer.blocks(), block) == 2);
-        assertEquals(List.of("G28", "G28"), printer.commands(),
+        assertEquals(List.of("G28", "G28"), withoutSdStatusPoll(printer),
                 "a replay is the same block again and nothing else");
     }
 
@@ -189,7 +189,7 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         await(() -> "the session to be resynchronised. The machine received " + printer.commands(),
                 () -> printer.sent("M110 N0"));
-        assertEquals(List.of("G28", "M110 N0"), printer.commands(),
+        assertEquals(List.of("G28", "M110 N0"), withoutSdStatusPoll(printer),
                 "a bare ok cannot be told from a stray one, so the block is released, the resend"
                         + " finds nothing held, and the numbering has to start again");
     }

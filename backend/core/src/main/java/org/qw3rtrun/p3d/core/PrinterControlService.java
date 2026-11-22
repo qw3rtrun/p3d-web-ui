@@ -229,6 +229,30 @@ public class PrinterControlService implements PrinterControl {
                 : Mono.just(ControlOutcome.absent(id, "the farm has no machine " + id)));
     }
 
+    /**
+     * Found or not, then one unconditional action - the same shape as {@link #sendRaw} and
+     * {@link #uploadToCard} minus every gate but the first. {@code openReactorIfKnown} on
+     * {@code boundedElastic} because it is {@code synchronized} and builds a resource; an unknown
+     * machine is {@code ABSENT} rather than an {@code IllegalArgumentException} the web layer would
+     * have to classify.
+     *
+     * <p><strong>No link check on purpose</strong> - see {@code PrinterControl.emergencyStop} and
+     * {@code PrinterReactor.emergencyStop}, and note that the {@code M112} refusal in
+     * {@link #whyTheHostOwnsIt} below stays exactly as it is: it says the console cannot carry a
+     * stop, which is still true, and names this route as the one that can.
+     */
+    @Override
+    public Mono<ControlOutcome> emergencyStop(UUID id) {
+        return Mono.fromSupplier(() -> manager.openReactorIfKnown(id))
+                .subscribeOn(Schedulers.boundedElastic())
+                .map(found -> found
+                        .map(reactor -> {
+                            reactor.emergencyStop();
+                            return ControlOutcome.accepted(id);
+                        })
+                        .orElseGet(() -> ControlOutcome.absent(id, "the farm has no machine " + id)));
+    }
+
     @Override
     public Mono<Void> connect(UUID id, ConnectCmd command) {
         return reactor(id).flatMap(r -> r.handleConnectCmd(Mono.just(command)));

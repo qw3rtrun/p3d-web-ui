@@ -115,7 +115,7 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
         type(id, "M105").expectStatus().isOk();
 
         awaitCommand(printer, "M105");
-        assertEquals(List.of("M105"), printer.commands(),
+        assertEquals(List.of("M105"), withoutSdStatusPoll(printer),
                 "the line the operator typed, and nothing the host added of its own");
 
         var sent = awaitLine(console, "SENT", "M105");
@@ -276,9 +276,11 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
         awaitCapability(id, "EEPROM");
 
         // The aggregate's route: refused for a tool this machine does not have, and silently.
+        // M27 is filtered throughout this file: SdStatusPoll (#147) asks this connected,
+        // SD-capable machine on its own three-second clock, regardless of what a test is about.
         command(id, "/set-temp", "{\"index\":1,\"temp\":200}").expectStatus().isOk();
         quiet();
-        assertTrue(printer.commands().isEmpty(),
+        assertTrue(withoutSdStatusPoll(printer).isEmpty(),
                 "the aggregate checks the tool index and drops this one; it reached " + id
                         + " as " + printer.commands());
 
@@ -286,7 +288,7 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
         type(id, "M104 T1 S200").expectStatus().isOk();
 
         awaitCommand(printer, "M104 T1 S200");
-        assertEquals(List.of("M104 T1 S200"), printer.commands(),
+        assertEquals(List.of("M104 T1 S200"), withoutSdStatusPoll(printer),
                 "a typed line is not interpreted, so there is no judgement to apply to it");
     }
 
@@ -313,7 +315,7 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
                 "the character that was refused belongs in the message: " + refusal.get("reason"));
 
         quiet();
-        assertTrue(printer.commands().isEmpty(),
+        assertTrue(withoutSdStatusPoll(printer).isEmpty(),
                 "refused means not sent: " + printer.commands());
     }
 
@@ -331,7 +333,7 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
         type(id, "M105\\nM112").expectStatus().isBadRequest();
 
         quiet();
-        assertTrue(printer.commands().isEmpty(),
+        assertTrue(withoutSdStatusPoll(printer).isEmpty(),
                 "one typed line is one block, or it is refused: " + printer.commands());
     }
 
@@ -354,7 +356,7 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
         type(id, "M117 " + "x".repeat(80)).expectStatus().isBadRequest();
 
         quiet();
-        assertTrue(printer.commands().isEmpty(),
+        assertTrue(withoutSdStatusPoll(printer).isEmpty(),
                 "an over-long block jams the session for good, so it may not be sent: "
                         + printer.commands());
     }
@@ -373,7 +375,7 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
         type(id, "N5 M105").expectStatus().isBadRequest();
 
         quiet();
-        assertTrue(printer.commands().isEmpty(),
+        assertTrue(withoutSdStatusPoll(printer).isEmpty(),
                 "the host numbers blocks; a typed N is two counters that disagree: "
                         + printer.commands());
     }
@@ -408,7 +410,7 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
         }
 
         quiet();
-        assertTrue(printer.commands().isEmpty(),
+        assertTrue(withoutSdStatusPoll(printer).isEmpty(),
                 "none of the four may reach the machine: " + printer.commands());
         assertNull(printer.writingTo(),
                 "and in particular no file may have been opened on the card");
@@ -432,7 +434,7 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
         type(id, "M851").expectStatus().isOk();
 
         awaitCommand(printer, "M851");
-        assertEquals(List.of("M851"), printer.commands(),
+        assertEquals(List.of("M851"), withoutSdStatusPoll(printer),
                 "a terminal that only sent commands the host knows could not be used to"
                         + " explore a printer, which is what a terminal is for");
 

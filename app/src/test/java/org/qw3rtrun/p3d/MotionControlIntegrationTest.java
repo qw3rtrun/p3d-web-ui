@@ -74,7 +74,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/home", "{}").expectStatus().isOk();
 
         awaitCommands(printer, List.of("G28"));
-        assertEquals(List.of("G28"), printer.commands(),
+        assertEquals(List.of("G28"), withoutSdStatusPoll(printer),
                 "nothing selected means all of them, and Marlin spells that as a bare G28");
     }
 
@@ -91,7 +91,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/home", "{\"x\":true,\"z\":true}").expectStatus().isOk();
 
         awaitCommands(printer, List.of("G28 X Z"));
-        assertEquals(List.of("G28 X Z"), printer.commands(),
+        assertEquals(List.of("G28 X Z"), withoutSdStatusPoll(printer),
                 "the axes named and no others - Y was not asked for and must not be homed");
     }
 
@@ -113,7 +113,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/move", "{\"x\":10,\"relative\":true}").expectStatus().isOk();
 
         awaitCommands(printer, List.of("G91", "G1 X10", "G90"));
-        assertEquals(List.of("G91", "G1 X10", "G90"), printer.commands(),
+        assertEquals(List.of("G91", "G1 X10", "G90"), withoutSdStatusPoll(printer),
                 "a jog is the mode switch, the move and the mode switch back, as one unit");
     }
 
@@ -130,7 +130,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/move", "{\"x\":10,\"y\":20,\"feedRate\":3000}").expectStatus().isOk();
 
         awaitCommands(printer, List.of("G1 X10 Y20 F3000"));
-        assertEquals(List.of("G1 X10 Y20 F3000"), printer.commands(),
+        assertEquals(List.of("G1 X10 Y20 F3000"), withoutSdStatusPoll(printer),
                 "no mode switch belongs around a move that was already absolute");
     }
 
@@ -149,7 +149,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/move", "{\"z\":0.2,\"relative\":true}").expectStatus().isOk();
 
         awaitCommands(printer, List.of("G91", "G1 Z0.2", "G90"));
-        assertEquals(List.of("G91", "G1 Z0.2", "G90"), printer.commands(),
+        assertEquals(List.of("G91", "G1 Z0.2", "G90"), withoutSdStatusPoll(printer),
                 "one axis was named, so one axis may appear in the move -"
                         + " a null that became a zero reads as G1 X0 Y0 Z0.2 E0");
     }
@@ -168,7 +168,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/move", "{\"x\":10,\"y\":0,\"relative\":true}").expectStatus().isOk();
 
         awaitCommands(printer, List.of("G91", "G1 X10 Y0", "G90"));
-        assertEquals(List.of("G91", "G1 X10 Y0", "G90"), printer.commands(),
+        assertEquals(List.of("G91", "G1 X10 Y0", "G90"), withoutSdStatusPoll(printer),
                 "Y was named as zero and must be on the wire; Z and E were not named and must not");
     }
 
@@ -191,7 +191,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/fan", "{\"index\":1,\"speed\":200}").expectStatus().isOk();
 
         awaitCommands(printer, List.of("M106 S200 P1"));
-        assertEquals(List.of("M106 S200 P1"), printer.commands(),
+        assertEquals(List.of("M106 S200 P1"), withoutSdStatusPoll(printer),
                 "the fan number goes in P; in I it would be a stray word and fan 0 would spin");
     }
 
@@ -205,7 +205,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/fan", "{\"speed\":128}").expectStatus().isOk();
 
         awaitCommands(printer, List.of("M106 S128"));
-        assertEquals(List.of("M106 S128"), printer.commands(),
+        assertEquals(List.of("M106 S128"), withoutSdStatusPoll(printer),
                 "a null index is no index word, not P0");
     }
 
@@ -223,7 +223,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/fan", "{\"index\":1,\"speed\":0}").expectStatus().isOk();
 
         awaitCommands(printer, List.of("M107 P1"));
-        assertEquals(List.of("M107 P1"), printer.commands(),
+        assertEquals(List.of("M107 P1"), withoutSdStatusPoll(printer),
                 "zero is off, the documented spelling of off is M107, and the index still travels");
     }
 
@@ -248,7 +248,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
         command(id, "/position").expectStatus().isOk().expectBody().isEmpty();
 
         awaitCommands(printer, List.of("M114"));
-        assertEquals(List.of("M114"), printer.commands());
+        assertEquals(List.of("M114"), withoutSdStatusPoll(printer));
 
         var position = events.await("PositionRs");
         assertEquals(10.0, coordinate(axes(position), "X"));
@@ -278,7 +278,7 @@ class MotionControlIntegrationTest extends FarmIntegrationTest {
                 .expectStatus().isOk();
 
         awaitCommands(printer, List.of("G91", "G1 Y-5 F1500", "G90"));
-        assertEquals(List.of("G91", "G1 Y-5 F1500", "G90"), printer.commands(),
+        assertEquals(List.of("G91", "G1 Y-5 F1500", "G90"), withoutSdStatusPoll(printer),
                 "one outstanding block at a time, and the mode switch back is still the last of them");
     }
 

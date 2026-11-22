@@ -10,6 +10,7 @@ import org.qw3rtrun.p3d.api.msg.BlocksAbandoned;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
 import org.qw3rtrun.p3d.api.msg.ConnectionStateChanged;
 import org.qw3rtrun.p3d.api.msg.SessionStarted;
+import org.qw3rtrun.p3d.g.marlin.command.AbortSDPrint;
 import org.qw3rtrun.p3d.g.marlin.command.AbsolutePositioning;
 import org.qw3rtrun.p3d.g.marlin.command.AutoHome;
 import org.qw3rtrun.p3d.g.marlin.command.DeleteSDFile;
@@ -21,6 +22,7 @@ import org.qw3rtrun.p3d.g.marlin.command.GetCurrentPosition;
 import org.qw3rtrun.p3d.g.marlin.command.InitSDCard;
 import org.qw3rtrun.p3d.g.marlin.command.LinearMoveG1;
 import org.qw3rtrun.p3d.g.marlin.command.ListSDCard;
+import org.qw3rtrun.p3d.g.marlin.command.PauseSDPrint;
 import org.qw3rtrun.p3d.g.marlin.command.PositionAutoReport;
 import org.qw3rtrun.p3d.g.marlin.command.PrintTravelMoveLimits;
 import org.qw3rtrun.p3d.g.marlin.command.RelativePositioning;
@@ -335,6 +337,8 @@ public class PrinterState implements PrinterAggregate {
             case DeleteSDFile c -> handle(c);
             case SelectSDFile c -> handle(c);
             case StartOrResumeSDPrint c -> handle(c);
+            case PauseSDPrint c -> handle(c);
+            case AbortSDPrint c -> handle(c);
 
             // refused: not dangerous, just commands this route cannot carry correctly.
             case StartSDWrite c -> refuse(c, "M28 turns the wire into a file sink until M29, so "
@@ -634,6 +638,16 @@ public class PrinterState implements PrinterAggregate {
      */
     public void handle(StartOrResumeSDPrint start) {
         passThrough(start);
+    }
+
+    /** {@code M25} - pause a print running from the card; the firmware holds it, not the host. */
+    public void handle(PauseSDPrint pause) {
+        passThrough(pause);
+    }
+
+    /** {@code M524} - abort a print running from the card. */
+    public void handle(AbortSDPrint abort) {
+        passThrough(abort);
     }
 
     /** Sends a command as given - the default arm; the inbound counterpart is {@link #republish}. */

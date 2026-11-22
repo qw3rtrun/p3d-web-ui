@@ -9,6 +9,7 @@ import type {
     EventMessage,
     FarmRole,
     MachineJoinedFarm,
+    SdPrinting,
     TemperatureRs,
 } from '../api/types'
 import {isTemperature, isUsable} from '../api/types'
@@ -36,6 +37,10 @@ interface Row {
     reason: string | null
     hotend: number | null
     bed: number | null
+    // The last `M27` that said something is printing from the card, or null for the other answer -
+    // a percentage beside the badge, not a second progress UI (#147). The farm stream's opening
+    // snapshot carries connection and temperature only, so a row reads null until the next `M27`.
+    printing: { position: number; size: number } | null
 }
 
 const rows = ref<Record<string, Row>>({})
@@ -52,8 +57,17 @@ function blank(uuid: string, name = 'unknown'): Row {
     return {
         uuid, name, host: '', port: 0,
         state: 'OFFLINE', attempt: 0, reason: null,
-        hotend: null, bed: null,
+        hotend: null, bed: null, printing: null,
     }
+}
+
+/** A row's print as a whole percentage, or null when the row is not printing. */
+function progressOf(row: Row): number | null {
+    const printing = row.printing
+    if (printing === null || printing.size <= 0) {
+        return null
+    }
+    return Math.min(100, Math.round((printing.position / printing.size) * 100))
 }
 
 function rowFor(uuid: string): Row {
@@ -96,6 +110,19 @@ function onMessage(message: EventMessage) {
             row.state = event.to
             row.attempt = event.attempt
             row.reason = event.reason
+            if (event.to === 'OFFLINE') {
+                // Nothing will contradict a stale percentage: no M27 is asked of a machine the farm
+                // has let go, so the chip would sit there claiming a print nobody is watching.
+                row.printing = null
+            }
+            break
+        }
+        case 'SdPrinting': {
+            rowFor(message.id).printing = message.event as SdPrinting
+            break
+        }
+        case 'SdNotPrinting': {
+            rowFor(message.id).printing = null
             break
         }
         case 'MachineJoinedFarm': {
@@ -213,7 +240,15 @@ onUnmounted(() => {
                   {{ row.host }}<span v-if="row.port">:{{ row.port }}</span>
                 </p>
               </div>
-              <ConnectionBadge :state="row.state" :attempt="row.attempt" :reason="row.reason"/>
+              <div class="d-flex align-items-center gap-2">
+                <!-- A badge, the same shape the connection already uses, rather than a second
+                     progress bar - the printer's own page has the full one. -->
+                <span v-if="progressOf(row) !== null" class="badge bg-primary"
+                      title="Printing from the card. Open the printer for the full progress.">
+                  Printing {{ progressOf(row) }}%
+                </span>
+                <ConnectionBadge :state="row.state" :attempt="row.attempt" :reason="row.reason"/>
+              </div>
             </div>
 
             <div class="row mt-3">

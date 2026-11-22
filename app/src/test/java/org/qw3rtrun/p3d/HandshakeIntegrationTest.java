@@ -68,6 +68,18 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  * that adds one has to argue with a test rather than slip past.
  *
  * @see GracefulShutdownIntegrationTest#aFarmShutdownTurnsOffTheAutoReportsItStarted
+ *
+ * <h2>Why these exact-list assertions are not filtered for {@code SdStatusPoll} (#147)</h2>
+ * {@code FarmIntegrationTest.withoutSdStatusPoll} exists because that scheduled {@code M27} can
+ * land inside another test's exact-list assertion on {@code commands()} - but several lists here
+ * expect a bare {@code M27} as the handshake's own last block, so filtering every {@code M27} would
+ * hide the thing being asserted rather than the noise around it. Left as a named, accepted cost
+ * instead: every assertion here runs within milliseconds of the connect it follows (the handshake
+ * is a handful of blocks a mock answers synchronously), against a poll ticking once every three
+ * real seconds, and it has not been the one to fail in any run that measured the two that do -
+ * {@code PrintJobIntegrationTest}'s feed and {@code TerminalIntegrationTest}'s negative assertion,
+ * both long enough to matter. If this file ever does flake on it, the fix is the same shape as
+ * theirs, keeping exactly the handshake's own {@code M27} and dropping any that follow it.
  */
 class HandshakeIntegrationTest extends FarmIntegrationTest {
 

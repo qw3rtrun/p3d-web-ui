@@ -689,6 +689,57 @@ public class PrinterReactor {
     }
 
     /**
+     * {@code M112}, over <strong>two routes, because a stop has two failure modes and neither route
+     * covers both</strong>. Both are past {@code PrinterState.onCommand}'s switch, which refuses a
+     * queued {@code FullShutdown} because <em>that</em> route cannot carry one.
+     *
+     * <p><strong>{@link HostTerminal#emergencyStop()} is what reaches the wire once the printer has
+     * stopped acknowledging</strong> - the case nothing could reach before #147's follow-up. It is
+     * written unframed and out of band, past {@code canProcess()}; that method's javadoc holds the
+     * reasoning. A queued source cannot do this - priority decides who gets demand and a shut window
+     * releases none, so it was measured never to be subscribed at all
+     * ({@code HostTerminalEmergencyTest.anEmergencyQueuedAsAGCodeSourceNeverReachesAShutWindow}).
+     *
+     * <p><strong>The queued copy is kept, unchanged, because it is the only thing that aborts an
+     * exclusive transfer that is still genuinely flowing.</strong> It preempts the
+     * {@link PublisherQueue} holder and <em>fails</em> the {@code Mono} an in-flight SD upload is
+     * subscribed to with {@link PublisherQueue.Preempted}, which is how that caller learns its file
+     * was corrupted by the stop
+     * ({@code PublisherQueueExclusivityTest.anEmergencyPreemptsAnUploadAndAbortsIt}); the unframed
+     * write puts a byte on the wire and touches no holder's subscription. The abort needs no demand
+     * - {@code addPublisher} drains and the drain aborts a holder that is no longer the head - so
+     * the upload is failed even when the queued line never reaches the wire. {@code SdUploader}
+     * turns the {@code Preempted} into {@code SdUploadState.FAILED}, and the card file is left short
+     * and <em>open</em>, since the aborted source's own {@code M29} is never pulled: the right
+     * answer on a machine that has halted and has to be reset.
+     *
+     * <p><strong>The cost, stated:</strong> on a flowing stream {@code M112} goes out twice, once
+     * unframed and immediately, once shortly after through the queue - measured on one trace as
+     * {@code -> M112} then {@code -> N5 M112*36}. Harmless on a machine that has already halted, and
+     * the queued copy doubles as a backstop for the one case the out-of-band write can miss: the
+     * emergency lane spends a unit of the socket's own demand, so a write queue full at that instant
+     * parks the stop until demand arrives.
+     *
+     * <p>There is <strong>no link check</strong>, unlike {@link #interject} and {@link #sendRaw}: a
+     * stop at a socket that has just died costs nothing, and one withheld because the host doubted
+     * the link is the failure this exists to prevent. A machine with no session has nothing to stop,
+     * which is not an error - the queued copy goes to a queue nothing is draining and is discarded
+     * with it on the next connect. {@code HostTerminal.emergencyStop()}'s {@code boolean} is not
+     * propagated for the same reason {@code PrinterControlService.emergencyStop} answers
+     * {@code Accepted} once it has found the machine.
+     */
+    public void emergencyStop() {
+        log.warn("emergency stop for {}", printer.getId());
+        var host = terminal;
+        if (host != null) {
+            host.emergencyStop();                                          // reaches the wire with the window shut
+        } else {
+            log.warn("{} has no session, so there is no wire to stop it on", printer.getId());
+        }
+        commandQueue.addPublisher(Priority.EMERGENCY, Mono.just("M112")); // aborts and fails a flowing exclusive transfer
+    }
+
+    /**
      * Blocks taken by the send window and not yet acknowledged - read off the last
      * {@code BlockAcknowledged}, since the window itself is internal to the transport and no
      * subscriber can see it.

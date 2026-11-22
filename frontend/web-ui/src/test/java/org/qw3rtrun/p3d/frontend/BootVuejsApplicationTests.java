@@ -102,6 +102,11 @@ class BootVuejsApplicationTests {
                 public Publisher<ControlOutcome> cancelCardUpload(UUID id) {
                     throw new UnsupportedOperationException("not expected during a context load");
                 }
+
+                @Override
+                public Publisher<ControlOutcome> emergencyStop(UUID id) {
+                    throw new UnsupportedOperationException("not expected during a context load");
+                }
             };
         }
 

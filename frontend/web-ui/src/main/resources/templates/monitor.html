@@ -98,9 +98,13 @@
                     </div>
 
                     <!-- An island, and the only one here with no th:if: the console is the live
-                         session's wire traffic, which every machine has. It opens a fourth
+                         session's wire traffic, which every machine has. It opens a second
                          EventSource because /terminal/stream is a different endpoint carrying what
-                         the monitor stream leaves out, not a fourth copy of the same stream. -->
+                         the monitor stream leaves out, not a second copy of the same stream - the
+                         monitor stream itself is one connection no matter how many of Overview,
+                         Storage and Settings above are watching it (#166: client.ts pools
+                         watchPrinter by uuid, so this pane's /terminal/stream is this page's
+                         second persistent connection, not its fourth). -->
                     <div class="tab-pane fade" id="terminal" role="tabpanel" aria-labelledby="terminal-tab">
                         <div data-p3d="terminal-tab"
                              th:attr="data-uuid=${printer.uuid},

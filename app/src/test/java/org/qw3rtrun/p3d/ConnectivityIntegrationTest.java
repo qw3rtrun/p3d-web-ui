@@ -66,7 +66,7 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         await(() -> "the handshake to be on the wire. The machine received " + printer.commands(),
                 () -> printer.commands().contains("M27"));
-        assertEquals(List.of("M110 N0", "M115", "M155 S1", "M114", "M27"), printer.commands(),
+        assertEquals(List.of("M110 N0", "M115", "M155 S1", "M114", "M27"), upToTheHandshakesOwnM27(printer),
                 "the session must open with M110, then ask what the machine is, then start reports");
         assertTrue(printer.sessionOpen(), "the socket should still be open");
     }
@@ -110,7 +110,7 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
 
         await(() -> "the handshake to be on the wire. The machine received " + printer.commands(),
                 () -> printer.commands().contains("M27"));
-        assertEquals(List.of("M110 N0", "M115", "M155 S1", "M114", "M27"), printer.commands(),
+        assertEquals(List.of("M110 N0", "M115", "M155 S1", "M114", "M27"), upToTheHandshakesOwnM27(printer),
                 "the whole handshake still gets out through a window of one, one block per"
                         + " acknowledgement - which is the point of this profile");
     }
@@ -420,5 +420,21 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
                 });
         assertFalse("OFFLINE".equals(describe(id).get("state")),
                 "the roster must not still think the machine is offline");
+    }
+
+    /**
+     * {@code commands()}, truncated right after the handshake's own trailing {@code M27} - unlike
+     * {@link #withoutSdStatusPoll(MockPrinter)}, which drops every {@code M27} and is wrong here:
+     * the two callers of this method assert a list that *ends in* {@code M27} as the thing being
+     * tested, not noise to discard (the same hazard {@code HandshakeIntegrationTest}'s class javadoc
+     * names for why it does not filter at all). {@code SdStatusPoll} (#147) only starts ticking once
+     * a machine is connected, so any extra {@code M27} it contributes can only land *after* the
+     * handshake's own - truncating there keeps that one and drops everything a background poll
+     * added behind it, which a blanket filter cannot do because both are the identical string.
+     */
+    private static List<String> upToTheHandshakesOwnM27(MockPrinter printer) {
+        var commands = printer.commands();
+        var firstM27 = commands.indexOf("M27");
+        return firstM27 < 0 ? commands : commands.subList(0, firstM27 + 1);
     }
 }

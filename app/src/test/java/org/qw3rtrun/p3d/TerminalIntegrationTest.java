@@ -158,6 +158,38 @@ class TerminalIntegrationTest extends FarmIntegrationTest {
                 "an outbound block is not a reply and has nothing to decode it as");
     }
 
+    // ------------------------------------------------ two tabs on the same console (#162)
+
+    /**
+     * The console's half of issue #162's mechanism - see
+     * {@code ConnectivityIntegrationTest.aSecondConcurrentSubscriberToTheSameStreamIsServedIndependentlyOfTheFirst}
+     * for the full account of what was actually wrong (a frontend connection count, not this). What
+     * this proves is that {@code traffic()}'s {@code replay().limit(256)} sink serves a second,
+     * concurrently-opened subscriber the same replay and the same live traffic as the first, with
+     * neither blocking the other - the server-side half of "two tabs on the same printer" that a
+     * browser-driving test cannot reach, per {@code doc/specs/INTEGRATION_TESTS_spec.md}.
+     */
+    @Test
+    void aSecondConcurrentSubscriberToTheConsoleIsServedIndependentlyOfTheFirst() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("second terminal tab", printer);
+        connectAndSettle(id, printer);
+        var firstTab = watchTerminal(id);
+
+        type(id, "M105").expectStatus().isOk();
+        awaitLine(firstTab, "SENT", "M105");
+
+        // Opened while the first tab's console stream is still live and unread - the replay sink
+        // must hand this new subscriber its own 256-line scrollback (which now includes the M105
+        // just sent) independently of whatever the first tab has already consumed.
+        var secondTab = watchTerminal(id);
+        awaitLine(secondTab, "SENT", "M105");
+
+        type(id, "M114").expectStatus().isOk();
+        awaitLine(firstTab, "SENT", "M114");
+        awaitLine(secondTab, "SENT", "M114");
+    }
+
     // ------------------------------------- the three ways the monitor stream loses a line
 
     /**

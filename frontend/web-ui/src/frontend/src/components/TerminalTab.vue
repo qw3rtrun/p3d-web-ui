@@ -15,6 +15,21 @@ import {wireTime} from '../format'
  * the monitor stream withholds as flow control, at a volume that has no business on a stream the
  * dashboard fans out.
  *
+ * **Mounted is not connected** (#162). The island still mounts with the page, unchanged; the
+ * `EventSource` now opens lazily, the first time the Terminal pane is actually shown, and stays open
+ * for the rest of the page's life. Opening it at mount meant a Monitor page held two permanently-open
+ * SSE connections - this one and `PrinterMonitor.vue`'s - so two browser tabs on the same printer held
+ * four, forever, since an SSE connection never frees its slot. This app serves plain HTTP/1.1 (no TLS,
+ * no h2c anywhere in it), where a browser's own per-origin connection cap is about six in Chrome, and
+ * four plus a second tab's page load exceeds it: whatever queues behind them queues for good, which is
+ * the hang. Deferring is always safe because `#overview` is `monitor.html`'s `show active` pane and
+ * `#terminal` is never the default.
+ *
+ * It is deliberately not closed again when the operator switches away. The server's terminal sink is a
+ * `replay().limit(256)`, so every resubscription replays up to 256 lines that `lines` already holds and
+ * the transcript would duplicate on each revisit; reconciling that buys one connection back while the
+ * pane is hidden, which #162 does not need.
+ *
  * Three decisions a later reader will otherwise take for defects and "fix":
  *
  * **Nothing is persisted and nothing is paged** (#135 point 3). The live session is the whole of it;
@@ -177,19 +192,25 @@ function recall(steps: number) {
     draft.value = history[walked]
 }
 
+let subscription: Subscription | null = null
+
 // Bootstrap fires this on the tab's anchor and it bubbles; the pane is `display: none` until then,
 // and a box with no height has nowhere to scroll, so a replayed scrollback would sit at the top.
+// This is also where the stream is opened, once - see the note on mounted versus connected above.
 function onTabShown(event: Event) {
     const shown = (event.target as HTMLElement | null)?.getAttribute('href')
-    if (shown === '#terminal' && pinned.value) {
+    if (shown !== '#terminal') {
+        return
+    }
+    if (subscription === null) {
+        subscription = watchTerminal(props.uuid, onMessage)
+    }
+    if (pinned.value) {
         void toTheEnd()
     }
 }
 
-let subscription: Subscription | null = null
-
 onMounted(() => {
-    subscription = watchTerminal(props.uuid, onMessage)
     document.addEventListener('shown.bs.tab', onTabShown)
 })
 

@@ -12,6 +12,9 @@ import type {Account, ConnectionStatus, Descriptor, EventMessage, GcodeFile} fro
  *   page of HTML it would try to parse as JSON.
  * - **One stream for the farm** (plan item D2): `watchFarm` below opens one `EventSource`, never one
  *   per printer - `/api-printer/{id}/stream` instantiates a reactor server-side as a side effect.
+ * - **One stream per printer page** (#166): a Monitor page is three islands - Overview, Storage,
+ *   Settings - all watching the same machine, so `watchPrinter` pools its `EventSource` per uuid
+ *   and reference-counts it, rather than each island opening its own.
  */
 
 // ---------------------------------------------------------------- CSRF
@@ -113,13 +116,33 @@ export const farm = {
 
 // ---------------------------------------------------------------- one machine
 
+// `PrinterMonitor.vue` and `SettingsTab.vue` both ask this on mount, and both mount at once for the
+// same reason `watchPrinter` used to open more than once per uuid (#166): every tab pane is in the
+// DOM from page load.
+// Unlike the stream this is a one-shot GET, not a connection to keep open, so there is nothing to
+// reference-count - instead, a request already in flight for a uuid is handed to the second caller
+// instead of a second request being made, and the entry clears itself the moment it settles so a
+// later, genuinely new request (a reconnect, a reload) is never served a stale answer.
+const connectionRequests = new Map<string, Promise<ConnectionStatus>>()
+
+function fetchConnection(uuid: string): Promise<ConnectionStatus> {
+    const pending = connectionRequests.get(uuid)
+    if (pending) {
+        return pending
+    }
+    const request = getJson<ConnectionStatus>(`/api-printer/${uuid}/connection`)
+        .finally(() => connectionRequests.delete(uuid))
+    connectionRequests.set(uuid, request)
+    return request
+}
+
 // The commands one printer accepts. Every one posts a small JSON body the server turns into
 // G-code - the browser never sends a Marlin line itself, and deliberately has no "send raw G-code"
 // escape hatch: a control needing something not listed here needs a backend change, not a workaround.
 export function printer(uuid: string) {
     const at = (path: string) => `/api-printer/${uuid}${path}`
     return {
-        connection: () => getJson<ConnectionStatus>(at('/connection')),
+        connection: () => fetchConnection(uuid),
 
         connect: () => send(at('/connect'), {connect: true}),
         disconnect: () => send(at('/connect'), {connect: false}),
@@ -370,9 +393,73 @@ export function watchFarm(onMessage: Listener): Subscription {
     return subscribe('/api-farm/stream', onMessage)
 }
 
-/** One machine, for a page that is looking at exactly that machine. */
+// ---------------------------------------------------------------- the printer stream pool
+
+// One machine, for a page that is looking at exactly that machine - except that a Monitor page is
+// three islands (Overview, Storage, Settings) all looking at the *same* machine, and Bootstrap
+// keeps every tab pane in the DOM from load, so all three mount - and all three used to call
+// `watchPrinter` - at once (#166). This pool shares one `EventSource` per uuid across every such
+// caller: the first subscribe opens it, each later one for the same uuid only adds a listener, and
+// `close()` removes only that caller's own listener. The connection itself closes when the last
+// subscriber for that uuid releases it, never before - so one island unmounting (or the Terminal
+// tab's own stream, which is a different endpoint entirely) never tears down the others' feed.
+interface PooledStream {
+    source: EventSource
+    listeners: Set<Listener>
+}
+
+const printerStreams = new Map<string, PooledStream>()
+
+function openPrinterStream(uuid: string): PooledStream {
+    const url = `/api-printer/${uuid}/stream`
+    const source = new EventSource(url, {withCredentials: true})
+    const listeners = new Set<Listener>()
+
+    source.addEventListener('message', (e: MessageEvent) => {
+        let message: EventMessage
+        try {
+            message = JSON.parse(e.data) as EventMessage
+        } catch (error) {
+            console.warn(`{${url}} unreadable message`, error)
+            return
+        }
+        // Every caller sharing this connection gets the message independently - one listener's own
+        // failure must not stop the others on the pool from receiving it.
+        for (const listener of listeners) {
+            try {
+                listener(message)
+            } catch (error) {
+                console.warn(`{${url}} listener failed`, error)
+            }
+        }
+    })
+    source.addEventListener('error', () => {
+        // EventSource reconnects by itself; a closed one means the server refused us, which after
+        // a session expiry is what a logged-out browser gets.
+        if (source.readyState === EventSource.CLOSED) {
+            console.warn(`{${url}} closed by the server`)
+        }
+    })
+
+    const pooled: PooledStream = {source, listeners}
+    printerStreams.set(uuid, pooled)
+    return pooled
+}
+
+/** One machine, for a page that is looking at exactly that machine - see the pool above this. */
 export function watchPrinter(uuid: string, onMessage: Listener): Subscription {
-    return subscribe(`/api-printer/${uuid}/stream`, onMessage)
+    const pooled = printerStreams.get(uuid) ?? openPrinterStream(uuid)
+    pooled.listeners.add(onMessage)
+
+    return {
+        close() {
+            pooled.listeners.delete(onMessage)
+            if (pooled.listeners.size === 0) {
+                pooled.source.close()
+                printerStreams.delete(uuid)
+            }
+        },
+    }
 }
 
 /**

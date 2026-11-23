@@ -141,30 +141,49 @@ exists to undo: `PrinterControl.updates(id)` instantiates a reactor as a side ef
 rows on a page would dial forty printers that nobody asked to connect. The farm stream opens
 nothing.
 
-**A persistent `EventSource` is a connection that never gives its slot back, and this app has no
-TLS - count them per origin, not per page.** Issue #162: one Monitor page tab opens two of them -
-`PrinterMonitor.vue`'s `/stream` and `TerminalTab.vue`'s `/terminal/stream` - and used to open the
-second unconditionally on mount. Two browser tabs on the *same* printer therefore held four
-permanently-open SSE connections to one origin at once, which can exceed a browser's own
-per-origin HTTP/1.1 connection cap (Chrome's is about six) and hang the second tab's own page load
-behind them - confirmed by live reproduction: `curl`, which pools nothing, served the same five
-concurrent connections (two tabs' worth of both streams, plus a page load) instantly, and a thread
-dump taken at that moment showed the printer's own `p3d-printer-<uuid>`/`p3d-listener-<uuid>`
-threads idle, not blocked - so the server was never the bottleneck. Confirmed separately: this app
-serves plain HTTP/1.1 cleartext (no `server.ssl`, no `server.http2.enabled` in
-`application.properties`), and a browser will not negotiate h2c without TLS, so enabling h2c
-server-side would not have helped even if it were configured.
+**The rule for the Monitor page is not "one stream per tab" either: it is one `/stream`
+subscription per printer page, shared across every island that watches it.** `monitor.html`
+mounts `PrinterMonitor.vue` (Overview), `StorageTab.vue` and `SettingsTab.vue` as three separate
+Vue islands, but Bootstrap keeps every tab pane in the DOM from load - CSS-hidden, not
+conditionally rendered - so all three `onMounted` hooks fire immediately regardless of which tab
+is showing, and until #166 each one called `watchPrinter(uuid, ...)` on its own, opening three
+identical `EventSource`s at the *same* `/api-printer/{id}/stream` from one page load. `watchPrinter`
+in `client.ts` now pools by uuid and reference-counts the listeners on it: the first caller opens
+the connection, every later caller for that uuid only adds a listener to it, and it closes only
+when the last of them unsubscribes. A component still calls `watchPrinter` and still owns closing
+what it opened in `onUnmounted` exactly as before - the sharing is invisible at the call site by
+design, so a fourth island can be added later without anyone having to remember the pool exists.
 
-**The fix, and why it stops where it does.** `TerminalTab.vue` now opens `/terminal/stream` lazily
-- the first time the Terminal pane is actually shown (`shown.bs.tab`), not on mount - and leaves it
-open for the rest of the page's life rather than closing it again on hide. That cuts the common
-case (Monitor viewed, Terminal never opened) to one persistent connection per tab and the worst
-case (both tabs' operators open Terminal too) to four, still under the cap, for one line of
-reasoning: closing and reopening would re-trigger the console's `replay().limit(256)` scrollback
-on every revisit, and `TerminalTab.vue`'s transcript is not cleared on resubscribe, so repeated
-close/open would duplicate lines rather than merely cost a connection. **Any new per-printer stream
-this page grows needs the same question asked before it ships**: does it need to be open before
-the user looks, or can it wait for the tab/panel that uses it to actually be shown.
+**A persistent `EventSource` is a connection that never gives its slot back, and this app has no
+TLS - count them per origin, not per page.** Issue #162: one Monitor page tab was already holding
+three identical connections to `/stream` (Overview, Storage, Settings, before #166 pooled them) and
+opened a fourth, unconditionally on mount, to `TerminalTab.vue`'s own `/terminal/stream`. Two
+browser tabs on the *same* printer therefore held eight permanently-open SSE connections to one
+origin at once - not four, which is what #162 counted at the time by looking at `PrinterMonitor.vue`
+alone and missing that Storage and Settings each already contributed their own copy of `/stream` -
+which can exceed a browser's own per-origin HTTP/1.1 connection cap (Chrome's is about six) and hang
+the second tab's own page load behind them - confirmed by live reproduction: `curl`, which pools
+nothing, served the same five concurrent connections (two tabs' worth of both streams, plus a page
+load) instantly, and a thread dump taken at that moment showed the printer's own
+`p3d-printer-<uuid>`/`p3d-listener-<uuid>` threads idle, not blocked - so the server was never the
+bottleneck. Confirmed separately: this app serves plain HTTP/1.1 cleartext (no `server.ssl`, no
+`server.http2.enabled` in `application.properties`), and a browser will not negotiate h2c without
+TLS, so enabling h2c server-side would not have helped even if it were configured.
+
+**The fix has two parts, and each closes a different gap.** `TerminalTab.vue` opens
+`/terminal/stream` lazily - the first time the Terminal pane is actually shown (`shown.bs.tab`), not
+on mount - and leaves it open for the rest of the page's life rather than closing it again on hide,
+for one line of reasoning: closing and reopening would re-trigger the console's
+`replay().limit(256)` scrollback on every revisit, and `TerminalTab.vue`'s transcript is not cleared
+on resubscribe, so repeated close/open would duplicate lines rather than merely cost a connection.
+That answers *when* to open a per-printer stream. `watchPrinter`'s pool (#166) answers a different
+question - *how many* copies of the same stream a page opens regardless of timing - and the two
+together cut the worst case (both tabs' operators viewing every tab) from eight connections to two:
+one shared `/stream` per tab plus one `/terminal/stream` per tab, each opened once no matter how
+many islands or panes ask for it. **Any new per-printer stream this page grows needs both questions
+asked before it ships**: does it need to be open before the user looks, or can it wait for the
+tab/panel that uses it to actually be shown - and if more than one island on the page will want it,
+does it go through a pool like `watchPrinter`'s rather than each island dialling its own.
 
 **The farm stream opens with a snapshot** - the current state of every machine - and then carries
 live events, so a page can draw itself from the stream alone instead of fetching a list and then

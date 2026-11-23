@@ -11,14 +11,14 @@ This skill governs **one package**: `gcode/src/main/kotlin/org/qw3rtrun/p3d/g/co
 `G.kt` (commands, blocks, comments) and `GWords.kt` (parameter words, `bareString`, `text`, `expr`).
 Its tests are `dsl/GTest.kt`, `dsl/GDslCorpusTest.kt` and `dsl/M117DecoderTest.kt`.
 
-**`GSender` is not in this package.** It is the Java-facing sink, it lives in
-`backend/terminal/src/main/java/org/qw3rtrun/p3d/terminal/GSender.java`, and its test is
-`GSenderTest.java` beside it. Emitting is transport's business; this layer builds values and returns
-them. Edits to the sink are that module's, under its standards, not this skill's.
+**`GSender` is not in this package.** It is the Java-facing sink: it lives in
+`backend/terminal/src/main/java/org/qw3rtrun/p3d/terminal/GSender.java`, its test is
+`GSenderTest.java` beside it, and emitting is transport's business — this layer only builds values
+and returns them. Edits to the sink are that module's, under its standards, not this skill's.
 
-Everything under `code/core/**` is the **portable core** and is governed by
-[`low-level-protocol-dev`](../low-level-protocol-dev/SKILL.md) instead. If your edit touches both,
-they are two commits under two standards, not one.
+Everything under `code/core/**` is the **portable core**, governed by
+[`low-level-protocol-dev`](../low-level-protocol-dev/SKILL.md) instead. An edit touching both is two
+commits under two standards, not one.
 
 ## The inversion — read this before applying any core habit
 
@@ -28,11 +28,11 @@ boundary, and the core's rules do not merely relax here, several of them *revers
 
 | `low-level-protocol-dev` forbids | `code/dsl` requires | Why the reversal is correct |
 |---|---|---|
-| **Errors are values; never throw on bad input** | `require(...)` → `IllegalArgumentException` | A tokenizer's input arrives off a serial link, where malformed is the normal case. A builder's input is *source code someone wrote*. `X("abc")` is a programmer error at the call site, and failing there beats discovering it when a printer answers `echo:Unknown command`. `GWords.kt` states this in its own KDoc: "this module throws only for those." |
-| `BigDecimal` | a `BigDecimal` overload on **every** letter | The core admits `BigDecimal` as its one portability liability (todo 02). Here it is not a liability at all — callers hold JVM decimals and the facade's job is to accept them. |
-| Extension and infix functions, "no extension DSLs" | `infix fun GCommand.comment`, `infix fun GBlockDraft.comment`, `GCommand.block()` | These *are* the facade. `G(1, X(10)) comment " move"` is the ergonomic win the layer exists to provide. |
-| JVM types | `java.math.BigDecimal`, `StringBuilder`, whatever reads best at the call site | The call site is a JVM host writing Kotlin or Java. Nothing here is ported, so nothing here has to transliterate. (The `java.util.function.Consumer` constructor that used to be cited here belongs to `GSender`, in `:backend:terminal`.) |
-| `map`/`filter`/`toList` and allocation | `params.toList()`, `parts + tailComment(text)` | The ban is about **per-byte hot paths**. A builder runs once per authored block; clarity wins. |
+| **Errors are values; never throw on bad input** | `require(...)` → `IllegalArgumentException` | A tokenizer's input is bytes off a serial link, where malformed is normal; a builder's input is *source code someone wrote*, so `X("abc")` is a programmer error — better caught at the call site than at a printer's `echo:Unknown command`. `GWords.kt`'s own KDoc says it: "this module throws only for those." |
+| `BigDecimal` | a `BigDecimal` overload on **every** letter | The core admits `BigDecimal` as its one portability liability (todo 02); here it is not a liability at all — callers hold JVM decimals and the facade's job is to accept them. |
+| Extension and infix functions, "no extension DSLs" | `infix fun GCommand.comment`, `infix fun GBlockDraft.comment`, `GCommand.block()` | These *are* the facade: `G(1, X(10)) comment " move"` is the ergonomic win the layer exists to provide. |
+| JVM types | `java.math.BigDecimal`, `StringBuilder`, whatever reads best at the call site | The call site is a JVM host writing Kotlin or Java; nothing here is ported, so nothing has to transliterate. (The `java.util.function.Consumer` constructor once cited here belongs to `GSender`, in `:backend:terminal`.) |
+| `map`/`filter`/`toList` and allocation | `params.toList()`, `parts + tailComment(text)` | The ban is about **per-byte hot paths**; a builder runs once per authored block, so clarity wins. |
 | "Write C, not idiomatic Kotlin" | idiomatic Kotlin — overloads, default arguments, `vararg` | Optimise for the **call site**, not for transliteration. |
 
 **What does not reverse.** Two core rules hold with full force, because they are about the bytes on
@@ -108,14 +108,13 @@ already knows, share it the same way; do not copy the condition.
   (spec 7.2). Refusing it made `M110` unwritable.
 
 That over-wide-guard mistake has now been made **twice** in this module — once in the line-number
-rule (todo 05) and once here — and both times it was found by something real failing, not by
-review. When you add a guard, write out the block it would refuse and check that
-block is genuinely invalid.
+rule (todo 05) and once here, and both times it was found by something real failing, not by review.
+When you add a guard, write out the block it would refuse and check that block is genuinely invalid.
 
 ### The two character gates: `bareString` for a value, `rawBlock` for a whole line
 
-Every wire-bound string this layer hands out passes one character gate, and there are exactly two
-because there are exactly two kinds of unchecked string:
+Every wire-bound string here passes one of exactly two character gates, one per kind of unchecked
+string:
 
 - **`bareString(value)`** (`GWords.kt`) — a spec 3.4a rest-of-line *argument* inside a command the
   DSL built.
@@ -128,13 +127,13 @@ position. **The table is deliberately duplicated, not shared**: `bareString`'s m
 pointing at `text("…")` (spec 3.4b) as the way out, which is no way out for a typed command line, and
 its exact wording is asserted in `BareStringTest`.
 
-`rawBlock` adds two rules `bareString` does not have, because it holds the whole line: a blank line is
+`rawBlock` adds two rules `bareString` lacks, since it holds the whole line: a blank line is
 refused, and the payload is capped at `GLineLimit.INTEROPERABLE_PAYLOAD` (76, spec 1.3) with the
 overrun reported **in bytes**. It is 76 and not `payloadBudget(n)` on purpose — the line number does
 not exist yet when a person types the line, the transport assigns one at write time, and an over-long
 line is the one error a resend cannot repair.
 
-What `rawBlock` deliberately does **not** gate, so it does not get "improved" into doing so:
+What `rawBlock` deliberately does **not** gate — and should not be "improved" to:
 
 - **the vocabulary.** It does not know which commands a firmware has; `echo:Unknown command: "M851"`
   from the machine is the better answer, and a terminal exists to get it.
@@ -174,12 +173,12 @@ For a letter spec 4.2 does not list, do **not** add a builder — the generic es
 
 ### Builders return values; the sink stays separate
 
-Nothing in `G.kt` emits. A command can be built, inspected and asserted on before anything is sent.
-The Java facade this replaces took its sink in the constructor and returned `Unit`, which is why
-*its own test* had to keep a mutable list to see what it had produced. Do not reintroduce that.
+Nothing in `G.kt` emits — a command can be built, inspected and asserted on before anything is
+sent. The Java facade this replaced took its sink in the constructor and returned `Unit`, which is
+why *its own test* had to keep a mutable list to see what it had produced; do not reintroduce that.
 
-`GSender` — in `:backend:terminal`, not here — is deliberately thin and **holds no line number and
-no window**: that is `GCodeReader`/`GSendWindow`'s job (todo 05), and duplicating it would give a
+`GSender` (see *Which layer am I in*) is deliberately thin and **holds no line number and no
+window**: that is `GCodeReader`/`GSendWindow`'s job (todo 05), and duplicating it would give a
 caller two counters that can disagree. The named shortcuts this layer's callers reach for
 (`m105`, `m115`, `m155`, `m140`, `tempReport`, `autoReportTemp`, `firmwareInfo`,
 `setBedTemperature`) live in `MarlinG` in `marlin/MarlinRQ.kt`; each is one line over a command
@@ -188,20 +187,17 @@ class, with no privileges it does not have.
 ### The dependency runs one way
 
 `dsl` imports `code.core.GEncoder`, `code.core.token.*`, `code.core.block.*` and
-`code.core.command.*` - the commands and words it builds live in the last of those. **Nothing in
-`code/core` imports `dsl`** — check that this still holds after any change, because it is what keeps
-the core portable on its own:
-
-```bash
-grep -rn 'code\.dsl' gcode/src/main/kotlin/org/qw3rtrun/p3d/g/code/core/   # must print nothing
-```
+`code.core.command.*` — the commands and words it builds live in the last of those. **Nothing in
+`code/core` imports `dsl`**; the review checklist's grep below is what verifies that still holds
+after any change, because it is what keeps the core portable on its own.
 
 ## Testing
 
 Follow the `tdd` skill for the loop. On top of it, for this layer:
 
-- **`GDslCorpusTest` is the acceptance test.** New expressive power should move a number in it, or
-  you have not demonstrated the power. A refactor must leave all four numbers untouched.
+- **`GDslCorpusTest` is the acceptance test.** New expressive power should move one of its four
+  numbers (*The rule, as a number*), or you have not demonstrated the power; a refactor leaves all
+  four untouched.
 - **Assert the rendered string, not the object graph.** `assertEquals("G1 X10.5 F1800", encode(...))`
   is the claim; asserting a `GRq`'s shape tests the model, which `core` already tests.
 - **Every builder ships a round-trip-through-the-parser case.** `GTest.kt`'s
@@ -219,24 +215,24 @@ Follow the `tdd` skill for the loop. On top of it, for this layer:
 
 ## Documentation duty
 
-**A family of builders is documented once, at the file level, not once per builder.** `GWords.kt`'s
-21 letters each come in five shapes, and that shape — the flag, the three number/decimal/value
-overloads, the lexeme rule — is one fact, said once in the file's top KDoc with one example per
-shape. A `fun X(value: Int)` whose body is `word('X', value)` needs no KDoc of its own: the file
-block already told the reader what it does. The same holds for `G`/`M`/`T` in `G.kt` — the shared
-shape (number vs. lexeme overload, spec 4.1) belongs in the class block, not repeated per letter.
+**A family of builders is documented once, at the file level, not once per builder.** The
+21-letters-by-five-shapes pattern (*Adding a parameter letter means five declarations*) is one fact:
+say it once in `GWords.kt`'s top KDoc with one example per shape. A `fun X(value: Int)` whose body
+is `word('X', value)` needs no KDoc of its own — the file block already told the reader what it does.
+The same holds for `G`/`M`/`T` in `G.kt`: the shared shape (number vs. lexeme overload, spec 4.1)
+belongs in the class block, not repeated per letter.
 
 **A builder earns its own line only for a measured quirk**, not for existing. `D`'s collision with
 the Marlin debug command, `bareString`'s four refused characters, `command`'s letter-collision
-rule — these are real, non-obvious facts that survive, compressed, either in the file block (a
-quirk shared by the whole family, like `D`) or on the one builder that has it (like `bareString`).
-A neighbour that behaves exactly as the pattern predicts gets nothing.
+rule — real, non-obvious facts — survive compressed, either in the file block if the quirk is
+shared by the whole family (like `D`) or on the one builder that has it (like `bareString`). A
+neighbour that behaves exactly as the pattern predicts gets nothing.
 
-**Rule 1's "entry points" are the handful of functions a caller actually reaches for** — `G`, `M`,
-`T`, `command`, `block`, the generic `word`/`flag`/`text`/`bareString`/`expr` — and those may keep a
+**The "entry points" are the handful of functions a caller actually reaches for** — `G`, `M`, `T`,
+`command`, `block`, the generic `word`/`flag`/`text`/`bareString`/`expr` — and those may keep a
 compressed description and a wire-text example each. The ~100 per-letter overloads behind them are
-not entry points in that sense; they are the same five shapes with the letter fixed, and the file
-block is where that is said.
+not entry points in that sense: they're the same five shapes with the letter fixed, which the file
+block already says.
 
 - [`GCODE_spec.md`](../../../doc/specs/GCODE_spec.md) is the syntax authority. Cite section numbers
   where a rule is non-obvious; the DSL cites spec 3.1, 3.2, 3.4, 3.5, 4.1, 4.2, 4.3, 5, 6, 7.1, 7.2

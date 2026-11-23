@@ -234,8 +234,9 @@ Four things a caller depends on:
 A job that gets one of these **cannot be resumed from its checkpoint**, which is why `JobFeeder`
 fails it rather than retrying. The checkpoint records what was *sent*; what was lost is the
 difference between what was sent and what was accepted, which is exactly what the checkpoint does
-not hold. Replaying from it would re-run blocks the machine executed and skip the ones it did not,
-and a relative move replayed under a new number is a move made twice.
+not hold. Replaying from it would re-run blocks the machine executed and skip the ones it did not -
+the same reason a resynchronised session renumbers rather than patches (see *Resynchronising a
+session that has drifted* below).
 
 ### The queue hands demand to one source at a time, and says when one finishes
 
@@ -740,26 +741,23 @@ So: **route on `GRs` inside, publish `GRs` outside.** The send window still matc
 is dropped at `ReplyFlux` with a `#traffic` debug line.
 
 **One answer, one value on the bus - including the answers that span several lines.** A stage after
-`.handle(this::decode)` - `ReplyFlux.accumulate`, reached through `concatMapIterable` - folds an
-`M119` endstop report, an `M503`/`M92` settings burst and an `M115` capability block into one
-`EndstopReport` / `SettingsReport` / `CapabilitiesReport` each, through `:gcode`'s
-`EndstopReportReader`, `SettingsReportReader` and `CapabilitiesReportReader` - one shared stage, not
-three, since the three readers' `offer` methods type-check against disjoint `GRs` subtypes and a
-decoded reply can only ever be one of them. Same problem `SdFileListReader` solves for `M20`,
-different cut: a listing has a terminator line and these three have none, so the scope for each is
-**membership of its own family** and a burst ends at the first reply that is not a member of
-whichever one is open - almost always the `ok`, which is emitted straight after the report and must
-never be swallowed, since downstream it is window credit. That is why the stage is
-`concatMapIterable` and not a second `handle`: a `SynchronousSink` permits one emission per input
-and the line that ends a burst has two to make, in order. What makes family scoping safe is
-measured, not assumed, and twice over: `MultilineInterleaveProbe`, 2026-11-19, MarlinSim on
-`localhost:8099`, with `M155 S1` ticking throughout, found the `M119`/`M503` report's lines and its
-`ok P15 B3` all at 22ms, the auto-report ticks at 0ms and 691ms, nothing inside either answer;
-`CapabilitiesInterleaveProbe`, 2026-11-20, found `M115`'s header, all 38 `Cap:` lines and its `ok` at
-one millisecond offset, with the tick 0ms before and 651ms after. The generic rule ("accumulate
-everything until `ok`") was rejected for this transport and stays rejected: a `busy:` notice or a
-`Done printing file` really does land between an unrelated command and *its* `ok`. A burst a dead
-socket interrupts is never flushed and is lost, the same strict reading `SdFileListReader` takes.
+`.handle(this::decode)` - `ReplyFlux.accumulate`, reached through `concatMapIterable` (see *An answer
+that is a block of lines arrives as one value* above for why that operator and not a second `handle`
+- the `SynchronousSink`/one-emission-per-input reasoning is the same here) - folds an `M119` endstop
+report, an `M503`/`M92` settings burst and an `M115` capability block into one `EndstopReport` /
+`SettingsReport` / `CapabilitiesReport` each, through `:gcode`'s `EndstopReportReader`,
+`SettingsReportReader` and `CapabilitiesReportReader` - **one shared stage, not three**, since the
+three readers' `offer` methods type-check against disjoint `GRs` subtypes and a decoded reply can
+only ever be one of them. Same problem `SdFileListReader` solves for `M20`, different cut: a listing
+has a terminator line and these three have none, so the scope for each is **membership of its own
+family**, ended by the first reply that is not a member of whichever one is open, and a burst a dead
+socket interrupts is lost the same way an interrupted `SdFileList` is. Family scoping is measured,
+not assumed, and twice over: `MultilineInterleaveProbe`, 2026-11-19, MarlinSim on `localhost:8099`,
+with `M155 S1` ticking throughout, found the `M119`/`M503` report's lines and its `ok P15 B3` all at
+22ms, the auto-report ticks at 0ms and 691ms, nothing inside either answer; and
+`CapabilitiesInterleaveProbe` as above. The generic rule ("accumulate everything until `ok`") was
+rejected for this transport and stays rejected: a `busy:` notice or a `Done printing file` really
+does land between an unrelated command and *its* `ok`.
 
 This module ran a second parser (`terminal.msg.Replay`) until it was deleted, and the cost is worth
 remembering, because every item was invisible until something was measured against a real printer:
@@ -1050,19 +1048,14 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   itself; a consumer that does not would fail. The fix is `api` rather than `implementation`, which
   needs the `java-library` plugin in `p3d.java-conventions`.
 - ~~**A resynchronised session drops the blocks it abandoned, and nothing above is told.**~~
-  **Fixed** - it is a `BlocksAbandoned` on `messageFlux()` now, and `JobFeeder` fails the job on it.
-  The policy did not change and should not: the blocks are still dropped, because the window holds
-  bytes rather than commands on purpose and a relative move replayed under a new number is a move
-  made twice. What changed is that the conclusion leaves the module. Kept here for the half that is
-  still open, below.
-- **`BlocksAbandoned.blocks` is a lower bound and there is no upper one.** It counts what the send
-  window was still holding; a block released early by a stray `ok` is already gone from the window
-  and is not in it, which is
-  `ConnectivityIntegrationTest.aStrayAcknowledgementResynchronisesAnUnnumberedSession` - it reaches
-  `resynchronise` with `getInFlight() == 0` and so announces nothing at all. The honest count of
-  what a firmware never *ran* is not knowable from here: an `ok` covers acceptance into the planner
-  and nothing comes back afterwards. A consumer must read the number as "at least this many" and
-  not as a tally.
+  **Fixed** - it is a `BlocksAbandoned` on `messageFlux()` now; see *An abandoned block is announced
+  too* and *Resynchronising a session that has drifted* above for why the blocks are still dropped
+  rather than replayed (the policy did not change, only the fact that the conclusion now leaves the
+  module). `JobFeeder` fails the job on it. Kept here for the half that is still open, below.
+- **`BlocksAbandoned.blocks` is a lower bound and there is no upper one** - the same case as *An
+  abandoned block is announced too* above
+  (`ConnectivityIntegrationTest.aStrayAcknowledgementResynchronisesAnUnnumberedSession`,
+  `getInFlight() == 0`). A consumer must read the number as "at least this many" and not as a tally.
 - ~~**A failing expectation in a send-window test hangs the JVM instead of failing.**~~ **Fixed**,
   and the warning it came with was exactly right. `cancel()` no longer answers with
   `subscriber.onComplete()`, so a mismatched expectation now reports in about three seconds instead
@@ -1101,13 +1094,13 @@ Live examples of what this skill rules out, so nobody copies them as precedent:
   the firmware took them is what `BlockAcknowledged` answers block by block.
 - ~~**`PublisherQueue` uses a `PriorityQueue` with partial synchronisation.**~~ **Fixed** - it is
   a `PriorityBlockingQueue` behind the same `wip` drain loop `CommandProcessor` uses, and the entry
-  is kept because of what the rewrite turned up. Four of the rules it broke were invisible:
-  equal-priority sources came out in heap order rather than arrival order (two interactive commands
-  are the normal case), a second subscriber silently replaced the first, `request(0)` was ignored
-  where rule 3.9 makes it an error, and a source that over-produced was forwarded straight at the
-  send window. Two others - signals after a cancel and after an error - were *latent*: the code
-  shape was wrong and the wrong path happened to read a zero and return. A test that pins a rule the
-  implementation gets right by accident is worth having before the accident stops happening.
+  is kept because of what the rewrite turned up. Four of the rules it broke were invisible: the
+  equal-priority-in-heap-order and the over-producing-source-forwarded cases are told above (*The
+  queue hands demand to one source at a time*); new here are **a second subscriber silently
+  replacing the first**, and **`request(0)` ignored** where rule 3.9 makes it an error. Two others -
+  signals after a cancel and after an error - were *latent*: the code shape was wrong and the wrong
+  path happened to read a zero and return. A test that pins a rule the implementation gets right by
+  accident is worth having before the accident stops happening.
 - **`CommandProcessor`'s `wip` drain guard has no test that fails without it.** It is the half of
   the demand-accounting fix that closes the compound race - two threads each reading the same room
   out of `canProcess()` and each claiming it - and there is no way to schedule two threads onto a

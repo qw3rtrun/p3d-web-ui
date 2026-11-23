@@ -192,8 +192,6 @@ Follow the `tdd` skill for the loop; these are the protocol-specific rules on to
   work, in dependency order, plus [doc/gcode-completed.md](../../../doc/gcode-completed.md) as the
   record. A finding gets: the symptom as observed output, the spec section it violates, the file and
   lines, and a checkbox. A fix flips the checkbox and records what covers it.
-- Cite the spec section in code comments where a rule is non-obvious (`// spec 3.1: at least one
-  digit somewhere in the number`). That comment is what a reviewer — or a port author — checks against.
 
 **Comment density.** The code should document itself; a comment block is not a substitute for a
 reader following the control flow.
@@ -205,8 +203,9 @@ reader following the control flow.
   `GEncoder`, `GTokenizer`, the `GRs`/`GRq` hierarchy) or when it is genuinely tricky on its own terms.
   Even there it stays short: a compressed description, one example, `@param`/`@return` that carry
   something the name does not. A private or internal helper gets no doc comment at all.
-- `// spec N.N: ...` is the sanctioned inline form — one line, at the one place the rule is applied,
-  never a paragraph. It is the only kind of comment that belongs inside a function body.
+- `// spec N.N: ...` (e.g. `// spec 3.1: at least one digit somewhere in the number`) is the sanctioned
+  inline form, and the only comment that belongs inside a function body — one line, at the one place
+  the rule is applied, never a paragraph. It is what a reviewer, or a port author, checks against.
 - A measured fact (a TODO number, a captured byte string, a firmware quirk, a "why not the obvious
   alternative") belongs in the class doc, compressed to a clause, not spread across every method that
   touches it twice.
@@ -230,9 +229,8 @@ the wrong direction here: it allocates, it hides the flow, and it is the thing a
 One screen of C is the size to aim for, and that is considerably larger than one screen of idiomatic
 Kotlin.
 
-Density is bought with comments, not paid for with them: cite the spec section beside every
-non-obvious rule (`// spec 3.1: at least one digit somewhere in the number`) so dense code stays
-reviewable against the spec.
+Density is bought with comments, not paid for with them — the inline `// spec N.N:` form from
+*Documentation duty* above is what keeps code this dense reviewable against the spec.
 
 ## Review checklist
 

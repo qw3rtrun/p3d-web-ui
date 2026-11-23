@@ -46,16 +46,14 @@ trusted until a deliberate `files -> jobs` import was shown to compile cleanly a
 
 **`api` stays a Gradle module of its own, for two reasons.** It cannot merge: `:backend:terminal`
 is written in `api`'s event vocabulary and `core` depends on `terminal`, so folding `api` into
-`core` makes `core -> terminal -> core`, which Gradle refuses. And it should not: its rule is that
-it names no framework at all, and having none on its compile path is an enforcement no test
-replaces as cheaply.
+`core` makes `core -> terminal -> core`, which Gradle refuses. And it should not: `api` must stay
+free of WebFlux, JPA, Reactor and Spring itself - it is the vocabulary both the web side and the
+persistence side are written in, a framework dragged in through it reaches both, and having none
+on its compile path is an enforcement no test replaces as cheaply.
 
 The five submodels and their rules are `doc/sub_boundaries.txt`; this table is how they are
 realised. **Rule 1 is that every submodel depends on `api` and on no other submodel**, and
 `allowedDependencies` on each module declaration is where that is enforced.
-
-`api` must stay free of WebFlux, JPA, Reactor and Spring itself. It is the vocabulary both the web
-side and the persistence side are written in, and a framework dragged in through it reaches both.
 
 **`api` depends on `:gcode`, and `:gcode` depends on nothing.** The dependency rule is
 `backend -> terminal -> gcode` (`doc/sub_boundaries.txt` rules 6-8), and the direction is the whole
@@ -97,18 +95,17 @@ remains documentation, and the failure message says to go and edit it.
 **`api` is the only place a type crosses submodels.** A `PrinterEntity` must not leave
 `printer-management`, and the aggregate must not leave `core`.
 
-**`core` is live data; `printer-management` is static data, and the awkward part is that only
-`core` can *learn* the static kind.** Asking a machine what it is means talking to it, which is
-`core`'s job alone; keeping the answer is the roster's. So the fact crosses twice - out as
-`MFirmwareReportedEvent`/`MCapabilityReportedEvent`, back inside the `MRegisteredEvent` the roster
-announces - and `core` seeds its aggregates from the replica rather than from nothing.
-
 **`core` is live data; `printer-management` is static data.** What a machine is called, where to
 dial it and what it can do belong to management. What it is doing right now - connected, hot, busy,
-what it last reported - belongs to core. Rule 2 says core talks to other submodels through events,
-and it does: `PrinterDirectory` is core's own replica of where to dial, fed by `MRegisteredEvent`
-and `MDeletedEvent`, so core needs no database to start a printer. `frontend` reaches core through
-`PrinterControl`, an interface in `api`, and names nothing in it.
+what it last reported - belongs to core. **The awkward part is that only `core` can *learn* the
+static kind**: asking a machine what it is means talking to it, which is `core`'s job alone, while
+keeping the answer is the roster's - so the fact crosses twice, out as
+`MFirmwareReportedEvent`/`MCapabilityReportedEvent`, back inside the `MRegisteredEvent` the roster
+announces, and `core` seeds its aggregates from the replica rather than from nothing. Rule 2 says
+core talks to other submodels through events, and it does: `PrinterDirectory` is core's own replica
+of where to dial, fed by `MRegisteredEvent` and `MDeletedEvent`, so core needs no database to start
+a printer. `frontend` reaches core through `PrinterControl`, an interface in `api`, and names
+nothing in it.
 
 ## IMPORTANT - nothing blocking runs on an event loop
 
@@ -1868,11 +1865,11 @@ what travels, and that is rule 7 of `doc/sub_boundaries.txt`.
   and before it committed, so `FeedOutcomes`' transaction read the row as `ASSIGNED` and logged
   `refused to move job e0417935… from ASSIGNED to COMPLETED` - every block on the wire, job
   `RUNNING` for ever, because a feed outcome is at-most-once and nothing retries. 4 of 10 runs of
-  `PrintJobIntegrationTest` under load, 0 of 10 idle. **`AFTER_COMMIT` costs no responsiveness**:
-  it runs synchronously, on the publishing thread, inside the `TransactionTemplate` the service
-  call is still in - so a start against a disconnected machine is still answered inside
-  `jobs.start(...)`. **`fallbackExecution = true` is not optional**: some callers publish with no
-  transaction, and without it those are dropped in silence.
+  `PrintJobIntegrationTest` under load, 0 of 10 idle (`fallbackExecution`'s job is the same one
+  named under *nothing blocking runs on an event loop* above). **`AFTER_COMMIT` costs no
+  responsiveness**: it runs synchronously, on the publishing thread, inside the
+  `TransactionTemplate` the service call is still in - so a start against a disconnected machine is
+  still answered inside `jobs.start(...)`.
   **The converse half is equally a rule: a listener that only *annotates* the row the transition is
   writing stays inline.** `JobFeeder.onJobStopped` does, because `stop(...)` publishes the one exact
   checkpoint a resume reads and `JobServiceImpl.onProgress` must share that persistence context
@@ -2112,19 +2109,16 @@ the source, not suspected.
   stop" as one asynchronous operation the listener starts and nobody waits on. The cost today is one
   machine per delete, where the shutdown bug was the whole farm per `Ctrl+C`.
 - **A client that is not reading its socket while the server is torn down may see the connection
-  reset rather than finished, and that is where #87 deliberately stopped.** `releaseAll()` now waits,
-  bounded, for each `PrinterReactor`'s `updates()` Flux to have delivered its terminal signal before
-  it returns - that witness is real and is what makes "the farm has let go" a statement rather than a
-  hope. It is still one hop short of the socket: a reactor-netty response completed from a thread
-  other than the connection's own event loop - which this machine's aggregate thread always is -
-  schedules its final write and flush onto that event loop rather than performing it inline, so the
-  last flush can lose a race with `WebServerGracefulShutdownLifecycle`'s teardown. Measured against
-  `GracefulShutdownIntegrationTest`: a subscriber that *paces its own reading* fails with
-  `PrematureCloseException: Connection prematurely closed DURING response` on 5 of 5 shutdowns, while
-  the same paced subscriber against a *deleted printer on a farm that is still running* completes
-  cleanly on 5 of 5 - which is the pair that locates the boundary, and the second of those is frozen
-  as a test. **A normally-consuming subscriber completes cleanly: measured 15 of 15 shutdowns**, and
-  that is the case the integration test asserts strictly.
+  reset rather than finished, and that is where #87 deliberately stopped.** The gap is the one
+  named at the end of *Letting go is not the same as having ended* above - one hop past
+  `awaitSubscribersGone`, where a reactor-netty response completed off its own event loop schedules
+  its final write/flush asynchronously and can lose the race with teardown. The pair that locates
+  the boundary: against `GracefulShutdownIntegrationTest`, a subscriber that *paces its own
+  reading* fails with `PrematureCloseException: Connection prematurely closed DURING response` on
+  5 of 5 shutdowns, while the identically-paced subscriber against a *deleted printer on a farm
+  that is still running* (no shutdown racing it) completes cleanly on 5 of 5 - the second of those
+  is frozen as a test. **A normally-consuming subscriber completes cleanly: measured 15 of 15
+  shutdowns**, and that is the case the integration test asserts strictly.
 
   **This is not being chased further, and the reason is the client, not the difficulty.** `EventSource`
   has no completion callback - see `subscribe` in `frontend/web-ui/src/frontend/src/api/client.ts` -
@@ -2473,10 +2467,9 @@ the source, not suspected.
   **JVM-wide cached one**, so a per-object scheduler was never allocated and nothing said so. The
   symptom was farm-wide and the code looked per-printer.
 - ~~**A concurrent `connect()` and `disconnect()` can still both decide to act.**~~ **Fixed** by
-  issue #80, by confinement rather than by atomics: both are private and reached only through
-  `handleConnectCmd` on the machine's own executor, so the check-then-act on `attempts` is
-  serialised and `attempts` stopped being `volatile`. Both commands are still *taken*; the one
-  taken second is the one that stands, which is the whole of what serialising buys and is what
+  issue #80, by confinement rather than by atomics - see *One aggregate, one thread* above for the
+  mechanism. Both commands are still *taken*; the one taken second is the one that stands, which
+  is the whole of what serialising buys and is what
   `PrinterReactorThreadingTest.aDisconnectThatRacesAConnectLeavesNoDialRunning` pins - with latches
   forcing the interleaving rather than a loop hoping for it. The entry is kept for the estimate it
   got wrong: it said closing this "means deciding what a concurrent connect and disconnect *mean*,

@@ -242,6 +242,70 @@ class ConnectivityIntegrationTest extends FarmIntegrationTest {
                 "dialling walks CONNECTING, ONLINE, IDLE, and a browser is told each step: " + walk);
     }
 
+    // ---------------------------------------------------- two tabs on the same printer (#162)
+
+    /**
+     * The mechanism behind issue #162 ("opening a second browser tab hangs"), proved at the one
+     * boundary this module may assert on - the HTTP/SSE surface - rather than by driving a browser,
+     * which {@code doc/specs/INTEGRATION_TESTS_spec.md} rules out.
+     *
+     * <p><strong>Live reproduction (not asserted here, recorded for the record) found the hang is not
+     * server-side.</strong> Against the assembled app and a real MarlinSim session, five concurrent
+     * raw HTTP connections - two browser tabs' worth of {@code /stream} and {@code /terminal/stream}
+     * plus a page load - were all served within milliseconds by {@code curl}, which has none of a
+     * browser's own per-origin connection pooling. A JVM thread dump taken at that moment showed this
+     * machine's {@code p3d-printer-<uuid>} and {@code p3d-listener-<uuid>} virtual threads both idle
+     * ({@code LinkedBlockingQueue.take}), not blocked on each other or on a second subscriber. The
+     * actual cause is architectural and lives in the browser: this app serves plain HTTP/1.1
+     * cleartext (no {@code server.ssl}, no {@code server.http2.enabled} anywhere in
+     * {@code application.properties}, and a browser will not negotiate h2c without TLS), and two
+     * Monitor-page tabs on one printer used to hold four permanently-open SSE connections to one
+     * origin - {@code PrinterMonitor.vue}'s stream and {@code TerminalTab.vue}'s, times two tabs -
+     * which can exceed a browser's own same-origin connection cap (Chrome's is about six) since an
+     * SSE connection never frees its slot. The fix is in {@code TerminalTab.vue}: it now opens its
+     * stream lazily, on first view of the Terminal pane, rather than on mount.
+     *
+     * <p>What <em>is</em> asserted here is the half of that story this module can prove: that
+     * {@code PrinterReactor.updates()}'s fan-out - each subscription its own
+     * {@code CatchUp.snapshotThenLive}, over a multicast sink - genuinely serves a second concurrent
+     * subscriber promptly and independently of the first, with neither waiting on the other. If a
+     * future change ever made a second subscriber queue behind the first (a lock taken across
+     * subscriptions, a snapshot shared rather than rebuilt per subscriber), this test times out rather
+     * than passing silently.
+     */
+    @Test
+    void aSecondConcurrentSubscriberToTheSameStreamIsServedIndependentlyOfTheFirst() {
+        var printer = machine(MockPrinter.marlin());
+        var id = register("second tab", printer);
+        var firstTab = watch(id);
+
+        connectAndWait(id);
+
+        await(() -> "IDLE on the first tab's stream (it carried " + firstTab.types() + ")",
+                () -> {
+                    var latest = firstTab.payloadOf("ConnectionStateChanged");
+                    return latest != null && "IDLE".equals(latest.get("to"));
+                });
+
+        // Opened while the first tab's stream is still live and nobody has closed it - the exact
+        // shape of "a second browser tab opens the same printer's monitor page" from the server's
+        // point of view, minus the browser's own connection pooling this test cannot reproduce.
+        var secondTab = watch(id);
+
+        await(() -> "the second tab's own stream to carry IDLE too (it carried "
+                        + secondTab.types() + ")",
+                () -> {
+                    var latest = secondTab.payloadOf("ConnectionStateChanged");
+                    return latest != null && "IDLE".equals(latest.get("to"));
+                });
+
+        assertTrue(firstTab.saw("ConnectionStateChanged"),
+                "the first tab must go on being served once a second subscriber attaches");
+        assertTrue(secondTab.saw("ConnectionStateChanged"),
+                "a second concurrent subscriber to the same printer's stream must be served promptly"
+                        + " and independently of the first");
+    }
+
     // --------------------------------------------------------------- a link that drops and returns
 
     /**

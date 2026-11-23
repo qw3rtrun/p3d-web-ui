@@ -9,6 +9,8 @@ import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.token.GTokenizer
 import org.qw3rtrun.p3d.g.code.core.token.GUnknown
 import org.qw3rtrun.p3d.g.code.core.token.GValue
+import org.qw3rtrun.p3d.g.marlin.command.EthernetGatewayIPAddress
+import org.qw3rtrun.p3d.g.marlin.command.EthernetIPAddressNetworkIF
 import org.qw3rtrun.p3d.g.marlin.command.EthernetSubnetMask
 import org.qw3rtrun.p3d.g.marlin.command.PinsDebugging
 import org.qw3rtrun.p3d.g.marlin.command.SelectAndStart
@@ -158,6 +160,15 @@ class MarlinGapsTest {
      * the quad a single `GUnknown`, and `GUnknown` is **not a `GValue`**, so no word can carry it
      * and `valueOf` cannot see it. Closing this means either widening the value model or giving the
      * generator an unquoted-string kind - a decision, not a transcription.
+     *
+     * [#158](https://github.com/qw3rtrun/p3d-web-ui/issues/158) spot-checked all three commands
+     * against their own doc example lines (`M552 S-1 P192.168.1.55`, `M553 P255.255.255.192`,
+     * `M554 P192.168.1.1` - the lines `marlin-doc-examples.txt` vendors) rather than `M553` alone:
+     * `M552`'s `P` and `M554`'s `P` are typed `string` the same way `M553`'s is, so they share the
+     * same gap and the same half-working round-trip, confirmed here rather than assumed from the
+     * shared type. Neither carries a value `MarlinWords.stringArg`/`beforeStringArg` would help
+     * with - the 23-command rest-of-line mechanism is not a third way to read a lettered parameter,
+     * and inventing one here would be the wrong fix for a problem one layer lower.
      */
     @Nested
     inner class DottedQuad {
@@ -174,25 +185,40 @@ class MarlinGapsTest {
 
         @Test
         fun `so the form Marlin reads decodes to nothing`() {
+            assertNull((decode("M552 S-1 P192.168.1.55") as EthernetIPAddressNetworkIF).ipAddress)
             assertNull((decode("M553 P255.255.255.192") as EthernetSubnetMask).subnetMask)
+            assertNull((decode("M554 P192.168.1.1") as EthernetGatewayIPAddress).gateway)
         }
 
         @Test
         fun `and the form this module writes is not the form Marlin reads`() {
-            // Upstream types `P` as a string, so the generator emits a quoted one.
+            // Upstream types `P` as a string, so the generator emits a quoted one, for all three.
+            assertEquals(
+                "M552 P\"192.168.1.55\" S-1",
+                GEncoder.encode(EthernetIPAddressNetworkIF(ipAddress = "192.168.1.55", s = -1).encode()),
+            )
             assertEquals(
                 "M553 P\"255.255.255.192\"",
                 GEncoder.encode(EthernetSubnetMask("255.255.255.192").encode()),
+            )
+            assertEquals(
+                "M554 P\"192.168.1.1\"",
+                GEncoder.encode(EthernetGatewayIPAddress("192.168.1.1").encode()),
             )
         }
 
         @Test
         fun `a quoted value does round-trip, which is the half that works`() {
-            // Stated so the gap is not mistaken for "M553 is broken": the class is fine, the wire
-            // form is the thing that does not match.
-            val written = GEncoder.encode(EthernetSubnetMask("255.255.255.192").encode())
+            // Stated so the gap is not mistaken for "these three are broken": the classes are fine,
+            // the wire form is the thing that does not match.
+            val writtenIp = GEncoder.encode(EthernetIPAddressNetworkIF(ipAddress = "192.168.1.55", s = -1).encode())
+            assertEquals(EthernetIPAddressNetworkIF(ipAddress = "192.168.1.55", s = -1), decode(writtenIp))
 
-            assertEquals(EthernetSubnetMask("255.255.255.192"), decode(written))
+            val writtenMask = GEncoder.encode(EthernetSubnetMask("255.255.255.192").encode())
+            assertEquals(EthernetSubnetMask("255.255.255.192"), decode(writtenMask))
+
+            val writtenGateway = GEncoder.encode(EthernetGatewayIPAddress("192.168.1.1").encode())
+            assertEquals(EthernetGatewayIPAddress("192.168.1.1"), decode(writtenGateway))
         }
     }
 }

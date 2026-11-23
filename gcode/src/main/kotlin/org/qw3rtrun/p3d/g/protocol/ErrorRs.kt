@@ -41,6 +41,21 @@ enum class ErrorPrefix(val lexeme: String) {
  * does; `Error:` and `fatal:` end in their own separator, and the spec's example has nothing after
  * it.
  *
+ * **Marlin's safety halts - thermal runaway, a heating failure, a MIN/MAXTEMP trigger, a watchdog
+ * reset, cold-extrusion prevention, heater redundancy mismatch - decode here too, and are not given
+ * named subtypes.** [Issue #159](https://github.com/qw3rtrun/p3d-web-ui/issues/159) looked at
+ * subtyping them the way [SdCardRs][org.qw3rtrun.p3d.g.marlin.event.SdCardRs] subtypes the card
+ * family, and found the two cases are not alike: `SdCardRs`'s members each carry a different
+ * structured payload a caller reads by field (a filename, a size, a resume position); every one of
+ * these halts is free-text prose per `Marlin/src/core/language.h`'s `STR_T_*`/`STR_WATCHDOG_*`
+ * catalogue (`"Thermal Runaway"`, `"Heating failed"`, `"MAXTEMP triggered"`, `"Watchdog timeout.
+ * Reset required."`, ...), built the same way the `Last Line:` counter is - a marker and a value
+ * inside one sentence - with at most a heater id added the way [lastLine] adds a line number, were a
+ * caller ever to need it. `PrinterState.on(ErrorRs)` faults the connection on the message text alone,
+ * uniformly, whichever of the three prefixes or which prose sent it; no caller branches on which
+ * safety halt occurred. A named subtype earns its keep when a caller needs to act differently on one
+ * of these and not the others - until then, one more type nothing consumes is not a free improvement.
+ *
  * ```
  * ErrorRs.decode("Error:checksum mismatch, Last Line: 66555")?.lastLine   // 66555
  * ErrorRs(ErrorPrefix.BANGS, "hw").encode()                               // "!! hw"

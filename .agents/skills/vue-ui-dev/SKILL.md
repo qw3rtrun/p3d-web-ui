@@ -88,8 +88,8 @@ So:
   "heat nozzle" control, because offering an action that will fail is a bad interface - but the
   reason it is safe is the filter chain, not the `v-if`.
 - **The current user reaches a template as `${currentUser}` and `${currentRole}`**, put there by
-  `PageModelAdvice`. There is no endpoint that tells the browser who it is, and adding one to drive
-  rendering would be building client-side auth state.
+  `PageModelAdvice`, not an endpoint the browser calls - the no-client-side-auth-state rule above,
+  applied to rendering.
 - **A 403 is a bug in the UI, not in the user.** It means the page offered something the role
   cannot do. A 401 is different and normal - the session expired.
 
@@ -207,11 +207,11 @@ page simply stopped updating. Nothing in the build noticed.
 **Add a case to that test whenever the UI starts depending on a new `type` string.** It is the only
 thing that will fail when somebody renames an event class.
 
-**A reply arrives under `:gcode`'s own class name, and one reading can have two of them.** The
-server stopped keeping a parallel event model, so the stream carries `BareTemperatureRs` (an
-`M155` auto-report) and `OkTemperatureRs` (the answer to an `M105`) for the same thing, plus
-`PositionRs`, `ErrorRs` and so on. Match a family with a helper - `isTemperature(type)` in
-`types.ts` - rather than writing one of the names, which is the exact shape of the bug above.
+**A reply arrives under `:gcode`'s own class name (no duplicate model, per above), and one reading
+can have two of them.** The stream carries `BareTemperatureRs` (an `M155` auto-report) and
+`OkTemperatureRs` (the answer to an `M105`) for the same thing, plus `PositionRs`, `ErrorRs` and so
+on. Match a family with a helper - `isTemperature(type)` in `types.ts` - rather than writing one of
+the names, which is the exact shape of the bug above.
 
 **The farm's own events are the facts no firmware has a word for, and this page deliberately no
 longer lists them.** Anything a machine said comes back as a `GRs`; what is left for `api.msg` to
@@ -338,9 +338,10 @@ The chain is: a request-body record in `frontend/command` whose `toMarlin()` bui
 command -> a `POST` endpoint on `PrinterController` -> an arm in `PrinterState.onCommand` that
 actually sends it -> the transport.
 
-`frontend/command` carries temperature, homing, moves, the fan, `M500` and a position request.
-**Anything beyond that needs the backend chain built first**, and `:gcode` almost certainly already
-has the command - what is missing is the endpoint and the aggregate's arm.
+`frontend/command` carries the same six commands listed under *The controls that exist* above -
+`storeSettings` travels as `M500`. **Anything beyond that needs the backend chain built first**,
+and `:gcode` almost certainly already has the command - what is missing is the endpoint and the
+aggregate's arm.
 
 Note that nothing in the chain is compiler-checked end to end: a payload that translates correctly
 but hits no arm in `PrinterState.onCommand` compiles and is dropped at runtime with one WARN line.
@@ -356,9 +357,8 @@ work.
 
 ## TypeScript and Vue rules
 
-- **Vue 3 `<script setup lang="ts">`** with the Composition API. The POC under
-  `static/js/component` uses the global build and `defineComponent` by hand; that is what is being
-  replaced, not a pattern to copy.
+- **Vue 3 `<script setup lang="ts">`** with the Composition API - the now-removed POC's global-build
+  `defineComponent` style (see *Known debt*) is not a pattern to copy.
 - **`vue-tsc` must pass.** It is part of `npm run build`, so a type error fails the Gradle build.
   That is the UI's equivalent of the backend's compiler check and it is the reason the islands are
   TypeScript rather than JavaScript.
@@ -452,16 +452,17 @@ value it can carry.
   background images under `/images/auth/` and `/images/dashboard/` that were never shipped - so
   those `url()`s 404 today exactly as they did when it was served from `/static`. Tree-shaking CSS
   needs a tool that can see the Thymeleaf templates, which Vite cannot.
-- **No user-management page.** A person can see and change their *own* account at `/profile`, but
-  creating an operator or resetting somebody else's password is still `/api-users` over `curl`.
+- **No user-management page beyond `/profile`'s own-password hole** (see *Your own account, and
+  everybody else's*) - creating an operator or resetting somebody else's password is still
+  `/api-users` over `curl`.
 - **Changing a password does not sign out that user's other sessions.** Sessions are rows now, so
   the fix is reachable - delete the user's other rows on a change - but it is not done, and until
   it is, a password change does not evict whoever prompted it.
-- **The machine panel goes stale while the page is open.** Firmware and capabilities are learned
-  when a machine first connects, and the panel is server-rendered, so connecting a machine while
-  looking at its page leaves the panel empty until a reload. The honest fix is to re-render on
-  `MachineJoinedFarm`-style news rather than to poll, and it is not worth it until somebody is
-  actually bothered.
+- **The machine panel goes stale while the page is open.** It is server-rendered (see *Which side a
+  thing belongs on*), and firmware/capabilities are only learned when a machine first connects, so
+  connecting a machine while looking at its page leaves the panel empty until a reload. The honest
+  fix is to re-render on `MachineJoinedFarm`-style news rather than to poll, and it is not worth it
+  until somebody is actually bothered.
 - **A fan speed is what this page last asked for, not a reading.** Marlin does not report fan speed
   the way it reports a temperature, so the control is labelled "requested" and is wrong the moment
   a print's own `M106` changes it.

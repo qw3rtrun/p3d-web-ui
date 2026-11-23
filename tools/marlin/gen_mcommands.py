@@ -313,6 +313,7 @@ def field_label(f):
 def gen_class(c, name, src):
     """One data class implementing GRq."""
     params = c["params"]
+    forced = c.get("forced", [])
     used = set()
     fields = []
     for p in params:
@@ -348,7 +349,9 @@ def gen_class(c, name, src):
 
     # The first KDoc line is the command's signature, the way the reference class writes it:
     #   M105 [R] [T<index>]
-    sig = [c["code"]]
+    # A forced letter is unbracketed and comes right after the code - it is what selects this
+    # variant on the wire, not an optional parameter of it.
+    sig = [c["code"]] + forced
     for f in fields:
         if f["kind"] == "bare":
             piece = "<%s>" % f["name"]
@@ -373,6 +376,12 @@ def gen_class(c, name, src):
             out.append(" *")
             for line in BARE_STRING_NOTES[c["code"]]:
                 out.append((" * %s" % line).rstrip())
+    if forced:
+        out.append(" *")
+        out.append(" * **%s is fixed.** Every instance writes it; it is the base command's own"
+                   % ", ".join("`%s`" % l for l in forced))
+        out.append(" * parameter and not a settable property of this variant, so it is absent")
+        out.append(" * from the constructor rather than defaulted like the rest.")
     if any(not f["optional"] for f in fields):
         req = ", ".join("`%s`" % f["letter"] for f in fields if not f["optional"])
         out.append(" *")
@@ -382,13 +391,14 @@ def gen_class(c, name, src):
     # The example of use: the first parameter set to its SAMPLES value, or the bare command when
     # there is none, written and read back. What the comment claims is computed the way `encode`
     # writes it, and the regeneration's test run is what holds the two together.
+    code_wire = c["code"] + "".join(" " + letter for letter in forced)
     if fields:
         first = fields[0]
         ctor = "%s(%s = %s)" % (name, first["prop"], SAMPLES[first["kind"]])
-        wire = "%s %s" % (c["code"], EXAMPLE_WIRE[first["kind"]](first["letter"]))
+        wire = "%s %s" % (code_wire, EXAMPLE_WIRE[first["kind"]](first["letter"]))
     else:
         ctor = "%s()" % name
-        wire = c["code"]
+        wire = code_wire
     out.append(" *")
     out.append(" * Build one to send the command, and read one back with the companion's `decode`, which")
     out.append(" * is this command's [GRqDecoder]:")
@@ -427,9 +437,11 @@ def gen_class(c, name, src):
         head_args = "%s(%s, " % (c["letter"], c["number"])
 
     out.append("")
-    if fields:
+    if fields or forced:
         out.append("    override fun encode(): GCommand {")
-        out.append("        val words = ArrayList<GWord>(%d)" % len(fields))
+        out.append("        val words = ArrayList<GWord>(%d)" % (len(fields) + len(forced)))
+        for letter in forced:
+            out.append("        words.add(flag('%s'))" % letter)
         for f in fields:
             enc = KINDS[f["kind"]][2](f["letter"], f["prop"])
             cond = f["prop"] if f["kind"] == "flag" else "%s != null" % f["prop"]
@@ -916,8 +928,9 @@ def main():
         "    fun `a bare command encodes to just its code`() {",
     ]
     for i, c in enumerate(commands):
+        bare_wire = c["code"] + "".join(" " + letter for letter in c.get("forced", []))
         t.append('        assertEquals("%s", GEncoder.encode(%s().encode()))'
-                 % (c["code"], names[i]))
+                 % (bare_wire, names[i]))
     t += [
         "    }",
         "",

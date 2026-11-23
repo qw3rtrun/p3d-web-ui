@@ -116,8 +116,19 @@ that the extracted letters match what Marlin's own authors write.
   `M105 T<index>` gives `index`; `M204`'s four parameters are all named `accel` upstream, so they
   fall back to `p`, `r`, `t`, `s`. One name comes from `CORRECTIONS` instead of from the page —
   `M32`'s `P`, which the page leaves unnamed; see *Corrections* for why that is allowed.
-- **Four irregular codes are skipped**: `M43 T`, `T?`, `Tc`, `Tx`. None is a letter plus a number,
-  so no builder in this project can express one. The extractor prints every skip.
+- **Three irregular codes are skipped**: `T?`, `Tc`, `Tx` (MMU2). None is a letter plus a number
+  and none names a real numbered command, so no builder in this project can express one. The
+  extractor prints every skip.
+- **A fourth, `M43 T`, folds into `M43` instead of staying unexpressed.** `M043-T.md`'s own
+  `codes:` is the same irregular string, but it documents `M43`'s own `T` flag's sub-mode, with
+  `S`/`W` reinterpreted (valued pin/delay, not `M43`'s bare flags) and `L`/`R` added — a real
+  parameter set with nowhere to attach, not an inexpressible shape. `extract_marlin_docs.py`'s
+  `IRREGULAR_CODE_FOLDS` turns its code into `M43` and marks `T` as `forced`: the generated
+  `TogglePins` class writes `T` unconditionally rather than exposing it as a settable property,
+  because `T` is `M43`'s parameter and not this sub-mode's. `M43` becomes one more ambiguous code
+  alongside `G29`/`G34`/`M665`/`M666`, and the fold's own tie-break keeps `PinsDebugging` first in
+  the registry, so a bare `MarlinCommands.decode` still answers the far more common plain `M43`.
+  [#156](https://github.com/qw3rtrun/p3d-web-ui/issues/156).
 
 ## Known gaps
 

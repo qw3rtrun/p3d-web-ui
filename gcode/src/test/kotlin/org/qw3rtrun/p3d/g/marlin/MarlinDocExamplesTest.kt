@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.g.marlin
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.qw3rtrun.p3d.g.code.core.GEncoder
 import org.qw3rtrun.p3d.g.code.core.block.GBlockReader
 import org.qw3rtrun.p3d.g.code.core.command.GCommand
 import org.qw3rtrun.p3d.g.code.core.command.GNamedWord
@@ -10,6 +11,8 @@ import org.qw3rtrun.p3d.g.code.core.command.GWordReader
 import org.qw3rtrun.p3d.g.code.core.token.GLetter
 import org.qw3rtrun.p3d.g.code.core.token.GSpace
 import org.qw3rtrun.p3d.g.code.core.token.GToken
+import org.qw3rtrun.p3d.g.marlin.command.PinsDebugging
+import org.qw3rtrun.p3d.g.marlin.command.TogglePins
 
 /**
  * The independent check on [MarlinCommands].
@@ -104,10 +107,6 @@ class MarlinDocExamplesTest {
         "M672" to setOf('S'),
         // `M919.md` lists X Y Z A B C U V W I O P S T but not `E`, which its own example uses.
         "M919" to setOf('E'),
-        // `M43 L` and `M43 R` are documented on `M043-T.md`, a page whose `codes:` entry is the
-        // string `M43 T` - not a letter-plus-number command, so the extractor cannot attach its
-        // parameters to M43. The pin-watch sub-mode is effectively undocumented here.
-        "M43" to setOf('L', 'R'),
     )
 
     /**
@@ -170,6 +169,29 @@ class MarlinDocExamplesTest {
             .filter { block -> MarlinCommands.decoders.none { it.code == codeOf(block) } }
 
         assertEquals(emptyList<String>(), unresolved)
+    }
+
+    /**
+     * `M43 T` has a home now - [TogglePins], added for
+     * [#156](https://github.com/qw3rtrun/p3d-web-ui/issues/156) - which is why `"M43" to setOf('L',
+     * 'R')` is gone from [undocumentedUpstream] above: the generic sweep already proves `L` and `R`
+     * are modelled by *some* class for `M43`, and this proves it is specifically [TogglePins], with
+     * every one of its five values read back from the exact line Marlin's own pages show.
+     *
+     * `MarlinCommands.decode` still cannot be the one to reach it: `M43` is now one of
+     * [MarlinCommands.ambiguousCodes], the same as `G29`, and the registry's first-wins tie-break
+     * keeps [PinsDebugging] - built that way deliberately, so the ordinary, far more common `M43`
+     * is what a bare lookup answers. A caller who means the toggle sub-mode decodes with
+     * [TogglePins] directly, the way this test does.
+     */
+    @Test
+    fun `M43 T's example decodes every one of its values`() {
+        val block = examples.single { it.startsWith("M43 T") }
+
+        val toggle = TogglePins.decodeParams(paramTokens(parse(block).single()))
+
+        assertEquals(TogglePins(pin = 3, l = 6, count = 5, time = 1000), toggle)
+        assertEquals(block, GEncoder.encode(toggle.encode()))
     }
 
     /**

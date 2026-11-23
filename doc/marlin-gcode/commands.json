@@ -2773,6 +2773,50 @@
       ]
     },
     {
+      "code": "M43",
+      "letter": "M",
+      "number": "43",
+      "title": "Toggle Pins",
+      "group": "debug",
+      "shared": false,
+      "bareString": false,
+      "params": [
+        {
+          "letter": "S",
+          "kind": "int",
+          "optional": true,
+          "name": "pin"
+        },
+        {
+          "letter": "L",
+          "kind": "int",
+          "optional": true,
+          "name": "pin"
+        },
+        {
+          "letter": "I",
+          "kind": "flag",
+          "optional": true,
+          "name": null
+        },
+        {
+          "letter": "R",
+          "kind": "int",
+          "optional": true,
+          "name": "count"
+        },
+        {
+          "letter": "W",
+          "kind": "int",
+          "optional": true,
+          "name": "time"
+        }
+      ],
+      "forced": [
+        "T"
+      ]
+    },
+    {
       "code": "M48",
       "letter": "M",
       "number": "48",
@@ -9733,10 +9777,6 @@
     {
       "file": "M028.md",
       "why": "parameter tag is not a single letter: 'B1'"
-    },
-    {
-      "file": "M043-T.md",
-      "why": "not a letter+number command: 'M43 T'"
     },
     {
       "file": "M118.md",

@@ -141,6 +141,31 @@ exists to undo: `PrinterControl.updates(id)` instantiates a reactor as a side ef
 rows on a page would dial forty printers that nobody asked to connect. The farm stream opens
 nothing.
 
+**A persistent `EventSource` is a connection that never gives its slot back, and this app has no
+TLS - count them per origin, not per page.** Issue #162: one Monitor page tab opens two of them -
+`PrinterMonitor.vue`'s `/stream` and `TerminalTab.vue`'s `/terminal/stream` - and used to open the
+second unconditionally on mount. Two browser tabs on the *same* printer therefore held four
+permanently-open SSE connections to one origin at once, which can exceed a browser's own
+per-origin HTTP/1.1 connection cap (Chrome's is about six) and hang the second tab's own page load
+behind them - confirmed by live reproduction: `curl`, which pools nothing, served the same five
+concurrent connections (two tabs' worth of both streams, plus a page load) instantly, and a thread
+dump taken at that moment showed the printer's own `p3d-printer-<uuid>`/`p3d-listener-<uuid>`
+threads idle, not blocked - so the server was never the bottleneck. Confirmed separately: this app
+serves plain HTTP/1.1 cleartext (no `server.ssl`, no `server.http2.enabled` in
+`application.properties`), and a browser will not negotiate h2c without TLS, so enabling h2c
+server-side would not have helped even if it were configured.
+
+**The fix, and why it stops where it does.** `TerminalTab.vue` now opens `/terminal/stream` lazily
+- the first time the Terminal pane is actually shown (`shown.bs.tab`), not on mount - and leaves it
+open for the rest of the page's life rather than closing it again on hide. That cuts the common
+case (Monitor viewed, Terminal never opened) to one persistent connection per tab and the worst
+case (both tabs' operators open Terminal too) to four, still under the cap, for one line of
+reasoning: closing and reopening would re-trigger the console's `replay().limit(256)` scrollback
+on every revisit, and `TerminalTab.vue`'s transcript is not cleared on resubscribe, so repeated
+close/open would duplicate lines rather than merely cost a connection. **Any new per-printer stream
+this page grows needs the same question asked before it ships**: does it need to be open before
+the user looks, or can it wait for the tab/panel that uses it to actually be shown.
+
 **The farm stream opens with a snapshot** - the current state of every machine - and then carries
 live events, so a page can draw itself from the stream alone instead of fetching a list and then
 subscribing, which has a gap where an event goes missing.

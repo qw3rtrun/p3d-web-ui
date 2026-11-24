@@ -41,9 +41,19 @@ enum class ErrorPrefix(val lexeme: String) {
  * does; `Error:` and `fatal:` end in their own separator, and the spec's example has nothing after
  * it.
  *
- * **Marlin's safety halts - thermal runaway, a heating failure, a MIN/MAXTEMP trigger, a watchdog
- * reset, cold-extrusion prevention, heater redundancy mismatch - decode here too, and are not given
- * named subtypes.** [Issue #159](https://github.com/qw3rtrun/p3d-web-ui/issues/159) looked at
+ * **Marlin's safety halts - thermal runaway, a heating failure, a MIN/MAXTEMP trigger, a thermal
+ * malfunction, heater redundancy mismatch, a watchdog timeout, `kill()` and `stop()` - decode here
+ * too, and are not given named subtypes.** `SafetyHaltRsTest` pins one case per message in the
+ * catalogue, from `bugfix-2.1.x` sources rather than from the wiki
+ * ([issue #171](https://github.com/qw3rtrun/p3d-web-ui/issues/171)), and two of its findings belong
+ * here. `STR_STOP_PRE` and `STR_KILL_PRE` *begin with* `!! ` and are written after a
+ * `SERIAL_ERROR_START()`, so a real `STOP`/`KILL` line is `Error:!! KILL caused by ...` - [prefix]
+ * is [ErrorPrefix.ERROR] and the `!!` stays inside [message], while the bare `!! ...` spelling the
+ * wiki lists decodes as [ErrorPrefix.BANGS] with a shorter message. And **cold-extrusion
+ * prevention is not an error on this wire**: ` cold extrusion prevented`, ` too long extrusion
+ * prevented` and `Hotend too cold` all go out through `SERIAL_ECHO_MSG`, so they arrive under
+ * `echo:` and are read by `ColdExtrusionPrevented` and `EchoMessage` - never by this class.
+ * [Issue #159](https://github.com/qw3rtrun/p3d-web-ui/issues/159) looked at
  * subtyping them the way [SdCardRs][org.qw3rtrun.p3d.g.marlin.event.SdCardRs] subtypes the card
  * family, and found the two cases are not alike: `SdCardRs`'s members each carry a different
  * structured payload a caller reads by field (a filename, a size, a resume position); every one of

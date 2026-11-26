@@ -12,8 +12,10 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -48,7 +50,17 @@ class SdStatusPollTest {
                 }
             };
 
-    private final SdStatusPoll poll = new SdStatusPoll(directory, reactors);
+    /** The machines the uploader says are writing to their card right now. */
+    private final Set<UUID> writing = new HashSet<>();
+
+    private final SdUploader uploads = new SdUploader(reactors, null) {
+        @Override
+        public boolean writing(UUID machineId) {
+            return writing.contains(machineId);
+        }
+    };
+
+    private final SdStatusPoll poll = new SdStatusPoll(directory, reactors, uploads);
 
     /**
      * A runtime with no socket behind it, so the two volatile reads the poll gates on can be set
@@ -175,6 +187,29 @@ class SdStatusPollTest {
         poll.askEveryCard();
 
         assertEquals(List.of(), runtime.asked);
+    }
+
+    /**
+     * A machine writing to its card is not asked, and not merely asked later: the upload holds the
+     * wire exclusively, so an {@code M27} queued now waits behind it and every pass adds one more.
+     * Measured 2026-11-26 against the simulator, an 8.5-minute binary transfer released 178 queued
+     * {@code M27}s in the three seconds after its {@code M21}. Asked again once the upload is over.
+     */
+    @Test
+    void aMachineWritingToItsCardIsNotPolledUntilTheUploadIsOver() {
+        var runtime = linkedWithACard();
+        var id = machine(runtime);
+        writing.add(id);
+
+        poll.askEveryCard();
+        poll.askEveryCard();
+
+        assertEquals(List.of(), runtime.asked, "polled while the upload held the wire");
+
+        writing.remove(id);
+        poll.askEveryCard();
+
+        assertEquals(1, runtime.asked.size(), "not polled again once the upload ended");
     }
 
     /**

@@ -53,6 +53,12 @@ import java.util.List;
  * test: {@code PrinterReactor.handle} is cold, so a pass that merely composes it asks nothing of
  * anybody - the dead-feature failure this layer has shipped three times.
  *
+ * <p><strong>A machine writing to its card is skipped, not queued.</strong> An upload holds the
+ * wire exclusively, so an {@code M27} queued meanwhile cannot go out - it waits, and every pass adds
+ * another. Measured 2026-11-26 against the simulator: an 8.5-minute binary transfer released 178
+ * queued {@code M27}s in the three seconds after its {@code M21}, a burst a printer behind ESP3D
+ * has no reason to survive. The status is asked again on the first pass after the upload ends.
+ *
  * <p>Known cost, named rather than fixed: a machine that <em>does</em> report
  * {@code Cap:AUTOREPORT_SD_STATUS:1} has {@code M27 S3} running and gets this poll as well, so it
  * answers twice as often as it needs to. No machine in this farm does, and suppressing it would mean
@@ -64,12 +70,14 @@ public class SdStatusPoll {
 
     private final PrinterDirectory directory;
     private final PrinterReactorManager reactors;
+    private final SdUploader uploads;
 
     @Scheduled(fixedDelayString = "${p3d.printer.sd-status-poll-interval:3000}")
     public void askEveryCard() {
         for (var entry : directory.all()) {
             var reactor = reactors.runtimeOf(entry.id());
-            if (reactor == null || !reactor.linked() || !reactor.profile().hasSdCard()) {
+            if (reactor == null || !reactor.linked() || !reactor.profile().hasSdCard()
+                    || uploads.writing(entry.id())) {
                 continue;
             }
             reactor.handle(List.of(new ReportSDPrintStatus()))

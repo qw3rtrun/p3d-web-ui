@@ -236,6 +236,53 @@ class MbpSendWindowTest {
             assertEquals(MbpAccepted, window.on(MbpOk(0)))
         }
 
+        /**
+         * The retransmit's own answer, arriving after the original's. Measured 2026-11-26 against
+         * MarlinSim behind a proxy that froze the link for 3s: packet 175 went out, was sent again
+         * at the 2s timeout, and when the link thawed the firmware answered `ok175` for each copy -
+         * the second after the host had already sent 176. Reading that second one as out of sync
+         * ended a 4.6 MB transfer at 698 KB, over a stall shorter than every timeout.
+         */
+        @Test
+        fun `the duplicate ok a retransmit earns is not ours and leaves the next packet waiting`() {
+            val window = MbpSendWindow()
+            window.on(MbpStreamSync(175, 96, "0.1.0"))
+            window.send(MbpProtocol.FILE_TRANSFER, MbpTransferType.WRITE, byteArrayOf(1))
+            window.retransmit()
+            assertEquals(MbpAccepted, window.on(MbpOk(175)))
+            window.send(MbpProtocol.FILE_TRANSFER, MbpTransferType.WRITE, byteArrayOf(2))
+
+            assertEquals(MbpNotOurs, window.on(MbpOk(175)))
+            assertTrue(window.inFlight, "176 is still waiting for its own ok")
+            assertEquals(MbpAccepted, window.on(MbpOk(176)))
+        }
+
+        @Test
+        fun `only the id just accepted counts as a duplicate, an older one is still out of sync`() {
+            val window = MbpSendWindow()
+            window.on(MbpStreamSync(10, 96, "0.1.0"))
+            window.send(MbpProtocol.FILE_TRANSFER, MbpTransferType.WRITE, byteArrayOf(1))
+            window.on(MbpOk(10))
+            window.send(MbpProtocol.FILE_TRANSFER, MbpTransferType.WRITE, byteArrayOf(2))
+            window.on(MbpOk(11))
+            window.send(MbpProtocol.FILE_TRANSFER, MbpTransferType.WRITE, byteArrayOf(3))
+
+            assertEquals(MbpOutOfSync(12, 10), window.on(MbpOk(10)))
+        }
+
+        @Test
+        fun `a handshake forgets the last accepted id, so an ok for it is out of sync again`() {
+            val window = MbpSendWindow()
+            window.on(MbpStreamSync(4, 96, "0.1.0"))
+            window.send(MbpProtocol.FILE_TRANSFER, MbpTransferType.WRITE, byteArrayOf(1))
+            window.on(MbpOk(4))
+            window.resync()
+            window.on(MbpStreamSync(5, 96, "0.1.0"))
+            window.send(MbpProtocol.FILE_TRANSFER, MbpTransferType.WRITE, byteArrayOf(2))
+
+            assertEquals(MbpOutOfSync(5, 4), window.on(MbpOk(4)))
+        }
+
         @Test
         fun `nothing in flight means nothing to retransmit`() {
             assertNull(MbpSendWindow().retransmit())

@@ -2,6 +2,7 @@ package org.qw3rtrun.p3d.core;
 
 import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.model.ConnectionStatus;
+import org.qw3rtrun.p3d.api.model.MachineConnectionState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.model.MachineSpec;
 import org.qw3rtrun.p3d.api.msg.ConnectCmd;
@@ -791,6 +792,27 @@ public class PrinterReactor {
      */
     public boolean linked() {
         return printer.getConnection().linked();
+    }
+
+    /**
+     * What this machine is in the middle of that a card write must not interrupt, or null when it
+     * is free for one - a card print (running or paused), firmware that said {@code busy:} and
+     * has not stopped saying so, or a session the firmware has not acknowledged a single block of
+     * ({@code ONLINE}), where an exclusive transfer could hold the wire without ever reaching it. Volatile reads from the caller's thread, like {@link #linked()}, so
+     * it can be asked in front of a blocking store lookup.
+     */
+    public String busyWith() {
+        if (printer.isSdPrinting()) {
+            return "it is printing from its card";
+        }
+        var state = printer.getConnection().state();
+        if (state == MachineConnectionState.BUSY) {
+            return "its firmware reports it is busy";
+        }
+        if (state == MachineConnectionState.ONLINE) {
+            return "it has not acknowledged anything this session yet";
+        }
+        return null;
     }
 
     public Flux<EventMessage> updates() {

@@ -485,11 +485,90 @@ class HostTerminalBinaryTest {
                     receive("PFT:busy");
                     receive("ok14");
                 })
+                .then(() -> {
+                    var sync = packets().getLast();
+                    assertEquals(MbpProtocol.CONTROL, sync.getProtocol(), "a give-up asks first: " + sync);
+                    assertEquals(MbpControlType.SYNC, sync.getType(), "a give-up asks first: " + sync);
+                    // not the 14 this window would have stamped: the CLOSE must carry the firmware's id.
+                    receive("ss15,96,0.1.0");
+                    receive("ok15");
+                })
                 .expectErrorMessage("the client stayed busy after an abort")
                 .verify(TIMEOUT);
 
         var last = packets().getLast();
-        assertPacket(last, 14, MbpProtocol.CONTROL, MbpControlType.CLOSE, new byte[0]);
+        assertPacket(last, 15, MbpProtocol.CONTROL, MbpControlType.CLOSE, new byte[0]);
+    }
+
+    /**
+     * The failure that wedged a printer, replayed as measured on 2026-11-26 through a proxy that
+     * froze the link for 3s: packet 175 sent, sent again at the 2s timeout, then {@code ok175} for
+     * each copy - the second after 176 was already out. That second {@code ok} is the duplicate the
+     * firmware owes a retransmit, and the transfer carries on to the end rather than giving up.
+     */
+    @Test
+    void aLateDuplicateOkAfterARetransmitDoesNotEndTheTransfer() {
+        terminal();
+        byte[] data = payload(250);
+
+        StepVerifier.withVirtualTime(() -> transfer("mbp.gco", data), () -> clock, Long.MAX_VALUE)
+                .then(() -> {
+                    receive("echo:Switching to Binary Protocol");
+                    receive("ss172,96,0.1.0");
+                    receive("ok172");
+                    receive("PFT:version:0.1.0:compression:none");
+                    receive("ok173");
+                    receive("PFT:success");
+                })
+                .thenAwait(REPLY_TIMEOUT)
+                .then(() -> {
+                    assertEquals(HostTerminal.hex(wrote.get(wrote.size() - 2)),
+                            HostTerminal.hex(lastWritten()), "the first WRITE, sent again");
+                    receive("ok174");
+                    receive("ok174");
+                    receive("ok175");
+                    receive("ok176");
+                    receive("ok177");
+                    receive("PFT:success");
+                    receive("ok178");
+                })
+                .expectNext(96L, 192L, 250L)
+                .expectComplete()
+                .verify(TIMEOUT);
+
+        assertPacket(packets().getLast(), 178, MbpProtocol.CONTROL, MbpControlType.CLOSE, new byte[0]);
+    }
+
+    /**
+     * An unanswered {@code CONTROL CLOSE} is sent again, like any other packet, before the host
+     * gives up on it. Leaving binary mode on one missed {@code ok} is what let ASCII lines into the
+     * firmware's packet reader: the firmware is still there until a CLOSE actually lands.
+     */
+    @Test
+    void anUnansweredCloseIsSentAgainBeforeTheModeIsLeft() {
+        terminal();
+
+        StepVerifier.withVirtualTime(() -> transfer("empty.gco", new byte[0]), () -> clock, Long.MAX_VALUE)
+                .then(() -> {
+                    receive("echo:Switching to Binary Protocol");
+                    receive("ss1,96,0.1.0");
+                    receive("ok1");
+                    receive("PFT:version:0.1.0:compression:none");
+                    receive("ok2");
+                    receive("PFT:success");
+                    receive("ok3");
+                    receive("PFT:success");
+                })
+                .then(() -> assertPacket(packets().getLast(), 4, MbpProtocol.CONTROL,
+                        MbpControlType.CLOSE, new byte[0]))
+                .thenAwait(REPLY_TIMEOUT)
+                .then(() -> {
+                    assertEquals(HostTerminal.hex(wrote.get(wrote.size() - 2)),
+                            HostTerminal.hex(lastWritten()), "the CLOSE, byte for byte, again");
+                    receive("ok4");
+                })
+                .expectComplete()
+                .verify(TIMEOUT);
     }
 
     /**
@@ -521,14 +600,17 @@ class HostTerminalBinaryTest {
                     // waiting on the id it answers.
                     receive("ok4");
                     receive("PFT:success");
+                    receive("ss5,96,0.1.0");
                     receive("ok5");
                 })
                 .expectComplete()
                 .verify(TIMEOUT);
 
         var sent = packets();
-        assertPacket(sent.get(sent.size() - 2), 4, MbpProtocol.FILE_TRANSFER, MbpTransferType.ABORT,
+        assertPacket(sent.get(sent.size() - 3), 4, MbpProtocol.FILE_TRANSFER, MbpTransferType.ABORT,
                 new byte[0]);
+        assertEquals(MbpControlType.SYNC, sent.get(sent.size() - 2).getType(),
+                "a stopped transfer asks where the stream is before closing it: " + sent);
         assertPacket(sent.getLast(), 5, MbpProtocol.CONTROL, MbpControlType.CLOSE, new byte[0]);
     }
 

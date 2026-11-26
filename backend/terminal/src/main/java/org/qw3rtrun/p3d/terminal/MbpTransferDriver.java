@@ -80,10 +80,11 @@ import static java.lang.String.format;
  * <p><strong>A terminal signal means the mode has been left, or the attempt to leave it ran out.</strong>
  * {@code onComplete} is the file closed on the card (or a cancellation, which also completes - see
  * {@link HostTerminal#binaryTransfer}); {@code onError} is a give-up that was not a cancellation.
- * Either way a {@code CONTROL CLOSE} packet goes out first and the mode flag is cleared when its
- * {@code ok<n>} arrives or when the one deadline for it expires - whichever happens, the caller is
- * told, because a transfer that has already decided its outcome must not be delayed by a lost
- * acknowledgement of the mode exit.
+ * Either way a {@code CONTROL CLOSE} packet goes out first - after a {@code SYNC}, on a give-up,
+ * so it carries the id the firmware expects (see {@link #leave}) - and the mode flag is cleared
+ * when its {@code ok<n>} arrives. An unanswered CLOSE is sent again like any packet, and only when
+ * those attempts run out is the caller told anyway, with a warning that the printer may still be
+ * in binary mode: a decided outcome is not held back for ever by a lost acknowledgement.
  *
  * <p>The capture this was built against is in {@code HostTerminalBinaryTest}'s javadoc: MarlinSim,
  * {@code Marlin bugfix-2.1.x} compiled Oct 29 2026, measured 2026-11-16 on {@code localhost:8099},
@@ -120,6 +121,10 @@ public final class MbpTransferDriver {
 
         /** {@link #transfer} is driving the file. */
         TRANSFERRING,
+
+        /** The transfer did not finish cleanly, so a {@code SYNC} is out to learn the firmware's
+         * sync id before the {@code CONTROL CLOSE}; the outcome is already decided. */
+        RESYNCING,
 
         /** A {@code CONTROL CLOSE} is out; the outcome is already decided. */
         LEAVING,
@@ -308,6 +313,13 @@ public final class MbpTransferDriver {
         switch (phase) {
             case SYNCING -> synchronise(mbp);
             case TRANSFERRING -> advance(mbp);
+            // Anything but the ss is a leftover of the abandoned stream; the ss names the id the
+            // CLOSE has to carry.
+            case RESYNCING -> {
+                if (window.on(mbp) instanceof MbpSynced) {
+                    close();
+                }
+            }
             // The CONTROL CLOSE is answered by a plain ok<n> - unlike SYNC, it is dispatched through
             // the normal path. Measured: ok7.
             case LEAVING -> {
@@ -350,8 +362,8 @@ public final class MbpTransferDriver {
             // The packet is in and a PFT: line is owed instead; a fresh deadline, because what is
             // being waited for has changed.
             case MbpIdle _ -> arm();
-            case MbpFinished _ -> leave(null);
-            case MbpGaveUp gaveUp -> leave(cancelled ? null : new Failed(gaveUp.getReason()));
+            case MbpFinished _ -> leave(null, false);
+            case MbpGaveUp gaveUp -> leave(cancelled ? null : new Failed(gaveUp.getReason()), true);
             default -> log.warn("MBP: {} is a step this driver does not know", next);
         }
     }
@@ -360,7 +372,7 @@ public final class MbpTransferDriver {
         if (packet == null) {
             // Unreachable while one packet is in flight at a time, which is the window's whole
             // shape; a dropped packet would be the failure this module exists to prevent.
-            leave(new Failed("a packet was already in flight"));
+            leave(new Failed("a packet was already in flight"), true);
             return;
         }
         sent = 1;
@@ -373,14 +385,23 @@ public final class MbpTransferDriver {
             // A reply resolved this packet while the timeout was already on its way here.
             return;
         }
-        if (phase == Phase.LEAVING) {
-            log.warn("MBP: the CONTROL CLOSE went unacknowledged; reporting the outcome anyway");
+        if (phase == Phase.LEAVING && !window.getSynchronized()) {
+            // No ss ever arrived, so the CLOSE's id is a guess and sending it again buys nothing.
+            log.warn("MBP: the CONTROL CLOSE to an unsynchronised stream went unacknowledged;"
+                    + " reporting the outcome anyway");
             finish();
             return;
         }
         // Every wait gets the same budget - attempts x timeout, the firmware's own ten seconds -
         // but says which of the three it was, because they need different answers from an operator.
         if (sent >= attempts) {
+            if (phase == Phase.RESYNCING || phase == Phase.LEAVING) {
+                log.warn("MBP: the {} went unanswered after {} attempt(s); reporting the outcome anyway,"
+                        + " and the printer may still be in binary mode",
+                        phase == Phase.RESYNCING ? "SYNC" : "CONTROL CLOSE", attempts);
+                finish();
+                return;
+            }
             long budget = timeout.toMillis() * attempts;
             leave(new Failed(switch (phase) {
                 case AWAITING_MODE -> format("the printer did not switch to binary mode within %dms",
@@ -389,7 +410,7 @@ public final class MbpTransferDriver {
                         ? format("no reply to the packet in flight after %d attempt(s) %dms apart",
                         attempts, timeout.toMillis())
                         : format("the packet was acknowledged but never answered, after %dms", budget);
-            }));
+            }), phase != Phase.SYNCING);
             return;
         }
         sent++;
@@ -407,7 +428,8 @@ public final class MbpTransferDriver {
     }
 
     private void stop() {
-        if (cancelled) {
+        if (cancelled || phase == Phase.RESYNCING || phase == Phase.LEAVING) {
+            // already on the way out; a second leave would overwrite the outcome it decided.
             return;
         }
         cancelled = true;
@@ -418,14 +440,27 @@ public final class MbpTransferDriver {
             step(transfer.abort("the operator cancelled the transfer"));
             return;
         }
-        leave(null);
+        leave(null, false);
     }
 
     /**
      * Leaves binary mode and then terminates. {@code failure} is kept rather than signalled now,
      * because a printer left in binary mode would swallow every ASCII command the host sends next.
+     *
+     * <p><strong>A give-up asks the firmware where the stream is first.</strong>
+     * A give-up means this window and the firmware disagree, or may: measured 2026-11-26 behind a 3s
+     * link stall, a CLOSE stamped with the abandoned packet's id reached a firmware that had already
+     * taken that packet, so it was re-acknowledged as a duplicate and never executed. The host read
+     * that {@code ok} as the mode closing and sent {@code M21} into the packet reader; the session
+     * went deaf, and ten seconds later the firmware deleted the partial file and released the card
+     * while still in binary mode. A {@code SYNC} is answered whatever id the firmware expects, and
+     * the CLOSE then carries the one its {@code ss} names.
+     *
+     * @param resync whether to ask first: false for a clean finish, whose ids were acknowledged in
+     *               order, and for a handshake that never got its {@code ss} - asking again is the
+     *               thing that just failed, five times
      */
-    private void leave(Throwable error) {
+    private void leave(Throwable error, boolean resync) {
         failure = error;
         if (phase == Phase.AWAITING_MODE) {
             // The firmware never said it switched, so it is still reading ASCII and a CONTROL CLOSE
@@ -433,17 +468,24 @@ public final class MbpTransferDriver {
             finish();
             return;
         }
-        phase = Phase.LEAVING;
-        // A packet is in flight for almost all of a give-up; abandoning it keeps the sync id, which
-        // the CLOSE then reuses, so the stream stays synchronised on the way out.
         window.abandon();
+        if (!resync) {
+            close();
+            return;
+        }
+        phase = Phase.RESYNCING;
+        transmit(window.resync());
+    }
+
+    /** The {@code CONTROL CLOSE}, stamped with the id the window now holds. */
+    private void close() {
+        phase = Phase.LEAVING;
         byte[] closing = window.close();
         if (closing == null) {
             finish();
             return;
         }
-        write.accept(closing);
-        arm();
+        transmit(closing);
     }
 
     /**

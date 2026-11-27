@@ -1720,6 +1720,15 @@ relative move is `G91`, the move, then `G90`. Two consequences:
   scheduled between them and be interpreted in relative mode. One `doOnNext` over the list is what
   makes the batch atomic with respect to everything else that printer is asked to do.
 
+**That atomicity is a reason to return a list in its own right, not only a way to carry a mode
+switch.** `MoveAxes` is the modal case; `MoveToBedCorner` is the *safety* case, and nothing in it is
+modal - its three moves are all absolute. They are one record because the order is the property that
+matters: hop, cross the bed at height, descend. Posted as three `/move` calls they would be three
+tasks, and another tab's jog scheduled between the hop and the travel leaves the nozzle crossing the
+bed at the check height, which is a bed crash rather than a wrong coordinate. **So when a sequence
+of commands is only correct in order, the sequence is one `toMarlin()` and one endpoint** - asking a
+browser to issue them in turn is asking it to hold a lock it does not have.
+
 ### A reply reaching a browser
 
 **The inbound path has the same shape as the outbound one.** To make a firmware reply reach a
@@ -1751,9 +1760,9 @@ re-stated.
 
 ### What the farm can tell a machine to do
 
-Homing, moving, the fan, `M500`, a position request, an endstop read and the four temperature
-commands - the payload records in `frontend/command`, one endpoint each. Three notes that are easy
-to get wrong and were verified on the wire:
+Homing, moving, one bed corner, the fan, `M500`, a position request, an endstop read and the four
+temperature commands - the payload records in `frontend/command`, one endpoint each. Three notes
+that are easy to get wrong and were verified on the wire:
 
 - **A fan index travels in `P`, not `I`.** Marlin's documentation lists both as "index" and the
   generated command class carries both fields; `P` is what mainline firmware reads as the fan
@@ -1763,6 +1772,19 @@ to get wrong and were verified on the wire:
 - **A null axis is not zero.** Null is an axis the move does not mention; zero in relative mode
   means "do not move this axis" and in absolute mode means "go to the origin". A binding that
   defaulted null to zero would turn a single-axis jog into a move of everything.
+
+**`POST /api-printer/{id}/bed-corner` is the contract for one stop of the manual levelling wizard**
+(#175): body `{x, y, travelZ, checkZ, xyFeedRate, zFeedRate}`, every field optional and every one a
+`BigDecimal`, answering `Mono<Void>`. `MoveToBedCorner.toMarlin()` returns **three** absolute `G1`s -
+hop to `travelZ`, cross to `(x, y)` at that height, descend to `checkZ` - measured on the wire as
+`N11 G1 Z5 F600*7`, `N12 G1 X30 Y30 F3000*127`, `N13 G1 Z0.2 F600*28` against MarlinSim. There is
+**no new aggregate arm and no new event**: every element is a `LinearMoveG1`, so step 3 of the table
+above is satisfied by the existing `handle(LinearMoveG1)`, and the only replies are `AdvancedOkRs`
+and a `PositionRs` the browser asks for. Marlin's own `LEVEL_BED_CORNERS` is an LCD-menu feature
+with no G-code entry point, which is why the host orchestrates the sequence at all. **The corner
+coordinates are not validated against `MachineSpec.bedVolume`** - the only gate is the template's
+`th:if`, so this is the sharpest instance of the known debt *a move is not validated against the
+machine*.
 
 **`POST /api-printer/{id}/endstops/read` is the contract for `M119`**, and it is the plainest read
 on this surface: no body, no capability gate, no refusal branch, `Mono<Void>`, `OPERATOR` like every

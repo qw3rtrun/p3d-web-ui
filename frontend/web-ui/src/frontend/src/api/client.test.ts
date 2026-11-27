@@ -13,6 +13,11 @@ import type {EventMessage} from './types'
  * uses to play a server message. `vi.resetModules()` between tests is what gives each one a fresh
  * pool: the real module keeps its maps at module scope for the lifetime of the page, which a test
  * run must not let leak from one `it` into the next.
+ *
+ * `moveToBedCorner` is here for a different reason - not a pool, but a wire shape agreed with the
+ * server before either half existed, including the rule that a whole number travels as `5` and not
+ * `5.0` (`Z5.0` is what the second one would reach Marlin as). Everything else on `printer(uuid)`
+ * is a plain `send` whose body is its argument; this one has a body worth pinning.
  */
 
 class MockEventSource {
@@ -128,6 +133,29 @@ describe('watchPrinter', () => {
         watchPrinter('printer-1', () => {
         })
         expect(MockEventSource.instances).toHaveLength(2)
+    })
+})
+
+describe('printer(uuid).moveToBedCorner()', () => {
+    it('posts the frozen body, with whole numbers whole', async () => {
+        const fetchMock = vi.fn(async () => new Response(null, {status: 204}))
+        vi.stubGlobal('fetch', fetchMock)
+        vi.stubGlobal('document', {cookie: 'XSRF-TOKEN=tok'})
+
+        const {printer} = await import('./client')
+
+        await printer('printer-1').moveToBedCorner({
+            x: 30, y: 30, travelZ: 5, checkZ: 0.2, xyFeedRate: 3000, zFeedRate: 600,
+        })
+
+        const [path, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+        expect(path).toBe('/api-printer/printer-1/bed-corner')
+        expect(init.method).toBe('POST')
+        // The server stringifies the bound BigDecimal straight into the G-code, so `5` must not go
+        // out as `5.0` - it would reach Marlin as `Z5.0`.
+        expect(init.body).toBe(
+            '{"x":30,"y":30,"travelZ":5,"checkZ":0.2,"xyFeedRate":3000,"zFeedRate":600}')
+        expect(new Headers(init.headers).get('X-XSRF-TOKEN')).toBe('tok')
     })
 })
 

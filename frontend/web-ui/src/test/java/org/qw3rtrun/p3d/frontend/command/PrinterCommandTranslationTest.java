@@ -121,6 +121,85 @@ class PrinterCommandTranslationTest {
                         new BigDecimal("1200"), false)));
     }
 
+    // ------------------------------------------------- levelling a bed corner
+
+    // The order is the whole safety property: hop to a travel height, cross the bed, then descend
+    // to the check height. Any other order drags the nozzle across the bed at 0.2mm.
+    @Test
+    void aBedCornerIsHopThenTravelThenDescend() {
+        assertEquals(
+                List.of("G1 Z5 F600", "G1 X30 Y30 F3000", "G1 Z0.2 F600"),
+                wire(corner(new BigDecimal("30"), new BigDecimal("30"),
+                        new BigDecimal("5"), new BigDecimal("0.2"))));
+    }
+
+    // No mode switch around any of the three: the machine's resting mode is absolute, which is why
+    // MoveAxes returns a bare G1 when it is not relative. A stray G91 here would make the second
+    // corner a relative offset from the first and send the toolhead off the bed.
+    @Test
+    void aBedCornerSendsNoModeSwitch() {
+        var lines = wire(corner(new BigDecimal("30"), new BigDecimal("30"),
+                new BigDecimal("5"), new BigDecimal("0.2")));
+        assertFalse(lines.contains("G91"), () -> "a relative corner would leave the bed: " + lines);
+        assertFalse(lines.contains("G90"), () -> "nothing switched mode, so nothing restores it: " + lines);
+    }
+
+    // The browser omits the hop when the nozzle is already clear - a second corner in a sequence,
+    // where only the XY and the descend are new. Omitted, not zero: G1 Z0 is a move to the bed.
+    @Test
+    void aCornerWithNoTravelHeightStartsWithTheTravel() {
+        assertEquals(
+                List.of("G1 X30 Y30 F3000", "G1 Z0.2 F600"),
+                wire(corner(new BigDecimal("30"), new BigDecimal("30"),
+                        null, new BigDecimal("0.2"))));
+    }
+
+    // And with no check height it ends with the travel, which is how an operator parks the nozzle
+    // over a corner without lowering it onto the screw.
+    @Test
+    void aCornerWithNoCheckHeightEndsWithTheTravel() {
+        assertEquals(
+                List.of("G1 Z5 F600", "G1 X30 Y30 F3000"),
+                wire(corner(new BigDecimal("30"), new BigDecimal("30"),
+                        new BigDecimal("5"), null)));
+    }
+
+    // Both axes absent means the corner is only a change of height - checking the same corner again
+    // after turning its screw.
+    @Test
+    void aCornerWithNoAxesIsTheTwoHeightMovesAlone() {
+        assertEquals(
+                List.of("G1 Z5 F600", "G1 Z0.2 F600"),
+                wire(corner(null, null, new BigDecimal("5"), new BigDecimal("0.2"))));
+    }
+
+    // One axis is still a travel, carrying only that axis - an unmentioned Y must not become Y0,
+    // which on an absolute move is the front edge of the bed rather than "leave it alone".
+    @Test
+    void aCornerWithOneAxisTravelsOnThatAxisAlone() {
+        var lines = wire(corner(null, new BigDecimal("30"),
+                new BigDecimal("5"), new BigDecimal("0.2")));
+        assertEquals(List.of("G1 Z5 F600", "G1 Y30 F3000", "G1 Z0.2 F600"), lines);
+        assertFalse(lines.get(1).contains("X"), () -> "an unmentioned axis must not travel: " + lines);
+    }
+
+    // A null feed rate leaves the machine's own, exactly as MoveAxes does - the F word is left out
+    // rather than sent as zero, which would be a move that never finishes.
+    @Test
+    void aCornerWithNoFeedRatesOmitsF() {
+        var lines = wire(new MoveToBedCorner(new BigDecimal("30"), new BigDecimal("30"),
+                new BigDecimal("5"), new BigDecimal("0.2"), null, null));
+        assertEquals(List.of("G1 Z5", "G1 X30 Y30", "G1 Z0.2"), lines);
+        assertFalse(String.join(" ", lines).contains("F"), () -> "no feed rate was asked for: " + lines);
+    }
+
+    /** A corner at the feed rates the wizard uses: 3000 mm/min across, 600 mm/min up and down. */
+    private static MoveToBedCorner corner(BigDecimal x, BigDecimal y,
+                                          BigDecimal travelZ, BigDecimal checkZ) {
+        return new MoveToBedCorner(x, y, travelZ, checkZ,
+                new BigDecimal("3000"), new BigDecimal("600"));
+    }
+
     // --------------------------------------------------------------- the fan
 
     @Test

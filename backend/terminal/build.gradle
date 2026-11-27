@@ -326,3 +326,22 @@ tasks.register('probeLongFileName', JavaExec) {
             (findProperty('probePort') ?: '8099').toString(),
     ]
 }
+
+/**
+ * Measure the bed-leveling and babystepping surface - which Cap: lines report leveling, whether any
+ * of them names which of Marlin's five G29 variants is built, what a G29 pass answers and how long
+ * its `ok` takes, and what M290 requires.
+ *
+ * Hand-run only, like the probes above: it homes the machine and runs a full leveling pass, so it is
+ * deliberately not wired into `check`.
+ */
+tasks.register('probeBedLeveling', JavaExec) {
+    group = 'verification'
+    description = 'Measure G29/M420/M290 - the leveling capability roster, a timed G29 pass and a babystep (default localhost:8099).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.qw3rtrun.p3d.terminal.BedLevelingProbe'
+    args = [
+            (findProperty('probeHost') ?: 'localhost').toString(),
+            (findProperty('probePort') ?: '8099').toString(),
+    ]
+}

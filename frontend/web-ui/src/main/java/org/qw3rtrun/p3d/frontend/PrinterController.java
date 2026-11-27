@@ -10,6 +10,7 @@ import org.qw3rtrun.p3d.frontend.command.HomeAxes;
 import org.qw3rtrun.p3d.frontend.command.ListFiles;
 import org.qw3rtrun.p3d.frontend.command.MountCard;
 import org.qw3rtrun.p3d.frontend.command.MoveAxes;
+import org.qw3rtrun.p3d.frontend.command.MoveToBedCorner;
 import org.qw3rtrun.p3d.frontend.command.PauseSdPrint;
 import org.qw3rtrun.p3d.frontend.command.PrintFile;
 import org.qw3rtrun.p3d.frontend.command.PrinterCommand;
@@ -187,6 +188,14 @@ public class PrinterController {
     // so nothing can land between them and be read in the wrong mode.
     @PostMapping("/move")
     public Mono<Void> move(@PathVariable UUID id, @RequestBody Mono<MoveAxes> command) {
+        return send(id, command);
+    }
+
+    // One corner of the manual levelling wizard (#175): hop, travel, descend, as one request so
+    // nothing can interleave a descend between the hop and the travel - see MoveToBedCorner.
+    @PostMapping("/bed-corner")
+    public Mono<Void> moveToBedCorner(@PathVariable UUID id,
+                                      @RequestBody Mono<MoveToBedCorner> command) {
         return send(id, command);
     }
 

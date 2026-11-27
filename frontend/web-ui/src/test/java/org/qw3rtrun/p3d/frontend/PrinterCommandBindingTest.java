@@ -229,6 +229,24 @@ class PrinterCommandBindingTest {
         assertEquals("G1 X0 Y0 F6000", sent());
     }
 
+    /**
+     * {@code POST /bed-corner} - the levelling wizard's one request per corner (#175). The browser
+     * computes the coordinates from the declared bed volume and posts all six fields.
+     *
+     * <p>Asserted as the three lines <em>in order</em>, because the order is the safety property:
+     * one request rather than three {@code /move} calls is what stops another operator's jog, or a
+     * second tab, interleaving a descend to check height between the hop and the XY travel - which
+     * would drag the nozzle across the bed at 0.2mm. {@code PrinterControl.send} takes the list as a
+     * unit.
+     */
+    @Test
+    void theBedCornerPayloadBindsAsHopTravelDescend() {
+        post("/bed-corner", "{\"x\":30,\"y\":30,\"travelZ\":5,\"checkZ\":0.2,"
+                + "\"xyFeedRate\":3000,\"zFeedRate\":600}");
+
+        assertEquals(List.of("G1 Z5 F600", "G1 X30 Y30 F3000", "G1 Z0.2 F600"), received.get());
+    }
+
     /** {@code POST /fan} on Marlin's 0..255 scale, not a percentage. */
     @Test
     void theFanPayloadBinds() {

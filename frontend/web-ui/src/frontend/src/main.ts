@@ -6,6 +6,7 @@ import './theme/style.css'
 
 import * as bootstrap from 'bootstrap'
 import {createApp, type Component} from 'vue'
+import CalibrationTab from './components/CalibrationTab.vue'
 import FarmDashboard from './components/FarmDashboard.vue'
 import PrinterMonitor from './components/PrinterMonitor.vue'
 import SettingsTab from './components/SettingsTab.vue'
@@ -31,6 +32,8 @@ import {startTheme} from './theme'
  */
 
 const ISLANDS: Record<string, Component> = {
+    // The container only - its calibrations are child components, not mount points of their own.
+    'calibration-tab': CalibrationTab,
     'farm-dashboard': FarmDashboard,
     'printer-monitor': PrinterMonitor,
     'settings-tab': SettingsTab,

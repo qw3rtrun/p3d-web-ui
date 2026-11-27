@@ -67,9 +67,23 @@
                             <a class="nav-link" id="contact-tab" data-bs-toggle="tab" href="#demographics" role="tab"
                                aria-selected="false">Firmware</a>
                         </li>
-                        <li class="nav-item">
-                            <a class="nav-link border-0" id="more-tab" data-bs-toggle="tab" href="#more" role="tab"
+                        <!-- Gated, but on a different *kind* of fact from Storage and Settings above:
+                             those ask what the firmware reported (MachineProfile), so they have a
+                             "has not reported yet" branch. This asks what a human typed about the
+                             machine (MachineSpec.bedVolume) - corner positions are computed from the
+                             bed size - so `printer.profile.isKnown()` is the wrong condition here and
+                             must not be reintroduced: a connected, fully-reporting machine still has
+                             no declared bed until somebody declares one on the Edit page. One message,
+                             therefore, not two. -->
+                        <li class="nav-item" th:with="bed=${printer.spec.bedVolume() != null}">
+                            <a th:if="${bed}" class="nav-link border-0" id="more-tab" data-bs-toggle="tab"
+                               href="#more" role="tab" aria-controls="more"
                                aria-selected="false">Calibration</a>
+                            <span th:unless="${bed}" data-bs-toggle="tooltip" data-bs-placement="bottom"
+                                  title="Nobody has declared this machine's bed size, so there are no corner positions to move to.">
+                                <a class="nav-link border-0 disabled" aria-disabled="true"
+                                   tabindex="-1">Calibration</a>
+                            </span>
                         </li>
                     </ul>
                     <!-- The connection badge and buttons are part of PrinterMonitor now. -->
@@ -109,6 +123,22 @@
                         <div data-p3d="terminal-tab"
                              th:attr="data-uuid=${printer.uuid},
                                       data-role=${currentRole}"></div>
+                    </div>
+
+                    <!-- An island, and the pane the dead `more-tab` link never had. Only the
+                         container mounts here; each calibration inside it is a child component that
+                         mounts when its accordion row is opened, so a closed one opens no stream.
+                         The bed size rides in as three data- attributes because the corners are
+                         computed from it and the server already knew it - gated on the same
+                         expression as the nav link above. -->
+                    <div class="tab-pane fade" id="more" role="tabpanel" aria-labelledby="more-tab"
+                         th:if="${printer.spec.bedVolume() != null}">
+                        <div data-p3d="calibration-tab"
+                             th:attr="data-uuid=${printer.uuid},
+                                      data-role=${currentRole},
+                                      data-bed-x=${printer.spec.bedVolume().x()},
+                                      data-bed-y=${printer.spec.bedVolume().y()},
+                                      data-bed-z=${printer.spec.bedVolume().z()}"></div>
                     </div>
 
                     <!-- Thymeleaf, not a Vue island: firmware, capabilities and the declared spec are

@@ -172,6 +172,18 @@ export function printer(uuid: string) {
             feedRate?: number; relative?: boolean
         }) => send(at('/move'), move),
 
+        // One levelling stop, as three moves the server sends as a unit: hop to travelZ, cross to
+        // (x, y) at that height, descend to checkZ -
+        //     G1 Z5 F600 / G1 X30 Y30 F3000 / G1 Z0.2 F600
+        // Deliberately not three `move` calls: between them another tab's jog can interleave and
+        // leave the nozzle crossing the bed at check height, which is a bed crash. The server
+        // stringifies the bound BigDecimal, so send whole numbers as whole numbers - JS `5` becomes
+        // `Z5` where `5.0` would become `Z5.0`.
+        moveToBedCorner: (corner: {
+            x?: number; y?: number; travelZ?: number; checkZ?: number
+            xyFeedRate?: number; zFeedRate?: number
+        }) => send(at('/bed-corner'), corner),
+
         // Marlin's 0..255 scale, not a percentage - convert at the control.
         setFanSpeed: (speed: number, index?: number) =>
             send(at('/fan'), {index: index ?? null, speed}),

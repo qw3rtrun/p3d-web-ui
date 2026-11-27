@@ -41,6 +41,17 @@ Three consequences worth stating, because each one is a thing people reflexively
 - **A component owns a region, not the page.** Mount points are explicit. If a whole page would be
   one Vue component, the page probably wanted to be a Thymeleaf template with one island in it.
 
+**An island is not the same thing as a component.** Only what a page names in `data-p3d` goes in
+`main.ts`'s `ISLANDS` map; everything else is an ordinary child. `CalibrationTab` is the worked
+example - it is one island holding an accordion of calibrations, and each calibration
+(`LevelBedCorners` today, more later) is a child mounted with **`v-if` on its row being open, never
+`v-show`**. That is load-bearing rather than cosmetic: Bootstrap keeps every tab pane in the DOM
+from page load, so a panel that subscribes to a stream and asks the machine where it is would do
+both while nobody is looking at it. The open row is a Vue `ref` and not Bootstrap's `Collapse`,
+because `Collapse` animates by measuring the element it opens and with `v-if` that element does not
+exist yet - the two fight over it. Bootstrap's accordion *classes* are still used, driven by
+`:class`.
+
 ## Where things live
 
 ```
@@ -298,8 +309,8 @@ where fresh data lands, and `<PreviousSession v-if="stale" what="…"/>`.
 ## The controls that exist
 
 `client.ts` carries the whole command surface, and it is the application's vocabulary rather than
-G-code: temperature (hotend, bed, on-demand read, auto-report), `home`, `move`, `setFanSpeed`,
-`storeSettings` and `requestPosition`.
+G-code: temperature (hotend, bed, on-demand read, auto-report), `home`, `move`, `moveToBedCorner`,
+`setFanSpeed`, `storeSettings` and `requestPosition`.
 
 Three things a control has to get right, because the browser is where the unit is chosen:
 
@@ -314,6 +325,21 @@ Three things a control has to get right, because the browser is where the unit i
 call. There is no auto-report for position the way `M155` auto-reports temperature, so ask on
 demand and after a move - never on a timer, which fills a busy printer's command queue with
 questions while it is trying to print.
+
+**`moveToBedCorner` is one call carrying three moves, and splitting it into three `move` calls is a
+bug** (#175). Hop to `travelZ`, cross to `(x, y)` at that height, descend to `checkZ`: the server
+applies the list as one task, and between three separate calls another tab's jog can be scheduled -
+leaving the nozzle crossing the bed at the check height. So when a sequence is only correct in
+order, it belongs in one endpoint; a browser cannot hold that lock. Send whole numbers whole - the
+server stringifies the bound `BigDecimal` straight into the G-code, so `5` becomes `Z5` where `5.0`
+becomes `Z5.0`.
+
+**There is no homed flag on this wire.** `M114` answers a plausible-looking position before any
+`G28` with nothing saying it is untrusted, so a panel that issues *absolute* moves has to track
+homing itself, from the `PositionRs` that `G28` sends just before its own `ok` (measured: three
+`echo:busy: processing` keepalives then the position, 6778 ms end to end). That attribution is a
+heuristic - the stream says nothing about which command a position answers - so the gate must also
+close when the link does, and the badge is the host's belief rather than a firmware fact.
 
 ## Your own account, and everybody else's
 

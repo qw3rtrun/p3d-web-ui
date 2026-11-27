@@ -55,6 +55,7 @@ import org.qw3rtrun.p3d.g.marlin.event.FirmwareInfoRs;
 import org.qw3rtrun.p3d.g.marlin.event.HeaterReading;
 import org.qw3rtrun.p3d.g.marlin.event.PositionRs;
 import org.qw3rtrun.p3d.g.marlin.event.SdCardRs;
+import org.qw3rtrun.p3d.g.marlin.event.SdPrinting;
 import org.qw3rtrun.p3d.g.marlin.event.SettingsRs;
 import org.qw3rtrun.p3d.g.marlin.event.TemperatureRs;
 import org.qw3rtrun.p3d.g.marlin.event.UnknownCommand;
@@ -223,6 +224,15 @@ public class PrinterState implements PrinterAggregate {
     /** Where the machine's connection is, as a value a caller can be handed. */
     public ConnectionStatus getConnection() {
         return connection.status();
+    }
+
+    /**
+     * Whether the last {@code M27} answer, or the print's own start, said a card print is running -
+     * {@code SD printing byte}, which Marlin answers for a paused print too. Read off
+     * {@link SdCardControl}'s one volatile value, so it is safe from the caller's thread.
+     */
+    public boolean isSdPrinting() {
+        return card.state().printing() instanceof SdPrinting;
     }
 
     /** The current connection state as the event that would have announced it. */

@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.qw3rtrun.p3d.api.control.ControlOutcome;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
+import org.qw3rtrun.p3d.api.jobs.Job;
 import org.qw3rtrun.p3d.api.msg.SdUploadProgressed;
 import org.qw3rtrun.p3d.api.msg.SdUploadState;
 import org.qw3rtrun.p3d.g.code.core.GEncoder;
@@ -27,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 /**
  * Writes a stored G-code file onto a machine's SD card - shaped like {@link JobFeeder}, except the
@@ -129,6 +131,9 @@ public class SdUploader {
     private final PrinterReactorManager reactors;
     private final GcodeFileService files;
 
+    /** What the job queue holds for a machine; see the constructor. */
+    private final Function<UUID, List<Job>> jobsOf;
+
     /** The ceiling on a binary transfer, {@code p3d.sd.binary-max-bytes}. */
     private final long binaryMaxBytes;
 
@@ -139,8 +144,19 @@ public class SdUploader {
     }
 
     public SdUploader(PrinterReactorManager reactors, GcodeFileService files, long binaryMaxBytes) {
+        this(reactors, files, machineId -> List.of(), binaryMaxBytes);
+    }
+
+    /**
+     * @param jobsOf what the job queue holds for a machine - {@code JobService::forMachine} in the
+     *               application. Blocking; asked only from the {@code boundedElastic} callable
+     *               {@link #start} already schedules.
+     */
+    public SdUploader(PrinterReactorManager reactors, GcodeFileService files,
+                      Function<UUID, List<Job>> jobsOf, long binaryMaxBytes) {
         this.reactors = reactors;
         this.files = files;
+        this.jobsOf = jobsOf;
         this.binaryMaxBytes = binaryMaxBytes;
     }
 
@@ -252,24 +268,48 @@ public class SdUploader {
                 return Mono.just(ControlOutcome.wrongState(machineId, "printer " + machineId
                         + " did not report Cap:BINARY_FILE_TRANSFER, so it cannot take a binary transfer"));
             }
+            var busy = reactor.busyWith();
+            if (busy != null) {
+                return Mono.just(ControlOutcome.wrongState(machineId, "printer " + machineId
+                        + " cannot take an upload while " + busy));
+            }
             var longFilenameWriteSupported = reactor.profile().hasLongFilenameWrite();
             // one blocking round trip, not two: the card name's own cache lookup (and the write
             // behind a miss) shares the thread the file lookup already needed, rather than hopping
             // onto boundedElastic twice for one request.
-            return Mono.fromCallable(() -> new Resolved(
-                            resolveCardName(fileId, extended, longFilenameWriteSupported),
-                            files.fetch(fileId)))
+            // the job check first, so a held machine neither caches a short name nor reads a file.
+            return Mono.fromCallable(() -> {
+                        var holding = heldBy(machineId);
+                        return holding != null
+                                ? new Resolved(holding, null, Optional.empty())
+                                : new Resolved(null,
+                                        resolveCardName(fileId, extended, longFilenameWriteSupported),
+                                        files.fetch(fileId));
+                    })
                     .subscribeOn(Schedulers.boundedElastic())
-                    .flatMap(resolved -> resolved.file()
-                            .map(file -> begin(reactor, machineId, fileId, file, resolved.cardName(),
-                                    binary, trim))
-                            .orElseGet(() -> Mono.just(ControlOutcome.absent(machineId,
-                                    "there is no file " + fileId + " to upload"))));
+                    .flatMap(resolved -> resolved.heldBy() != null
+                            ? Mono.just(ControlOutcome.wrongState(machineId, "printer " + machineId
+                                    + " cannot take an upload while " + resolved.heldBy()))
+                            : resolved.file()
+                                    .map(file -> begin(reactor, machineId, fileId, file,
+                                            resolved.cardName(), binary, trim))
+                                    .orElseGet(() -> Mono.just(ControlOutcome.absent(machineId,
+                                            "there is no file " + fileId + " to upload"))));
         });
     }
 
-    /** What {@link #start} needs out of its one blocking round trip. */
-    private record Resolved(String cardName, Optional<GcodeFile> file) {
+    /** What {@link #start} needs out of its one blocking round trip: why the machine is held, or the name and the file. */
+    private record Resolved(String heldBy, String cardName, Optional<GcodeFile> file) {
+    }
+
+    /** Why a job holds this machine, or null - an assigned, running or paused job is feeding it or about to. */
+    private String heldBy(UUID machineId) {
+        for (var job : jobsOf.apply(machineId)) {
+            if (job.state().holdsAMachine()) {
+                return "job " + job.id() + " (" + job.fileName() + ") holds it as " + job.state();
+            }
+        }
+        return null;
     }
 
     /**
@@ -508,6 +548,16 @@ public class SdUploader {
             log.info("{} was asked to stop writing {} after {} block(s)",
                     machineId, transfer.cardName, transfer.blocksSent.get());
         });
+    }
+
+    /**
+     * Whether this machine is writing to its card right now, in either mode - from the moment the
+     * upload is accepted until its terminal event. What a host-side poller asks before queueing
+     * anything: the upload holds the wire exclusively, so a poll queued meanwhile only waits and
+     * piles up behind it (see {@code SdStatusPoll}).
+     */
+    public boolean writing(UUID machineId) {
+        return running.containsKey(machineId);
     }
 
     /** On a timer rather than per block - the same rate decision {@code JobFeeder} makes, and for the same reason. */

@@ -68,6 +68,9 @@ class MbpSendWindow(blockSize: Int = 512) {
 
     private var pendingIsSync = false
 
+    /** The id of the packet last accepted, or -1 since a handshake - what a duplicate `ok` names. */
+    private var accepted = -1
+
     /** Whether a packet is sent and not yet acknowledged, so no other may be stamped. */
     val inFlight: Boolean
         get() = pending != null
@@ -182,6 +185,7 @@ class MbpSendWindow(blockSize: Int = 512) {
      *
      * ```
      * ok<n>, n == outstanding   MbpAccepted       the window is free, next advances
+     * ok<n>, n == last accepted MbpNotOurs        the duplicate a retransmit earns; see below
      * ok<n>, n != outstanding   MbpOutOfSync      a reply for a packet we are not waiting on
      * ok<n>, SYNC outstanding   MbpOutOfSync      SYNC is answered by ss alone; see below
      * rs<n>, n == outstanding   MbpResendNeeded   transmit those bytes again
@@ -195,6 +199,13 @@ class MbpSendWindow(blockSize: Int = 512) {
      * write one for that packet, so the only `ok` that can arrive while a `SYNC` is in flight is a
      * late one for an earlier packet that reused the id. Accepting it would advance [next] past the
      * firmware and desynchronise the stream from the very packet sent to synchronise it.
+     *
+     * A retransmit whose original was late rather than lost is answered twice: the firmware
+     * re-acknowledges a packet whose id is one behind what it expects (see [retransmit]), and that
+     * second `ok` can arrive after the next packet is already out. It names exactly the id this
+     * window accepted last, so it is set aside rather than read as divergence - measured 2026-11-26
+     * behind a 3s link stall, where reading it as out of sync ended the transfer. Only that one id:
+     * anything older is still [MbpOutOfSync], and a handshake forgets it.
      *
      * [MbpOutOfSync] replaces the `SynchronizationError` the Python reference throws and the
      * forever-retransmit `kmbp` does: it is a value, the caller resynchronises, and a stray reply
@@ -214,9 +225,11 @@ class MbpSendWindow(blockSize: Int = 512) {
         when (reply) {
             is MbpOk -> {
                 if (pending == null || pendingIsSync || reply.sync != pendingSync) {
+                    if (reply.sync == accepted && !pendingIsSync) return MbpNotOurs
                     return MbpOutOfSync(pendingSync, reply.sync)
                 }
                 clear()
+                accepted = reply.sync
                 next = (next + 1) and 0xff
                 return MbpAccepted
             }
@@ -236,6 +249,7 @@ class MbpSendWindow(blockSize: Int = 512) {
                 version = reply.version
                 if (reply.buffer >= 1 && reply.buffer < blockSize) blockSize = reply.buffer
                 synchronized = true
+                accepted = -1
                 clear()
                 return MbpSynced(reply.sync, reply.buffer, reply.version)
             }
@@ -243,6 +257,7 @@ class MbpSendWindow(blockSize: Int = 512) {
             is MbpFatalError -> {
                 errors++
                 synchronized = false
+                accepted = -1
                 clear()
                 return MbpFatal(reply.sync)
             }

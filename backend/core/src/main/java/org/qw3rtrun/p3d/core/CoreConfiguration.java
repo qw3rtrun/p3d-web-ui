@@ -74,10 +74,10 @@ public class CoreConfiguration {
      * placeholder so the two cannot drift.
      */
     @Bean
-    public SdUploader sdUploader(PrinterReactorManager reactors, GcodeFileService files,
+    public SdUploader sdUploader(PrinterReactorManager reactors, GcodeFileService files, JobService jobs,
                                  @Value("${p3d.sd.binary-max-bytes:"
                                          + SdUploader.DEFAULT_BINARY_MAX_BYTES + "}") long binaryMaxBytes) {
-        return new SdUploader(reactors, files, binaryMaxBytes);
+        return new SdUploader(reactors, files, jobs::forMachine, binaryMaxBytes);
     }
 
     /**
@@ -99,8 +99,9 @@ public class CoreConfiguration {
      * the measurement and for why the interval is three seconds.
      */
     @Bean
-    public SdStatusPoll sdStatusPoll(PrinterDirectory directory, PrinterReactorManager reactors) {
-        return new SdStatusPoll(directory, reactors);
+    public SdStatusPoll sdStatusPoll(PrinterDirectory directory, PrinterReactorManager reactors,
+                                     SdUploader uploads) {
+        return new SdStatusPoll(directory, reactors, uploads);
     }
 
     /**

@@ -7,9 +7,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.qw3rtrun.p3d.api.control.ControlOutcome;
 import org.qw3rtrun.p3d.api.files.GcodeFile;
 import org.qw3rtrun.p3d.api.files.GcodeFileService;
+import org.qw3rtrun.p3d.api.jobs.Job;
+import org.qw3rtrun.p3d.api.jobs.JobState;
 import org.qw3rtrun.p3d.api.model.MachineProfile;
 import org.qw3rtrun.p3d.api.msg.SdUploadProgressed;
 import org.qw3rtrun.p3d.api.msg.SdUploadState;
+import org.qw3rtrun.p3d.g.marlin.event.SdDonePrinting;
+import org.qw3rtrun.p3d.g.marlin.event.SdPrinting;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -399,8 +403,12 @@ class SdUploaderTest {
         private volatile byte[] binaryData;
 
         StubReactor(UUID id, Map<String, Boolean> capabilities) {
-            super(null, new PrinterState(id,
-                    new MachineProfile(Map.of(), capabilities, LocalDateTime.now())));
+            this(new PrinterState(id, new MachineProfile(Map.of(), capabilities, LocalDateTime.now())));
+        }
+
+        /** Over an aggregate the test has already driven into the state it needs. */
+        StubReactor(PrinterState printer) {
+            super(null, printer);
         }
 
         @Override
@@ -607,6 +615,140 @@ class SdUploaderTest {
 
         // the machine was not left busy: a legitimate ASCII upload still goes.
         var file = OneFile.of("benchy.gco", "G28\nG1 X1\n");
+        StepVerifier.create(uploaderFor(id, reactor, file, DEFAULT_MAX)
+                        .start(reactor, id, file.id(), "benchy.gco", false, false))
+                .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
+                .verifyComplete();
+    }
+
+    /**
+     * A card print in progress refuses an upload in either mode, before anything is claimed. An
+     * ASCII {@code M28} would open a second file on a card the firmware is reading from, and a
+     * binary one would switch a printing machine's serial port into packet mode mid-print.
+     * {@code SD printing byte} is what {@code M27} answers while a print is running or paused, so
+     * the poll keeps this fresh whoever started the print.
+     */
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void aMachinePrintingFromItsCardIsRefusedAnUpload(boolean binary) {
+        var id = UUID.randomUUID();
+        var printer = new PrinterState(id, new MachineProfile(Map.of(), CAPABLE, LocalDateTime.now()));
+        printer.on(new SdPrinting(1234, 56789));
+        var reactor = new StubReactor(printer);
+
+        StepVerifier.create(uploaderFor(id, reactor, storeThatMustNotBeAsked(), DEFAULT_MAX)
+                        .start(reactor, id, UUID.randomUUID(), "benchy.gco", binary, false))
+                .assertNext(outcome -> {
+                    var refused = refusalOf(outcome);
+                    assertEquals(ControlOutcome.Refusal.WRONG_STATE, refused.refusal());
+                    assertTrue(refused.reason().contains("printing"),
+                            "the refusal has to say what the machine is busy with: " + refused.reason());
+                })
+                .verifyComplete();
+
+        assertEquals(List.of(), reactor.written, "nothing may reach the wire");
+        assertEquals(List.of(), reactor.announced, "a refusal is not a transfer and announces none");
+    }
+
+    /**
+     * Firmware still answering {@code echo:busy: processing} is working on something - a homing, a
+     * heat-up, a long move - and an {@code M28} queued behind it would open the file mid-operation.
+     * Refused the same way as a print, and again before the store is asked anything.
+     */
+    @Test
+    void aMachineWhoseFirmwareIsBusyIsRefusedAnUpload() {
+        var id = UUID.randomUUID();
+        var lifecycle = new ConnectionLifecycle();
+        lifecycle.connectRequested();
+        lifecycle.linkEstablished();
+        lifecycle.busyReported("processing");
+        var reactor = new StubReactor(new PrinterState(id,
+                new MachineProfile(Map.of(), CAPABLE, LocalDateTime.now()), null, lifecycle));
+
+        StepVerifier.create(uploaderFor(id, reactor, storeThatMustNotBeAsked(), DEFAULT_MAX)
+                        .start(reactor, id, UUID.randomUUID(), "benchy.gco", true, false))
+                .assertNext(outcome -> assertTrue(refusalOf(outcome).reason().contains("busy"),
+                        "the refusal has to say the firmware is busy: " + outcome))
+                .verifyComplete();
+
+        assertEquals(List.of(), reactor.written, "nothing may reach the wire");
+    }
+
+    /**
+     * A machine a job holds - assigned to it, feeding it, or paused mid-feed - is refused. The
+     * firmware may look idle between two blocks of a host-fed print, so neither the connection state
+     * nor the card says so; the queue is the only thing that knows. A job that has finished holds
+     * nothing.
+     */
+    @ParameterizedTest
+    @CsvSource({"ASSIGNED, true", "RUNNING, true", "PAUSED, true", "COMPLETED, false", "CANCELLED, false"})
+    void aMachineHeldByAJobIsRefusedAnUpload(JobState state, boolean refused) {
+        var id = UUID.randomUUID();
+        var reactor = new StubReactor(id, CAPABLE);
+        var file = OneFile.of("benchy.gco", "G28\n");
+        var job = new Job(UUID.randomUUID(), UUID.randomUUID(), "part.gcode", id, state, null,
+                LocalDateTime.now(), null, null, null, null);
+        var manager = new PrinterReactorManager(new PrinterDirectory(), PrinterState::new, event -> {
+        }) {
+            @Override
+            public PrinterReactor runtimeOf(UUID asked) {
+                return asked.equals(id) ? reactor : null;
+            }
+        };
+        var uploader = new SdUploader(manager, file,
+                machine -> machine.equals(id) ? List.of(job) : List.of(), DEFAULT_MAX);
+
+        StepVerifier.create(uploader.start(reactor, id, file.id(), "benchy.gco", true, false))
+                .assertNext(outcome -> {
+                    if (refused) {
+                        assertTrue(refusalOf(outcome).reason().contains("job"),
+                                "the refusal has to name the job: " + outcome);
+                    } else {
+                        assertInstanceOf(ControlOutcome.Accepted.class, outcome);
+                    }
+                })
+                .verifyComplete();
+
+        if (refused) {
+            assertEquals(List.of(), reactor.announced, "a refusal is not a transfer and announces none");
+        }
+    }
+
+    /**
+     * Linked but {@code ONLINE}: the socket is open and the firmware has not acknowledged anything
+     * yet, so nothing says it can take a command at all. Measured 2026-11-26: a simulator still
+     * rebooting from the last session lost the session's {@code M110}, nothing was ever
+     * acknowledged, and a binary upload accepted in that state never got its {@code M28 B1} onto
+     * the wire - it reported {@code UPLOADING} at 0 bytes for as long as anyone watched.
+     */
+    @Test
+    void aMachineThatHasAcknowledgedNothingYetIsRefusedAnUpload() {
+        var id = UUID.randomUUID();
+        var lifecycle = new ConnectionLifecycle();
+        lifecycle.connectRequested();
+        lifecycle.linkEstablished();
+        var reactor = new StubReactor(new PrinterState(id,
+                new MachineProfile(Map.of(), CAPABLE, LocalDateTime.now()), null, lifecycle));
+
+        StepVerifier.create(uploaderFor(id, reactor, storeThatMustNotBeAsked(), DEFAULT_MAX)
+                        .start(reactor, id, UUID.randomUUID(), "benchy.gco", true, false))
+                .assertNext(outcome -> assertTrue(refusalOf(outcome).reason().contains("acknowledged"),
+                        "the refusal has to say why: " + outcome))
+                .verifyComplete();
+
+        assertEquals(List.of(), reactor.written, "nothing may reach the wire");
+    }
+
+    /** Once the print is over the card takes an upload again - the refusal reads the state, it is not a latch. */
+    @Test
+    void aMachineWhosePrintHasEndedTakesAnUpload() {
+        var id = UUID.randomUUID();
+        var printer = new PrinterState(id, new MachineProfile(Map.of(), CAPABLE, LocalDateTime.now()));
+        printer.on(new SdPrinting(1234, 56789));
+        printer.on(SdDonePrinting.INSTANCE);
+        var reactor = new StubReactor(printer);
+        var file = OneFile.of("benchy.gco", "G28\n");
+
         StepVerifier.create(uploaderFor(id, reactor, file, DEFAULT_MAX)
                         .start(reactor, id, file.id(), "benchy.gco", false, false))
                 .assertNext(outcome -> assertInstanceOf(ControlOutcome.Accepted.class, outcome))
